@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Notebooks
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Environment
+.venv/
+env/
+venv/
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (large generated files)
+data/raw/
+data/processed/
+*.nc
+*.h5
+*.hdf5
+
+# Outputs
+outputs/
+results/
+lightning_logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+opencode.json
+*.log
