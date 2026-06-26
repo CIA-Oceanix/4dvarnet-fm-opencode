@@ -44,21 +44,21 @@ def run_baselines_all_windows(dataset, cfg):
     # Get parameters
     sigma, rho, beta = cfg.da_params
     
-    # Initialize methods (with reduced iterations for speed)
+    # Initialize methods
     weak_4dvar = Weak4DVar(
-        da_window_steps=cfg.num_steps,
+        da_window_steps=100,
         B_var=cfg.B_var,
         R_var=cfg.R_var,
-        opt_steps=80,  # Reduced from 150 for faster demo
+        opt_steps=150,
         dt=cfg.dt,
         device=device
     )
     
     strong_4dvar = Strong4DVar(
-        da_window_steps=cfg.num_steps,
+        da_window_steps=100,
         B_var=cfg.B_var,
         R_var=cfg.R_var,
-        max_iter=20,  # Reduced from 40 for faster demo
+        max_iter=40,
         dt=cfg.dt,
         device=device
     )
@@ -66,6 +66,7 @@ def run_baselines_all_windows(dataset, cfg):
     enkf = EnKF(
         N_ensemble=30,
         R_var=cfg.R_var,
+        inflation=1.2,
         dt=cfg.dt,
         device=device
     )
@@ -292,8 +293,8 @@ def main():
                         help='Number of windows to process (default: 10)')
     parser.add_argument('--seed', type=int, default=123, 
                         help='Random seed (default: 123)')
-    parser.add_argument('--duration', type=float, default=5.0,
-                        help='Window duration in seconds (default: 5.0)')
+    parser.add_argument('--duration', type=float, default=3.0,
+                        help='Window duration in seconds (default: 3.0)')
     args = parser.parse_args()
     
     print("=" * 70)

@@ -89,7 +89,7 @@ class Weak4DVar:
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse)
 
-    def _forward_weak(self, x0, q, steps, start_idx, forcing, sigma, rho, beta, c1):
+    def _forward_weak(self, x0, q, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
@@ -101,7 +101,10 @@ class Weak4DVar:
             Xn = X + dX * self.dt + q[t, 0]
             Yn = Y + dY * self.dt + q[t, 1]
             Zn = Z + dZ * self.dt + q[t, 2]
-            traj.append(torch.stack([Xn, Yn, Zn]))
+            next_s = torch.stack([Xn, Yn, Zn])
+            if clip_range is not None:
+                next_s = torch.clamp(next_s, -clip_range, clip_range)
+            traj.append(next_s)
         return torch.stack(traj)
 
 
@@ -178,7 +181,7 @@ class Strong4DVar:
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse)
 
-    def _forward_strong(self, x0, steps, start_idx, forcing, sigma, rho, beta, c1):
+    def _forward_strong(self, x0, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
@@ -187,7 +190,10 @@ class Strong4DVar:
             dX = sigma * (Y - X) + c1 * W
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
-            traj.append(torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt]))
+            next_s = torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt])
+            if clip_range is not None:
+                next_s = torch.clamp(next_s, -clip_range, clip_range)
+            traj.append(next_s)
         return torch.stack(traj)
 
 
