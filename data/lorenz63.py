@@ -31,6 +31,8 @@ class Lorenz63Config:
 
     tau_eta: float = 5.0
     sigma_eta: float = np.sqrt(0.5)
+    forcing_state_bias: float = 0.0
+    forcing_coupling: str = "linear"
 
     @property
     def num_steps(self) -> int:
@@ -95,9 +97,10 @@ def generate_long_trajectory(
 
 
 def generate_corrupted_forcing(
-    W_L_true: torch.Tensor, num_steps: int, dt: float,
+    W_L_true: torch.Tensor, X: torch.Tensor, num_steps: int, dt: float,
     tau_eta: float, sigma_eta: float, seed: int,
     device: torch.device = torch.device("cpu"),
+    state_bias: float = 0.0,
 ) -> torch.Tensor:
     rng = np.random.RandomState(seed)
     eta = np.zeros(num_steps)
@@ -109,7 +112,7 @@ def generate_corrupted_forcing(
         eta[t] = eta[t - 1] + d_eta
 
     eta_tensor = torch.tensor(eta, dtype=torch.float32, device=device)
-    return W_L_true + eta_tensor
+    return W_L_true + eta_tensor + state_bias * X
 
 
 def generate_observations(
@@ -161,9 +164,9 @@ class Lorenz63Dataset:
 
             if cfg.use_corrupted_forcing:
                 W_L_star = generate_corrupted_forcing(
-                    W_L_true, cfg.num_steps, cfg.dt,
+                    W_L_true, true_fluid[:, 0], cfg.num_steps, cfg.dt,
                     cfg.tau_eta, cfg.sigma_eta, force_seed,
-                    self.device,
+                    self.device, state_bias=cfg.forcing_state_bias,
                 )
             else:
                 W_L_star = W_L_true.clone()

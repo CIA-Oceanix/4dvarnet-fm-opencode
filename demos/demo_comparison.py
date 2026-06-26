@@ -9,15 +9,16 @@ This script demonstrates:
 2. Computing mean ± std RMSE across windows
 3. Side-by-side reconstruction comparison
 4. Degradation analysis (CS2/CS1 ratio)
-5. Validation of 3-6x degradation hypothesis
+5. Impact of structural forcing mismatch (quartic vs linear coupling)
 
 Statistical Setup:
 - N=10 windows for each case study
 - Same seed (123) for fair comparison
 - Compute mean and std of RMSE metrics
+- Optionally use quartic coupling (sign(W)*W^2) for structural model mismatch
 
 Usage:
-    python demos/demo_comparison.py [--num-windows N] [--seed SEED]
+    python demos/demo_comparison.py [--num-windows N] [--seed SEED] [--coupling {linear,quartic}]
 
 Author: Agent B - Visualization Specialist
 Date: June 25, 2026
@@ -37,7 +38,7 @@ from data.lorenz63 import Lorenz63Config, Lorenz63Dataset
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF
 
 
-def run_baselines_all_windows(dataset, cfg):
+def run_baselines_all_windows(dataset, cfg, coupling_type="linear"):
     """Run all baseline methods on all windows in dataset"""
     device = torch.device('cpu')
     
@@ -51,7 +52,8 @@ def run_baselines_all_windows(dataset, cfg):
         R_var=cfg.R_var,
         opt_steps=150,
         dt=cfg.dt,
-        device=device
+        device=device,
+        coupling_type=coupling_type,
     )
     
     strong_4dvar = Strong4DVar(
@@ -60,7 +62,8 @@ def run_baselines_all_windows(dataset, cfg):
         R_var=cfg.R_var,
         max_iter=40,
         dt=cfg.dt,
-        device=device
+        device=device,
+        coupling_type=coupling_type,
     )
     
     enkf = EnKF(
@@ -68,7 +71,8 @@ def run_baselines_all_windows(dataset, cfg):
         R_var=cfg.R_var,
         inflation=1.2,
         dt=cfg.dt,
-        device=device
+        device=device,
+        coupling_type=coupling_type,
     )
     
     num_windows = len(dataset)
@@ -240,18 +244,19 @@ def print_comparison_table(results_cs1, results_cs2):
         print(f"{method_name:<18} {mean_cs1:>6.4f}±{std_cs1:<6.4f} {mean_cs2:>6.4f}±{std_cs2:<6.4f} {mean_deg:>13.2f}x {status:>10}")
     
     print("=" * 80)
-    print("\nKEY FINDING: All classical DA methods degrade 4-5x under model mismatch")
-    print("(corrupted forcing + biased parameters), validating the need for")
-    print("data-driven approaches like 4DVarNet-FM.")
+    print("\nKEY FINDING: All classical DA methods degrade significantly under model mismatch")
+    print("(corrupted forcing + biased parameters + structural coupling error).")
     print("=" * 80)
 
 
-def save_degradation_summary(results_cs1, results_cs2, save_path):
+def save_degradation_summary(results_cs1, results_cs2, save_path, coupling_type="linear"):
     """Save comprehensive degradation analysis to file"""
+    cpl = "quadratic (sign(W)*W^2)" if coupling_type == "quartic" else "linear"
     with open(save_path, 'w') as f:
         f.write("=" * 80 + "\n")
         f.write("  CS1 vs CS2 DEGRADATION ANALYSIS (N=10 windows)\n")
         f.write("=" * 80 + "\n")
+        f.write(f"  DA coupling: {cpl}\n")
         f.write(f"{'Method':<18} {'CS1 RMSE':>15} {'CS2 RMSE':>15} {'Degradation':>15} {'Status':>10}\n")
         f.write("-" * 80 + "\n")
         
@@ -273,15 +278,14 @@ def save_degradation_summary(results_cs1, results_cs2, save_path):
             f.write(f"{method_name:<18} {mean_cs1:>6.4f}±{std_cs1:<6.4f} {mean_cs2:>6.4f}±{std_cs2:<6.4f} {mean_deg:>13.2f}x {status:>10}\n")
         
         f.write("=" * 80 + "\n\n")
-        f.write("KEY FINDING: All classical DA methods degrade 4-5x under model \n")
-        f.write("mismatch (corrupted forcing + biased parameters), validating \n")
-        f.write("the need for data-driven approaches like 4DVarNet-FM.\n\n")
+        f.write(f"KEY FINDING: All classical DA methods degrade under model mismatch\n")
+        f.write(f"(coupling={cpl}, param_bias, corrupted forcing).\n\n")
         f.write("Details:\n")
         f.write("- CS1: Noise-free forcings, correct parameters (σ=10, ρ=28, β=8/3)\n")
-        f.write("- CS2: OU-corrupted forcings, biased parameters (5% bias)\n")
+        f.write(f"- CS2: OU-corrupted forcings, biased parameters, state-dependent bias\n")
+        f.write(f"- DA coupling function: {cpl}\n")
         f.write("- Degradation measured as: CS2_RMSE / CS1_RMSE\n")
-        f.write("- All methods show consistent degradation pattern\n")
-        f.write("- Target degradation range: 3-6x (validates hypothesis)\n")
+        f.write("- Target degradation range: 3-6x\n")
         f.write("=" * 80 + "\n")
     
     print(f"✓ Saved degradation summary: {save_path}")
@@ -295,11 +299,20 @@ def main():
                         help='Random seed (default: 123)')
     parser.add_argument('--duration', type=float, default=3.0,
                         help='Window duration in seconds (default: 3.0)')
+    parser.add_argument('--coupling', type=str, default='linear', choices=['linear', 'quartic'],
+                        help='Coupling function for DA models (default: linear)')
+    parser.add_argument('--forcing-state-bias', type=float, default=0.15,
+                        help='State-dependent forcing bias for CS2 (default: 0.15)')
+    parser.add_argument('--param-bias', type=float, default=0.15,
+                        help='Parameter bias for CS2 (default: 0.15)')
     args = parser.parse_args()
     
+    coupling_label = "quadratic (sign(W)*W^2)" if args.coupling == "quartic" else "linear"
     print("=" * 70)
     print("  CS1 vs CS2: COMPREHENSIVE COMPARISON")
     print("=" * 70)
+    print(f"  DA coupling function: {coupling_label}")
+    print(f"  CS2 sources: param_bias={args.param_bias}, forcing_state_bias={args.forcing_state_bias}")
     
     # Create output directories
     os.makedirs('outputs/figures', exist_ok=True)
@@ -321,22 +334,23 @@ def main():
     print(f"\n[2/5] Generating CS2 dataset (N={args.num_windows} windows, seed={args.seed})...")
     cfg_cs2 = Lorenz63Config(
         case=2,
-        param_bias=0.05,
+        param_bias=args.param_bias,
+        forcing_state_bias=args.forcing_state_bias,
         num_windows=args.num_windows,
         T_max=args.duration,
         seed=args.seed
     )
     dataset_cs2 = Lorenz63Dataset(cfg_cs2)
-    print(f"   - Case: 2 (corrupted forcing, biased parameters)")
+    print(f"   - Case: 2 (corrupted forcing, biased params, state-dependent bias)")
     
     # Run baselines on all CS1 windows
     print(f"\n[3/5] Running baselines on CS1 ({args.num_windows} windows)...")
-    results_cs1 = run_baselines_all_windows(dataset_cs1, cfg_cs1)
+    results_cs1 = run_baselines_all_windows(dataset_cs1, cfg_cs1, coupling_type=args.coupling)
     print(f"   - CS1 Mean RMSE (Strong-4DVar): {np.mean(results_cs1['strong']['rmse']):.4f} ± {np.std(results_cs1['strong']['rmse']):.4f}")
     
     # Run baselines on all CS2 windows
     print(f"\n[4/5] Running baselines on CS2 ({args.num_windows} windows)...")
-    results_cs2 = run_baselines_all_windows(dataset_cs2, cfg_cs2)
+    results_cs2 = run_baselines_all_windows(dataset_cs2, cfg_cs2, coupling_type=args.coupling)
     print(f"   - CS2 Mean RMSE (Strong-4DVar): {np.mean(results_cs2['strong']['rmse']):.4f} ± {np.std(results_cs2['strong']['rmse']):.4f}")
     
     # Print comparison table
@@ -344,7 +358,7 @@ def main():
     
     # Save degradation summary
     save_degradation_summary(results_cs1, results_cs2, 
-                              'outputs/results/degradation_summary.txt')
+                              'outputs/results/degradation_summary.txt', coupling_type=args.coupling)
     
     # Create visualizations
     print(f"\n[5/5] Creating comparison visualizations...")
@@ -367,6 +381,7 @@ def main():
     print("  SUMMARY")
     print("=" * 70)
     print(f"Processed {args.num_windows} windows for each case study")
+    print(f"DA coupling: {coupling_label}")
     print("\nDegradation ratios (CS2/CS1):")
     for method_name, method_key in [('Weak-4DVar', 'weak'), 
                                      ('Strong-4DVar', 'strong'), 
@@ -381,8 +396,11 @@ def main():
     print("  - outputs/figures/cs1_vs_cs2_comparison.png")
     print("  - outputs/figures/degradation_barplot.png")
     print("  - outputs/results/degradation_summary.txt")
-    print("\n✓ All baseline DA methods show significant degradation (4-5x)")
-    print("  under model mismatch, validating the need for 4DVarNet-FM!")
+    print("\n✓ All baseline DA methods show significant degradation under model mismatch")
+    if args.coupling == "quartic":
+        print("  (structural coupling mismatch amplifies the error).")
+    else:
+        print("  (linear coupling), validating the need for 4DVarNet-FM!")
     print("=" * 70)
 
 
