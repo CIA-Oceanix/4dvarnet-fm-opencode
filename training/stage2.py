@@ -17,6 +17,8 @@ def train_stage2(
 ):
     loss_fn = StateMSELoss(use_gradient_loss=True)
 
+    best_val_loss = float('inf')
+
     for param in model.mean_estimator.parameters():
         param.requires_grad = False
 
@@ -44,6 +46,12 @@ def train_stage2(
                 pred = model(batch.obs)
                 loss = loss_fn(pred, batch.states)
                 val_loss += loss.item()
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), 'checkpoint_stage2.pt')
+            if verbose:
+                print("✓ checkpoint saved")
 
         if verbose and (epoch + 1) % 20 == 0:
             print(

@@ -50,7 +50,10 @@ class Down(nn.Module):
 
     def forward(self, x, t_emb=None):
         x = self.block(x, t_emb)
-        return self.pool(x)
+        return x, self.pool(x)
+
+    def forward_pool(self, x, t_emb=None):
+        return self.pool(self.block(x, t_emb))
 
 
 class Up(nn.Module):
@@ -90,8 +93,7 @@ class ConditionEncoder(nn.Module):
                 if isinstance(term, torch.Tensor):
                     if term.shape[1] != 0:
                         cond = torch.cat([cond, term], dim=1)
-        if cond.shape[1] != x.shape[1]:
-            cond = self.proj(cond.transpose(1, 2)).transpose(1, 2)
+        cond = self.proj(cond.transpose(1, 2)).transpose(1, 2)
         return cond
 
 
@@ -121,7 +123,7 @@ class UNet1D(nn.Module):
 
         self.cond_encoder = ConditionEncoder(state_dim, hidden_channels[0], use_obs, use_energy)
 
-        self.enc_in = nn.Conv1d(cond_dim, hidden_channels[0], 3, padding=1)
+        self.enc_in = nn.Conv1d(hidden_channels[0], hidden_channels[0], 3, padding=1)
 
         self.downs = nn.ModuleList()
         in_c = hidden_channels[0]
@@ -132,7 +134,7 @@ class UNet1D(nn.Module):
         self.bottleneck = ConvBlock(hidden_channels[-1], hidden_channels[-1], time_emb_dim, dropout)
 
         self.ups = nn.ModuleList()
-        for out_c in reversed(hidden_channels[:-1]):
+        for out_c in reversed(hidden_channels):
             self.ups.append(Up(in_c, out_c, time_emb_dim))
             in_c = out_c
 
@@ -161,8 +163,8 @@ class UNet1D(nn.Module):
 
         skips = []
         for down in self.downs:
-            skips.append(h)
-            h = down(h, t_emb)
+            skip, h = down(h, t_emb)
+            skips.append(skip)
 
         h = self.bottleneck(h, t_emb)
 

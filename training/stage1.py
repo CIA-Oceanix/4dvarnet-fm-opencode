@@ -18,6 +18,8 @@ def train_stage1(
     loss_fn = StateMSELoss(use_gradient_loss=True)
     optimizer = optim.Adam(model.mean_estimator.parameters(), lr=lr)
 
+    best_val_loss = float('inf')
+
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
@@ -40,6 +42,12 @@ def train_stage1(
                 pred_mean = model.estimate_mean(batch.obs)
                 loss = loss_fn(pred_mean, batch.states)
                 val_loss += loss.item()
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.mean_estimator.state_dict(), 'checkpoint_stage1.pt')
+            if verbose:
+                print("✓ checkpoint saved")
 
         if verbose and (epoch + 1) % 20 == 0:
             print(

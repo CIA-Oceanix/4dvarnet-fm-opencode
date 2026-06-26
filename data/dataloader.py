@@ -30,6 +30,24 @@ class FlowMatchingDataset(Dataset):
         return w["true_state"], w["obs"], w["obs_mask"]
 
 
+class ConcatFMDataset(Dataset):
+    def __init__(self, datasets):
+        self.datasets = datasets
+        self.cumlen = [0]
+        for d in datasets:
+            self.cumlen.append(self.cumlen[-1] + len(d))
+
+    def __len__(self):
+        return self.cumlen[-1]
+
+    def __getitem__(self, idx):
+        for i in range(len(self.datasets)):
+            if idx < self.cumlen[i + 1]:
+                w = self.datasets[i][idx - self.cumlen[i]]
+                return w["true_state"], w["obs"], w["obs_mask"]
+        raise IndexError
+
+
 def collate_fm(batch):
     states = torch.stack([b[0] for b in batch])
     obs = torch.stack([b[1] for b in batch])
@@ -40,11 +58,11 @@ def collate_fm(batch):
 def make_dataloaders(datasets: Dict[str, Dataset], batch_size: int = 32):
     return {
         "train": DataLoader(
-            FlowMatchingDataset(datasets["train"]),
+            ConcatFMDataset([datasets["train_cs1"], datasets["train_cs2"]]),
             batch_size=batch_size, shuffle=True, collate_fn=collate_fm,
         ),
         "val": DataLoader(
-            FlowMatchingDataset(datasets["val"]),
+            ConcatFMDataset([datasets["val_cs1"], datasets["val_cs2"]]),
             batch_size=batch_size, shuffle=False, collate_fn=collate_fm,
         ),
         "test_cs1": DataLoader(

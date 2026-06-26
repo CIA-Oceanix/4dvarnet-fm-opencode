@@ -44,7 +44,7 @@ class TweedieSolver(nn.Module):
         B, T, D = obs.shape
         x = torch.zeros(B, D, T, device=obs.device)
         for k in range(self.K_inner):
-            tau = torch.full((B,), (k + 1) / self.K_inner, device=obs.device)
+            tau = torch.full((B,), k / (self.K_inner - 1), device=obs.device)
             residual = self.mean_estimator(x, obs.transpose(1, 2), tau)
             x = x + residual
         return x.transpose(1, 2)
@@ -89,13 +89,15 @@ class TweedieSolver(nn.Module):
         obs: torch.Tensor,
         obs_operator: callable = None,
         prior_operator: callable = None,
+        device: torch.device = None,
     ) -> torch.Tensor:
         B, T, D = obs.shape
-        device = obs.device
+        if device is None:
+            device = obs.device
 
         x_mean = self.estimate_mean(obs)
 
-        x0 = torch.randn(B, T, D, device=device)
+        x0 = torch.randn(B, T, D, device=device) * 0.5
         x = x0.clone()
 
         dt = 1.0 / self.N_outer

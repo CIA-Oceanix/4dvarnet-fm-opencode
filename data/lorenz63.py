@@ -138,7 +138,6 @@ class Lorenz63Dataset:
 
         traj_seed = cfg.seed
         obs_seed = cfg.seed + 1
-        force_seed = cfg.seed + 2
 
         full_steps = cfg.spinup_steps + (cfg.num_windows + 2) * cfg.window_spacing
         long_traj = generate_long_trajectory(
@@ -163,6 +162,7 @@ class Lorenz63Dataset:
             W_L_true = seg[:, 3]
 
             if cfg.use_corrupted_forcing:
+                force_seed = cfg.seed + 2 + idx // (cfg.num_steps + 1)
                 W_L_star = generate_corrupted_forcing(
                     W_L_true, true_fluid[:, 0], cfg.num_steps, cfg.dt,
                     cfg.tau_eta, cfg.sigma_eta, force_seed,
@@ -207,4 +207,23 @@ def make_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
         "val": Lorenz63Dataset(val_cfg),
         "test_cs1": Lorenz63Dataset(test_cfg_cs1),
         "test_cs2": Lorenz63Dataset(test_cfg_cs2),
+    }
+
+
+def make_mixed_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
+    base = cfg.__dict__.copy()
+    train_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 42, "num_windows": 1000})
+    train_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 42, "num_windows": 1000, "forcing_coupling": "quartic"})
+    val_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 99, "num_windows": 100})
+    val_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 99, "num_windows": 100})
+    test_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 123, "num_windows": 200})
+    test_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 124, "num_windows": 200})
+
+    return {
+        "train_cs1": Lorenz63Dataset(train_cs1_cfg),
+        "train_cs2": Lorenz63Dataset(train_cs2_cfg),
+        "val_cs1": Lorenz63Dataset(val_cs1_cfg),
+        "val_cs2": Lorenz63Dataset(val_cs2_cfg),
+        "test_cs1": Lorenz63Dataset(test_cs1_cfg),
+        "test_cs2": Lorenz63Dataset(test_cs2_cfg),
     }
