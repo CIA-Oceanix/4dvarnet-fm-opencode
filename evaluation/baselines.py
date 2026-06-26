@@ -94,7 +94,7 @@ class Weak4DVar:
         for t in range(1, steps):
             s = traj[-1]
             X, Y, Z = s[0], s[1], s[2]
-            W = forcing[start_idx + t - 1]
+            W = forcing[t - 1]
             dX = sigma * (Y - X) + c1 * W
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
@@ -183,7 +183,7 @@ class Strong4DVar:
         for t in range(1, steps):
             s = traj[-1]
             X, Y, Z = s[0], s[1], s[2]
-            W = forcing[start_idx + t - 1]
+            W = forcing[t - 1]
             dX = sigma * (Y - X) + c1 * W
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
@@ -246,6 +246,9 @@ class EnKF:
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn(3, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - ensemble[n])
+
+                mean_e = torch.mean(ensemble, dim=0)
+                ensemble = mean_e + self.inflation * (ensemble - mean_e)
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
