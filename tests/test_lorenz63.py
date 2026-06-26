@@ -125,8 +125,9 @@ def test_forcing_ou_properties(cs2_config, device):
     num_steps = cs2_config.num_steps
     W_L_true = torch.zeros(num_steps, device=device)
     
+    X_stub = torch.zeros(num_steps, device=device)
     W_L_corrupted = generate_corrupted_forcing(
-        W_L_true=W_L_true,
+        W_L_true=W_L_true, X=X_stub,
         num_steps=num_steps,
         dt=cs2_config.dt,
         tau_eta=cs2_config.tau_eta,
