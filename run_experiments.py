@@ -115,19 +115,37 @@ def evaluate_model(model, dataset, device, use_mean_estimator=False):
     all_rmse = np.stack(rmse_list, axis=0)
     return np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0)
 
-def evaluate_baseline(method, dataset, cfg, device, return_trajs=False):
+def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
     sig, rho, bet = cfg.da_params
     rmse_list = []
     results_list = []
-    for i in range(len(dataset)):
-        w = dataset[i]
-        obs = w["obs"].to(device)
-        mask = w["obs_mask"].to(device)
-        truth = w["true_state"]
-        force = (w["forcing_corrupted"] if cfg.use_corrupted_forcing else w["forcing_true"]).to(device)
-        result = method.assimilate(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
-        rmse_list.append(result.rmse)
-        results_list.append(result)
+
+    use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
+    force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
+
+    if batch_size > 1 and hasattr(method, 'assimilate_batch'):
+        for i in range(0, len(dataset), batch_size):
+            batch = [dataset[j] for j in range(i, min(i + batch_size, len(dataset)))]
+            obs = torch.stack([w["obs"].to(device) for w in batch], dim=0)
+            mask = torch.stack([w["obs_mask"].to(device) for w in batch], dim=0)
+            truth = torch.stack([w["true_state"] for w in batch], dim=0)
+            force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
+
+            results = method.assimilate_batch(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
+            for result in results:
+                rmse_list.append(result.rmse)
+                results_list.append(result)
+    else:
+        for i in range(len(dataset)):
+            w = dataset[i]
+            obs = w["obs"].to(device)
+            mask = w["obs_mask"].to(device)
+            truth = w["true_state"]
+            force = w[force_key].to(device)
+            result = method.assimilate(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
+            rmse_list.append(result.rmse)
+            results_list.append(result)
+
     all_rmse = np.stack(rmse_list, axis=0)
     stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
     if return_trajs:
@@ -154,7 +172,7 @@ def _baseline_traj_path(case_name, method_name):
     return os.path.join(EXP_DIR, f"baselines_trajs_{key}.npz")
 
 
-def run_and_cache_baselines(datasets, device):
+def run_and_cache_baselines(datasets, device, batch_size=1):
     cache_path = os.path.join(EXP_DIR, "baselines.json")
 
     # Load existing partial results if any
@@ -193,7 +211,7 @@ def run_and_cache_baselines(datasets, device):
             method = method_map[name]
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
-            (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True)
+            (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
             elapsed = time.time() - t1
 
             # Save RMSE to JSON
@@ -391,6 +409,9 @@ def main():
                         help="Batch size (default 32, LR scaled from config base)")
     parser.add_argument("--num-workers", type=int, default=4,
                         help="DataLoader workers (default 4)")
+    parser.add_argument("--baseline-batch-size", type=int, default=1,
+                        help="Batch size for baseline evaluation (default 1 = per-sample). "
+                             "Use >1 (e.g., 64, 128) for GPU-efficient batched DA.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -435,7 +456,7 @@ def main():
         print(f"Baselines loaded from cache ({bl_path})")
     else:
         print()
-        baselines = run_and_cache_baselines(datasets, device)
+        baselines = run_and_cache_baselines(datasets, device, batch_size=args.baseline_batch_size)
 
     if args.baselines_only:
         return

@@ -49,7 +49,7 @@ def test_stage1_overfit(tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        train_stage1(model, loader, loader, epochs=5, lr=1e-2, verbose=False, checkpoint_path=None)
+        train_stage1(model, loader, loader, epochs=5, lr=1e-2, verbose=False)
     finally:
         os.chdir(old_cwd)
 
@@ -75,7 +75,7 @@ def test_stage2_overfit(tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        train_stage2(model, loader, loader, epochs=5, lr=1e-2, verbose=False, checkpoint_path=None)
+        train_stage2(model, loader, loader, epochs=5, lr=1e-2, verbose=False)
     finally:
         os.chdir(old_cwd)
 
