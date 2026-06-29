@@ -10,9 +10,9 @@ This implementation is based on the manuscript:
 > R. Fablet, W. de Tinguy, M. Cuzol, B. Chapron  
 > *Preprint, 2025*
 
-See [`notes_4dvarnet_fm.pdf`](./notes_4dvarnet_fm.pdf) for the full manuscript.
+See [`notes_4dvarnet_fm.pdf`](./reports/notes_4dvarnet_fm.pdf) for the full manuscript.
 
-The baseline DA methods (Weak-4DVar, Strong-4DVar, EnKF) are adapted from the reference Colab notebook [`notebook.ipynb`](./notebook.ipynb).
+The baseline DA methods (Weak-4DVar, Strong-4DVar, EnKF) are adapted from the reference Colab notebook [`notebooks/notebook.ipynb`](./notebooks/notebook.ipynb).
 
 ## Project Structure
 
@@ -46,6 +46,7 @@ The baseline DA methods (Weak-4DVar, Strong-4DVar, EnKF) are adapted from the re
 │   ├── generate_report.py
 │   ├── generate_baseline_report.py
 │   ├── generate_synthesis.py
+│   ├── notes_4dvarnet_fm.pdf  # Manuscript PDF
 │   └── outputs/        # Synthesis PDFs (versioned)
 ├── batch/              # SLURM batch and shell scripts
 │   ├── *.sbatch        # run_baselines, run_enkf_inflation, …
@@ -53,11 +54,12 @@ The baseline DA methods (Weak-4DVar, Strong-4DVar, EnKF) are adapted from the re
 │   └── run_with_scheduler.sh
 ├── notebooks/          # Jupyter notebooks
 │   └── demo_baselines.ipynb  # CS1 vs CS2 baseline comparison
+│   └── notebook.ipynb    # Reference Colab notebook
 ├── eval_baselines.py   # Hydra entry point for baseline evaluation
 ├── train.py            # Hydra entry point for FM training
 ├── run_experiment.py   # End-to-end entry point
 ├── run_experiments.py  # Multi-experiment orchestrator
-└── notes_4dvarnet_fm.pdf  # Manuscript PDF
+└── archive/            # Outdated status/plan files (refactoring complete)
 ```
 
 ## Quick Start
