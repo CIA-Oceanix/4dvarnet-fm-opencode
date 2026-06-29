@@ -1,4 +1,8 @@
 # @package _global_
+defaults:
+  - /lorenz63_default
+  - _self_
+
 note: "Train on CS2 data only"
 training:
   stage1:

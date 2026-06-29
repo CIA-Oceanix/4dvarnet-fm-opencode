@@ -14,7 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.lorenz63 import make_mixed_datasets
+from data.lorenz63 import Lorenz63Config, make_mixed_datasets
 from run_experiments import make_experiment_dataloaders
 from models.solver import TweedieSolver
 from training.pipeline import run_2stage_pipeline
@@ -42,7 +42,20 @@ def main(cfg: DictConfig):
     print(f"Device: {device}")
 
     # Data
-    base_cfg = cfg.data.to_lorenz63_config()
+    dc = cfg.data
+    base_cfg = Lorenz63Config(
+        dt=dc.dt, T_max=dc.T_max, obs_interval=dc.obs_interval,
+        R_var=dc.R_var, B_var=dc.B_var,
+        num_windows=dc.num_windows, window_spacing=dc.window_spacing,
+        spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
+        sigma_true=dc.sigma_true, rho_true=dc.rho_true, beta_true=dc.beta_true,
+        gamma=dc.gamma, W_L_bar=dc.W_L_bar, c1=dc.c1, c2=dc.c2,
+        sigma_0=dc.sigma_0, sigma_L=dc.sigma_L,
+        tau_eta=dc.tau_eta, sigma_eta=dc.sigma_eta,
+        param_bias=dc.get("param_bias", 0.0),
+        forcing_state_bias=dc.get("forcing_state_bias", 0.0),
+        forcing_coupling=dc.get("forcing_coupling", "linear"),
+    )
     datasets = make_mixed_datasets(base_cfg)
     loaders = make_experiment_dataloaders(
         datasets, batch_size=cfg.training.batch_size,

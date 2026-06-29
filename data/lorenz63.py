@@ -8,7 +8,7 @@ from typing import Dict, Tuple
 class Lorenz63Config:
     case: int = 1
     dt: float = 0.01
-    T_max: float = 5.0
+    T_max: float = 3.0
     obs_interval: int = 20
     R_var: float = 0.5
     B_var: float = 2.0

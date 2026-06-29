@@ -21,7 +21,7 @@ class BaselineResult:
 class Weak4DVar:
     def __init__(
         self,
-        da_window_steps: int = 500,
+        da_window_steps: int = 300,
         B_var: float = 2.0,
         R_var: float = 0.5,
         Q_var: float = 0.05,
@@ -196,7 +196,7 @@ class Weak4DVar:
 class Strong4DVar:
     def __init__(
         self,
-        da_window_steps: int = 500,
+        da_window_steps: int = 300,
         B_var: float = 2.0,
         R_var: float = 0.5,
         max_iter: int = 40,

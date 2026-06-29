@@ -1,38 +1,79 @@
 data:
   system: lorenz63
   dt: 0.01
-  T_max: 5.0
+  T_max: 3.0
   obs_interval: 20
   R_var: 0.5
   B_var: 2.0
-  Q_var: 0.05
-  param_bias: 0.05
   num_windows: 2000
   window_spacing: 2000
   spinup_steps: 10000
+  seed: 42
+  sigma_true: 10.0
+  rho_true: 28.0
+  beta_true: 2.6666666666666665
+  gamma: 0.05
+  W_L_bar: 0.0
+  c1: 1.0
+  c2: 0.1
+  sigma_0: 0.08
+  sigma_L: 0.20
+  tau_eta: 5.0
+  sigma_eta: 0.7071067811865476
+  forcing_state_bias: 0.0
+  forcing_coupling: linear
+  param_bias: 0.0
+  case: 1
 
 model:
+  state_dim: 3
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
   K_inner: 5
   N_outer: 10
   nu: 1.0
-  parameterization: T+O+S+E
-  hidden_channels: [64, 128, 256]
-  time_emb_dim: 64
+  use_obs: true
+  use_energy: true
   dropout: 0.1
 
 training:
-  lr: 1e-3
-  epochs_stage1: 200
-  epochs_stage2: 400
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 1.0
   batch_size: 32
+  loss:
+    use_gradient: true
+    gradient_weight: 0.1
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  checkpoint_stage2: checkpoints/stage2.pt
+  outputs_dir: outputs
 
 baselines:
-  da_window_steps: 500
+  da_window_steps: 300
   N_ensemble: 30
-  weak_opt_steps: 150
-  strong_max_iter: 40
+  batch_size: 128
+  weak4dvar:
+    opt_steps: 150
+    lr: 0.02
+  strong4dvar:
+    max_iter: 40
+    lr: 0.1
+  enkf:
+    inflation: 1.0
 
-case_study:
+cs1:
+  param_bias: 0.0
+  forcing_coupling: linear
+
+cs2:
   param_bias: 0.15
   forcing_state_bias: 0.15
   forcing_coupling: quartic

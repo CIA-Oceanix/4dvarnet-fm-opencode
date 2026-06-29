@@ -1,4 +1,8 @@
 # @package _global_
+defaults:
+  - /lorenz63_default
+  - _self_
+
 note: "Smaller U-Net -- less overfitting"
 model:
   hidden_channels: [32, 64, 128]

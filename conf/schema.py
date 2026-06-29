@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Any
 from omegaconf import MISSING
 
 
@@ -7,7 +7,7 @@ from omegaconf import MISSING
 class DataConfig:
     system: str = "lorenz63"
     dt: float = 0.01
-    T_max: float = 5.0
+    T_max: float = 3.0
     obs_interval: int = 20
     R_var: float = 0.5
     B_var: float = 2.0
@@ -53,6 +53,24 @@ class DataConfig:
     @property
     def use_corrupted_forcing(self) -> bool:
         return self.case == 2
+
+    def to_lorenz63_config(self) -> Any:
+        """Convert to data.lorenz63.Lorenz63Config."""
+        from data.lorenz63 import Lorenz63Config as L63C
+        return L63C(
+            case=self.case, dt=self.dt, T_max=self.T_max,
+            obs_interval=self.obs_interval, R_var=self.R_var,
+            B_var=self.B_var, param_bias=self.param_bias,
+            num_windows=self.num_windows, window_spacing=self.window_spacing,
+            spinup_steps=self.spinup_steps, seed=self.seed,
+            sigma_true=self.sigma_true, rho_true=self.rho_true,
+            beta_true=self.beta_true, gamma=self.gamma,
+            W_L_bar=self.W_L_bar, c1=self.c1, c2=self.c2,
+            sigma_0=self.sigma_0, sigma_L=self.sigma_L,
+            tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
+            forcing_state_bias=self.forcing_state_bias,
+            forcing_coupling=self.forcing_coupling,
+        )
 
 
 @dataclass
@@ -116,8 +134,9 @@ class EnKFConfig:
 
 @dataclass
 class BaselinesConfig:
-    da_window_steps: int = 500
+    da_window_steps: int = 300
     N_ensemble: int = 30
+    batch_size: int = 128
     weak4dvar: Weak4DVarConfig = field(default_factory=Weak4DVarConfig)
     strong4dvar: Strong4DVarConfig = field(default_factory=Strong4DVarConfig)
     enkf: EnKFConfig = field(default_factory=EnKFConfig)

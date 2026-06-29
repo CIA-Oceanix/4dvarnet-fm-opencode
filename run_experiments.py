@@ -6,7 +6,7 @@ Usage:
     python run_experiments.py --experiment A1          # Run specific
     python run_experiments.py --baselines-only         # Cache baselines only
 """
-import os, sys, json, time, argparse, traceback, subprocess
+import os, sys, json, time, argparse, traceback, subprocess, warnings
 import torch
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,12 +16,12 @@ from torch.utils.data import DataLoader
 from models.solver import TweedieSolver
 from training.stage1 import train_stage1
 from training.stage2 import train_stage2
-from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF
 from evaluation.metrics import rmse
-
-BASE = os.path.dirname(os.path.abspath(__file__))
-EXP_DIR = os.path.join(BASE, "experiments")
-os.makedirs(EXP_DIR, exist_ok=True)
+from evaluation.run import (
+    evaluate_baseline, fmt_rmse, run_and_cache_baselines,
+    _BASELINE_METHODS, _BASELINE_CASES, _baseline_traj_path,
+    EXP_DIR,
+)
 
 EXPERIMENTS = [
     {
@@ -115,154 +115,7 @@ def evaluate_model(model, dataset, device, use_mean_estimator=False):
     all_rmse = np.stack(rmse_list, axis=0)
     return np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0)
 
-def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
-    sig, rho, bet = cfg.da_params
-    rmse_list = []
-    results_list = []
-
-    use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
-    force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
-
-    if batch_size > 1 and hasattr(method, 'assimilate_batch'):
-        for i in range(0, len(dataset), batch_size):
-            batch = [dataset[j] for j in range(i, min(i + batch_size, len(dataset)))]
-            obs = torch.stack([w["obs"].to(device) for w in batch], dim=0)
-            mask = torch.stack([w["obs_mask"].to(device) for w in batch], dim=0)
-            truth = torch.stack([w["true_state"] for w in batch], dim=0)
-            force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
-
-            results = method.assimilate_batch(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
-            for result in results:
-                rmse_list.append(result.rmse)
-                results_list.append(result)
-    else:
-        for i in range(len(dataset)):
-            w = dataset[i]
-            obs = w["obs"].to(device)
-            mask = w["obs_mask"].to(device)
-            truth = w["true_state"]
-            force = w[force_key].to(device)
-            result = method.assimilate(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
-            rmse_list.append(result.rmse)
-            results_list.append(result)
-
-    all_rmse = np.stack(rmse_list, axis=0)
-    stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
-    if return_trajs:
-        return stats, results_list
-    return stats
-
-def fmt_rmse(mean_arr, std_arr):
-    return {
-        "X": {"mean": float(mean_arr[0]), "std": float(std_arr[0])},
-        "Y": {"mean": float(mean_arr[1]), "std": float(std_arr[1])},
-        "Z": {"mean": float(mean_arr[2]), "std": float(std_arr[2])},
-        "mean": float(np.mean(mean_arr)),
-    }
-
-# ── Baselines (uses pre-generated datasets) ─────────────────────
-
-_BASELINE_METHODS = ["Weak-4DVar", "Strong-4DVar", "EnKF"]
-_BASELINE_CASES = [("cs1", "test_cs1", 1, 0.0, "CS1"),
-                   ("cs2", "test_cs2", 2, 0.15, "CS2")]
-
-
-def _baseline_traj_path(case_name, method_name):
-    key = f"{case_name}_{method_name.replace('-', '_').replace(' ', '_')}"
-    return os.path.join(EXP_DIR, f"baselines_trajs_{key}.npz")
-
-
-def run_and_cache_baselines(datasets, device, batch_size=1):
-    cache_path = os.path.join(EXP_DIR, "baselines.json")
-
-    # Load existing partial results if any
-    partial = {}
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            partial = json.load(f)
-        print(f"  Found partial results ({cache_path}), resuming...")
-    else:
-        print("  Running baselines...")
-
-    N = int(3.0 / 0.01)
-    w4d = Weak4DVar(dt=0.01, da_window_steps=N, device=device)
-    s4d = Strong4DVar(dt=0.01, da_window_steps=N, device=device)
-    enkf = EnKF(dt=0.01, N_ensemble=30, device=device)
-    method_map = {"Weak-4DVar": w4d, "Strong-4DVar": s4d, "EnKF": enkf}
-
-    cfg_cs1 = Lorenz63Config(case=1, param_bias=0.0, T_max=3.0, seed=123)
-    cfg_cs2 = Lorenz63Config(case=2, param_bias=0.15, forcing_state_bias=0.15,
-                              forcing_coupling="quartic", T_max=3.0, seed=124)
-    cfg_map = {"cs1": cfg_cs1, "cs2": cfg_cs2}
-
-    if "config" not in partial:
-        partial["config"] = {"T_max": 3.0, "da_window_steps": N}
-
-    total_t0 = time.time()
-
-    for case_name, ds_key, case_val, bias, label in _BASELINE_CASES:
-        ds = datasets[ds_key]
-        cfg = cfg_map[case_name]
-        for name in _BASELINE_METHODS:
-            if partial.get(case_name, {}).get(name) is not None:
-                print(f"    {label}/{name:<15} already done, skipping")
-                continue
-
-            method = method_map[name]
-            print(f"    {label}/{name:<15} ...", end=" ", flush=True)
-            t1 = time.time()
-            (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
-            elapsed = time.time() - t1
-
-            # Save RMSE to JSON
-            if case_name not in partial:
-                partial[case_name] = {}
-            partial[case_name][name] = fmt_rmse(m, s)
-            partial["total_time_seconds"] = time.time() - total_t0
-            with open(cache_path, "w") as f:
-                json.dump(partial, f, indent=2)
-
-            # Save trajectories to per-(case,method) file
-            trajs = np.stack([r.trajectory for r in bl_results], axis=0)
-            truths = np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))], axis=0)
-            traj_data = {"trajectories": trajs, "truths": truths}
-            if bl_results[0].ensemble_variance is not None:
-                traj_data["ensemble_variance"] = np.stack(
-                    [r.ensemble_variance for r in bl_results], axis=0)
-            np.savez_compressed(_baseline_traj_path(case_name, name), **traj_data)
-
-            print(f"X={m[0]:.4f} Y={m[1]:.4f} Z={m[2]:.4f}"
-                  f"  mean={np.mean(m):.4f} [{elapsed:.1f}s]")
-
-    # Combine per-method trajectory files into final .npz
-    traj_path = os.path.join(EXP_DIR, "baselines_trajectories.npz")
-    all_present = True
-    for case_name, _, _, _, _ in _BASELINE_CASES:
-        for name in _BASELINE_METHODS:
-            if not os.path.exists(_baseline_traj_path(case_name, name)):
-                all_present = False
-                break
-
-    if all_present:
-        print("  Combining trajectories...")
-        traj_arrays = {}
-        for case_name, _, _, _, _ in _BASELINE_CASES:
-            for name in _BASELINE_METHODS:
-                src = _baseline_traj_path(case_name, name)
-                data = np.load(src)
-                prefix = f"{case_name}_{name.replace('-', '_').replace(' ', '_')}"
-                for key in data.files:
-                    traj_arrays[f"{prefix}_{key}"] = data[key]
-                data.close()
-                os.remove(src)
-        np.savez_compressed(traj_path, **traj_arrays)
-        print(f"    Saved: {traj_path}")
-    else:
-        print("    (incomplete — skipping trajectory combination)")
-
-    # Regenerate synthesis report with latest baselines
-    subprocess.run([sys.executable, "generate_report.py"], capture_output=True)
-    return partial
+# ── Baselines (delegated to evaluation/run.py) ──────────────────
 
 # ── Single experiment ───────────────────────────────────────────
 
@@ -412,7 +265,27 @@ def main():
     parser.add_argument("--baseline-batch-size", type=int, default=1,
                         help="Batch size for baseline evaluation (default 1 = per-sample). "
                              "Use >1 (e.g., 64, 128) for GPU-efficient batched DA.")
+    parser.add_argument("--da-window-steps", type=int, default=None,
+                        help="DA window steps for baselines (default: auto from T_max/dt = 300). "
+                             "Must evenly divide total steps (300 for T_max=3.0, dt=0.01).")
     args = parser.parse_args()
+
+    if args.baselines_only:
+        print("""
+╔══════════════════════════════════════════════════════════════╗
+║  DEPRECATED: run_experiments.py --baselines-only           ║
+║                                                             ║
+║  Use instead:  python eval_baselines.py                     ║
+║  With Hydra:   python eval_baselines.py \\                   ║
+║                  baselines.da_window_steps=300              ║
+║                  baselines.batch_size=128                   ║
+╚══════════════════════════════════════════════════════════════╝
+""", file=sys.stderr)
+        _warned = True
+
+    da_window_steps = args.da_window_steps if args.da_window_steps is not None else int(3.0 / 0.01)
+    if 300 % da_window_steps != 0:
+        print(f"Warning: da_window_steps={da_window_steps} does not evenly divide 300 (total steps)")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dev_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
@@ -448,15 +321,17 @@ def main():
         # Cache datasets
         torch.save(datasets, os.path.join(EXP_DIR, "datasets.pt"))
 
-    # Baselines (cached separately)
-    bl_path = os.path.join(EXP_DIR, "baselines.json")
+    # Baselines (cached separately per da_window_steps)
+    dws_suffix = f"_dws{da_window_steps}"
+    bl_path = os.path.join(EXP_DIR, f"baselines{dws_suffix}.json")
     if os.path.exists(bl_path) and not args.baselines_only:
         with open(bl_path) as f:
             baselines = json.load(f)
         print(f"Baselines loaded from cache ({bl_path})")
     else:
         print()
-        baselines = run_and_cache_baselines(datasets, device, batch_size=args.baseline_batch_size)
+        baselines = run_and_cache_baselines(datasets, device, batch_size=args.baseline_batch_size,
+                                            da_window_steps=da_window_steps)
 
     if args.baselines_only:
         return
