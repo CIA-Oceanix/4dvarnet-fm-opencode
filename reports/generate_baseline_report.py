@@ -3,10 +3,10 @@
 Generate a synthesis PDF from baseline evaluation results.
 
 Usage:
-    python generate_baseline_report.py \\
+    python reports/generate_baseline_report.py \\
         --json experiments/baselines_dws50_inf1.2.json \\
         --trajs experiments/baselines_trajectories_dws50_inf1.2.npz \\
-        --output outputs/synthesis_dws50_inf12.pdf
+        --output reports/outputs/synthesis_dws50_inf12.pdf
 """
 import os, sys, json, argparse
 import numpy as np
@@ -154,7 +154,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate baseline synthesis PDF")
     parser.add_argument("--json", required=True, help="Path to metrics JSON")
     parser.add_argument("--trajs", required=True, help="Path to trajectory NPZ")
-    parser.add_argument("--output", default="outputs/synthesis_dws50_inf12.pdf")
+    parser.add_argument("--output", default="reports/outputs/synthesis_dws50_inf12.pdf")
     args = parser.parse_args()
 
     metrics, trajs_data = load_results(args.json, args.trajs)

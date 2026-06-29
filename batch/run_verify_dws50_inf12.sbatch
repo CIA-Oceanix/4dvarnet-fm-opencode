@@ -38,10 +38,10 @@ python eval_baselines.py \
 echo ""
 echo "=== [3/3] Generating synthesis PDF ==="
 
-python generate_baseline_report.py \
+python reports/generate_baseline_report.py \
   --json experiments/baselines_dws50_inf1.2.json \
   --trajs experiments/baselines_trajectories_dws50_inf1.2.npz \
-  --output outputs/synthesis_dws50_inf12.pdf
+  --output reports/outputs/synthesis_dws50_inf12.pdf
 
 echo ""
 echo "  Done at: $(date)"

@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
-OUTPUT_DIR = os.path.join(BASE, "outputs")
+OUTPUT_DIR = os.path.join(BASE, "reports", "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLORS_BL = {"Weak-4DVar": "#ff7f0e", "Strong-4DVar": "#2ca02c", "EnKF": "#d62728"}

@@ -9,7 +9,8 @@ Usage:
 import os, sys, json, time, argparse, traceback, subprocess, warnings
 import torch
 import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+BASE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE)
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets
 from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm
 from torch.utils.data import DataLoader
@@ -224,7 +225,7 @@ def run_single_experiment(exp, datasets, device, batch_size=256, num_workers=4):
     print(f"  CS2: X={m2[0]:.4f} Y={m2[1]:.4f} Z={m2[2]:.4f}  mean={np.mean(m2):.4f}")
     print(f"  Degradation: {deg:.2f}x  |  Total: {total_t:.0f}s")
     # Regenerate synthesis report with latest results
-    subprocess.run([sys.executable, "generate_report.py"], capture_output=True)
+    subprocess.run([sys.executable, os.path.join(BASE, "reports", "generate_report.py")], capture_output=True)
     return result
 
 # ── Generate all datasets once ──────────────────────────────────
@@ -355,7 +356,7 @@ def main():
     print(f"  DONE: {len(succeeded)}/{len(experiments)} successful")
     if failed:
         print(f"  Failed: {failed}")
-    print(f"\n  Run: python generate_report.py")
+    print(f"\n  Run: python reports/generate_report.py")
 
 if __name__ == "__main__":
     main()

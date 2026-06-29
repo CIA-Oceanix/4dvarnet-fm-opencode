@@ -28,15 +28,35 @@ The baseline DA methods (Weak-4DVar, Strong-4DVar, EnKF) are adapted from the re
 ├── training/           # Two-stage training pipeline
 │   ├── losses.py       # State MSE + gradient loss
 │   ├── stage1.py       # Train Gaussian mean estimator Ψ̄θ̄
-│   └── stage2.py       # Train non-Gaussian residual Rᴺᴳ (freeze Ψ̄θ̄)
+│   ├── stage2.py       # Train non-Gaussian residual Rᴺᴳ (freeze Ψ̄θ̄)
+│   ├── lightning_module.py  # PyTorch Lightning wrapper
+│   └── pipeline.py     # pl.Trainer orchestration
 ├── evaluation/         # Baselines and metrics
 │   ├── baselines.py    # Weak-4DVar, Strong-4DVar, EnKF
 │   ├── metrics.py      # RMSE, spread, CRPS
-│   └── experiment.py   # Experiment orchestration
+│   ├── experiment.py   # Experiment orchestration
+│   └── run.py          # Baseline runner with caching
+├── conf/               # Hydra structured config schemas
+│   └── schema.py       # DataConfig, ModelConfig, TrainingConfig
+├── config/             # YAML configuration presets
+│   ├── lorenz63_default.yaml
+│   ├── baselines/      # DWS presets (dws20 … dws500)
+│   └── experiment/     # FM experiment configs (A1, B1, C1, C4, D1)
+├── reports/            # Report generation scripts and outputs (tracked)
+│   ├── generate_report.py
+│   ├── generate_baseline_report.py
+│   ├── generate_synthesis.py
+│   └── outputs/        # Synthesis PDFs (versioned)
+├── batch/              # SLURM batch and shell scripts
+│   ├── *.sbatch        # run_baselines, run_enkf_inflation, …
+│   ├── launch.sh
+│   └── run_with_scheduler.sh
 ├── notebooks/          # Jupyter notebooks
 │   └── demo_baselines.ipynb  # CS1 vs CS2 baseline comparison
-├── config/             # YAML configuration
+├── eval_baselines.py   # Hydra entry point for baseline evaluation
+├── train.py            # Hydra entry point for FM training
 ├── run_experiment.py   # End-to-end entry point
+├── run_experiments.py  # Multi-experiment orchestrator
 └── notes_4dvarnet_fm.pdf  # Manuscript PDF
 ```
 
@@ -47,6 +67,12 @@ pip install torch numpy matplotlib
 
 # Generate data and run baselines
 python run_experiment.py
+
+# Generate baseline synthesis report
+python reports/generate_baseline_report.py \
+    --json experiments/baselines_dws50_inf1.2.json \
+    --trajs experiments/baselines_trajectories_dws50_inf1.2.npz \
+    --output reports/outputs/synthesis_dws50_inf12.pdf
 
 # Or explore interactively
 jupyter notebook notebooks/demo_baselines.ipynb

@@ -2,15 +2,15 @@
 # Launch 4DVarNet-FM experiments in background with live report updates
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 CONDA_ENV="${CONDA_ENV:-fdv}"
-REPORT="${SCRIPT_DIR}/outputs/synthesis_report.pdf"
+REPORT="${SCRIPT_DIR}/reports/outputs/synthesis_report.pdf"
 LOG="${SCRIPT_DIR}/experiments/pipeline.log"
 POLL_INTERVAL="${POLL_INTERVAL:-120}"
 
-mkdir -p outputs experiments
+mkdir -p outputs experiments reports/outputs
 
 echo "============================================" | tee -a "$LOG"
 echo " 4DVarNet-FM Pipeline  |  $(date)" | tee -a "$LOG"
@@ -22,7 +22,7 @@ echo "  GPU:   $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tai
 echo "" | tee -a "$LOG"
 
 # Initial report
-conda run -n "$CONDA_ENV" python3 generate_report.py --output "$REPORT" >> "$LOG" 2>&1
+conda run -n "$CONDA_ENV" python3 reports/generate_report.py --output "$REPORT" >> "$LOG" 2>&1
 echo "  Initial report: ${REPORT}" | tee -a "$LOG"
 
 # Launch pipeline in background
@@ -35,12 +35,12 @@ echo "" | tee -a "$LOG"
 while kill -0 "$PIPELINE_PID" 2>/dev/null; do
     sleep "$POLL_INTERVAL"
     echo "  [$(date '+%H:%M:%S')] Regenerating report ..." | tee -a "$LOG"
-    conda run -n "$CONDA_ENV" python3 generate_report.py --output "$REPORT" >> "$LOG" 2>&1
+    conda run -n "$CONDA_ENV" python3 reports/generate_report.py --output "$REPORT" >> "$LOG" 2>&1
     echo "  [$(date '+%H:%M:%S')] Report updated" | tee -a "$LOG"
 done
 
 # Final report
 echo "" | tee -a "$LOG"
 echo "  Pipeline finished at $(date)" | tee -a "$LOG"
-conda run -n "$CONDA_ENV" python3 generate_report.py --output "$REPORT" >> "$LOG" 2>&1
+conda run -n "$CONDA_ENV" python3 reports/generate_report.py --output "$REPORT" >> "$LOG" 2>&1
 echo "  Final report: ${REPORT}" | tee -a "$LOG"

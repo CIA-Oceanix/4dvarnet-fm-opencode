@@ -6,7 +6,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from data.lorenz63 import Lorenz63Config, Lorenz63Dataset
 from evaluation.baselines import EnKF
 
@@ -65,7 +65,8 @@ deg_quartic = cs2_quartic_rmses / cs1_rmses
 # ── Generate PDF ────────────────────────────────────────────────────────
 print("\nGenerating PDF...")
 
-with PdfPages('outputs/results/coupling_comparison.pdf') as pdf:
+os.makedirs('reports/outputs', exist_ok=True)
+with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
     plt.rcParams.update({'font.size': 11, 'axes.titlesize': 13, 'axes.labelsize': 11})
 
     # ── Page 1: Title + Perturbation Table ──
@@ -178,7 +179,7 @@ with PdfPages('outputs/results/coupling_comparison.pdf') as pdf:
                  fontsize=14, fontweight='bold')
     plt.tight_layout(); pdf.savefig(fig); plt.close()
 
-print("✓ outputs/results/coupling_comparison.pdf (4 pages)")
+print("✓ reports/outputs/coupling_comparison.pdf (4 pages)")
 print(f"  Page 1: Perturbation table (EnKF)")
 print(f"  Page 2: Perturbation bar chart (EnKF)")
 print(f"  Page 3: Coupling comparison (3 methods)")

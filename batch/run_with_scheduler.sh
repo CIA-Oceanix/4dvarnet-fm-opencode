@@ -12,12 +12,12 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 CONDA_ENV="${CONDA_ENV:-fdv}"
 POLL_INTERVAL="${POLL_INTERVAL:-120}"
-REPORT="${SCRIPT_DIR}/outputs/synthesis_report.pdf"
+REPORT="${SCRIPT_DIR}/reports/outputs/synthesis_report.pdf"
 PID_FILE="/tmp/4dvarnet_scheduler.pid"
 RUNNER_PID_FILE="/tmp/4dvarnet_runner.pid"
 
@@ -33,7 +33,7 @@ generate_report() {
     local ts
     ts=$(date '+%H:%M:%S')
     echo "  [${ts}] Regenerating report ..."
-    conda run -n "$CONDA_ENV" python3 generate_report.py --output "$REPORT" 2>&1 | \
+    conda run -n "$CONDA_ENV" python3 reports/generate_report.py --output "$REPORT" 2>&1 | \
         sed 's/^/    /'
     echo "  [${ts}] Report updated: ${REPORT}"
 }
