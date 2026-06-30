@@ -1,10 +1,10 @@
 import torch
+import torch.nn as nn
 from omegaconf import DictConfig
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
-from training.lightning_module import Lit4DVarNetFM
-from models.solver import TweedieSolver
+from training.lightning_module import LitModel
 
 
 def create_trainer(cfg: DictConfig, stage: int) -> pl.Trainer:
@@ -32,13 +32,20 @@ def create_trainer(cfg: DictConfig, stage: int) -> pl.Trainer:
 
 
 def train_stage(
-    model: TweedieSolver,
+    model: nn.Module,
     loaders: dict,
     cfg: DictConfig,
     stage: int,
     device: torch.device,
-) -> TweedieSolver:
-    lit_module = Lit4DVarNetFM(model, cfg, stage=stage)
+) -> nn.Module:
+    stage_cfg = cfg.training.stage1 if stage == 1 else cfg.training.stage2
+    lit_module = LitModel(
+        model, model_type=cfg.model.model_type, stage=stage,
+        lr=stage_cfg.lr,
+        gradient_clip_val=stage_cfg.gradient_clip_val,
+        use_gradient_loss=cfg.training.loss.use_gradient,
+        gradient_weight=cfg.training.loss.gradient_weight,
+    )
     trainer = create_trainer(cfg, stage)
     trainer.fit(lit_module, loaders["train"], loaders["val"])
     path = cfg.paths[f"checkpoint_stage{stage}"]
@@ -47,11 +54,11 @@ def train_stage(
 
 
 def run_2stage_pipeline(
-    model: TweedieSolver,
+    model: nn.Module,
     loaders: dict,
     cfg: DictConfig,
     device: torch.device,
-) -> TweedieSolver:
+) -> nn.Module:
     model = train_stage(model, loaders, cfg, stage=1, device=device)
     if cfg.training.stage2.epochs > 0:
         model = train_stage(model, loaders, cfg, stage=2, device=device)

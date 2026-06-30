@@ -102,7 +102,7 @@ def test_c1_longer_train_checkpoint():
 
 def test_lightning_module_produces_same_output():
     """Lit4DVarNetFM.forward() == TweedieSolver.forward() for same weights."""
-    from training.lightning_module import Lit4DVarNetFM
+    from training.lightning_module import LitModel as Lit4DVarNetFM
     from omegaconf import OmegaConf
     from conf.schema import ExperimentConfig
 

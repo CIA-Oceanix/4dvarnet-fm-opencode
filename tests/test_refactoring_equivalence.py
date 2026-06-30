@@ -5,7 +5,7 @@ import numpy as np
 from conf.schema import DataConfig
 from models.solver import TweedieSolver
 from training.losses import StateMSELoss
-from training.lightning_module import Lit4DVarNetFM
+from training.lightning_module import LitModel as Lit4DVarNetFM
 from data.lorenz63 import Lorenz63Dataset, generate_long_trajectory
 
 

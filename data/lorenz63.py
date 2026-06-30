@@ -210,14 +210,17 @@ def make_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
     }
 
 
-def make_mixed_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
+def make_mixed_datasets(cfg: Lorenz63Config, *,
+                        num_train_windows: int = 1000,
+                        num_val_windows: int = 100,
+                        num_test_windows: int = 200) -> Dict[str, Lorenz63Dataset]:
     base = cfg.__dict__.copy()
-    train_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 42, "num_windows": 1000})
-    train_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 42, "num_windows": 1000, "forcing_coupling": "quartic"})
-    val_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 99, "num_windows": 100})
-    val_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 99, "num_windows": 100})
-    test_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 123, "num_windows": 200})
-    test_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 124, "num_windows": 200})
+    train_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 42, "num_windows": num_train_windows})
+    train_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 42, "num_windows": num_train_windows, "forcing_coupling": "quartic"})
+    val_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 99, "num_windows": num_val_windows})
+    val_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 99, "num_windows": num_val_windows})
+    test_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
+    test_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 124, "num_windows": num_test_windows})
 
     return {
         "train_cs1": Lorenz63Dataset(train_cs1_cfg),

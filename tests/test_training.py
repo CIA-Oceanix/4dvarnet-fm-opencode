@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from models.solver import TweedieSolver
-from training.lightning_module import Lit4DVarNetFM
+from training.lightning_module import LitModel as Lit4DVarNetFM
 from training.losses import StateMSELoss
 from training.stage1 import train_stage1
 from training.stage2 import train_stage2

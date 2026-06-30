@@ -36,7 +36,7 @@ def test_down_shape():
     B, C_in, C_out, L = 2, 3, 16, 100
     down = Down(C_in, C_out, time_emb_dim=64)
     x = torch.randn(B, C_in, L)
-    out = down(x)
+    out = down.forward_pool(x)
     assert out.shape == (B, C_out, L // 2)
 
 

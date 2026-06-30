@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+  - /lorenz63_default
+  - _self_
+
+model:
+  model_type: direct_unet
+  direct_unet:
+    hidden_channels: [32, 64, 128]
+    dropout: 0.1
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+data:
+  train_mix: cs1_rand+cs2_rand
+  randomize_params: true
+  param_noise: 0.2

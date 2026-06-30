@@ -30,6 +30,9 @@ class DataConfig:
     forcing_coupling: str = "linear"
     param_bias: float = 0.0
     case: int = 1
+    train_mix: str = "cs1+cs2"
+    randomize_params: bool = False
+    param_noise: float = 0.2
 
     @property
     def num_steps(self) -> int:
@@ -74,7 +77,23 @@ class DataConfig:
 
 
 @dataclass
+class DirectUNetConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    dropout: float = 0.1
+
+
+@dataclass
+class VanillaCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+
+
+@dataclass
 class ModelConfig:
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -84,6 +103,8 @@ class ModelConfig:
     use_obs: bool = True
     use_energy: bool = True
     dropout: float = 0.1
+    direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
+    vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
 
 
 @dataclass
