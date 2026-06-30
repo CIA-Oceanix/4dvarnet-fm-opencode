@@ -40,9 +40,12 @@ lightning_logs/
 .DS_Store
 Thumbs.db
 
-# Config with secrets
-opencode.json
+# Logs
 *.log
+
+# LaTeX build artifacts
+*.aux
+*.out
 
 # Generated data & checkpoints
 experiments/

@@ -1,0 +1,132 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{booktabs}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{Case Studies CS1 and CS2:\\Stochastic Lorenz-63 Data Assimilation}
+\author{4DVarNet-FM}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{State-Space Model}
+
+We consider a stochastic Lorenz-63 system augmented with a fourth variable $W_L$ representing a wind forcing. The state vector is
+\[
+\mathbf{x} = [X, Y, Z, W_L]^{\mathsf T} \in \mathbb{R}^{4}.
+\]
+
+The deterministic drift is given by
+\begin{align}
+\dot X &= \sigma\,(Y - X) + c_1\,W_L,\\
+\dot Y &= X\,(\rho - Z) - Y,\\
+\dot Z &= X\,Y - \beta\,Z,\\
+\dot W_L &= -\gamma\,(W_L - \overline W_L) + c_2\,X,
+\end{align}
+with parameters $\sigma = 10.0$, $\rho = 28.0$, $\beta = 8/3$, $\gamma = 0.05$, $\overline W_L = 0.0$, $c_1 = 1.0$, $c_2 = 0.1$.
+
+The system is discretised with the Euler--Maruyama scheme using a time step $\Delta t = 0.01$. Multiplicative noise is injected into $Y$, $Z$ and $W_L$:
+\begin{align}
+X_{t+1} &= X_t + \dot X_t\,\Delta t,\\
+Y_{t+1} &= Y_t + \dot Y_t\,\Delta t + \sigma_0\,Y_t\,\sqrt{\Delta t}\,\xi_1,\\
+Z_{t+1} &= Z_t + \dot Z_t\,\Delta t + \sigma_0\,Z_t\,\sqrt{\Delta t}\,\xi_2,\\
+W_{L,t+1} &= W_{L,t} + \dot W_{L,t}\,\Delta t + \sigma_L\,\sqrt{\Delta t}\,\xi_3,
+\end{align}
+where $\xi_1, \xi_2, \xi_3 \sim \mathcal{N}(0,1)$ are independent Gaussian increments, $\sigma_0 = 0.08$ and $\sigma_L = 0.20$.
+
+\section{Observation Model}
+
+Sparse noisy observations of the state variables $(X,Y,Z)$ are available every $\Delta t_{\text{obs}}=20\Delta t = 0.2$ time units:
+\[
+\mathbf{y}_k = H\,\mathbf{x}(t_k) + \boldsymbol\varepsilon_k,\qquad
+\boldsymbol\varepsilon_k \sim \mathcal{N}\bigl(\mathbf{0}, R\bigr),
+\]
+with $R = R_{\text{var}}\,I_3$ and $R_{\text{var}} = 0.5$. The observation operator $H\in\mathbb{R}^{3\times4}$ selects the first three components. The observation mask is
+\[
+m(t) = \begin{cases}
+1 & \text{if } t \in \{\Delta t_{\text{obs}},\,2\Delta t_{\text{oss}},\,\dots,\,T_{\max}\},\\
+0 & \text{otherwise}.
+\end{cases}
+\]
+
+\section{Case Study CS1: Perfect Model Baseline}
+
+CS1 uses the true dynamics with correct parameters and uncorrupted forcing:
+\begin{itemize}[noitemsep]
+\item Parameters: $\sigma = 10.0$, $\rho = 28.0$, $\beta = 8/3$ (no bias).
+\item Forcing: $W_L^* = W_L$ (the true wind, uncorrupted).
+\item Coupling in $\dot X$: linear term $c_1 W_L$.
+\item Expected: good reconstruction with RMSE $\ll 0.5$.
+\end{itemize}
+
+\section{Case Study CS2: Model Mismatch}
+
+CS2 introduces three sources of model mismatch.
+
+\subsection{Parameter Bias}
+
+The Lorenz parameters are biased by a fraction $b = 0.15$:
+\begin{align}
+\sigma_{\text{CS2}} &= \sigma\,(1 - b) = 8.5,\\
+\rho_{\text{CS2}}  &= \rho\,(1 - b) = 23.8,\\
+\beta_{\text{CS2}} &= \beta\,(1 + b) \approx 3.11.
+\end{align}
+
+\subsection{Forcing Corruption}
+
+The true wind $W_L$ is corrupted by an Ornstein--Uhlenbeck process $\eta$ and a state-dependent term:
+\[
+W_L^* = W_L + \eta + \alpha\,X,
+\]
+where $\alpha = 0.15$ (forcing state bias). The corruption $\eta$ satisfies
+\[
+d\eta = -\frac{1}{\tau_\eta}\,\eta\,dt + \sigma_\eta\sqrt{\frac{2}{\tau_\eta}}\,dW,
+\]
+with $\tau_\eta = 5.0$ and $\sigma_\eta = \sqrt{0.5}$.
+
+\subsection{Nonlinear Coupling}
+
+The coupling in $\dot X$ is changed from linear to quartic:
+\[
+c_1\,W_L \;\longrightarrow\; \operatorname{sgn}(W_L)\,W_L^2,
+\]
+which introduces a stronger and non-symmetric forcing on the $X$ variable.
+
+\section{Parameter Summary}
+
+\begin{table}[ht]
+\centering
+\caption{Default model parameters.}
+\begin{tabular}{lccr}
+\toprule
+Symbol & Value & Unit & Description\\
+\midrule
+$\sigma$ & $10.0$ & — & Lorenz $X\leftrightarrow Y$ feedback\\
+$\rho$ & $28.0$ & — & Rayleigh number\\
+$\beta$ & $8/3$ & — & Aspect ratio\\
+$\gamma$ & $0.05$ & s$^{-1}$ & Wind relaxation rate\\
+$\overline W_L$ & $0.0$ & — & Wind baseline\\
+$c_1$ & $1.0$ & — & Wind $\to$ state coupling\\
+$c_2$ & $0.1$ & — & State $\to$ wind coupling\\
+$\sigma_0$ & $0.08$ & — & Multiplicative noise std\\
+$\sigma_L$ & $0.20$ & — & Wind noise std\\
+$\tau_\eta$ & $5.0$ & s & OU correlation time\\
+$\sigma_\eta$ & $\sqrt{0.5}$ & — & OU noise std\\
+$\alpha$ & $0.15$ & — & Forcing-state bias\\
+$b$ & $0.15$ & — & Parameter bias fraction\\
+$R_{\text{var}}$ & $0.5$ & — & Observation noise variance\\
+$B_{\text{var}}$ & $2.0$ & — & Background variance\\
+$\Delta t$ & $0.01$ & s & Integration step\\
+$T_{\max}$ & $3.0$ & s & Assimilation window\\
+$\Delta t_{\text{obs}}$ & $0.2$ & s & Observation interval\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
