@@ -33,11 +33,25 @@ def main():
     )
 
     t0 = time.time()
-    datasets = make_mixed_datasets(
-        base_cfg, num_test_windows=200,
-        include_randparam_test=True, param_noise=0.2,
-    )
-    print(f"Datasets generated in {time.time()-t0:.1f}s")
+    datasets_cache = os.path.join(EXP_DIR, "datasets.pt")
+    datasets = None
+    if os.path.exists(datasets_cache):
+        try:
+            loaded = torch.load(datasets_cache)
+            if "test_cs3" in loaded and "test_cs4" in loaded:
+                datasets = loaded
+                print(f"Loaded cached datasets in {time.time()-t0:.1f}s")
+            else:
+                print("Cached datasets lack CS3/CS4, regenerating...")
+        except Exception:
+            print("Failed to load cached datasets, regenerating...")
+    if datasets is None:
+        datasets = make_mixed_datasets(
+            base_cfg, num_test_windows=200,
+            include_randparam_test=True, param_noise=0.2,
+        )
+        print(f"Datasets generated in {time.time()-t0:.1f}s")
+        torch.save(datasets, datasets_cache)
     for key in datasets:
         print(f"  {key}: {len(datasets[key])} windows")
 
