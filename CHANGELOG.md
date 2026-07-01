@@ -61,3 +61,32 @@
 **Rationale:** Experiment G tests whether VanillaCFM's advantage comes from multi-τ training or the residual loss formulation. τ=0 collapses CFM to a single Euler step predicting the conditional mean, directly comparable to DirectUNet. All sbatch workflows consolidate infrastructure for reproducible cluster runs.
 
 **Verification:** `python -m pytest tests/ -m "not slow" --ignore=tests/test_checkpoint_compat.py` — 111 passed, 0 failed, 7 deselected (slow). Config validation: all 10 configs (E1-E3, F1-F3, G1-G3, lorenz63_default) produced correct model types. τ=0 flag confirmed on all G configs.
+
+## 2026-07-01: Baseline summary JSON + experiments/summaries/ folder
+
+**Summary:** Created `experiments/summaries/baselines_summary_cs1_cs2.json` consolidating Weak-4DVar, Strong-4DVar, EnKF (inf=1.2), and ETKF (inf=1.6) metrics and trajectory file paths for CS1/CS2. All methods verified on identical trajectories. Updated `.gitignore` to track `experiments/summaries/` while keeping the rest of `experiments/` ignored. Moved exp/g-tau0-cfm-ablation branch to remote.
+
+**Files modified:**
+- `.gitignore` — added `!experiments/summaries/`, `!experiments/summaries/**` to allow tracking
+- `experiments/summaries/baselines_summary_cs1_cs2.json` — new: consolidated DA baseline summary
+
+**Rationale:** Summary file provides a single source of truth for comparing baseline methods with learned models. Tracked subfolder enables sharing results while keeping large generated data (npz/pt) gitignored.
+
+**Verification:** Trajectory truths match across all four methods (max_diff=0). JSON contains per-variable X/Y/Z metrics, degradation ratios, and file paths.
+
+## 2026-07-01: Verify G3 inference + forced τ=0 CFM comparison + CS1/CS2 model summary
+
+**Summary:** Verified G3 (τ=0 CFM) inference is robust across multiple x0 noise seeds (variance < 0.001). Evaluated F1/F2/F3 with forced τ=0 single-step sampling to quantify degradation from multi-τ training. Generated comprehensive CS1/CS2 comparison report across all 4 model families (DirectUNet, VanillaCFM 10-step, VanillaCFM forced τ=0, τ=0 CFM).
+
+**Files modified:**
+- `batch/verify_g3_inference.py` — new: standalone G3 verification with 3 x0 seeds
+- `batch/run_verify_g3_inference.sbatch` — new: sbatch runner for verification
+- `batch/compute_forced_tau0.py` — new: forced τ=0 evaluation for F1/F2/F3
+- `batch/run_compute_forced_tau0.sbatch` — new: sbatch runner for forced τ=0
+- `reports/generate_cs1_cs2_summary.py` — new: report generator with per-group best-in-class
+- `experiments/summaries/cs1_cs2_unet_cfm_comparison.json` — new: full comparison data
+- `CHANGELOG.md` — appended this entry
+
+**Rationale:** Validate G3's suspiciously good 0.032 RMSE, quantify VanillaCFM's reliance on multi-step Euler integration, and consolidate all CS1/CS2 model results in a single report.
+
+**Verification:** G3 verified across 3 seeds (42, 123, 999): CS1=0.031975±0.000013, CS2=0.032000±0.000024. Forced τ=0 degrades F3 from 0.070→0.094 (CS1). Data independence confirmed: train/val/test use different seeds (42/99/123/124), producing decorrelated Lorenz attractor trajectories after 10k-step spinup.

@@ -1,0 +1,184 @@
+{
+  "groups": {
+    "direct": {
+      "label": "DirectUNet",
+      "entries": [
+        {
+          "model": "DirectUNet",
+          "variant": "direct",
+          "config": "[64,128,256]",
+          "cs1": 0.14414875209331512,
+          "cs2": 0.15633513033390045,
+          "note": ""
+        },
+        {
+          "model": "DirectUNet",
+          "variant": "direct",
+          "config": "[32,64,128]",
+          "cs1": 0.08145607262849808,
+          "cs2": 0.10201738029718399,
+          "note": ""
+        },
+        {
+          "model": "DirectUNet",
+          "variant": "direct",
+          "config": "[32,64,128] rand",
+          "cs1": 0.11631041765213013,
+          "cs2": 0.1139446422457695,
+          "note": ""
+        }
+      ],
+      "best_cs1": {
+        "model": "DirectUNet",
+        "variant": "direct",
+        "config": "[32,64,128]",
+        "cs1": 0.08145607262849808,
+        "cs2": 0.10201738029718399,
+        "note": ""
+      },
+      "best_cs2": {
+        "model": "DirectUNet",
+        "variant": "direct",
+        "config": "[32,64,128]",
+        "cs1": 0.08145607262849808,
+        "cs2": 0.10201738029718399,
+        "note": ""
+      }
+    },
+    "cfm_10step": {
+      "label": "VanillaCFM (10-step)",
+      "entries": [
+        {
+          "model": "VanillaCFM",
+          "variant": "cfm_10step",
+          "config": "[64,128,256]",
+          "cs1": 0.14068084955215454,
+          "cs2": 0.14905641973018646,
+          "note": ""
+        },
+        {
+          "model": "VanillaCFM",
+          "variant": "cfm_10step",
+          "config": "[32,64,128]",
+          "cs1": 0.11896076053380966,
+          "cs2": 0.1257093995809555,
+          "note": ""
+        },
+        {
+          "model": "VanillaCFM",
+          "variant": "cfm_10step",
+          "config": "[32,64,128] rand",
+          "cs1": 0.0689857006072998,
+          "cs2": 0.06996792554855347,
+          "note": ""
+        }
+      ],
+      "best_cs1": {
+        "model": "VanillaCFM",
+        "variant": "cfm_10step",
+        "config": "[32,64,128] rand",
+        "cs1": 0.0689857006072998,
+        "cs2": 0.06996792554855347,
+        "note": ""
+      },
+      "best_cs2": {
+        "model": "VanillaCFM",
+        "variant": "cfm_10step",
+        "config": "[32,64,128] rand",
+        "cs1": 0.0689857006072998,
+        "cs2": 0.06996792554855347,
+        "note": ""
+      }
+    },
+    "cfm_forced_tau0": {
+      "label": "VanillaCFM (\u03c4=0 forced eval)",
+      "entries": [
+        {
+          "model": "VanillaCFM (\u03c4=0 forced)",
+          "variant": "cfm_forced_tau0",
+          "config": "[64,128,256]",
+          "cs1": 0.13549475371837616,
+          "cs2": 0.14334630966186523,
+          "note": ""
+        },
+        {
+          "model": "VanillaCFM (\u03c4=0 forced)",
+          "variant": "cfm_forced_tau0",
+          "config": "[32,64,128]",
+          "cs1": 0.14032521843910217,
+          "cs2": 0.14974631369113922,
+          "note": ""
+        },
+        {
+          "model": "VanillaCFM (\u03c4=0 forced)",
+          "variant": "cfm_forced_tau0",
+          "config": "[32,64,128] rand",
+          "cs1": 0.09416765719652176,
+          "cs2": 0.09163127094507217,
+          "note": ""
+        }
+      ],
+      "best_cs1": {
+        "model": "VanillaCFM (\u03c4=0 forced)",
+        "variant": "cfm_forced_tau0",
+        "config": "[32,64,128] rand",
+        "cs1": 0.09416765719652176,
+        "cs2": 0.09163127094507217,
+        "note": ""
+      },
+      "best_cs2": {
+        "model": "VanillaCFM (\u03c4=0 forced)",
+        "variant": "cfm_forced_tau0",
+        "config": "[32,64,128] rand",
+        "cs1": 0.09416765719652176,
+        "cs2": 0.09163127094507217,
+        "note": ""
+      }
+    },
+    "cfm_tau0_trained": {
+      "label": "\u03c4=0 CFM (trained \u03c4=0)",
+      "entries": [
+        {
+          "model": "\u03c4=0 CFM",
+          "variant": "cfm_tau0_trained",
+          "config": "[64,128,256]",
+          "cs1": 0.08265011012554169,
+          "cs2": 0.09672543406486511,
+          "note": ""
+        },
+        {
+          "model": "\u03c4=0 CFM",
+          "variant": "cfm_tau0_trained",
+          "config": "[32,64,128]",
+          "cs1": 0.07705283910036087,
+          "cs2": 0.0956467017531395,
+          "note": ""
+        },
+        {
+          "model": "\u03c4=0 CFM",
+          "variant": "cfm_tau0_trained",
+          "config": "[32,64,128] rand",
+          "cs1": 0.03197464346885681,
+          "cs2": 0.03201243281364441,
+          "note": ""
+        }
+      ],
+      "best_cs1": {
+        "model": "\u03c4=0 CFM",
+        "variant": "cfm_tau0_trained",
+        "config": "[32,64,128] rand",
+        "cs1": 0.03197464346885681,
+        "cs2": 0.03201243281364441,
+        "note": ""
+      },
+      "best_cs2": {
+        "model": "\u03c4=0 CFM",
+        "variant": "cfm_tau0_trained",
+        "config": "[32,64,128] rand",
+        "cs1": 0.03197464346885681,
+        "cs2": 0.03201243281364441,
+        "note": ""
+      }
+    }
+  }
+}
