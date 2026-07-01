@@ -154,7 +154,7 @@ class Lorenz63Dataset:
 
         start_indices = (
             np.arange(cfg.num_windows) * cfg.window_spacing + cfg.spinup_steps
-        )
+        ).astype(int)
 
         self.windows = []
         for idx in start_indices:
