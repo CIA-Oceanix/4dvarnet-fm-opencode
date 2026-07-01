@@ -44,7 +44,7 @@ def test_weak4dvar_forward_model(device):
     weak = Weak4DVar(da_window_steps=50, dt=0.01, device=device)
     
     x0 = torch.tensor([1.0, 1.0, 20.0], device=device)
-    q = torch.zeros((50, 3), device=device)
+    q = torch.zeros(50, 3, device=device)
     forcing = torch.zeros(100, device=device)
     
     traj = weak._forward_weak(

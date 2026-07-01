@@ -66,7 +66,7 @@ class Weak4DVar:
             win_force = forcing[start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros((self.da_window_steps, 3), device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(self.da_window_steps, 3, device=self.device, requires_grad=True)
             x_bg_ref = current_bg.clone().detach()
 
             opt = optim.Adam([x0_ctrl, q_ctrl], lr=self.lr)
@@ -159,7 +159,7 @@ class Weak4DVar:
             win_force = forcing[:, start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros((B, self.da_window_steps, 3), device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(B, self.da_window_steps, 3, device=self.device, requires_grad=True)
             x_bg_ref = current_bg.clone().detach()
 
             opt = optim.Adam([x0_ctrl, q_ctrl], lr=self.lr)
