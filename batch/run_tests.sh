@@ -1,8 +1,9 @@
 #!/bin/bash
+# DEPRECATED: Use batch/run_test_suite.sbatch (sbatch) instead.
 # Quick Test Suite Runner for Lorenz-63 DA Baselines
 # Created: June 25, 2026
 
-cd /homes/rfablet/HomeOdyssey/Python/4dvarnet-fm-opencode
+cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 
 echo "====================================="
 echo "Lorenz-63 DA Baselines - Test Runner"

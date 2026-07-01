@@ -1,4 +1,5 @@
 #!/bin/bash
+# DEPRECATED: Use batch/run_new_experiments.sbatch instead (same experiments, updated config).
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
 #SBATCH --gres=gpu:rtx8000:1

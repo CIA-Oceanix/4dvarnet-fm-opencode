@@ -29,4 +29,35 @@
 - `reports/generate_unet_cfm_report.py` — added CS3/CS4 columns to metrics table, bar charts, per-component breakdown, and conclusion
 - `docs/case_studies.tex` — added CS3/CS4 sections with equations and description
 **Rationale:** CS3/CS4 test generalisation to unseen random parameter draws at evaluation time, complementing the CS1/CS2 fixed-parameter tests. The coupling_type fix ensures correct forward model in baselines for quartic cases.
-**Verification:** Pending — will run `pytest tests/ -v` and `ruff check .` after next session's experiments.
+**Verification:** Verified — `pytest tests/ -m "not slow"` (111 passed), config validation (10/10 configs OK), `.gitignore` cleanup applied.
+
+## 2026-07-01: Implement τ=0 CFM ablation + sbatch infrastructure + tests
+
+**Summary:** Implemented Experiment G (VanillaCFM τ=0 ablation), created 3 new sbatch scripts for lint/test/config-validation, updated PLAN.md to reflect actual state, wrote missing tests for DirectUNet/VanillaCFM/RandomParamDataset, fixed stale test assertions, and updated .gitignore from stash.
+
+**Files modified:**
+- `conf/schema.py` — added `train_tau_0_only: bool = False` to `VanillaCFMConfig`
+- `models/vanilla_cfm.py` — τ=0 logic in `compute_cfm_loss` (zero tau) and `sample` (single Euler step)
+- `train.py` — wired `train_tau_0_only` flag through `model_factory`
+- `config/experiment/G{1,2,3}_vanilla_cfm_t0_*.yaml` — 3 new experiment configs (mirror F1-F3, with `train_tau_0_only: true`)
+- `config/experiment/F{1,2,3}_*.yaml` — added explicit `train_tau_0_only: false`
+- `batch/run_lint.sbatch` — new: ruff + mypy batch job
+- `batch/run_test_suite.sbatch` — new: pytest fast suite batch job
+- `batch/run_config_validation.sbatch` — new: validates all 10 configs load correctly
+- `batch/run_one_epoch_tests.sbatch` — added G1-G3, updated array range
+- `batch/run_new_experiments.sbatch` — added G1-G3, updated array range, extended time limit
+- `batch/run_vanilla_experiments.sbatch` — added deprecation notice
+- `batch/run_tests.sh` — added deprecation notice, fixed stale path
+- `PLAN.md` — complete rewrite matching actual state
+- `.gitignore` — added `checkpoints/`, `*.pt`, `.coverage`, `.pytest_cache/`, `all_figures.pdf` from stash
+- `tests/test_direct_unet.py` — new: 4 tests for DirectUNet
+- `tests/test_vanilla_cfm.py` — new: 8 tests for VanillaCFM including τ=0 mode
+- `tests/test_random_param_dataset.py` — new: 6 tests for RandomParamDataset
+- `tests/test_hydra_config.py` — fixed stale `T_max` (5.0→3.0) and `da_window_steps` (500→300) assertions
+- `tests/test_baselines_hydra.py` — fixed stale `da_window_steps` assertion
+- `tests/test_refactoring_equivalence.py` — fixed `test_legacy_stage1_checkpoint` to save full model state dict
+- `CHANGELOG.md` — marked CS3/CS4 verification as complete, appended this entry
+
+**Rationale:** Experiment G tests whether VanillaCFM's advantage comes from multi-τ training or the residual loss formulation. τ=0 collapses CFM to a single Euler step predicting the conditional mean, directly comparable to DirectUNet. All sbatch workflows consolidate infrastructure for reproducible cluster runs.
+
+**Verification:** `python -m pytest tests/ -m "not slow" --ignore=tests/test_checkpoint_compat.py` — 111 passed, 0 failed, 7 deselected (slow). Config validation: all 10 configs (E1-E3, F1-F3, G1-G3, lorenz63_default) produced correct model types. τ=0 flag confirmed on all G configs.

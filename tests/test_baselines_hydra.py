@@ -12,7 +12,7 @@ from conf.schema import BaselinesConfig, Weak4DVarConfig, Strong4DVarConfig, EnK
 class TestBaselinesConfigDefaults:
     def test_default_values(self):
         bc = BaselinesConfig()
-        assert bc.da_window_steps == 500
+        assert bc.da_window_steps == 300
         assert bc.N_ensemble == 30
         assert bc.batch_size == 128
 

@@ -129,16 +129,16 @@ class TestCheckpointLoading:
     """Legacy checkpoint loading should work."""
 
     def test_legacy_stage1_checkpoint(self, tmp_path):
-        """Lit4DVarNetFM can load a raw mean_estimator state_dict."""
+        """Lit4DVarNetFM can load a full model state dict for stage 1."""
         model = TweedieSolver(state_dim=3, hidden_channels=[4, 8], K_inner=2)
         ckpt_path = tmp_path / "stage1.pt"
-        torch.save(model.mean_estimator.state_dict(), ckpt_path)
+        torch.save(model.state_dict(), ckpt_path)
 
         new_model = TweedieSolver(state_dim=3, hidden_channels=[4, 8], K_inner=2)
         lit_module = Lit4DVarNetFM(model=new_model, stage=1)
         lit_module.load_legacy_checkpoint(str(ckpt_path))
 
-        for p1, p2 in zip(model.mean_estimator.parameters(), new_model.mean_estimator.parameters()):
+        for p1, p2 in zip(model.parameters(), new_model.parameters()):
             torch.testing.assert_close(p1, p2)
 
     def test_legacy_full_checkpoint(self, tmp_path):

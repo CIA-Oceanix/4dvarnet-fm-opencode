@@ -50,6 +50,15 @@ Thumbs.db
 # Generated data & checkpoints
 experiments/
 checkpoint_stage*.pt
+checkpoints/
+*.pt
+
+# Coverage
+.coverage
+.pytest_cache/
+
+# Generated figures
+all_figures.pdf
 
 # SLURM logs
 sbatch_logs/

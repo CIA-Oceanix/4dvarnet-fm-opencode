@@ -8,7 +8,7 @@ def test_schema_imports():
     """All schema classes can be imported and instantiated."""
     dc = DataConfig()
     assert dc.dt == 0.01
-    assert dc.T_max == 5.0
+    assert dc.T_max == 3.0
     assert dc.system == "lorenz63"
 
     mc = ModelConfig()
@@ -20,7 +20,7 @@ def test_schema_imports():
     assert tc.stage2.epochs == 400
 
     bc = BaselinesConfig()
-    assert bc.da_window_steps == 500
+    assert bc.da_window_steps == 300
     assert bc.weak4dvar.opt_steps == 150
 
     cs1 = CS1Config()
@@ -40,7 +40,7 @@ def test_config_yaml_loads():
     assert cfg.data.system == "lorenz63"
     assert cfg.model.state_dim == 3
     assert cfg.training.stage1.epochs == 200
-    assert cfg.baselines.da_window_steps == 500
+    assert cfg.baselines.da_window_steps == 300
 
 
 def test_config_all_keys_present():
@@ -116,6 +116,6 @@ def test_experiment_config_roundtrip():
     assert ec.model.state_dim == 3
     assert ec.training.batch_size == 32
     assert ec.paths.checkpoint_dir == "checkpoints"
-    assert ec.baselines.da_window_steps == 500
+    assert ec.baselines.da_window_steps == 300
     assert ec.cs1.param_bias == 0.0
     assert ec.cs2.param_bias == 0.15
