@@ -75,3 +75,21 @@
 **Rationale:** The CS1/CS2 baseline summary used tuned inflation (EnKF=1.2, ETKF=1.6) but CS3/CS4 evaluation was only run with ETKF at default inflation=1.0. These sweeps enable the same optimization for CS3/CS4.
 
 **Verification:** Python syntax via `ast.parse` — clean. Bash syntax via `bash -n` — clean. Existing callers unaffected (suffix defaults to `""`).
+
+## 2026-07-02: Add CS5/CS6/CS7 sparse-obs test cases + DWS/inflation sweep infrastructure
+
+**Summary:** Created three new test cases (CS5/CS6/CS7) with sparser observations (obs_interval=40, ~7 obs/window vs 14). CS5 is clean reference, CS6 matches CS2 bias levels, CS7 doubles the bias. Implemented DWS sweep (40/60/80/120) for Weak/Strong 4DVar and inflation sweep for EnKF/ETKF on CS5/CS6/CS7 via sbatch array jobs.
+
+**Files modified:**
+- `data/lorenz63.py` — added `include_sparse_obs_test` parameter to `make_mixed_datasets`; generates CS5/CS6/CS7 with obs_interval=40, seeds 127/128/129
+- `evaluation/run.py` — added CS5/CS6/CS7 to `_BASELINE_CASES`, added `cfg_cs7` to `cfg_map`, added `if ds_key not in datasets: continue` guard for partial dataset evaluation
+- `eval_baselines.py` — passes `include_sparse_obs_test=True`; generalized test window counting
+- `batch/cs567_sweep.py` — new: unified driver supporting `--dws` and `--method enkf/etkf --inflation X`
+- `batch/run_cs567_dws_sweep.sbatch` — new: 4-task array (40/60/80/120)
+- `batch/run_cs567_enkf_sweep.sbatch` — new: 6-task array (1.0-1.5, widened for sparse obs)
+- `batch/run_cs567_etkf_sweep.sbatch` — new: 11-task array (1.0-2.0)
+- `CHANGELOG.md` — appended this entry
+
+**Rationale:** Sparser observations force stronger reliance on learned dynamics, making the bias gap larger between noise-free and noisy cases. CS5 (clean) vs CS6/CS7 (biased at 0.15/0.30) isolates how bias scales with observation sparsity.
+
+**Verification:** `make_mixed_datasets(include_sparse_obs_test=True)` produces all 7 test datasets (cs1-cs7). Each CS5/6/7 has `obs_interval=40` and seeds 127/128/129. Python and bash syntax checked.

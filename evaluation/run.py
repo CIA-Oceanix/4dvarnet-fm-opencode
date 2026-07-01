@@ -16,6 +16,9 @@ _BASELINE_CASES = [
     ("cs2", "test_cs2", 2, 0.15, "CS2", "quartic"),
     ("cs3", "test_cs3", 1, 0.0, "CS3", "linear"),
     ("cs4", "test_cs4", 2, 0.15, "CS4", "quartic"),
+    ("cs5", "test_cs5", 1, 0.0, "CS5", "linear"),
+    ("cs6", "test_cs6", 2, 0.15, "CS6", "quartic"),
+    ("cs7", "test_cs7", 2, 0.30, "CS7", "quartic"),
 ]
 
 
@@ -116,7 +119,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     cfg_cs3 = Lorenz63Config(case=1, param_bias=0.0, T_max=3.0, seed=125)
     cfg_cs4 = Lorenz63Config(case=2, param_bias=0.15, forcing_state_bias=0.15,
                               forcing_coupling="quartic", T_max=3.0, seed=126)
-    cfg_map = {"cs1": cfg_cs1, "cs2": cfg_cs2, "cs3": cfg_cs3, "cs4": cfg_cs4}
+    cfg_cs7 = Lorenz63Config(case=2, param_bias=0.30, forcing_state_bias=0.30,
+                              forcing_coupling="quartic", T_max=3.0, seed=129)
+    cfg_map = {"cs1": cfg_cs1, "cs2": cfg_cs2, "cs3": cfg_cs3, "cs4": cfg_cs4,
+               "cs5": cfg_cs1, "cs6": cfg_cs2, "cs7": cfg_cs7}
 
     if "config" not in partial:
         partial["config"] = {"T_max": 3.0, "da_window_steps": N}
@@ -124,6 +130,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     total_t0 = time.time()
 
     for case_name, ds_key, case_val, bias, label, coupling_type in _BASELINE_CASES:
+        if ds_key not in datasets:
+            continue
         ds = datasets[ds_key]
         cfg = cfg_map[case_name]
         method_map = baseline_pool[coupling_type]
