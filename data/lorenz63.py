@@ -69,6 +69,7 @@ def generate_long_trajectory(
     sigma_0: float, sigma_L: float,
     device: torch.device = torch.device("cpu"),
 ) -> torch.Tensor:
+    num_steps = int(num_steps)
     rng = torch.Generator(device=device).manual_seed(seed)
     trajectory = torch.zeros(num_steps, 4, device=device)
     state = torch.tensor([1.0, 1.0, 20.0, 0.0], device=device)
