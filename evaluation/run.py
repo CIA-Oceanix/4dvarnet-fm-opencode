@@ -73,13 +73,13 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
-                             etkf_config=None):
+                             etkf_config=None, suffix=""):
     if da_window_steps is None:
         N = int(3.0 / 0.01)
     else:
         N = da_window_steps
     dws_suffix = f"_dws{N}"
-    param_suffix = ""
+    param_suffix = suffix
     if enkf_config and enkf_config.get("inflation", 1.0) != 1.0:
         param_suffix += f"_inf{enkf_config['inflation']}"
     if etkf_config and etkf_config.get("inflation", 1.0) != 1.0:

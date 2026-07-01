@@ -61,3 +61,17 @@
 **Rationale:** Experiment G tests whether VanillaCFM's advantage comes from multi-τ training or the residual loss formulation. τ=0 collapses CFM to a single Euler step predicting the conditional mean, directly comparable to DirectUNet. All sbatch workflows consolidate infrastructure for reproducible cluster runs.
 
 **Verification:** `python -m pytest tests/ -m "not slow" --ignore=tests/test_checkpoint_compat.py` — 111 passed, 0 failed, 7 deselected (slow). Config validation: all 10 configs (E1-E3, F1-F3, G1-G3, lorenz63_default) produced correct model types. τ=0 flag confirmed on all G configs.
+
+## 2026-07-02: Add EnKF/ETKF inflation sensitivity sweep for CS3/CS4
+
+**Summary:** Created sbatch infrastructure for inflating parameter sweeps of EnKF and ETKF on CS3/CS4 test cases, filling a gap where only CS1/CS2 had been scanned. Added `suffix` parameter to `run_and_cache_baselines` for clean `_cs3cs4` cache-file tagging.
+
+**Files modified:**
+- `evaluation/run.py` — added `suffix=""` kwarg to `run_and_cache_baselines`, appended to `param_suffix` before cache filename construction
+- `batch/inflation_sweep_cs3cs4.py` — new: standalone script that generates CS3/CS4 datasets and runs one inflation value for the specified method
+- `batch/run_enkf_cs3cs4_sweep.sbatch` — new: 7-task array job for EnKF inflation [1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3]
+- `batch/run_etkf_cs3cs4_sweep.sbatch` — new: 11-task array job for ETKF inflation [1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.6, 2.0]
+
+**Rationale:** The CS1/CS2 baseline summary used tuned inflation (EnKF=1.2, ETKF=1.6) but CS3/CS4 evaluation was only run with ETKF at default inflation=1.0. These sweeps enable the same optimization for CS3/CS4.
+
+**Verification:** Python syntax via `ast.parse` — clean. Bash syntax via `bash -n` — clean. Existing callers unaffected (suffix defaults to `""`).
