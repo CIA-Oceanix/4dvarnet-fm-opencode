@@ -1,0 +1,85 @@
+{
+  "experiment_id": "baselines_cs1_cs2",
+  "model_type": "baselines",
+  "config": {
+    "da_window_steps": 50,
+    "enKF_inflation": 1.2,
+    "etkf_inflation": 1.6
+  },
+  "Weak-4DVar": {
+    "cs1": {
+      "X": 0.4456,
+      "Y": 0.6337,
+      "Z": 0.7449,
+      "mean": 0.6081,
+      "trajectories_file": "baselines_trajectories.npz",
+      "trajectories_key": "cs1_Weak_4DVar_trajectories"
+    },
+    "cs2": {
+      "X": 0.7398,
+      "Y": 1.2563,
+      "Z": 2.7397,
+      "mean": 1.5786,
+      "trajectories_file": "baselines_trajectories.npz",
+      "trajectories_key": "cs2_Weak_4DVar_trajectories"
+    },
+    "degradation": 2.596
+  },
+  "Strong-4DVar": {
+    "cs1": {
+      "X": 0.4768,
+      "Y": 0.6616,
+      "Z": 0.7786,
+      "mean": 0.639,
+      "trajectories_file": "baselines_trajectories.npz",
+      "trajectories_key": "cs1_Strong_4DVar_trajectories"
+    },
+    "cs2": {
+      "X": 0.9388,
+      "Y": 1.3801,
+      "Z": 3.6024,
+      "mean": 1.9738,
+      "trajectories_file": "baselines_trajectories.npz",
+      "trajectories_key": "cs2_Strong_4DVar_trajectories"
+    },
+    "degradation": 3.089
+  },
+  "EnKF": {
+    "cs1": {
+      "X": 0.5398,
+      "Y": 0.8538,
+      "Z": 0.9534,
+      "mean": 0.7823,
+      "trajectories_file": "baselines_trajs_dws50_inf1.2_cs1_EnKF.npz",
+      "trajectories_key": "trajectories"
+    },
+    "cs2": {
+      "X": 1.3188,
+      "Y": 2.0582,
+      "Z": 4.3544,
+      "mean": 2.5772,
+      "trajectories_file": "baselines_trajs_dws50_inf1.2_cs2_EnKF.npz",
+      "trajectories_key": "trajectories"
+    },
+    "degradation": 3.294
+  },
+  "ETKF": {
+    "cs1": {
+      "X": 0.4644,
+      "Y": 0.7456,
+      "Z": 0.8563,
+      "mean": 0.6888,
+      "trajectories_file": "baselines_trajs_dws50_inf1.2_etkf_inf1.6_cs1_ETKF.npz",
+      "trajectories_key": "trajectories"
+    },
+    "cs2": {
+      "X": 0.9864,
+      "Y": 1.7805,
+      "Z": 3.8767,
+      "mean": 2.2145,
+      "trajectories_file": "baselines_trajs_dws50_inf1.2_etkf_inf1.6_cs2_ETKF.npz",
+      "trajectories_key": "trajectories"
+    },
+    "degradation": 3.215
+  }
+}

@@ -48,7 +48,9 @@ Thumbs.db
 *.out
 
 # Generated data & checkpoints
-experiments/
+experiments/*
+!experiments/summaries/
+!experiments/summaries/**
 checkpoint_stage*.pt
 checkpoints/
 *.pt
