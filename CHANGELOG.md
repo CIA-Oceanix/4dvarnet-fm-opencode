@@ -120,13 +120,25 @@
 
 ## 2026-07-02: Store per-window sigma/rho/beta for CS3/CS4 baseline evaluation
 
-**Summary:** CS3/CS4 use `RandomParamLorenz63Dataset` which generates each window with different sigma/rho/beta (uniform ±20%), but the baselines always received hardcoded params from `cfg_map`. Fixed by: (1) storing sigma/rho/beta in each window dict for both `RandomParamLorenz63Dataset` and `Lorenz63Dataset`; (2) reading per-window params in `evaluate_baseline`; (3) using per-window params only in single-window path (batch path disabled for CS3/CS4 via `has_per_window_params` guard); (4) creating `Lorenz63Dynamics` PyTorch module in new `models/lorenz63_dynamics.py`.
+**Summary:** CS3/CS4 use `RandomParamLorenz63Dataset` which generates each window with different sigma/rho/beta (uniform ±20%), but the baselines always received hardcoded params from `cfg_map`. Fixed by: (1) storing sigma/rho/beta in each `RandomParamLorenz63Dataset` window dict; (2) reading per-window params as `[B]` tensors in `evaluate_baseline` batch path; (3) adding `unsqueeze(-1)` in EnKF/ETKF `assimilate_batch` to broadcast per-window params correctly against `[B, N_ensemble]` states; (4) reading per-window params in sequential path via `w.get("sigma", sig)`.
 **Files modified:**
-- `data/random_param_dataset.py` — store `sigma`, `rho`, `beta` per window
-- `data/lorenz63.py` — store `sigma_true`, `rho_true`, `beta_true` per window
-- `models/lorenz63_dynamics.py` — new: `Lorenz63Dynamics` `nn.Module` with `step()`, `rollout()`, `rollout_with_q()`
-- `evaluation/run.py` — `evaluate_baseline` reads per-window params (falls back to `cfg.da_params`); batch path disabled when `has_per_window_params`
-**Rationale:** Without this fix, baselines on CS3/CS4 use fixed sigma/rho/beta for all 200 windows, while the true dynamics vary per window. This systematically penalizes baseline methods and produces misleading degradation numbers.
-**Verification:** `Lorenz63Dynamics.step` broadcasts correctly for both scalar and per-batch-element sigma/rho/beta. CS1/CS2 (`Lorenz63Dataset`) don't store params, preserving batch path. CS3/CS4 (`RandomParamLorenz63Dataset`) use tensor sigma/rho/beta in batch path; EnKF/ETKF broadcast fix via `unsqueeze(-1)`. All 4 methods verified with both tensor and scalar params. Branch: `fix/cs3-cs4-per-window-params`.
+- `data/random_param_dataset.py` — store `sigma`, `rho`, `beta` per window (3 lines)
+- `evaluation/run.py` — `evaluate_baseline` reads per-window params as tensors in batch path, with fallback to scalar `cfg.da_params` for CS1/CS2
+- `evaluation/baselines.py` — `unsqueeze(-1)` on 1D sigma/rho/beta in EnKF and ETKF `assimilate_batch` for broadcast compatibility with `[B, N_ensemble]` tensors
+- `tests/test_random_param_dataset.py` — updated expected keys to include sigma/rho/beta
+**Rationale:** Without this fix, baselines on CS3/CS4 use fixed sigma/rho/beta for all windows while true dynamics vary per window. The batch path is enabled for CS3/CS4 (not disabled) — per-window params are passed as `[B]` tensors and EnKF/ETKF use `unsqueeze(-1)` to make them `[B, 1]` for correct broadcast against ensemble states `[B, N_ensemble]`. CS1/CS2 (no "sigma" key) remain on scalar params.
+**Verification:** All 4 methods (Weak/Strong-4DVar, EnKF, ETKF) tested with batch_size=1,5,20 — consistent RMSE across batch sizes. Per-window params verified correct (σ=8–12, ρ=23–33, β=2.2–3.2 across 20 windows). 4DVar requires DWS=50 (DWS=300 gives poor convergence regardless of param source). Branch: `fix/cs3-cs4-per-window-params`.
+
+## 2026-07-02: Add params field to BaselineResult + save param estimates in all 4 joint DA methods
+
+**Summary:** Added optional `params` field (`np.ndarray`, shape `(num_steps, 3)`) to `BaselineResult` dataclass. Modified all 4 joint DA methods (`JointWeak4DVar`, `JointStrong4DVar`, `JointEnKF`, `JointETKF`) to save per-timestep σ/ρ/β estimates in both `assimilate` and `assimilate_batch`. Created `eval_joint_comparison.py` evaluation script that runs vanilla vs joint methods on CS3/CS4 (da_window_steps=50, batch_size=200) and prints state RMSE + param RMSE + ratio table.
+
+**Files modified:**
+- `evaluation/baselines.py` — `BaselineResult.params` field; all 4 joint methods save param estimates
+- `eval_joint_comparison.py` — new: comparison script producing formatted table
+
+**Rationale:** Enable structured comparison of state RMSE and param RMSE between vanilla and joint estimation methods. Results show Joint-EnKF improves state RMSE vs vanilla EnKF (ratio 0.49-0.77) while Joint-Strong-4DVar degrades (~1.8-2.0x). Joint-Weak-4DVar ratio is ~1.2 (marginal pass). Param RMSE is lowest for Joint-EnKF (~0.5-1.0) and highest for Joint-Strong-4DVar (sigma RMSE >12).
+
+**Verification:** `pytest tests/test_joint_estimation.py -v -m "not slow"` — 12 passed (0.94s). `pytest tests/test_joint_estimation.py -v -m "slow"` — 4 passed (6.72s). Comparison script runs end-to-end on GPU with batch_size=200, da_window_steps=50.
 
 
