@@ -43,6 +43,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
+    has_per_window_params = "sigma" in dataset[0]
 
     if batch_size > 1 and hasattr(method, 'assimilate_batch'):
         for i in range(0, len(dataset), batch_size):
@@ -51,8 +52,13 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = torch.stack([w["obs_mask"].to(device) for w in batch], dim=0)
             truth = torch.stack([w["true_state"] for w in batch], dim=0)
             force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
-
-            results = method.assimilate_batch(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
+            if has_per_window_params:
+                sigma = torch.tensor([w["sigma"] for w in batch], device=device)
+                rho = torch.tensor([w["rho"] for w in batch], device=device)
+                beta = torch.tensor([w["beta"] for w in batch], device=device)
+            else:
+                sigma, rho, beta = sig, rho, bet
+            results = method.assimilate_batch(obs, mask, force, truth, sigma=sigma, rho=rho, beta=beta)
             for result in results:
                 rmse_list.append(result.rmse)
                 results_list.append(result)
@@ -63,7 +69,10 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = w["obs_mask"].to(device)
             truth = w["true_state"]
             force = w[force_key].to(device)
-            result = method.assimilate(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
+            s = w.get("sigma", sig)
+            r = w.get("rho", rho)
+            b = w.get("beta", bet)
+            result = method.assimilate(obs, mask, force, truth, sigma=s, rho=r, beta=b)
             rmse_list.append(result.rmse)
             results_list.append(result)
 

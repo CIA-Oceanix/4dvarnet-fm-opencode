@@ -5,10 +5,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --job-name=4dvarnet-cs567-enkf
-#SBATCH --array=0-5
-#SBATCH --output=sbatch_logs/cs567_enkf_%j_%a.out
-#SBATCH --error=sbatch_logs/cs567_enkf_%j_%a.err
+#SBATCH --job-name=4dvarnet-evaluate-all
+#SBATCH --output=sbatch_logs/evaluate_all_%j.out
+#SBATCH --error=sbatch_logs/evaluate_all_%j.err
 
 set -euo pipefail
 
@@ -18,17 +17,13 @@ export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export CONDA_DEFAULT_ENV=fdv
 export PYTHONUNBUFFERED=1
 
-INFLATION_VALUES=(1.0 1.1 1.2 1.3 1.4 1.5)
-INFLATION=${INFLATION_VALUES[$SLURM_ARRAY_TASK_ID]}
-
 echo "============================================"
-echo " CS5/CS6/CS7 EnKF Inflation Sweep | $(date)"
+echo " Evaluate All: baselines + CFM on CS1-CS4 | $(date)"
 echo "============================================"
-echo "  Task: ${SLURM_ARRAY_TASK_ID} / Inflation: ${INFLATION}"
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
 echo ""
 
-python batch/cs567_sweep.py --method enkf --inflation $INFLATION
+python evaluate_all.py --experiments E1 E2 E3 F1 F2 F3 G1 G2 G3
 
 echo ""
 echo "  Done at: $(date)"

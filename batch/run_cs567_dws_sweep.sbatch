@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=00:30:00
+#SBATCH --time=02:00:00
 #SBATCH --job-name=4dvarnet-cs567-dws
 #SBATCH --array=0-3
 #SBATCH --output=sbatch_logs/cs567_dws_%j_%a.out

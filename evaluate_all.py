@@ -109,16 +109,15 @@ def main():
     print(f"Device: {device}")
 
     base_cfg = Lorenz63Config(
-        dt=0.01, T_max=3.0, obs_interval=0.05,
-        R_var=0.1, B_var=0.5,
-        num_windows=200, window_spacing=3.0,
-        spinup_steps=200, seed=42,
-        sigma_true=10.0, rho_true=28.0, beta_true=2.6667,
-        gamma=0.0, W_L_bar=0.0, c1=0.0, c2=0.0,
-        sigma_0=0.0, sigma_L=0.0,
-        tau_eta=0.0, sigma_eta=0.0,
-        param_bias=0.0, forcing_state_bias=0.0,
-        forcing_coupling="linear",
+        dt=0.01, T_max=3.0, obs_interval=20,
+        R_var=0.5, B_var=2.0,
+        num_windows=2000, window_spacing=2000,
+        spinup_steps=10000, seed=42,
+        sigma_true=10.0, rho_true=28.0, beta_true=2.6666666666666665,
+        gamma=0.05, W_L_bar=0.0, c1=1.0, c2=0.1,
+        sigma_0=0.08, sigma_L=0.20,
+        tau_eta=5.0, sigma_eta=0.7071067811865476,
+        param_bias=0.0, forcing_state_bias=0.0, forcing_coupling="linear",
     )
     datasets = make_mixed_datasets(base_cfg, num_test_windows=200,
                                    include_randparam_test=True, param_noise=0.2)

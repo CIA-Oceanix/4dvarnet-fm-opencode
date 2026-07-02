@@ -61,6 +61,9 @@ class RandomParamLorenz63Dataset:
                 "obs_mask": obs_mask,
                 "forcing_true": W_L_true,
                 "forcing_corrupted": W_L_star,
+                "sigma": sigma,
+                "rho": rho,
+                "beta": beta,
             })
 
     def __len__(self) -> int:

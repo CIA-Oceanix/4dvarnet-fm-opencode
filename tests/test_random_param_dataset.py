@@ -22,7 +22,7 @@ class TestRandomParamDataset:
     def test_getitem_keys(self, tiny_cfg):
         ds = RandomParamLorenz63Dataset(tiny_cfg, param_noise=0.2)
         item = ds[0]
-        expected_keys = {"true_state", "obs", "obs_mask", "forcing_true", "forcing_corrupted"}
+        expected_keys = {"true_state", "obs", "obs_mask", "forcing_true", "forcing_corrupted", "sigma", "rho", "beta"}
         assert set(item.keys()) == expected_keys, f"Got keys: {set(item.keys())}"
 
     def test_tensor_shapes(self, tiny_cfg):

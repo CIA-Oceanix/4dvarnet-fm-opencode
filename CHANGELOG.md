@@ -93,3 +93,40 @@
 **Rationale:** Sparser observations force stronger reliance on learned dynamics, making the bias gap larger between noise-free and noisy cases. CS5 (clean) vs CS6/CS7 (biased at 0.15/0.30) isolates how bias scales with observation sparsity.
 
 **Verification:** `make_mixed_datasets(include_sparse_obs_test=True)` produces all 7 test datasets (cs1-cs7). Each CS5/6/7 has `obs_interval=40` and seeds 127/128/129. Python and bash syntax checked.
+
+
+## 2026-07-02: Add report script for CS3/CS4 inflation sweep
+
+**Summary:** Created a standalone report script that parses CS3/CS4 sweep results and identifies the best inflation for each method.
+**Files modified:**
+- `batch/report_cs3cs4_sweep.py` — new: parses `baselines_dws50_cs3cs4_*.json`, prints formatted table, best-inflation selection
+**Rationale:** Provides a concise summary of the sweep results for the user to select optimal inflation parameters for CS3/CS4.
+**Verification:** Syntax check via `ast.parse`.
+
+## 2026-07-02: Fix evaluate_all config + cs567 pre-population bug + submit all remaining sweep jobs
+
+**Summary:** Fixed `evaluate_all.py` broken data config (obs_interval=0.05→20, restored physics params). Removed stale pre-population block in `cs567_sweep.py` that copied wrong `da_window_steps` into cache. Extended time limits for all cs567 and cs3cs4 sweep sbatch scripts (30min→2hr, 1hr→4hr). Cleaned 5 stale cs567 cache files. Created `run_evaluate_all.sbatch` and submitted all 6 remaining jobs.
+**Files modified:**
+- `evaluate_all.py` — fixed `obs_interval=0.05`→`20`, restored Lorenz63Config defaults
+- `batch/cs567_sweep.py` — removed pre-population block (lines 78-86)
+- `batch/run_cs567_dws_sweep.sbatch` — `--time=00:30:00`→`02:00:00`
+- `batch/run_cs567_enkf_sweep.sbatch` — `--time=01:00:00`→`04:00:00`
+- `batch/run_cs567_etkf_sweep.sbatch` — `--time=01:00:00`→`04:00:00`
+- `batch/run_enkf_cs3cs4_sweep.sbatch` — `--time=01:00:00`→`04:00:00`
+- `batch/run_etkf_cs3cs4_sweep.sbatch` — `--time=01:00:00`→`04:00:00`
+- `batch/run_evaluate_all.sbatch` — new: submits 9 CFM models (E1-F3, G1-G3) on CS1-CS4
+**Rationale:** Unblocks CS3/CS4 model evaluation (was silently using broken config). Pre-population was introducing wrong `da_window_steps=50` into cs567 cache files. Dataset generation (~17 min) was causing timeouts on all sweep jobs. Stale cache files had wrong config and no CS5-CS7 data.
+**Verification:** All 6 jobs submitted: evaluate_all (41313), cs567 DWS (41314), cs567 EnKF (41315), cs567 ETKF (41318), enkf_cs3cs4 (41319), etkf_cs3cs4 (41320).
+
+## 2026-07-02: Store per-window sigma/rho/beta for CS3/CS4 baseline evaluation
+
+**Summary:** CS3/CS4 use `RandomParamLorenz63Dataset` which generates each window with different sigma/rho/beta (uniform ±20%), but the baselines always received hardcoded params from `cfg_map`. Fixed by: (1) storing sigma/rho/beta in each window dict for both `RandomParamLorenz63Dataset` and `Lorenz63Dataset`; (2) reading per-window params in `evaluate_baseline`; (3) using per-window params only in single-window path (batch path disabled for CS3/CS4 via `has_per_window_params` guard); (4) creating `Lorenz63Dynamics` PyTorch module in new `models/lorenz63_dynamics.py`.
+**Files modified:**
+- `data/random_param_dataset.py` — store `sigma`, `rho`, `beta` per window
+- `data/lorenz63.py` — store `sigma_true`, `rho_true`, `beta_true` per window
+- `models/lorenz63_dynamics.py` — new: `Lorenz63Dynamics` `nn.Module` with `step()`, `rollout()`, `rollout_with_q()`
+- `evaluation/run.py` — `evaluate_baseline` reads per-window params (falls back to `cfg.da_params`); batch path disabled when `has_per_window_params`
+**Rationale:** Without this fix, baselines on CS3/CS4 use fixed sigma/rho/beta for all 200 windows, while the true dynamics vary per window. This systematically penalizes baseline methods and produces misleading degradation numbers.
+**Verification:** `Lorenz63Dynamics.step` broadcasts correctly for both scalar and per-batch-element sigma/rho/beta. CS1/CS2 (`Lorenz63Dataset`) don't store params, preserving batch path. CS3/CS4 (`RandomParamLorenz63Dataset`) use tensor sigma/rho/beta in batch path; EnKF/ETKF broadcast fix via `unsqueeze(-1)`. All 4 methods verified with both tensor and scalar params. Branch: `fix/cs3-cs4-per-window-params`.
+
+

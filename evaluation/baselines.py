@@ -459,6 +459,10 @@ class ETKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
+        # Ensure broadcast-compatible dims for per-batch params
+        if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
+            sigma, rho, beta = sigma.unsqueeze(-1), rho.unsqueeze(-1), beta.unsqueeze(-1)
+
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]
             Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
@@ -598,6 +602,10 @@ class EnKF:
         ens_var = np.zeros((B, num_steps, 3))
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
+
+        # Ensure broadcast-compatible dims for per-batch params
+        if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
+            sigma, rho, beta = sigma.unsqueeze(-1), rho.unsqueeze(-1), beta.unsqueeze(-1)
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]

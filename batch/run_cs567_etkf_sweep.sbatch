@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --job-name=4dvarnet-cs567-etkf
 #SBATCH --array=0-10
 #SBATCH --output=sbatch_logs/cs567_etkf_%j_%a.out

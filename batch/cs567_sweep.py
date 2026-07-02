@@ -75,16 +75,6 @@ def main():
     dws_suffix = f"_dws{dws}"
     our_cache = os.path.join(EXP_DIR, f"baselines{dws_suffix}{suffix}.json")
 
-    if not os.path.exists(our_cache):
-        existing = os.path.join(EXP_DIR, "baselines_dws50.json")
-        if os.path.exists(existing):
-            with open(existing) as f:
-                partial = json.load(f)
-            partial.pop("total_time_seconds", None)
-            with open(our_cache, "w") as f:
-                json.dump(partial, f, indent=2)
-            print(f"  Pre-populated CS1-CS4 from {existing}")
-
     t1 = time.time()
     run_and_cache_baselines(
         datasets, device,
