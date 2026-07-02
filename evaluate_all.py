@@ -60,7 +60,7 @@ def evaluate_cfm_model(model, model_type, datasets, device, exp_dir):
 
 def run_baselines(datasets, device):
     print("\n── Running Baselines ──")
-    results = run_and_cache_baselines(datasets, device, batch_size=1)
+    results = run_and_cache_baselines(datasets, device, batch_size=200)
     return results
 
 
