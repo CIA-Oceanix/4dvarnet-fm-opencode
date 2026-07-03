@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - /lorenz63_default
+  - _self_
+
+model:
+  model_type: joint_cfm
+  vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+  joint_cfm:
+    param_dim: 3
+    param_loss_weight: 0.1
+    param_noise_min: 0.0
+    param_noise_max: 0.3
+    train_tau_0_only: true
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+data:
+  train_mix: cs1+cs2
+  randomize_params: true
+  param_noise: [0.0, 0.3]
