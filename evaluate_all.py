@@ -3,13 +3,15 @@
 Unified evaluation: run baselines + trained CFM models on CS1-CS4,
 produce a comparison table (RMSE across X/Y/Z).
 """
-import os, sys, json, argparse
+import os, sys, json, argparse, time
 import torch
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.lorenz63 import Lorenz63Config, make_mixed_datasets
+from data.lorenz63 import Lorenz63Config, Lorenz63Dataset, make_mixed_datasets
+from data.random_param_dataset import RandomParamLorenz63Dataset
+from data.random_bias_dataset import RandomBiasLorenz63Dataset
 from evaluation.run import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES, fmt_rmse
 from evaluation.run import evaluate_baseline
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
@@ -58,9 +60,15 @@ def evaluate_cfm_model(model, model_type, datasets, device, exp_dir):
     return metrics
 
 
-def run_baselines(datasets, device):
+def run_baselines(datasets, device, da_window_steps=None,
+                  enkf_inflation=None, etkf_inflation=None):
     print("\n── Running Baselines ──")
-    results = run_and_cache_baselines(datasets, device, batch_size=200)
+    enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
+    etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
+    results = run_and_cache_baselines(datasets, device, batch_size=200,
+                                      da_window_steps=da_window_steps,
+                                      enkf_config=enkf_config,
+                                      etkf_config=etkf_config)
     return results
 
 
@@ -103,27 +111,47 @@ def main():
     parser.add_argument("--device", default=None)
     parser.add_argument("--baselines-only", action="store_true",
                         help="Only run baselines, skip CFM evaluation")
+    parser.add_argument("--enkf-inflation", type=float, default=None,
+                        help="EnKF inflation factor")
+    parser.add_argument("--etkf-inflation", type=float, default=None,
+                        help="ETKF inflation factor")
+    parser.add_argument("--da-window-steps", type=int, default=None,
+                        help="DA window steps (default: T_max/dt = 300)")
     args = parser.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Device: {device}")
 
-    base_cfg = Lorenz63Config(
-        dt=0.01, T_max=3.0, obs_interval=20,
-        R_var=0.5, B_var=2.0,
-        num_windows=2000, window_spacing=2000,
-        spinup_steps=10000, seed=42,
-        sigma_true=10.0, rho_true=28.0, beta_true=2.6666666666666665,
-        gamma=0.05, W_L_bar=0.0, c1=1.0, c2=0.1,
-        sigma_0=0.08, sigma_L=0.20,
-        tau_eta=5.0, sigma_eta=0.7071067811865476,
-        param_bias=0.0, forcing_state_bias=0.0, forcing_coupling="linear",
-    )
-    datasets = make_mixed_datasets(base_cfg, num_test_windows=200,
-                                   include_randparam_test=True, param_noise=0.2,
-                                   include_randombias_test=True)
+    datasets_cache = os.path.join(EXP_DIR, "datasets_cs4b.pt")
+    if os.path.exists(datasets_cache):
+        t0 = time.time()
+        torch.serialization.add_safe_globals(
+            [Lorenz63Dataset, RandomParamLorenz63Dataset, RandomBiasLorenz63Dataset])
+        datasets = torch.load(datasets_cache, weights_only=False)
+        print(f"Loaded cached datasets in {time.time()-t0:.1f}s")
+    else:
+        base_cfg = Lorenz63Config(
+            dt=0.01, T_max=3.0, obs_interval=20,
+            R_var=0.5, B_var=2.0,
+            num_windows=2000, window_spacing=2000,
+            spinup_steps=10000, seed=42,
+            sigma_true=10.0, rho_true=28.0, beta_true=2.6666666666666665,
+            gamma=0.05, W_L_bar=0.0, c1=1.0, c2=0.1,
+            sigma_0=0.08, sigma_L=0.20,
+            tau_eta=5.0, sigma_eta=0.7071067811865476,
+            param_bias=0.0, forcing_state_bias=0.0, forcing_coupling="linear",
+        )
+        datasets = make_mixed_datasets(base_cfg, num_test_windows=200,
+                                       num_train_windows=0, num_val_windows=0,
+                                       include_randparam_test=True, param_noise=0.2,
+                                       include_randombias_test=True)
+        torch.save(datasets, datasets_cache)
+        print(f"Cached datasets to {datasets_cache}")
 
-    baseline_results = run_baselines(datasets, device)
+    baseline_results = run_baselines(datasets, device,
+                                     da_window_steps=args.da_window_steps,
+                                     enkf_inflation=args.enkf_inflation,
+                                     etkf_inflation=args.etkf_inflation)
 
     cfm_results = {}
     exp_ids = [e for e in args.experiments if os.path.isdir(os.path.join(EXP_DIR, e))]
