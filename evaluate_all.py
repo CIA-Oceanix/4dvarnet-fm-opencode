@@ -46,7 +46,7 @@ def load_trained_model(exp_dir: str, device: torch.device):
 
 
 def evaluate_cfm_model(model, model_type, datasets, device, exp_dir):
-    test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
+    test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4", "test_cs4b"]
     metrics = {}
     for key in test_keys:
         if key in datasets:
@@ -120,7 +120,8 @@ def main():
         param_bias=0.0, forcing_state_bias=0.0, forcing_coupling="linear",
     )
     datasets = make_mixed_datasets(base_cfg, num_test_windows=200,
-                                   include_randparam_test=True, param_noise=0.2)
+                                   include_randparam_test=True, param_noise=0.2,
+                                   include_randombias_test=True)
 
     baseline_results = run_baselines(datasets, device)
 

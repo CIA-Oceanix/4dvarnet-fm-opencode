@@ -217,7 +217,8 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
                         num_test_windows: int = 200,
                         include_randparam_test: bool = True,
                         param_noise: float = 0.2,
-                        include_sparse_obs_test: bool = False) -> Dict[str, Lorenz63Dataset]:
+                        include_sparse_obs_test: bool = False,
+                        include_randombias_test: bool = False) -> Dict[str, Lorenz63Dataset]:
     from data.random_param_dataset import RandomParamLorenz63Dataset
     base = cfg.__dict__.copy()
     train_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 42, "num_windows": num_train_windows})
@@ -240,6 +241,14 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
     if include_randparam_test:
         out["test_cs3"] = RandomParamLorenz63Dataset(test_cs3_cfg, param_noise=param_noise)
         out["test_cs4"] = RandomParamLorenz63Dataset(test_cs4_cfg, param_noise=param_noise)
+    if include_randombias_test:
+        from data.random_bias_dataset import RandomBiasLorenz63Dataset
+        test_cs4b_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.0,
+            "forcing_state_bias": 0.0, "forcing_coupling": "quartic",
+            "seed": 130, "num_windows": num_test_windows})
+        out["test_cs4b"] = RandomBiasLorenz63Dataset(
+            test_cs4b_cfg, param_noise=param_noise, bias_range=(0.0, 0.20))
+
     if include_sparse_obs_test:
         test_cs5_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
             "forcing_state_bias": 0.0, "forcing_coupling": "linear",
