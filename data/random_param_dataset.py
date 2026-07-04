@@ -35,6 +35,7 @@ class RandomParamLorenz63Dataset:
                 c1=cfg.c1, c2=cfg.c2,
                 sigma_0=cfg.sigma_0, sigma_L=cfg.sigma_L,
                 device=self.device,
+                coupling_exponent=cfg.coupling_exponent_truth,
             )
 
             seg = traj[-cfg.num_steps:].clone()

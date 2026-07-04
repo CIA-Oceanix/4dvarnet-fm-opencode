@@ -4,10 +4,12 @@ import numpy as np
 from dataclasses import dataclass
 
 
-def _apply_coupling(W: torch.Tensor, c1: float, coupling_type: str) -> torch.Tensor:
-    if coupling_type == "quartic":
-        return c1 * torch.sign(W) * W ** 2
-    return c1 * W
+def _apply_coupling(W: torch.Tensor, c1, exponent: float = 1.0) -> torch.Tensor:
+    if isinstance(c1, torch.Tensor) and c1.dim() == 1:
+        c1 = c1.view(-1, *([1] * (W.dim() - 1)))
+    if exponent == 1.0:
+        return c1 * W
+    return c1 * torch.sign(W) * torch.abs(W) ** exponent
 
 
 @dataclass
@@ -29,7 +31,7 @@ class Weak4DVar:
         opt_steps: int = 150,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
-        coupling_type: str = "linear",
+        coupling_exponent: float = 1.0,
     ):
         self.da_window_steps = da_window_steps
         self.B_var = B_var
@@ -39,7 +41,7 @@ class Weak4DVar:
         self.opt_steps = opt_steps
         self.dt = dt
         self.device = device
-        self.coupling_type = coupling_type
+        self.coupling_exponent = coupling_exponent
 
     def assimilate(
         self,
@@ -103,7 +105,7 @@ class Weak4DVar:
             s = traj[-1]
             X, Y, Z = s[0], s[1], s[2]
             W = forcing[t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
             Xn = X + dX * self.dt + q[t, 0]
@@ -122,7 +124,7 @@ class Weak4DVar:
             s = traj[-1]
             X, Y, Z = s[:, 0], s[:, 1], s[:, 2]
             W = forcing[:, t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
             Xn = X + dX * self.dt + q[:, t, 0]
@@ -203,7 +205,7 @@ class Strong4DVar:
         lr: float = 0.1,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
-        coupling_type: str = "linear",
+        coupling_exponent: float = 1.0,
     ):
         self.da_window_steps = da_window_steps
         self.B_var = B_var
@@ -212,7 +214,7 @@ class Strong4DVar:
         self.lr = lr
         self.dt = dt
         self.device = device
-        self.coupling_type = coupling_type
+        self.coupling_exponent = coupling_exponent
 
     def assimilate(
         self,
@@ -274,7 +276,7 @@ class Strong4DVar:
             s = traj[-1]
             X, Y, Z = s[0], s[1], s[2]
             W = forcing[t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
             next_s = torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt])
@@ -290,7 +292,7 @@ class Strong4DVar:
             s = traj[-1]
             X, Y, Z = s[:, 0], s[:, 1], s[:, 2]
             W = forcing[:, t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
             next_s = torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt], dim=1)
@@ -361,14 +363,14 @@ class ETKF:
         inflation: float = 1.0,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
-        coupling_type: str = "linear",
+        coupling_exponent: float = 1.0,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
         self.inflation = inflation
         self.dt = dt
         self.device = device
-        self.coupling_type = coupling_type
+        self.coupling_exponent = coupling_exponent
 
     def assimilate(
         self,
@@ -397,7 +399,7 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[t - 1]
             Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = Xe * (rho - Ze) - Ye
             dZ = Xe * Ye - beta * Ze
             ensemble[:, 0] += dX * self.dt
@@ -466,7 +468,7 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]
             Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = Xe * (rho - Ze) - Ye
             dZ = Xe * Ye - beta * Ze
             ensemble[:, :, 0] += dX * self.dt
@@ -523,14 +525,14 @@ class EnKF:
         inflation: float = 1.0,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
-        coupling_type: str = "linear",
+        coupling_exponent: float = 1.0,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
         self.inflation = inflation
         self.dt = dt
         self.device = device
-        self.coupling_type = coupling_type
+        self.coupling_exponent = coupling_exponent
 
     def assimilate(
         self,
@@ -555,7 +557,7 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[t - 1]
             Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = Xe * (rho - Ze) - Ye
             dZ = Xe * Ye - beta * Ze
             ensemble[:, 0] += dX * self.dt
@@ -610,7 +612,7 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]
             Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_type)
+            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
             dY = Xe * (rho - Ze) - Ye
             dZ = Xe * Ye - beta * Ze
             ensemble[:, :, 0] += dX * self.dt

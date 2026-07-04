@@ -33,6 +33,8 @@ class Lorenz63Config:
     sigma_eta: float = np.sqrt(0.5)
     forcing_state_bias: float = 0.0
     forcing_coupling: str = "linear"
+    coupling_exponent_truth: float = 1.6
+    coupling_exponent_da: float = 1.0
 
     @property
     def num_steps(self) -> int:
@@ -62,12 +64,19 @@ class Lorenz63Config:
         return self.case == 2
 
 
+def _coupling(W, c1, exponent):
+    if exponent == 1.0:
+        return c1 * W
+    return c1 * torch.sign(W) * torch.abs(W)**exponent
+
+
 def generate_long_trajectory(
     num_steps: int, dt: float, seed: int,
     sigma: float, rho: float, beta: float,
     gamma: float, W_L_bar: float, c1: float, c2: float,
     sigma_0: float, sigma_L: float,
     device: torch.device = torch.device("cpu"),
+    coupling_exponent: float = 1.5,
 ) -> torch.Tensor:
     num_steps = int(num_steps)
     rng = torch.Generator(device=device).manual_seed(seed)
@@ -82,7 +91,7 @@ def generate_long_trajectory(
         X, Y, Z, W_L = trajectory[t - 1]
         dW1, dW2, dW3 = noise[t]
 
-        dX = sigma * (Y - X) + c1 * W_L
+        dX = sigma * (Y - X) + _coupling(W_L, c1, coupling_exponent)
         dY = X * (rho - Z) - Y
         dZ = X * Y - beta * Z
         dW_L_term = -gamma * (W_L - W_L_bar) + c2 * X
@@ -148,6 +157,7 @@ class Lorenz63Dataset:
             c1=cfg.c1, c2=cfg.c2,
             sigma_0=cfg.sigma_0, sigma_L=cfg.sigma_L,
             device=self.device,
+            coupling_exponent=cfg.coupling_exponent_truth,
         )
 
         self.full_trajectory = long_traj
@@ -212,54 +222,22 @@ def make_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
 
 
 def make_mixed_datasets(cfg: Lorenz63Config, *,
-                        num_train_windows: int = 1000,
-                        num_val_windows: int = 100,
-                        num_test_windows: int = 200,
-                        include_randparam_test: bool = True,
-                        param_noise: float = 0.2,
-                        include_sparse_obs_test: bool = False,
-                        include_randombias_test: bool = False) -> Dict[str, Lorenz63Dataset]:
+                        num_test_windows: int = 10,
+                        include_s1_test: bool = False,
+                        param_noise: float = 0.2) -> Dict[str, Lorenz63Dataset]:
     from data.random_param_dataset import RandomParamLorenz63Dataset
     base = cfg.__dict__.copy()
-    train_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 42, "num_windows": num_train_windows})
-    train_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 42, "num_windows": num_train_windows, "forcing_coupling": "quartic"})
-    val_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 99, "num_windows": num_val_windows})
-    val_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 99, "num_windows": num_val_windows})
-    test_cs1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
-    test_cs2_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 124, "num_windows": num_test_windows})
-    test_cs3_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0, "seed": 125, "num_windows": num_test_windows})
-    test_cs4_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15, "forcing_state_bias": 0.15, "seed": 126, "num_windows": num_test_windows})
 
+    test_s0_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
+        "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
     out = {
-        "train_cs1": Lorenz63Dataset(train_cs1_cfg),
-        "train_cs2": Lorenz63Dataset(train_cs2_cfg),
-        "val_cs1": Lorenz63Dataset(val_cs1_cfg),
-        "val_cs2": Lorenz63Dataset(val_cs2_cfg),
-        "test_cs1": Lorenz63Dataset(test_cs1_cfg),
-        "test_cs2": Lorenz63Dataset(test_cs2_cfg),
+        "test_s0": RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise),
     }
-    if include_randparam_test:
-        out["test_cs3"] = RandomParamLorenz63Dataset(test_cs3_cfg, param_noise=param_noise)
-        out["test_cs4"] = RandomParamLorenz63Dataset(test_cs4_cfg, param_noise=param_noise)
-    if include_randombias_test:
-        from data.random_bias_dataset import RandomBiasLorenz63Dataset
-        test_cs4b_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.0,
-            "forcing_state_bias": 0.0, "forcing_coupling": "quartic",
-            "seed": 130, "num_windows": num_test_windows})
-        out["test_cs4b"] = RandomBiasLorenz63Dataset(
-            test_cs4b_cfg, param_noise=param_noise, bias_range=(0.0, 0.20))
 
-    if include_sparse_obs_test:
-        test_cs5_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
-            "forcing_state_bias": 0.0, "forcing_coupling": "linear",
-            "obs_interval": 40, "seed": 127, "num_windows": num_test_windows})
-        test_cs6_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.15,
-            "forcing_state_bias": 0.15, "forcing_coupling": "quartic",
-            "obs_interval": 40, "seed": 128, "num_windows": num_test_windows})
-        test_cs7_cfg = Lorenz63Config(**{**base, "case": 2, "param_bias": 0.30,
-            "forcing_state_bias": 0.30, "forcing_coupling": "quartic",
-            "obs_interval": 40, "seed": 129, "num_windows": num_test_windows})
-        out["test_cs5"] = Lorenz63Dataset(test_cs5_cfg)
-        out["test_cs6"] = Lorenz63Dataset(test_cs6_cfg)
-        out["test_cs7"] = Lorenz63Dataset(test_cs7_cfg)
+    if include_s1_test:
+        from data.random_bias_dataset import RandomBiasLorenz63Dataset
+        test_s1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.15,
+            "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
+        out["test_s1"] = RandomBiasLorenz63Dataset(
+            test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
     return out

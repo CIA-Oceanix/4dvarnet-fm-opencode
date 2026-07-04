@@ -12,14 +12,8 @@ os.makedirs(EXP_DIR, exist_ok=True)
 
 _BASELINE_METHODS = ["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"]
 _BASELINE_CASES = [
-    ("cs1", "test_cs1", 1, 0.0, "CS1", "linear"),
-    ("cs2", "test_cs2", 2, 0.15, "CS2", "quartic"),
-    ("cs3", "test_cs3", 1, 0.0, "CS3", "linear"),
-    ("cs4", "test_cs4", 2, 0.15, "CS4", "quartic"),
-    ("cs4b", "test_cs4b", 2, None, "CS4b", "quartic"),
-    ("cs5", "test_cs5", 1, 0.0, "CS5", "linear"),
-    ("cs6", "test_cs6", 2, 0.15, "CS6", "quartic"),
-    ("cs7", "test_cs7", 2, 0.30, "CS7", "quartic"),
+    ("s0", "test_s0", 1, 0.0, "S0", 1.6),
+    ("s1", "test_s1", 1, 0.15, "S1", 1.0),
 ]
 
 
@@ -57,9 +51,11 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 sigma = torch.tensor([w["sigma"] for w in batch], device=device)
                 rho = torch.tensor([w["rho"] for w in batch], device=device)
                 beta = torch.tensor([w["beta"] for w in batch], device=device)
+                c1 = torch.tensor([w.get("c1", 1.0) for w in batch], device=device)
             else:
                 sigma, rho, beta = sig, rho, bet
-            results = method.assimilate_batch(obs, mask, force, truth, sigma=sigma, rho=rho, beta=beta)
+                c1 = 1.0
+            results = method.assimilate_batch(obs, mask, force, truth, sigma=sigma, rho=rho, beta=beta, c1=c1)
             for result in results:
                 rmse_list.append(result.rmse)
                 results_list.append(result)
@@ -73,7 +69,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             s = w.get("sigma", sig)
             r = w.get("rho", rho)
             b = w.get("beta", bet)
-            result = method.assimilate(obs, mask, force, truth, sigma=s, rho=r, beta=b)
+            c1_val = w.get("c1", 1.0)
+            result = method.assimilate(obs, mask, force, truth, sigma=s, rho=r, beta=b, c1=c1_val)
             rmse_list.append(result.rmse)
             results_list.append(result)
 
@@ -113,41 +110,31 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     etkf_cfg = etkf_config or {}
 
     baseline_pool = {}
-    for coupling_type in ("linear", "quartic"):
-        baseline_pool[coupling_type] = {
+    for expo in {c[5] for c in _BASELINE_CASES}:
+        baseline_pool[expo] = {
             "Weak-4DVar": Weak4DVar(dt=0.01, da_window_steps=N, device=device,
-                                     coupling_type=coupling_type, **weak_cfg),
+                                     coupling_exponent=expo, **weak_cfg),
             "Strong-4DVar": Strong4DVar(dt=0.01, da_window_steps=N, device=device,
-                                         coupling_type=coupling_type, **strong_cfg),
-            "EnKF": EnKF(dt=0.01, device=device, coupling_type=coupling_type, **enkf_cfg),
-            "ETKF": ETKF(dt=0.01, device=device, coupling_type=coupling_type, **etkf_cfg),
+                                         coupling_exponent=expo, **strong_cfg),
+            "EnKF": EnKF(dt=0.01, device=device, coupling_exponent=expo, **enkf_cfg),
+            "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, **etkf_cfg),
         }
 
-    cfg_cs1 = Lorenz63Config(case=1, param_bias=0.0, T_max=3.0, seed=123)
-    cfg_cs2 = Lorenz63Config(case=2, param_bias=0.15, forcing_state_bias=0.15,
-                              forcing_coupling="quartic", T_max=3.0, seed=124)
-    cfg_cs3 = Lorenz63Config(case=1, param_bias=0.0, T_max=3.0, seed=125)
-    cfg_cs4 = Lorenz63Config(case=2, param_bias=0.15, forcing_state_bias=0.15,
-                              forcing_coupling="quartic", T_max=3.0, seed=126)
-    cfg_cs4b = Lorenz63Config(case=2, param_bias=0.0, forcing_state_bias=0.0,
-                               forcing_coupling="quartic", T_max=3.0, seed=130)
-    cfg_cs7 = Lorenz63Config(case=2, param_bias=0.30, forcing_state_bias=0.30,
-                              forcing_coupling="quartic", T_max=3.0, seed=129)
-    cfg_map = {"cs1": cfg_cs1, "cs2": cfg_cs2, "cs3": cfg_cs3, "cs4": cfg_cs4,
-               "cs4b": cfg_cs4b,
-               "cs5": cfg_cs1, "cs6": cfg_cs2, "cs7": cfg_cs7}
+    cfg_s0 = Lorenz63Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
+    cfg_s1 = Lorenz63Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131)
+    cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:
         partial["config"] = {"T_max": 3.0, "da_window_steps": N}
 
     total_t0 = time.time()
 
-    for case_name, ds_key, case_val, bias, label, coupling_type in _BASELINE_CASES:
+    for case_name, ds_key, case_val, bias, label, coupling_exponent in _BASELINE_CASES:
         if ds_key not in datasets:
             continue
         ds = datasets[ds_key]
         cfg = cfg_map[case_name]
-        method_map = baseline_pool[coupling_type]
+        method_map = baseline_pool[coupling_exponent]
         for name in _BASELINE_METHODS:
             if partial.get(case_name, {}).get(name) is not None:
                 print(f"    {label}/{name:<15} already done, skipping")
