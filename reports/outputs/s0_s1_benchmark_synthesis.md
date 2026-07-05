@@ -1,6 +1,6 @@
 # S0/S1 Benchmark Synthesis
 
-**Date**: 2026-07-04
+**Date**: 2026-07-05
 **Branch**: `exp/s0-s1-benchmark`
 **Truth coupling exponent**: a=1.6 (default)
 **S0 DA exponent**: 1.6 (perfect model)
@@ -215,3 +215,61 @@ The anomalous S0 > S1 for Weak-4DVar at dws=300 (5.17 > 3.71) is attributed to t
 5. **The Z component** is consistently the most affected by the S1 parametric bias (β×1.15), with 2–3× higher RMSE than X or Y.
 
 6. **a=2.0** is not viable with the current Euler-Maruyama integrator (dt=0.01) due to trajectory divergence during the 10000-step spinup.
+
+---
+
+## 8. Joint State-Parameter Estimation
+
+10 windows, dws=50, inflation=2.0 (EnKF/ETKF), R_var=0.5, obs_interval=20, a=1.6 truth exponent.
+
+Four joint methods (Joint-Weak-4DVar, Joint-Strong-4DVar, Joint-EnKF, Joint-ETKF) simultaneously estimate σ, ρ, β, c₁ alongside the state. Vanilla methods provide baseline state RMSE with known (possibly biased) parameters.
+
+### S0 (Perfect Model, No Bias)
+
+| Method | State RMSE | Param RMSE (σ/ρ/β/c₁) | State Ratio vs Vanilla |
+|--------|:-----------:|:---------------------:|:----------------------:|
+| Weak-4DVar | 0.697 | — | — |
+| Joint-Weak-4DVar | 0.893 | 1.77 / 1.15 / 0.32 / 0.18 | 1.28× |
+| Strong-4DVar | 0.553 | — | — |
+| Joint-Strong-4DVar | 0.962 | 5.00 / 1.29 / 0.29 / 2.59 | 1.74× |
+| EnKF | 0.736 | — | — |
+| Joint-EnKF | 1.323 | 2.80 / 0.91 / 0.38 / 0.80 | 1.80× |
+| ETKF | 0.723 | — | — |
+| Joint-ETKF | 0.951 | 0.52 / 0.99 / 0.18 / 0.04 | 1.32× |
+
+### S1 (Model Mismatch)
+
+| Method | State RMSE | Param RMSE (σ/ρ/β/c₁) | State Ratio vs Vanilla |
+|--------|:-----------:|:---------------------:|:----------------------:|
+| Weak-4DVar | 1.411 | — | — |
+| Joint-Weak-4DVar | **0.934** | 1.39 / 1.66 / 0.40 / 0.25 | **0.66×** |
+| Strong-4DVar | 2.436 | — | — |
+| Joint-Strong-4DVar | **1.001** | 3.54 / 2.91 / 0.54 / 3.05 | **0.41×** |
+| EnKF | 2.174 | — | — |
+| Joint-EnKF | **1.611** | 2.74 / 2.00 / 0.45 / 0.86 | **0.74×** |
+| ETKF | 2.166 | — | — |
+| Joint-ETKF | **1.446** | 1.73 / 1.94 / 0.37 / 0.18 | **0.67×** |
+
+### Key Findings
+
+1. **On S0 (perfect model)**, joint estimation degrades state RMSE by 1.3–1.8×. This is expected — the methods are solving a harder problem with 4 extra unknowns. The degradation is worst for Joint-Strong-4DVar (σ RMSE=5.00, c₁ RMSE=2.59) and best for Joint-ETKF (c₁ RMSE=0.04, nearly perfect c₁ recovery).
+
+2. **On S1 (model mismatch), ALL joint methods improve state RMSE over their vanilla counterparts.** The improvement is dramatic:
+   - **Joint-Strong-4DVar**: 2.44 → 1.00 (0.41×, best ratio)
+   - **Joint-Weak-4DVar**: 1.41 → 0.93 (0.66×, best absolute state RMSE)
+   - **Joint-ETKF**: 2.17 → 1.45 (0.67×)
+   - **Joint-EnKF**: 2.17 → 1.61 (0.74×)
+
+3. **Joint-ETKF** provides the best parameter RMSE on both S0 and S1, particularly for c₁ (0.04 and 0.18). Its ensemble transform update effectively handles the joint state-parameter covariance.
+
+4. **Joint-Strong-4DVar** shows the most dramatic state improvement (0.41×) but has poor parameter convergence (σ=3.54, c₁=3.05), suggesting the state correction compensates for model bias through non-physical parameter adjustments.
+
+5. **Parameter RMSE is generally high** for σ (1.4–5.0) and c₁ (0.2–3.1), moderate for ρ (0.9–2.9), and best for β (0.2–0.5). This ordering is consistent with the Lorenz-63 sensitivities: β is tightly constrained by Z dynamics, while σ and c₁ have similar effects on the X equation, making them harder to separate.
+
+6. **The mean state RMSE of joint methods on S1 (~0.93–1.61) approaches the S0 vanilla baseline (~0.55–0.74)**, indicating that joint estimation can substantially compensate for the 15% parametric bias.
+
+---
+
+## Final Conclusions
+
+1. **Best operating regime**: a=1.6 truth exponent with S0 DA=1.6 (perfect), S1 DA=1.0 (mismatch). Maximizes S0–S1 contrast while keeping all methods stable with S0 < S1 ordering.
