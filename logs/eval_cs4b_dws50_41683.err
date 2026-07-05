@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all.py", line 7, in <module>
+    import torch
+  File "/Odyssey/private/rfablet/miniforge3/lib/python3.12/site-packages/torch/__init__.py", line 443, in <module>
+    _load_global_deps()
+  File "/Odyssey/private/rfablet/miniforge3/lib/python3.12/site-packages/torch/__init__.py", line 401, in _load_global_deps
+    _preload_cuda_deps(err)
+  File "/Odyssey/private/rfablet/miniforge3/lib/python3.12/site-packages/torch/__init__.py", line 357, in _preload_cuda_deps
+    raise err
+  File "/Odyssey/private/rfablet/miniforge3/lib/python3.12/site-packages/torch/__init__.py", line 379, in _load_global_deps
+    ctypes.CDLL(global_deps_lib_path, mode=ctypes.RTLD_GLOBAL)
+  File "/Odyssey/private/rfablet/miniforge3/lib/python3.12/ctypes/__init__.py", line 379, in __init__
+    self._handle = _dlopen(self._name, mode)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: /Odyssey/private/rfablet/miniforge3/lib/python3.12/site-packages/torch/lib/libtorch_global_deps.so: cannot open shared object file: No such file or directory

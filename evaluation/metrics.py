@@ -5,6 +5,10 @@ def rmse(analysis: np.ndarray, truth: np.ndarray) -> np.ndarray:
     return np.sqrt(np.mean((analysis - truth) ** 2, axis=0))
 
 
+def param_rmse(pred_params: np.ndarray, true_params: np.ndarray) -> np.ndarray:
+    return np.sqrt(np.mean((pred_params - true_params) ** 2, axis=0))
+
+
 def spread(ensemble_variance: np.ndarray) -> np.ndarray:
     return np.sqrt(np.mean(ensemble_variance, axis=0))
 

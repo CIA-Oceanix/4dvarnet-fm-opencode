@@ -65,6 +65,10 @@ class RandomParamLorenz63Dataset:
                 "sigma": sigma,
                 "rho": rho,
                 "beta": beta,
+                "true_sigma": sigma,
+                "true_rho": rho,
+                "true_beta": beta,
+                "true_c1": cfg.c1,
             })
 
     def __len__(self) -> int:

@@ -90,6 +90,10 @@ class RandomBiasLorenz63Dataset:
                 "rho": da_rho,
                 "beta": da_beta,
                 "c1": da_c1,
+                "true_sigma": truth_sigma,
+                "true_rho": truth_rho,
+                "true_beta": truth_beta,
+                "true_c1": truth_c1,
                 "param_bias": p_bias,
                 "forcing_state_bias": f_bias,
             })
