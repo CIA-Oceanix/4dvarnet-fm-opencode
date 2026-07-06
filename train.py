@@ -33,13 +33,13 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
                                 num_workers=4, randomize_params=False, param_noise=0.2,
                                 base_cfg=None, num_train_windows=1000,
-                                data_setup="legacy"):
+                                data_setup="legacy", with_params=False):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=num_workers, pin_memory=True)
     if data_setup == "s0_s1":
         return {
-            "train": DataLoader(FlowMatchingDataset(datasets["train"]), shuffle=True, **kw),
-            "val": DataLoader(FlowMatchingDataset(datasets["val"]), shuffle=False, **kw),
+            "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=with_params), shuffle=True, **kw),
+            "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=with_params), shuffle=False, **kw),
         }
     if randomize_params and base_cfg is not None:
         train_cs1 = RandomParamLorenz63Dataset(
@@ -241,6 +241,7 @@ def main(cfg: DictConfig):
         base_cfg=base_cfg,
         num_train_windows=dc.get("num_train_windows", 1000),
         data_setup=data_setup,
+        with_params=(model_type == "joint_cfm"),
     )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")

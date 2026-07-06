@@ -94,8 +94,17 @@ class VanillaCFMConfig:
 
 
 @dataclass
+class JointCFMConfig:
+    param_dim: int = 4
+    param_loss_weight: float = 0.1
+    param_noise_min: float = 0.0
+    param_noise_max: float = 0.3
+    train_tau_0_only: bool = False
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -107,6 +116,7 @@ class ModelConfig:
     dropout: float = 0.1
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
+    joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
 
 
 @dataclass

@@ -4,35 +4,46 @@ from typing import Dict, Iterator, Tuple
 
 
 class FlowMatchingBatch:
-    def __init__(self, states: torch.Tensor, obs: torch.Tensor, obs_mask: torch.Tensor):
+    def __init__(self, states, obs, obs_mask, params=None):
         self.states = states
         self.obs = obs
         self.obs_mask = obs_mask
+        self.params = params
         self.batch_size, self.T, self.dim = states.shape
 
-    def to(self, device: torch.device):
+    def to(self, device):
         self.states = self.states.to(device)
         self.obs = self.obs.to(device)
         self.obs_mask = self.obs_mask.to(device)
+        if self.params is not None:
+            self.params = self.params.to(device)
         return self
 
 
 class FlowMatchingDataset(Dataset):
-    def __init__(self, lorenz_dataset, T_max: float = 5.0):
+    def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False):
         self.source = lorenz_dataset
         self.T_max = T_max
+        self.with_params = with_params
 
     def __len__(self):
         return len(self.source)
 
     def __getitem__(self, idx):
         w = self.source[idx]
+        if self.with_params and "sigma" in w:
+            return (w["true_state"], w["obs"], w["obs_mask"],
+                    w.get("true_sigma", w["sigma"]),
+                    w.get("true_rho", w["rho"]),
+                    w.get("true_beta", w["beta"]),
+                    w.get("true_c1", w.get("c1", 1.0)))
         return w["true_state"], w["obs"], w["obs_mask"]
 
 
 class ConcatFMDataset(Dataset):
-    def __init__(self, datasets):
+    def __init__(self, datasets, with_params: bool = False):
         self.datasets = datasets
+        self.with_params = with_params
         self.cumlen = [0]
         for d in datasets:
             self.cumlen.append(self.cumlen[-1] + len(d))
@@ -44,6 +55,12 @@ class ConcatFMDataset(Dataset):
         for i in range(len(self.datasets)):
             if idx < self.cumlen[i + 1]:
                 w = self.datasets[i][idx - self.cumlen[i]]
+                if self.with_params and "sigma" in w:
+                    return (w["true_state"], w["obs"], w["obs_mask"],
+                            w.get("true_sigma", w["sigma"]),
+                            w.get("true_rho", w["rho"]),
+                            w.get("true_beta", w["beta"]),
+                            w.get("true_c1", w.get("c1", 1.0)))
                 return w["true_state"], w["obs"], w["obs_mask"]
         raise IndexError
 
@@ -52,7 +69,10 @@ def collate_fm(batch):
     states = torch.stack([b[0] for b in batch])
     obs = torch.stack([b[1] for b in batch])
     masks = torch.stack([b[2] for b in batch])
-    return FlowMatchingBatch(states, obs, masks)
+    params = None
+    if len(batch[0]) == 7:
+        params = torch.stack([torch.tensor([b[3], b[4], b[5], b[6]], dtype=torch.float32) for b in batch])
+    return FlowMatchingBatch(states, obs, masks, params=params)
 
 
 def make_dataloaders(datasets: Dict[str, Dataset], batch_size: int = 32):

@@ -106,12 +106,14 @@ class UNet1D(nn.Module):
         use_obs: bool = True,
         use_energy: bool = False,
         dropout: float = 0.1,
+        output_dim: int = None,
     ):
         super().__init__()
         if hidden_channels is None:
             hidden_channels = [64, 128, 256]
 
         self.state_dim = state_dim
+        self.output_dim = output_dim if output_dim is not None else state_dim
         self.use_obs = use_obs
         self.use_energy = use_energy
         self.time_emb_dim = time_emb_dim
@@ -141,7 +143,7 @@ class UNet1D(nn.Module):
         self.enc_out = nn.Sequential(
             nn.Conv1d(in_c, in_c, 3, padding=1),
             nn.SiLU(),
-            nn.Conv1d(in_c, state_dim, 3, padding=1),
+            nn.Conv1d(in_c, self.output_dim, 3, padding=1),
         )
 
     def forward(
