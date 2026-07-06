@@ -67,6 +67,8 @@ class LitModel(pl.LightningModule):
             loss = self.loss_fn(pred, batch.states)
         elif self.model_type == "vanilla_cfm":
             loss = self.model.compute_cfm_loss(batch)
+        elif self.model_type == "joint_cfm":
+            loss = self.model.compute_cfm_loss(batch)
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")
         return loss

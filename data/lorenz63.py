@@ -241,3 +241,42 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
         out["test_s1"] = RandomBiasLorenz63Dataset(
             test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
     return out
+
+
+def make_s0_s1_trainval(cfg: Lorenz63Config, *,
+                        num_train_windows: int = 1000,
+                        num_val_windows: int = 100,
+                        num_test_windows: int = 200,
+                        param_noise: float = 0.2,
+                        bias_range: Tuple[float, float] = (0.0, 0.2)) -> Dict[str, "Lorenz63Dataset"]:
+    from data.random_param_dataset import RandomParamLorenz63Dataset
+    from data.random_bias_dataset import RandomBiasLorenz63Dataset
+    base = cfg.__dict__.copy()
+
+    train_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 42,
+        "num_windows": num_train_windows, "param_bias": 0.0,
+        "forcing_state_bias": 0.0})
+    train = RandomBiasLorenz63Dataset(
+        train_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+
+    val_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 99,
+        "num_windows": num_val_windows, "param_bias": 0.0,
+        "forcing_state_bias": 0.0})
+    val = RandomBiasLorenz63Dataset(
+        val_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+
+    test_s0_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
+        "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
+    test_s0 = RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise)
+
+    test_s1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.15,
+        "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
+    test_s1 = RandomBiasLorenz63Dataset(
+        test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
+
+    return {
+        "train": train,
+        "val": val,
+        "test_s0": test_s0,
+        "test_s1": test_s1,
+    }
