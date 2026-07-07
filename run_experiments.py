@@ -80,7 +80,8 @@ EXPERIMENTS = [
 # ── Dataloader factory ──────────────────────────────────────────
 
 def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
-                                num_workers=4):
+                                num_workers=4,
+                                obs_interval=20, R_var=0.5):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=num_workers, pin_memory=True)
     source_map = {
@@ -89,13 +90,14 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
         "cs2_only": [datasets["train_cs2"]],
     }
     train_sources = source_map.get(train_mix, source_map["cs1+cs2"])
+    obs_cfg = {"obs_interval": obs_interval, "R_var": R_var}
     return {
         "train": DataLoader(
-            ConcatFMDataset(train_sources),
+            ConcatFMDataset(train_sources, **obs_cfg),
             shuffle=True, **kw,
         ),
         "val": DataLoader(
-            ConcatFMDataset([datasets["val_cs1"], datasets["val_cs2"]]),
+            ConcatFMDataset([datasets["val_cs1"], datasets["val_cs2"]], **obs_cfg),
             shuffle=False, **kw,
         ),
     }

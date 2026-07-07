@@ -3,7 +3,7 @@ import torch.nn as nn
 from omegaconf import DictConfig
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from training.lightning_module import LitModel
 
 
@@ -18,12 +18,13 @@ def create_trainer(cfg: DictConfig, stage: int) -> pl.Trainer:
             filename=f"stage{stage}_best",
         )
     ]
-    logger = CSVLogger(save_dir=cfg.paths.outputs_dir, name=f"stage{stage}")
+    csv_logger = CSVLogger(save_dir=cfg.paths.outputs_dir, name=f"stage{stage}")
+    tb_logger = TensorBoardLogger(save_dir=cfg.paths.outputs_dir, name=f"stage{stage}")
     trainer = pl.Trainer(
         max_epochs=stage_cfg.epochs,
         gradient_clip_val=stage_cfg.gradient_clip_val,
         callbacks=callbacks,
-        logger=logger,
+        logger=[csv_logger, tb_logger],
         accelerator=cfg.training.get("accelerator", "auto"),
         devices=1,
         log_every_n_steps=10,

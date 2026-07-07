@@ -63,7 +63,7 @@ class LitModel(pl.LightningModule):
                 pred = self.model(batch.obs)
             loss = self.loss_fn(pred, batch.states)
         elif self.model_type == "direct_unet":
-            pred = self.model(batch.obs)
+            pred = self.model(batch)
             loss = self.loss_fn(pred, batch.states)
         elif self.model_type == "vanilla_cfm":
             loss = self.model.compute_cfm_loss(batch)
@@ -83,8 +83,10 @@ class LitModel(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch.batch_size)
         return loss
 
-    def forward(self, obs, **kwargs):
-        return self.model(obs, **kwargs)
+    def forward(self, batch, **kwargs):
+        if self.model_type == "direct_unet":
+            return self.model(batch)
+        return self.model(batch, **kwargs)
 
     def load_legacy_checkpoint(self, ckpt_path: str):
         state = torch.load(ckpt_path, map_location="cpu")

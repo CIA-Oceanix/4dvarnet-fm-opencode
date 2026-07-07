@@ -77,33 +77,43 @@ def generate_long_trajectory(
     sigma_0: float, sigma_L: float,
     device: torch.device = torch.device("cpu"),
     coupling_exponent: float = 1.5,
+    max_retries: int = 10,
 ) -> torch.Tensor:
     num_steps = int(num_steps)
-    rng = torch.Generator(device=device).manual_seed(seed)
-    trajectory = torch.zeros(num_steps, 4, device=device)
-    state = torch.tensor([1.0, 1.0, 20.0, 0.0], device=device)
-    trajectory[0] = state
+    base_seed = seed
+    for attempt in range(max_retries):
+        current_seed = base_seed + attempt
+        rng = torch.Generator(device=device).manual_seed(current_seed)
+        trajectory = torch.zeros(num_steps, 4, device=device)
+        state = torch.tensor([1.0, 1.0, 20.0, 0.0], device=device)
+        trajectory[0] = state
 
-    sqrt_dt = np.sqrt(dt)
-    noise = torch.randn((num_steps, 3), device=device, generator=rng) * sqrt_dt
+        sqrt_dt = np.sqrt(dt)
+        noise = torch.randn((num_steps, 3), device=device, generator=rng) * sqrt_dt
 
-    for t in range(1, num_steps):
-        X, Y, Z, W_L = trajectory[t - 1]
-        dW1, dW2, dW3 = noise[t]
+        for t in range(1, num_steps):
+            X, Y, Z, W_L = trajectory[t - 1]
+            dW1, dW2, dW3 = noise[t]
 
-        dX = sigma * (Y - X) + _coupling(W_L, c1, coupling_exponent)
-        dY = X * (rho - Z) - Y
-        dZ = X * Y - beta * Z
-        dW_L_term = -gamma * (W_L - W_L_bar) + c2 * X
+            dX = sigma * (Y - X) + _coupling(W_L, c1, coupling_exponent)
+            dY = X * (rho - Z) - Y
+            dZ = X * Y - beta * Z
+            dW_L_term = -gamma * (W_L - W_L_bar) + c2 * X
 
-        X_next = X + dX * dt
-        Y_next = Y + dY * dt + sigma_0 * Y * dW1
-        Z_next = Z + dZ * dt + sigma_0 * Z * dW2
-        W_L_next = W_L + dW_L_term * dt + sigma_L * dW3
+            X_next = X + dX * dt
+            Y_next = Y + dY * dt + sigma_0 * Y * dW1
+            Z_next = Z + dZ * dt + sigma_0 * Z * dW2
+            W_L_next = W_L + dW_L_term * dt + sigma_L * dW3
 
-        trajectory[t] = torch.tensor([X_next, Y_next, Z_next, W_L_next], device=device)
+            trajectory[t] = torch.tensor([X_next, Y_next, Z_next, W_L_next], device=device)
 
-    return trajectory
+        if torch.isfinite(trajectory).all():
+            return trajectory
+
+    raise RuntimeError(
+        f"generate_long_trajectory diverged after {max_retries} retries "
+        f"(seed={base_seed}, sigma={sigma:.2f}, rho={rho:.2f}, beta={beta:.2f})"
+    )
 
 
 def generate_corrupted_forcing(
@@ -134,8 +144,8 @@ def generate_observations(
     obs_indices = np.arange(obs_interval, num_steps, obs_interval)
     obs_mask = torch.zeros(num_steps, dtype=torch.bool, device=device)
     obs_mask[obs_indices] = True
-    noisy_obs = true_fluid.clone()
-    noisy_obs[obs_indices] += (
+    noisy_obs = torch.full_like(true_fluid, float('nan'))
+    noisy_obs[obs_indices] = true_fluid[obs_indices] + (
         torch.randn((len(obs_indices), 3), device=device, generator=rng) * np.sqrt(R_var)
     )
     return noisy_obs, obs_mask
@@ -243,12 +253,41 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
     return out
 
 
+def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
+                          num_train_windows: int,
+                          num_val_windows: int,
+                          num_test_windows: int,
+                          param_noise: float,
+                          bias_range: Tuple[float, float]) -> str:
+    import hashlib
+    key_data = {
+        "num_train_windows": num_train_windows,
+        "num_val_windows": num_val_windows,
+        "num_test_windows": num_test_windows,
+        "param_noise": param_noise,
+        "bias_range": bias_range,
+        "dt": cfg.dt, "T_max": cfg.T_max,
+        "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
+        "spinup_steps": cfg.spinup_steps, "window_spacing": cfg.window_spacing,
+        "seed": cfg.seed,
+        "sigma_true": cfg.sigma_true, "rho_true": cfg.rho_true, "beta_true": cfg.beta_true,
+        "gamma": cfg.gamma, "W_L_bar": cfg.W_L_bar,
+        "c1": cfg.c1, "c2": cfg.c2,
+        "sigma_0": cfg.sigma_0, "sigma_L": cfg.sigma_L,
+        "coupling_exponent_truth": cfg.coupling_exponent_truth,
+        "param_bias": cfg.param_bias,
+        "forcing_state_bias": cfg.forcing_state_bias,
+    }
+    return hashlib.sha256(str(sorted(key_data.items())).encode()).hexdigest()
+
+
 def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                         num_train_windows: int = 1000,
                         num_val_windows: int = 100,
                         num_test_windows: int = 200,
                         param_noise: float = 0.2,
                         bias_range: Tuple[float, float] = (0.0, 0.2)) -> Dict[str, "Lorenz63Dataset"]:
+    import hashlib, os
     from data.random_param_dataset import RandomParamLorenz63Dataset
     from data.random_bias_dataset import RandomBiasLorenz63Dataset
     base = cfg.__dict__.copy()
@@ -256,23 +295,62 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
     train_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 42,
         "num_windows": num_train_windows, "param_bias": 0.0,
         "forcing_state_bias": 0.0})
-    train = RandomBiasLorenz63Dataset(
-        train_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
-
     val_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 99,
         "num_windows": num_val_windows, "param_bias": 0.0,
         "forcing_state_bias": 0.0})
-    val = RandomBiasLorenz63Dataset(
-        val_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
-
     test_s0_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
         "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
-    test_s0 = RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise)
-
     test_s1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.15,
         "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
+
+    cache_dir = os.path.join(os.path.dirname(__file__), "..", "dataset_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_key = _make_s0_s1_cache_key(
+        cfg, num_train_windows=num_train_windows,
+        num_val_windows=num_val_windows, num_test_windows=num_test_windows,
+        param_noise=param_noise, bias_range=bias_range)
+    cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
+
+    if os.path.exists(cache_path):
+        print(f"  Loading cached datasets ({cache_key[:12]}...)")
+        cached = torch.load(cache_path)
+        train = RandomBiasLorenz63Dataset(
+            train_cfg, param_noise=param_noise, bias_mode='random',
+            bias_range=bias_range, cached_windows=cached["train_windows"])
+        val = RandomBiasLorenz63Dataset(
+            val_cfg, param_noise=param_noise, bias_mode='random',
+            bias_range=bias_range, cached_windows=cached["val_windows"])
+        test_s0 = RandomParamLorenz63Dataset(
+            test_s0_cfg, param_noise=param_noise,
+            cached_windows=cached["test_s0_windows"])
+        test_s1 = RandomBiasLorenz63Dataset(
+            test_s1_cfg, param_noise=param_noise, bias_mode='fixed',
+            cached_windows=cached["test_s1_windows"])
+        return {"train": train, "val": val,
+                "test_s0": test_s0, "test_s1": test_s1}
+
+    train = RandomBiasLorenz63Dataset(
+        train_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+    val = RandomBiasLorenz63Dataset(
+        val_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+    test_s0 = RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise)
     test_s1 = RandomBiasLorenz63Dataset(
         test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
+
+    def _strip_obs(w):
+        w.pop("obs", None)
+        w.pop("obs_mask", None)
+        return w
+
+    tmp_path = cache_path + ".tmp"
+    torch.save({
+        "train_windows": [_strip_obs(w) for w in train.windows],
+        "val_windows": [_strip_obs(w) for w in val.windows],
+        "test_s0_windows": [_strip_obs(w) for w in test_s0.windows],
+        "test_s1_windows": [_strip_obs(w) for w in test_s1.windows],
+    }, tmp_path)
+    os.rename(tmp_path, cache_path)
+    print(f"  Cached datasets ({cache_key[:12]}...)")
 
     return {
         "train": train,

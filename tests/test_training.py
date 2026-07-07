@@ -24,7 +24,8 @@ class _FixedDataset(Dataset):
         return self.states.shape[0]
 
     def __getitem__(self, idx):
-        return self.states[idx], self.obs[idx], self.mask[idx]
+        forcing = torch.zeros(self.states.shape[1], dtype=torch.float32)
+        return self.states[idx], self.obs[idx], self.mask[idx], forcing
 
 
 def _make_fixed_loader(B=2, T=50, D=3):

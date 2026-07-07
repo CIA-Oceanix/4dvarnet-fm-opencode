@@ -31,3 +31,9 @@ data:
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2
+baselines:
+  da_window_steps: 50
+  enkf:
+    inflation: 2.0
+  etkf:
+    inflation: 2.0

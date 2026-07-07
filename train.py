@@ -14,6 +14,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+torch.set_float32_matmul_precision('medium')
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval, Lorenz63Dataset
 from data.random_param_dataset import RandomParamLorenz63Dataset
@@ -37,9 +38,10 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=num_workers, pin_memory=True)
     if data_setup == "s0_s1":
+        obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
         return {
-            "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=with_params), shuffle=True, **kw),
-            "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=with_params), shuffle=False, **kw),
+            "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg), shuffle=True, **kw),
+            "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg), shuffle=False, **kw),
         }
     if randomize_params and base_cfg is not None:
         train_cs1 = RandomParamLorenz63Dataset(
@@ -116,21 +118,36 @@ def model_factory(cfg: DictConfig, device: torch.device):
     return model.to(device)
 
 
+def _make_eval_batch(w, device):
+    from data.dataloader import FlowMatchingBatch
+    states = w["true_state"].unsqueeze(0).to(device)
+    obs = w["obs"].unsqueeze(0).to(device)
+    mask = w["obs_mask"].unsqueeze(0).to(device)
+    forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
+    params = torch.tensor([[w.get("sigma", 0.0), w.get("rho", 0.0),
+                            w.get("beta", 0.0), w.get("c1", 1.0)]], dtype=torch.float32, device=device)
+    true_params = torch.tensor([[w.get("true_sigma", w.get("sigma", 0.0)),
+                                  w.get("true_rho", w.get("rho", 0.0)),
+                                  w.get("true_beta", w.get("beta", 0.0)),
+                                  w.get("true_c1", w.get("c1", 1.0))]], dtype=torch.float32, device=device)
+    return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
+
+
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False):
     rmse_list = []
     param_list = []
     true_param_list = []
     for i in range(len(dataset)):
         w = dataset[i]
-        obs = w["obs"].unsqueeze(0).to(device)
+        batch = _make_eval_batch(w, device)
         if model_type == "tweedie":
-            pred = model(obs).detach().cpu().numpy()[0]
+            pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
-            pred = model(obs).detach().cpu().numpy()[0]
+            pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
-            pred = model.sample(obs).detach().cpu().numpy()[0]
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
-            pred, params = model.sample(obs, return_params=True)
+            pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
             tp = [w.get("true_sigma", w.get("sigma")),
@@ -154,15 +171,15 @@ def save_trajectories(model, dataset, device, model_type, save_path):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
-        obs = w["obs"].unsqueeze(0).to(device)
+        batch = _make_eval_batch(w, device)
         if model_type == "tweedie":
-            pred = model(obs).detach().cpu().numpy()[0]
+            pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
-            pred = model(obs).detach().cpu().numpy()[0]
+            pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
-            pred = model.sample(obs).detach().cpu().numpy()[0]
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
-            pred = model.sample(obs).detach().cpu().numpy()[0]
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         trajs.append(pred)
         truths.append(w["true_state"].numpy())
     np.savez_compressed(save_path,

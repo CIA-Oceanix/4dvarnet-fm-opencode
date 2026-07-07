@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:rtx8000:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=00:15:00
@@ -38,9 +38,9 @@ echo ""
 python train.py \
   --config-name experiment/${EXP} \
   training.stage1.epochs=1 \
-  +data.num_train_windows=10 \
-  +data.num_val_windows=2 \
-  +data.num_test_windows=5 \
+  data.num_train_windows=10 \
+  data.num_val_windows=2 \
+  data.num_test_windows=5 \
   hydra.run.dir=. \
   hydra.output_subdir=null
 

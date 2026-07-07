@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 #SBATCH --job-name=s0s1-state
 #SBATCH --array=0-3
 #SBATCH --output=sbatch_logs/s0s1_state_%A_%a.out

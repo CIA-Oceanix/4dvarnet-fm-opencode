@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:rtx8000:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=00:15:00
