@@ -141,7 +141,7 @@ def generate_observations(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_steps = true_fluid.shape[0]
     rng = torch.Generator(device=device).manual_seed(seed)
-    obs_indices = np.arange(obs_interval, num_steps, obs_interval)
+    obs_indices = np.arange(0, num_steps, obs_interval)
     obs_mask = torch.zeros(num_steps, dtype=torch.bool, device=device)
     obs_mask[obs_indices] = True
     noisy_obs = torch.full_like(true_fluid, float('nan'))
