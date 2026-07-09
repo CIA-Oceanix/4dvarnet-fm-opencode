@@ -96,3 +96,24 @@ def test_unet1d_no_obs():
     tau = torch.rand(B)
     out = model(x, tau=tau)
     assert out.shape == (B, D, L)
+
+
+def test_condition_encoder_sanitizes_nan_obs():
+    B, D, L = 2, 3, 50
+    encoder = ConditionEncoder(state_dim=D, hidden_dim=64, use_obs=True, use_energy=False)
+    x = torch.randn(B, D, L)
+    obs = torch.randn(B, D, L)
+    obs[:, :, 1:] = float("nan")
+    out = encoder(x, obs)
+    assert not torch.isnan(out).any()
+
+
+def test_unet1d_sanitizes_nan_obs():
+    B, D, L = 2, 3, 50
+    model = UNet1D(state_dim=D, hidden_channels=[4, 8], time_emb_dim=8, use_obs=True, use_energy=False)
+    x = torch.randn(B, D, L)
+    obs = torch.randn(B, D, L)
+    obs[:, :, 1:] = float("nan")
+    tau = torch.rand(B)
+    out = model(x, obs=obs, tau=tau)
+    assert not torch.isnan(out).any()

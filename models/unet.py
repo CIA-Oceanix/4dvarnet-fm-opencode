@@ -89,7 +89,7 @@ class ConditionEncoder(nn.Module):
         B, C, L = x.shape
         cond = x
         if self.use_obs:
-            cond = torch.cat([cond, obs], dim=1)
+            cond = torch.cat([cond, torch.nan_to_num(obs, nan=0.0)], dim=1)
         if self.use_energy and energy_terms is not None:
             for term in energy_terms:
                 if isinstance(term, torch.Tensor):
