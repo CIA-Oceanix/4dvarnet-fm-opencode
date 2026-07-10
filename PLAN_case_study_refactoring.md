@@ -21,7 +21,7 @@ Remove hardcoded L63-specific assumptions behind abstract interfaces. No functio
 | 4 | Metrics | Generalize RMSE keys from X/Y/Z to config-driven `state_names` | `evaluation/metrics.py`, `train.py` (partial) | 0.5h | completed | `p1-metrics` |
 | 5 | Datasets | Refactor datasets to use `DynamicsBase` internally; `generate_full_trajectory` on `Lorenz63Dynamics` | `data/lorenz63.py`, `data/random_bias_dataset.py`, `data/random_param_dataset.py` | 2h | completed | `p1-datasets` |
 | 6 | DA baselines | Parameterize `Weak4DVar`, `Strong4DVar`, `EnKF`, `ETKF` to accept `DynamicsBase` | `evaluation/baselines.py` | 3h | completed | `p1-baselines` |
-| 7 | Pipeline | Wire `model_factory`, `get_dynamics`, evaluation loop + full validation | `train.py`, `eval_baselines.py`, `training/`, `evaluate_all.py` | 1.5h | pending | `p1-pipeline` |
+| 7 | Pipeline | Wire `model_factory`, `get_dynamics`, evaluation loop + full validation | `train.py`, `eval_baselines.py`, `training/`, `evaluate_all.py` | 1.5h | completed | `p1-pipeline` |
 
 ### Verifications (run after each agent)
 

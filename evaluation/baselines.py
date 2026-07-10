@@ -140,7 +140,6 @@ class Weak4DVar:
         return torch.stack(traj)
 
     def _forward_weak_batch(self, x0, q, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
-        B = x0.shape[0]
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
@@ -305,7 +304,6 @@ class Strong4DVar:
         return torch.stack(traj)
 
     def _forward_strong_batch(self, x0, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
-        B = x0.shape[0]
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
@@ -1075,7 +1073,6 @@ class JointEnKF(EnKF):
     ) -> BaselineResult:
         num_steps = observations.shape[0]
         N = self.N_ensemble
-        param_dim = self.dynamics.param_dim if self.dynamics else 3
         N_dim = self.state_dim + 4
         N1 = N - 1
 
@@ -1142,7 +1139,6 @@ class JointEnKF(EnKF):
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
         sd = self.state_dim
-        param_dim = self.dynamics.param_dim if self.dynamics else 3
         N_dim = sd + 4
         N1 = N - 1
 
