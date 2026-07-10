@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz63 import Lorenz63Config
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
 from evaluation.metrics import rmse
+from models.lorenz63_dynamics import Lorenz63Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
@@ -109,15 +110,19 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     enkf_cfg = enkf_config or {}
     etkf_cfg = etkf_config or {}
 
+    dynamics_pool = {}
+    for expo in {c[5] for c in _BASELINE_CASES}:
+        dynamics_pool[expo] = Lorenz63Dynamics(dt=0.01, coupling_exponent=expo)
     baseline_pool = {}
     for expo in {c[5] for c in _BASELINE_CASES}:
+        dynamics = dynamics_pool[expo]
         baseline_pool[expo] = {
             "Weak-4DVar": Weak4DVar(dt=0.01, da_window_steps=N, device=device,
-                                     coupling_exponent=expo, **weak_cfg),
+                                     coupling_exponent=expo, dynamics=dynamics, **weak_cfg),
             "Strong-4DVar": Strong4DVar(dt=0.01, da_window_steps=N, device=device,
-                                         coupling_exponent=expo, **strong_cfg),
-            "EnKF": EnKF(dt=0.01, device=device, coupling_exponent=expo, **enkf_cfg),
-            "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, **etkf_cfg),
+                                         coupling_exponent=expo, dynamics=dynamics, **strong_cfg),
+            "EnKF": EnKF(dt=0.01, device=device, coupling_exponent=expo, dynamics=dynamics, **enkf_cfg),
+            "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, dynamics=dynamics, **etkf_cfg),
         }
 
     cfg_s0 = Lorenz63Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)

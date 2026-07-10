@@ -2,10 +2,12 @@ import torch
 from models.dynamics import DynamicsBase
 
 
-def _apply_coupling(W: torch.Tensor, c1: float, coupling_type: str) -> torch.Tensor:
-    if coupling_type == "quartic":
-        return c1 * torch.sign(W) * W ** 2
-    return c1 * W
+def _apply_coupling(W: torch.Tensor, c1, exponent: float = 1.0) -> torch.Tensor:
+    if isinstance(c1, torch.Tensor) and c1.dim() == 1:
+        c1 = c1.view(-1, *([1] * (W.dim() - 1)))
+    if exponent == 1.0:
+        return c1 * W
+    return c1 * torch.sign(W) * torch.abs(W) ** exponent
 
 
 class Lorenz63Dynamics(DynamicsBase):
@@ -13,7 +15,7 @@ class Lorenz63Dynamics(DynamicsBase):
     param_names = ["sigma", "rho", "beta"]
     param_dim = 3
 
-    def __init__(self, dt: float = 0.01, coupling_type: str = "linear",
+    def __init__(self, dt: float = 0.01, coupling_exponent: float = 1.0,
                  c1: float = 1.0, clip_range: float = 50.0,
                  sigma_0: float = 0.08, gamma: float = 0.05,
                  W_L_bar: float = 0.0, c2: float = 0.1,
@@ -22,7 +24,7 @@ class Lorenz63Dynamics(DynamicsBase):
         self.dt = dt
         self.c1 = c1
         self.clip_range = clip_range
-        self.coupling_type = coupling_type
+        self.coupling_exponent = coupling_exponent
         self.sigma_0 = sigma_0
         self.gamma = gamma
         self.W_L_bar = W_L_bar
@@ -57,7 +59,7 @@ class Lorenz63Dynamics(DynamicsBase):
              sigma, rho, beta) -> torch.Tensor:
         X, Y, Z = state[..., 0], state[..., 1], state[..., 2]
         W = forcing
-        coupling = _apply_coupling(W, self.c1, self.coupling_type)
+        coupling = _apply_coupling(W, self.c1, self.coupling_exponent)
         dX = sigma * (Y - X) + coupling
         dY = X * (rho - Z) - Y
         dZ = X * Y - beta * Z

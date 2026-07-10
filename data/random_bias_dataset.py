@@ -14,7 +14,7 @@ class RandomBiasDataset:
                  max_window_retries: int = 10):
         if dynamics is None and isinstance(cfg, Lorenz63Config):
             dynamics = Lorenz63Dynamics(
-                dt=cfg.dt, coupling_type=cfg.forcing_coupling,
+                dt=cfg.dt, coupling_exponent=cfg.coupling_exponent_truth,
                 c1=cfg.c1, sigma_0=cfg.sigma_0,
                 gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
                 c2=cfg.c2, sigma_L=cfg.sigma_L,

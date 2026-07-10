@@ -241,7 +241,7 @@ def _cfg_to_data_dict(cfg: Lorenz63Config) -> dict:
 def _make_lorenz63_dynamics(cfg: Lorenz63Config):
     from models.lorenz63_dynamics import Lorenz63Dynamics
     return Lorenz63Dynamics(
-        dt=cfg.dt, coupling_type=cfg.forcing_coupling,
+        dt=cfg.dt, coupling_exponent=cfg.coupling_exponent_truth,
         c1=cfg.c1, sigma_0=cfg.sigma_0,
         gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
         c2=cfg.c2, sigma_L=cfg.sigma_L,
@@ -259,17 +259,14 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
     test_s0_cfg = Lorenz63Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.0,
         "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
     out = {
-        "test_s0": RandomParamLorenz63Dataset(test_s0_cfg, dynamics, param_noise=param_noise),
+        "test_s0": RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise, dynamics=dynamics),
     }
-    out["test_s0"].data_cfg.update(_cfg_to_data_dict(test_s0_cfg))
-
     if include_s1_test:
         from data.random_bias_dataset import RandomBiasLorenz63Dataset
         test_s1_cfg = Lorenz63Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.15,
             "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
         ds = RandomBiasLorenz63Dataset(
-            test_s1_cfg, dynamics, param_noise=param_noise, bias_mode='fixed')
-        ds.data_cfg.update(_cfg_to_data_dict(test_s1_cfg))
+            test_s1_cfg, param_noise=param_noise, dynamics=dynamics, bias_mode='fixed')
         out["test_s1"] = ds
     return out
 
