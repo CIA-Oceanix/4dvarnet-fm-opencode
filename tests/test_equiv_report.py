@@ -2,7 +2,8 @@
 Compare refactored baseline RMSEs against the published S0/S1 report.
 Uses the exact config from reports/outputs/s0_s1_synthesis.md:
   dws=50, 15 obs per window (obs_interval=20), R_var=0.5,
-  EnKF/ETKF inflation=2.0, Weak/Strong opt_steps=150, lr=0.01
+  EnKF/ETKF inflation=2.0, Weak opt_steps=150 lr=0.02,
+  Strong max_iter=40 lr=0.1
 """
 import sys, os, json
 os.environ['TRITON_CACHE_DIR'] = '/tmp/triton_cache'
@@ -25,8 +26,8 @@ print(f"Datasets: { {k: len(v) for k, v in datasets.items()} }")
 
 result = run_and_cache_baselines(
     datasets, device, batch_size=1, da_window_steps=50,
-    weak_config={"opt_steps": 150, "lr": 0.01},
-    strong_config={"max_iter": 50, "lr": 0.5},
+    weak_config={"opt_steps": 150, "lr": 0.02},
+    strong_config={"max_iter": 40, "lr": 0.1},
     enkf_config={"N_ensemble": 30, "inflation": 2.0},
     etkf_config={"N_ensemble": 30, "inflation": 2.0},
     suffix="_equiv_test",
