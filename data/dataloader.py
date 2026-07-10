@@ -27,15 +27,23 @@ class FlowMatchingBatch:
 
 class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
-                 obs_interval: int = 20, R_var: float = 0.5):
+                 obs_interval: int = 20, R_var: float = 0.5, param_names=None):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
         self.obs_interval = obs_interval
         self.R_var = R_var
+        self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
+        self.param_dim = len(self.param_names)
 
     def __len__(self):
         return len(self.source)
+
+    def _extract_params(self, w):
+        return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+
+    def _extract_true_params(self, w):
+        return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):
         from data.lorenz63 import generate_observations
@@ -47,32 +55,33 @@ class FlowMatchingDataset(Dataset):
             w["obs"] = obs
             w["obs_mask"] = obs_mask
         result = (w["true_state"], w["obs"], w["obs_mask"], w["forcing_corrupted"])
-        if self.with_params and "sigma" in w:
-            result = result + (
-                w.get("sigma"), w.get("rho"), w.get("beta"), w.get("c1", 1.0),
-            )
-            result = result + (
-                w.get("true_sigma", w["sigma"]),
-                w.get("true_rho", w["rho"]),
-                w.get("true_beta", w["beta"]),
-                w.get("true_c1", w.get("c1", 1.0)),
-            )
+        if self.with_params and self.param_names[0] in w:
+            result = result + self._extract_params(w)
+            result = result + self._extract_true_params(w)
         return result
 
 
 class ConcatFMDataset(Dataset):
     def __init__(self, datasets, with_params: bool = False,
-                 obs_interval: int = 20, R_var: float = 0.5):
+                 obs_interval: int = 20, R_var: float = 0.5, param_names=None):
         self.datasets = datasets
         self.with_params = with_params
         self.obs_interval = obs_interval
         self.R_var = R_var
+        self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
+        self.param_dim = len(self.param_names)
         self.cumlen = [0]
         for d in datasets:
             self.cumlen.append(self.cumlen[-1] + len(d))
 
     def __len__(self):
         return self.cumlen[-1]
+
+    def _extract_params(self, w):
+        return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+
+    def _extract_true_params(self, w):
+        return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):
         from data.lorenz63 import generate_observations
@@ -86,16 +95,9 @@ class ConcatFMDataset(Dataset):
                     w["obs"] = obs
                     w["obs_mask"] = obs_mask
                 result = (w["true_state"], w["obs"], w["obs_mask"], w["forcing_corrupted"])
-                if self.with_params and "sigma" in w:
-                    result = result + (
-                        w.get("sigma"), w.get("rho"), w.get("beta"), w.get("c1", 1.0),
-                    )
-                    result = result + (
-                        w.get("true_sigma", w["sigma"]),
-                        w.get("true_rho", w["rho"]),
-                        w.get("true_beta", w["beta"]),
-                        w.get("true_c1", w.get("c1", 1.0)),
-                    )
+                if self.with_params and self.param_names[0] in w:
+                    result = result + self._extract_params(w)
+                    result = result + self._extract_true_params(w)
                 return result
         raise IndexError
 
@@ -107,9 +109,10 @@ def collate_fm(batch):
     forcing = torch.stack([b[3] for b in batch])
     params = None
     true_params = None
-    if len(batch[0]) == 12:
-        params = torch.stack([torch.tensor([b[4], b[5], b[6], b[7]], dtype=torch.float32) for b in batch])
-        true_params = torch.stack([torch.tensor([b[8], b[9], b[10], b[11]], dtype=torch.float32) for b in batch])
+    if len(batch[0]) > 4:
+        n_params = (len(batch[0]) - 4) // 2
+        params = torch.stack([torch.tensor(b[4:4 + n_params], dtype=torch.float32) for b in batch])
+        true_params = torch.stack([torch.tensor(b[4 + n_params:4 + 2 * n_params], dtype=torch.float32) for b in batch])
     return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params)
 
 

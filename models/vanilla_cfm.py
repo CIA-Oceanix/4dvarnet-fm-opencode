@@ -13,9 +13,9 @@ def _make_cond(obs, forcing, params):
 
 
 class VanillaCFM(nn.Module):
-    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False):
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4):
         super().__init__()
-        self.obs_dim = state_dim + 1 + 4
+        self.obs_dim = state_dim + 1 + param_dim
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=self.obs_dim,
@@ -68,7 +68,8 @@ class JointCFM(VanillaCFM):
     def __init__(self, state_dim=3, param_dim=4, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1, param_loss_weight=0.1,
                  train_tau_0_only=False):
-        super().__init__(state_dim=state_dim, hidden_channels=hidden_channels,
+        super().__init__(state_dim=state_dim, param_dim=param_dim,
+                         hidden_channels=hidden_channels,
                          time_emb_dim=time_emb_dim, N_outer=N_outer,
                          sigma_prior=sigma_prior, dropout=dropout)
         self.unet = UNet1D(

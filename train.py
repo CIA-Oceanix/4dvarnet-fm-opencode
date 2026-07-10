@@ -87,6 +87,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             state_dim=cfg.model.state_dim,
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
+            param_dim=cfg.model.get("param_dim", 4),
         )
     elif model_type == "vanilla_cfm":
         vc = cfg.model.vanilla_cfm
@@ -98,6 +99,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             sigma_prior=vc.sigma_prior,
             dropout=vc.dropout,
             train_tau_0_only=vc.get("train_tau_0_only", False),
+            param_dim=cfg.model.get("param_dim", 4),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
