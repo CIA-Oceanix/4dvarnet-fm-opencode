@@ -2,6 +2,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 from dataclasses import dataclass
+from models.dynamics import DynamicsBase
 
 
 def _apply_coupling(W: torch.Tensor, c1, exponent: float = 1.0) -> torch.Tensor:
@@ -55,6 +56,7 @@ class Weak4DVar:
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         self.da_window_steps = da_window_steps
         self.B_var = B_var
@@ -65,6 +67,8 @@ class Weak4DVar:
         self.dt = dt
         self.device = device
         self.coupling_exponent = coupling_exponent
+        self.dynamics = dynamics
+        self.state_dim = dynamics.state_dim if dynamics else 3
 
     def assimilate(
         self,
@@ -77,12 +81,13 @@ class Weak4DVar:
         beta: float = 8 / 3,
         c1: float = 1.0,
     ) -> BaselineResult:
+        sd = self.state_dim
         num_steps = observations.shape[0]
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        current_bg = interp_obs[0].clone() + torch.randn(3, device=self.device) * 1.5
+        current_bg = interp_obs[0].clone() + torch.randn(sd, device=self.device) * 1.5
 
         for w in range(num_windows):
             start = w * self.da_window_steps
@@ -92,7 +97,7 @@ class Weak4DVar:
             win_force = forcing[start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros(self.da_window_steps, 3, device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(self.da_window_steps, sd, device=self.device, requires_grad=True)
             x_bg_ref = current_bg.clone().detach()
 
             opt = optim.Adam([x0_ctrl, q_ctrl], lr=self.lr)
@@ -127,15 +132,8 @@ class Weak4DVar:
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
-            X, Y, Z = s[0], s[1], s[2]
             W = forcing[t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = X * (rho - Z) - Y
-            dZ = X * Y - beta * Z
-            Xn = X + dX * self.dt + q[t, 0]
-            Yn = Y + dY * self.dt + q[t, 1]
-            Zn = Z + dZ * self.dt + q[t, 2]
-            next_s = torch.stack([Xn, Yn, Zn])
+            next_s = self.dynamics.step(s, W, sigma, rho, beta) + q[t]
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -146,15 +144,8 @@ class Weak4DVar:
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
-            X, Y, Z = s[:, 0], s[:, 1], s[:, 2]
             W = forcing[:, t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = X * (rho - Z) - Y
-            dZ = X * Y - beta * Z
-            Xn = X + dX * self.dt + q[:, t, 0]
-            Yn = Y + dY * self.dt + q[:, t, 1]
-            Zn = Z + dZ * self.dt + q[:, t, 2]
-            next_s = torch.stack([Xn, Yn, Zn], dim=1)
+            next_s = self.dynamics.step(s, W, sigma, rho, beta) + q[:, t]
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -171,12 +162,13 @@ class Weak4DVar:
         beta: float = 8 / 3,
         c1: float = 1.0,
     ) -> list:
+        sd = self.state_dim
         B, num_steps, _ = observations.shape
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
 
         interp_obs = _interp_observations(observations, obs_mask)
-        current_bg = interp_obs[:, 0].clone() + torch.randn(B, 3, device=self.device) * 1.5
+        current_bg = interp_obs[:, 0].clone() + torch.randn(B, sd, device=self.device) * 1.5
 
         for w in range(num_windows):
             start = w * self.da_window_steps
@@ -186,7 +178,7 @@ class Weak4DVar:
             win_force = forcing[:, start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros(B, self.da_window_steps, 3, device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(B, self.da_window_steps, sd, device=self.device, requires_grad=True)
             x_bg_ref = current_bg.clone().detach()
 
             opt = optim.Adam([x0_ctrl, q_ctrl], lr=self.lr)
@@ -232,6 +224,7 @@ class Strong4DVar:
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         self.da_window_steps = da_window_steps
         self.B_var = B_var
@@ -241,6 +234,8 @@ class Strong4DVar:
         self.dt = dt
         self.device = device
         self.coupling_exponent = coupling_exponent
+        self.dynamics = dynamics
+        self.state_dim = dynamics.state_dim if dynamics else 3
 
     def assimilate(
         self,
@@ -254,11 +249,12 @@ class Strong4DVar:
         c1: float = 1.0,
     ) -> BaselineResult:
         num_steps = observations.shape[0]
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        current_bg = interp_obs[0].clone() + torch.randn(3, device=self.device) * 1.5
+        current_bg = interp_obs[0].clone() + torch.randn(sd, device=self.device) * 1.5
 
         for w in range(num_windows):
             start = w * self.da_window_steps
@@ -301,12 +297,8 @@ class Strong4DVar:
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
-            X, Y, Z = s[0], s[1], s[2]
             W = forcing[t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = X * (rho - Z) - Y
-            dZ = X * Y - beta * Z
-            next_s = torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt])
+            next_s = self.dynamics.step(s, W, sigma, rho, beta)
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -317,12 +309,8 @@ class Strong4DVar:
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
-            X, Y, Z = s[:, 0], s[:, 1], s[:, 2]
             W = forcing[:, t - 1]
-            dX = sigma * (Y - X) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = X * (rho - Z) - Y
-            dZ = X * Y - beta * Z
-            next_s = torch.stack([X + dX * self.dt, Y + dY * self.dt, Z + dZ * self.dt], dim=1)
+            next_s = self.dynamics.step(s, W, sigma, rho, beta)
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -340,11 +328,12 @@ class Strong4DVar:
         c1: float = 1.0,
     ) -> list:
         B, num_steps, _ = observations.shape
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
 
         interp_obs = _interp_observations(observations, obs_mask)
-        current_bg = interp_obs[:, 0].clone() + torch.randn(B, 3, device=self.device) * 1.5
+        current_bg = interp_obs[:, 0].clone() + torch.randn(B, sd, device=self.device) * 1.5
 
         for w in range(num_windows):
             start = w * self.da_window_steps
@@ -393,6 +382,7 @@ class ETKF:
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -400,6 +390,8 @@ class ETKF:
         self.dt = dt
         self.device = device
         self.coupling_exponent = coupling_exponent
+        self.dynamics = dynamics
+        self.state_dim = dynamics.state_dim if dynamics else 3
 
     def assimilate(
         self,
@@ -413,27 +405,22 @@ class ETKF:
         c1: float = 1.0,
     ) -> BaselineResult:
         num_steps = observations.shape[0]
+        sd = self.state_dim
         N = self.N_ensemble
         N1 = N - 1
         R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        ensemble = interp_obs[0].unsqueeze(0).repeat(N, 1) + torch.randn((N, 3), device=self.device) * 1.5
+        ensemble = interp_obs[0].unsqueeze(0).repeat(N, 1) + torch.randn((N, sd), device=self.device) * 1.5
 
-        analysis = np.zeros((num_steps, 3))
-        ens_var = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
+        ens_var = np.zeros((num_steps, sd))
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = Xe * (rho - Ze) - Ye
-            dZ = Xe * Ye - beta * Ze
-            ensemble[:, 0] += dX * self.dt
-            ensemble[:, 1] += dY * self.dt
-            ensemble[:, 2] += dZ * self.dt
+            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
 
 
             if obs_mask[t]:
@@ -465,7 +452,7 @@ class ETKF:
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, 3)), ensemble_variance=ens_var)
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, self.state_dim)), ensemble_variance=ens_var)
     def assimilate_batch(
         self,
         observations: torch.Tensor,
@@ -483,26 +470,16 @@ class ETKF:
         R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
 
         interp_obs = _interp_observations(observations, obs_mask)
-        ensemble = interp_obs[:, 0].unsqueeze(1).repeat(1, N, 1) + torch.randn((B, N, 3), device=self.device) * 1.5
+        ensemble = interp_obs[:, 0].unsqueeze(1).repeat(1, N, 1) + torch.randn((B, N, self.state_dim), device=self.device) * 1.5
 
-        analysis = np.zeros((B, num_steps, 3))
-        ens_var = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, self.state_dim))
+        ens_var = np.zeros((B, num_steps, self.state_dim))
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        # Ensure broadcast-compatible dims for per-batch params
-        if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
-            sigma, rho, beta = sigma.unsqueeze(-1), rho.unsqueeze(-1), beta.unsqueeze(-1)
-
         for t in range(1, num_steps):
-            W = forcing[:, t - 1, None]
-            Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = Xe * (rho - Ze) - Ye
-            dZ = Xe * Ye - beta * Ze
-            ensemble[:, :, 0] += dX * self.dt
-            ensemble[:, :, 1] += dY * self.dt
-            ensemble[:, :, 2] += dZ * self.dt
+            W = forcing[:, t - 1]
+            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -540,7 +517,7 @@ class ETKF:
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b,
-                ensemble=np.zeros((N, num_steps, 3)),
+                ensemble=np.zeros((N, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
             ))
         return results
@@ -555,6 +532,7 @@ class EnKF:
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -562,6 +540,8 @@ class EnKF:
         self.dt = dt
         self.device = device
         self.coupling_exponent = coupling_exponent
+        self.dynamics = dynamics
+        self.state_dim = dynamics.state_dim if dynamics else 3
 
     def assimilate(
         self,
@@ -576,32 +556,26 @@ class EnKF:
     ) -> BaselineResult:
         num_steps = observations.shape[0]
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        ensemble = interp_obs[0].unsqueeze(0).repeat(self.N_ensemble, 1) + torch.randn((self.N_ensemble, 3), device=self.device) * 1.5
+        ensemble = interp_obs[0].unsqueeze(0).repeat(self.N_ensemble, 1) + torch.randn((self.N_ensemble, self.state_dim), device=self.device) * 1.5
 
-        analysis = np.zeros((num_steps, 3))
-        ens_var = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, self.state_dim))
+        ens_var = np.zeros((num_steps, self.state_dim))
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = Xe * (rho - Ze) - Ye
-            dZ = Xe * Ye - beta * Ze
-            ensemble[:, 0] += dX * self.dt
-            ensemble[:, 1] += dY * self.dt
-            ensemble[:, 2] += dZ * self.dt
+            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
 
             if obs_mask[t]:
                 y_t = observations[t]
                 mean_e = torch.mean(ensemble, dim=0)
                 A = ensemble - mean_e
                 P_b = (A.T @ A) / (self.N_ensemble - 1)
-                R = torch.eye(3, device=self.device) * self.R_var
+                R = torch.eye(self.state_dim, device=self.device) * self.R_var
                 K = P_b @ torch.inverse(P_b + R)
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn(3, device=self.device) * np.sqrt(self.R_var)
+                    perturbed = y_t + torch.randn(self.state_dim, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - ensemble[n])
 
                 mean_e = torch.mean(ensemble, dim=0)
@@ -612,7 +586,7 @@ class EnKF:
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, 3)), ensemble_variance=ens_var)
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)), ensemble_variance=ens_var)
 
     def assimilate_batch(
         self,
@@ -627,36 +601,26 @@ class EnKF:
     ) -> list:
         B, num_steps, _ = observations.shape
         interp_obs = _interp_observations(observations, obs_mask)
-        ensemble = interp_obs[:, 0].unsqueeze(1).repeat(1, self.N_ensemble, 1) + torch.randn((B, self.N_ensemble, 3), device=self.device) * 1.5
+        ensemble = interp_obs[:, 0].unsqueeze(1).repeat(1, self.N_ensemble, 1) + torch.randn((B, self.N_ensemble, self.state_dim), device=self.device) * 1.5
 
-        analysis = np.zeros((B, num_steps, 3))
-        ens_var = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, self.state_dim))
+        ens_var = np.zeros((B, num_steps, self.state_dim))
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        # Ensure broadcast-compatible dims for per-batch params
-        if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
-            sigma, rho, beta = sigma.unsqueeze(-1), rho.unsqueeze(-1), beta.unsqueeze(-1)
-
         for t in range(1, num_steps):
-            W = forcing[:, t - 1, None]
-            Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
-            dX = sigma * (Ye - Xe) + _apply_coupling(W, c1, self.coupling_exponent)
-            dY = Xe * (rho - Ze) - Ye
-            dZ = Xe * Ye - beta * Ze
-            ensemble[:, :, 0] += dX * self.dt
-            ensemble[:, :, 1] += dY * self.dt
-            ensemble[:, :, 2] += dZ * self.dt
+            W = forcing[:, t - 1]
+            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
 
             if obs_mask[:, t].any():
                 y_t = observations[:, t]
                 mean_e = torch.mean(ensemble, dim=1)
                 A = ensemble - mean_e.unsqueeze(1)
                 P_b = (A.transpose(1, 2) @ A) / (self.N_ensemble - 1)
-                R = torch.eye(3, device=self.device).unsqueeze(0) * self.R_var
+                R = torch.eye(self.state_dim, device=self.device).unsqueeze(0) * self.R_var
                 K = P_b @ torch.inverse(P_b + R)
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn((B, 3), device=self.device) * np.sqrt(self.R_var)
+                    perturbed = y_t + torch.randn((B, self.state_dim), device=self.device) * np.sqrt(self.R_var)
                     ensemble[:, n] += (K @ (perturbed - ensemble[:, n]).unsqueeze(-1)).squeeze(-1)
 
                 mean_e = torch.mean(ensemble, dim=1)
@@ -671,7 +635,7 @@ class EnKF:
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b,
-                ensemble=np.zeros((self.N_ensemble, num_steps, 3)),
+                ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
             ))
         return results
@@ -690,12 +654,14 @@ class JointWeak4DVar(Weak4DVar):
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         super().__init__(
             da_window_steps=da_window_steps,
             B_var=B_var, R_var=R_var, Q_var=Q_var,
             lr=lr, opt_steps=opt_steps, dt=dt,
             device=device, coupling_exponent=coupling_exponent,
+            dynamics=dynamics,
         )
         self.P_var = P_var
 
@@ -711,12 +677,13 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
     ) -> BaselineResult:
         num_steps = observations.shape[0]
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
         param_arr = np.zeros((num_steps, 4))
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        current_bg = interp_obs[0].clone() + torch.randn(3, device=self.device) * 1.5
+        current_bg = interp_obs[0].clone() + torch.randn(sd, device=self.device) * 1.5
         log_s = torch.tensor(np.log(max(sigma, 1e-6)), device=self.device)
         log_r = torch.tensor(np.log(max(rho, 1e-6)), device=self.device)
         log_b = torch.tensor(np.log(max(beta, 1e-6)), device=self.device)
@@ -731,7 +698,7 @@ class JointWeak4DVar(Weak4DVar):
             win_force = forcing[start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros(self.da_window_steps, 3, device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(self.da_window_steps, sd, device=self.device, requires_grad=True)
             ls = log_s.clone().detach().requires_grad_(True)
             lr_ = log_r.clone().detach().requires_grad_(True)
             lb = log_b.clone().detach().requires_grad_(True)
@@ -790,8 +757,9 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
     ) -> list:
         B, num_steps, _ = observations.shape
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
         param_arr = np.zeros((B, num_steps, 4))
 
         if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
@@ -803,7 +771,7 @@ class JointWeak4DVar(Weak4DVar):
             c1_b = torch.full((B,), c1, device=self.device)
 
         interp_obs = _interp_observations(observations, obs_mask)
-        current_bg = interp_obs[:, 0].clone() + torch.randn(B, 3, device=self.device) * 1.5
+        current_bg = interp_obs[:, 0].clone() + torch.randn(B, sd, device=self.device) * 1.5
         log_s = torch.log(sigma_b.clamp(min=1e-6))
         log_r = torch.log(rho_b.clamp(min=1e-6))
         log_b = torch.log(beta_b.clamp(min=1e-6))
@@ -818,7 +786,7 @@ class JointWeak4DVar(Weak4DVar):
             win_force = forcing[:, start:end]
 
             x0_ctrl = current_bg.clone().detach().requires_grad_(True)
-            q_ctrl = torch.zeros(B, self.da_window_steps, 3, device=self.device, requires_grad=True)
+            q_ctrl = torch.zeros(B, self.da_window_steps, sd, device=self.device, requires_grad=True)
             ls = log_s.clone().detach().requires_grad_(True)
             lr_ = log_r.clone().detach().requires_grad_(True)
             lb = log_b.clone().detach().requires_grad_(True)
@@ -880,12 +848,14 @@ class JointStrong4DVar(Strong4DVar):
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         super().__init__(
             da_window_steps=da_window_steps,
             B_var=B_var, R_var=R_var,
             max_iter=max_iter, lr=lr, dt=dt,
             device=device, coupling_exponent=coupling_exponent,
+            dynamics=dynamics,
         )
         self.P_var = P_var
 
@@ -901,12 +871,13 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
     ) -> BaselineResult:
         num_steps = observations.shape[0]
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
         param_arr = np.zeros((num_steps, 4))
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        current_bg = interp_obs[0].clone() + torch.randn(3, device=self.device) * 1.5
+        current_bg = interp_obs[0].clone() + torch.randn(sd, device=self.device) * 1.5
         log_s = torch.tensor(np.log(max(sigma, 1e-6)), device=self.device)
         log_r = torch.tensor(np.log(max(rho, 1e-6)), device=self.device)
         log_b = torch.tensor(np.log(max(beta, 1e-6)), device=self.device)
@@ -974,8 +945,9 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
     ) -> list:
         B, num_steps, _ = observations.shape
+        sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
-        analysis = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
         param_arr = np.zeros((B, num_steps, 4))
 
         if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
@@ -987,7 +959,7 @@ class JointStrong4DVar(Strong4DVar):
             c1_b = torch.full((B,), c1, device=self.device)
 
         interp_obs = _interp_observations(observations, obs_mask)
-        current_bg = interp_obs[:, 0].clone() + torch.randn(B, 3, device=self.device) * 1.5
+        current_bg = interp_obs[:, 0].clone() + torch.randn(B, sd, device=self.device) * 1.5
         log_s = torch.log(sigma_b.clamp(min=1e-6))
         log_r = torch.log(rho_b.clamp(min=1e-6))
         log_b = torch.log(beta_b.clamp(min=1e-6))
@@ -1055,16 +1027,18 @@ class JointEnKF(EnKF):
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         super().__init__(
             N_ensemble=N_ensemble, R_var=R_var, inflation=inflation,
             dt=dt, device=device, coupling_exponent=coupling_exponent,
+            dynamics=dynamics,
         )
 
     def _init_ensemble(self, obs0, sigma, rho, beta, c1):
         N = self.N_ensemble
         state = obs0.clone().unsqueeze(0).repeat(N, 1)
-        state += torch.randn((N, 3), device=self.device) * 1.5
+        state += torch.randn((N, self.state_dim), device=self.device) * 1.5
         sigmas = torch.full((N, 1), sigma, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         rhos = torch.full((N, 1), rho, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         betas = torch.full((N, 1), beta, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
@@ -1075,7 +1049,7 @@ class JointEnKF(EnKF):
         B = obs0.shape[0]
         N = self.N_ensemble
         state = obs0.clone().unsqueeze(1).repeat(1, N, 1)
-        state += torch.randn((B, N, 3), device=self.device) * 1.5
+        state += torch.randn((B, N, self.state_dim), device=self.device) * 1.5
         if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
             sigmas = sigma.unsqueeze(-1).unsqueeze(-1).expand(B, N, 1) * (1 + torch.randn(B, N, 1, device=self.device) * 0.1)
             rhos = rho.unsqueeze(-1).unsqueeze(-1).expand(B, N, 1) * (1 + torch.randn(B, N, 1, device=self.device) * 0.1)
@@ -1101,61 +1075,57 @@ class JointEnKF(EnKF):
     ) -> BaselineResult:
         num_steps = observations.shape[0]
         N = self.N_ensemble
-        N_dim = 7
+        param_dim = self.dynamics.param_dim if self.dynamics else 3
+        N_dim = self.state_dim + 4
         N1 = N - 1
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = self._init_ensemble(interp_obs[0], sigma, rho, beta, c1)
 
-        analysis = np.zeros((num_steps, 3))
-        ens_var = np.zeros((num_steps, 3))
+        sd = self.state_dim
+        analysis = np.zeros((num_steps, sd))
+        ens_var = np.zeros((num_steps, sd))
         param_arr = np.zeros((num_steps, 4))
-        analysis[0] = torch.mean(ensemble[:, :3], dim=0).cpu().numpy()
-        ens_var[0] = torch.var(ensemble[:, :3], dim=0).cpu().numpy()
-        param_arr[0] = torch.mean(ensemble[:, 3:], dim=0).detach().cpu().numpy()
+        analysis[0] = torch.mean(ensemble[:, :sd], dim=0).cpu().numpy()
+        ens_var[0] = torch.var(ensemble[:, :sd], dim=0).cpu().numpy()
+        param_arr[0] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
             sig_e = ensemble[:, 3].clamp(min=1e-6)
             rho_e = ensemble[:, 4].clamp(min=1e-6)
             beta_e = ensemble[:, 5].clamp(min=1e-6)
-            c1_e = ensemble[:, 6].clamp(min=1e-6)
-            dX = sig_e * (Ye - Xe) + _apply_coupling(W, c1_e, self.coupling_exponent)
-            dY = Xe * (rho_e - Ze) - Ye
-            dZ = Xe * Ye - beta_e * Ze
-            ensemble[:, 0] += dX * self.dt
-            ensemble[:, 1] += dY * self.dt
-            ensemble[:, 2] += dZ * self.dt
+            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.expand(N), sig_e, rho_e, beta_e)
 
             if obs_mask[t]:
                 y_t = observations[t]
                 mean_e = torch.mean(ensemble, dim=0)
                 A = ensemble - mean_e
                 P_b = (A.T @ A) / N1
-                H = torch.zeros(3, N_dim, device=self.device)
-                H[0, 0] = H[1, 1] = H[2, 2] = 1.0
-                K = P_b @ H.T @ torch.inverse(H @ P_b @ H.T + torch.eye(3, device=self.device) * self.R_var)
+                H = torch.zeros(sd, N_dim, device=self.device)
+                for i in range(sd):
+                    H[i, i] = 1.0
+                K = P_b @ H.T @ torch.inverse(H @ P_b @ H.T + torch.eye(sd, device=self.device) * self.R_var)
                 for n in range(N):
-                    perturbed = y_t + torch.randn(3, device=self.device) * np.sqrt(self.R_var)
+                    perturbed = y_t + torch.randn(sd, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - H @ ensemble[n])
 
                 mean_e = torch.mean(ensemble, dim=0)
                 ensemble = mean_e + self.inflation * (ensemble - mean_e)
-                ensemble[:, 3:] = ensemble[:, 3:].clamp(min=1e-6)
+                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
                 ensemble[:, 3] = ensemble[:, 3].clamp(max=30.0)
                 ensemble[:, 4] = ensemble[:, 4].clamp(max=50.0)
                 ensemble[:, 5] = ensemble[:, 5].clamp(max=10.0)
                 ensemble[:, 6] = ensemble[:, 6].clamp(max=5.0)
 
-            analysis[t] = torch.mean(ensemble[:, :3], dim=0).detach().cpu().numpy()
-            ens_var[t] = torch.var(ensemble[:, :3], dim=0).detach().cpu().numpy()
-            param_arr[t] = torch.mean(ensemble[:, 3:], dim=0).detach().cpu().numpy()
+            analysis[t] = torch.mean(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            param_arr[t] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
-                              ensemble=np.zeros((N, num_steps, 3)),
+                              ensemble=np.zeros((N, num_steps, sd)),
                               ensemble_variance=ens_var)
 
     def assimilate_batch(
@@ -1171,32 +1141,27 @@ class JointEnKF(EnKF):
     ) -> list:
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
-        N_dim = 7
+        sd = self.state_dim
+        param_dim = self.dynamics.param_dim if self.dynamics else 3
+        N_dim = sd + 4
         N1 = N - 1
 
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = self._init_ensemble_batch(interp_obs[:, 0], sigma, rho, beta, c1)
 
-        analysis = np.zeros((B, num_steps, 3))
-        ens_var = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
+        ens_var = np.zeros((B, num_steps, sd))
         param_arr = np.zeros((B, num_steps, 4))
-        analysis[:, 0] = torch.mean(ensemble[:, :, :3], dim=1).cpu().numpy()
-        ens_var[:, 0] = torch.var(ensemble[:, :, :3], dim=1).cpu().numpy()
-        param_arr[:, 0] = torch.mean(ensemble[:, :, 3:], dim=1).detach().cpu().numpy()
+        analysis[:, 0] = torch.mean(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        ens_var[:, 0] = torch.var(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        param_arr[:, 0] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]
-            Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
             sig_e = ensemble[:, :, 3].clamp(min=1e-6)
             rho_e = ensemble[:, :, 4].clamp(min=1e-6)
             beta_e = ensemble[:, :, 5].clamp(min=1e-6)
-            c1_e = ensemble[:, :, 6].clamp(min=1e-6)
-            dX = sig_e * (Ye - Xe) + _apply_coupling(W, c1_e, self.coupling_exponent)
-            dY = Xe * (rho_e - Ze) - Ye
-            dZ = Xe * Ye - beta_e * Ze
-            ensemble[:, :, 0] += dX * self.dt
-            ensemble[:, :, 1] += dY * self.dt
-            ensemble[:, :, 2] += dZ * self.dt
+            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sig_e, rho_e, beta_e)
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -1207,23 +1172,24 @@ class JointEnKF(EnKF):
                     mean_e = torch.mean(ens_b, dim=0)
                     A = ens_b - mean_e
                     P_b = (A.T @ A) / N1
-                    H = torch.zeros(3, N_dim, device=self.device)
-                    H[0, 0] = H[1, 1] = H[2, 2] = 1.0
-                    K = P_b @ H.T @ torch.inverse(H @ P_b @ H.T + torch.eye(3, device=self.device) * self.R_var)
+                    H = torch.zeros(sd, N_dim, device=self.device)
+                    for i in range(sd):
+                        H[i, i] = 1.0
+                    K = P_b @ H.T @ torch.inverse(H @ P_b @ H.T + torch.eye(sd, device=self.device) * self.R_var)
                     for n in range(N):
-                        perturbed = y_t + torch.randn(3, device=self.device) * np.sqrt(self.R_var)
+                        perturbed = y_t + torch.randn(sd, device=self.device) * np.sqrt(self.R_var)
                         ens_b[n] += K @ (perturbed - H @ ens_b[n])
                     mean_e = torch.mean(ens_b, dim=0)
                     ensemble[b] = mean_e + self.inflation * (ens_b - mean_e)
-                    ensemble[b, :, 3:] = ensemble[b, :, 3:].clamp(min=1e-6)
+                    ensemble[b, :, sd:] = ensemble[b, :, sd:].clamp(min=1e-6)
                     ensemble[b, :, 3] = ensemble[b, :, 3].clamp(max=30.0)
                     ensemble[b, :, 4] = ensemble[b, :, 4].clamp(max=50.0)
                     ensemble[b, :, 5] = ensemble[b, :, 5].clamp(max=10.0)
                     ensemble[b, :, 6] = ensemble[b, :, 6].clamp(max=5.0)
 
-            analysis[:, t] = torch.mean(ensemble[:, :, :3], dim=1).detach().cpu().numpy()
-            ens_var[:, t] = torch.var(ensemble[:, :, :3], dim=1).detach().cpu().numpy()
-            param_arr[:, t] = torch.mean(ensemble[:, :, 3:], dim=1).detach().cpu().numpy()
+            analysis[:, t] = torch.mean(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            ens_var[:, t] = torch.var(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            param_arr[:, t] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         results = []
@@ -1231,7 +1197,7 @@ class JointEnKF(EnKF):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b, params=param_arr[b],
-                ensemble=np.zeros((N, num_steps, 3)),
+                ensemble=np.zeros((N, num_steps, sd)),
                 ensemble_variance=ens_var[b],
             ))
         return results
@@ -1246,10 +1212,12 @@ class JointETKF(ETKF):
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
+        dynamics: DynamicsBase = None,
     ):
         super().__init__(
             N_ensemble=N_ensemble, R_var=R_var, inflation=inflation,
             dt=dt, device=device, coupling_exponent=coupling_exponent,
+            dynamics=dynamics,
         )
 
     def assimilate(
@@ -1265,42 +1233,37 @@ class JointETKF(ETKF):
     ) -> BaselineResult:
         num_steps = observations.shape[0]
         N = self.N_ensemble
-        N_dim = 7
+        sd = self.state_dim
+        N_dim = sd + 4
         N1 = N - 1
         R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         state = interp_obs[0].clone().unsqueeze(0).repeat(N, 1)
-        state += torch.randn((N, 3), device=self.device) * 1.5
+        state += torch.randn((N, sd), device=self.device) * 1.5
         sigmas = torch.full((N, 1), sigma, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         rhos = torch.full((N, 1), rho, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         betas = torch.full((N, 1), beta, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         c1s = torch.full((N, 1), c1, device=self.device) * (1 + torch.randn(N, 1, device=self.device) * 0.1)
         ensemble = torch.cat([state, sigmas, rhos, betas, c1s], dim=1)
 
-        analysis = np.zeros((num_steps, 3))
-        ens_var = np.zeros((num_steps, 3))
+        analysis = np.zeros((num_steps, sd))
+        ens_var = np.zeros((num_steps, sd))
         param_arr = np.zeros((num_steps, 4))
-        analysis[0] = torch.mean(ensemble[:, :3], dim=0).cpu().numpy()
-        ens_var[0] = torch.var(ensemble[:, :3], dim=0).cpu().numpy()
-        param_arr[0] = torch.mean(ensemble[:, 3:], dim=0).detach().cpu().numpy()
+        analysis[0] = torch.mean(ensemble[:, :sd], dim=0).cpu().numpy()
+        ens_var[0] = torch.var(ensemble[:, :sd], dim=0).cpu().numpy()
+        param_arr[0] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
 
-        H_obs = torch.zeros(3, N_dim, device=self.device)
-        H_obs[0, 0] = H_obs[1, 1] = H_obs[2, 2] = 1.0
+        H_obs = torch.zeros(sd, N_dim, device=self.device)
+        for i in range(sd):
+            H_obs[i, i] = 1.0
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            Xe, Ye, Ze = ensemble[:, 0], ensemble[:, 1], ensemble[:, 2]
             sig_e = ensemble[:, 3].clamp(min=1e-6)
             rho_e = ensemble[:, 4].clamp(min=1e-6)
             beta_e = ensemble[:, 5].clamp(min=1e-6)
-            c1_e = ensemble[:, 6].clamp(min=1e-6)
-            dX = sig_e * (Ye - Xe) + _apply_coupling(W, c1_e, self.coupling_exponent)
-            dY = Xe * (rho_e - Ze) - Ye
-            dZ = Xe * Ye - beta_e * Ze
-            ensemble[:, 0] += dX * self.dt
-            ensemble[:, 1] += dY * self.dt
-            ensemble[:, 2] += dZ * self.dt
+            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.unsqueeze(1).expand(N), sig_e, rho_e, beta_e)
 
             if obs_mask[t]:
                 y_t = observations[t]
@@ -1308,7 +1271,7 @@ class JointETKF(ETKF):
                 A = ensemble - mu
                 HA = A @ H_obs.T
                 Y = HA
-                dy = y_t - mu[:3]
+                dy = y_t - mu[:sd]
 
                 Y_w = Y * R_sym_sqrt_inv
                 U, s, Vt = torch.linalg.svd(Y_w, full_matrices=False)
@@ -1325,20 +1288,20 @@ class JointETKF(ETKF):
 
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
-                ensemble[:, 3:] = ensemble[:, 3:].clamp(min=1e-6)
+                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
                 ensemble[:, 3] = ensemble[:, 3].clamp(max=30.0)
                 ensemble[:, 4] = ensemble[:, 4].clamp(max=50.0)
                 ensemble[:, 5] = ensemble[:, 5].clamp(max=10.0)
                 ensemble[:, 6] = ensemble[:, 6].clamp(max=5.0)
 
-            analysis[t] = torch.mean(ensemble[:, :3], dim=0).detach().cpu().numpy()
-            ens_var[t] = torch.var(ensemble[:, :3], dim=0).detach().cpu().numpy()
-            param_arr[t] = torch.mean(ensemble[:, 3:], dim=0).detach().cpu().numpy()
+            analysis[t] = torch.mean(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            param_arr[t] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
-                              ensemble=np.zeros((N, num_steps, 3)),
+                              ensemble=np.zeros((N, num_steps, sd)),
                               ensemble_variance=ens_var)
 
     def assimilate_batch(
@@ -1354,13 +1317,14 @@ class JointETKF(ETKF):
     ) -> list:
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
-        N_dim = 7
+        sd = self.state_dim
+        N_dim = sd + 4
         N1 = N - 1
         R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
 
         interp_obs = _interp_observations(observations, obs_mask)
         state = interp_obs[:, 0].clone().unsqueeze(1).repeat(1, N, 1)
-        state += torch.randn((B, N, 3), device=self.device) * 1.5
+        state += torch.randn((B, N, sd), device=self.device) * 1.5
         if isinstance(sigma, torch.Tensor) and sigma.dim() == 1:
             sigmas = sigma.unsqueeze(-1).unsqueeze(-1).expand(B, N, 1) * (1 + torch.randn(B, N, 1, device=self.device) * 0.1)
             rhos = rho.unsqueeze(-1).unsqueeze(-1).expand(B, N, 1) * (1 + torch.randn(B, N, 1, device=self.device) * 0.1)
@@ -1373,29 +1337,23 @@ class JointETKF(ETKF):
             c1s = torch.full((B, N, 1), c1, device=self.device) * (1 + torch.randn(B, N, 1, device=self.device) * 0.1)
         ensemble = torch.cat([state, sigmas, rhos, betas, c1s], dim=-1)
 
-        analysis = np.zeros((B, num_steps, 3))
-        ens_var = np.zeros((B, num_steps, 3))
+        analysis = np.zeros((B, num_steps, sd))
+        ens_var = np.zeros((B, num_steps, sd))
         param_arr = np.zeros((B, num_steps, 4))
-        analysis[:, 0] = torch.mean(ensemble[:, :, :3], dim=1).cpu().numpy()
-        ens_var[:, 0] = torch.var(ensemble[:, :, :3], dim=1).cpu().numpy()
-        param_arr[:, 0] = torch.mean(ensemble[:, :, 3:], dim=1).detach().cpu().numpy()
+        analysis[:, 0] = torch.mean(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        ens_var[:, 0] = torch.var(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        param_arr[:, 0] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
 
-        H_obs = torch.zeros(1, 3, N_dim, device=self.device)
-        H_obs[0, 0, 0] = H_obs[0, 1, 1] = H_obs[0, 2, 2] = 1.0
+        H_obs = torch.zeros(1, sd, N_dim, device=self.device)
+        for i in range(sd):
+            H_obs[0, i, i] = 1.0
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1, None]
-            Xe, Ye, Ze = ensemble[:, :, 0], ensemble[:, :, 1], ensemble[:, :, 2]
             sig_e = ensemble[:, :, 3].clamp(min=1e-6)
             rho_e = ensemble[:, :, 4].clamp(min=1e-6)
             beta_e = ensemble[:, :, 5].clamp(min=1e-6)
-            c1_e = ensemble[:, :, 6].clamp(min=1e-6)
-            dX = sig_e * (Ye - Xe) + _apply_coupling(W, c1_e, self.coupling_exponent)
-            dY = Xe * (rho_e - Ze) - Ye
-            dZ = Xe * Ye - beta_e * Ze
-            ensemble[:, :, 0] += dX * self.dt
-            ensemble[:, :, 1] += dY * self.dt
-            ensemble[:, :, 2] += dZ * self.dt
+            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sig_e, rho_e, beta_e)
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -1406,7 +1364,7 @@ class JointETKF(ETKF):
                     mu = torch.mean(ens_b, dim=0)
                     A = ens_b - mu
                     HA = A @ H_obs[0].T
-                    dy = y_t - mu[:3]
+                    dy = y_t - mu[:sd]
 
                     Y_w = HA * R_sym_sqrt_inv
                     U, s_, Vt = torch.linalg.svd(Y_w, full_matrices=False)
@@ -1422,15 +1380,15 @@ class JointETKF(ETKF):
                     ens_b = mu + w @ A + T @ A
                     mu = torch.mean(ens_b, dim=0)
                     ensemble[b] = mu + self.inflation * (ens_b - mu)
-                    ensemble[b, :, 3:] = ensemble[b, :, 3:].clamp(min=1e-6)
+                    ensemble[b, :, sd:] = ensemble[b, :, sd:].clamp(min=1e-6)
                     ensemble[b, :, 3] = ensemble[b, :, 3].clamp(max=30.0)
                     ensemble[b, :, 4] = ensemble[b, :, 4].clamp(max=50.0)
                     ensemble[b, :, 5] = ensemble[b, :, 5].clamp(max=10.0)
                     ensemble[b, :, 6] = ensemble[b, :, 6].clamp(max=5.0)
 
-            analysis[:, t] = torch.mean(ensemble[:, :, :3], dim=1).detach().cpu().numpy()
-            ens_var[:, t] = torch.var(ensemble[:, :, :3], dim=1).detach().cpu().numpy()
-            param_arr[:, t] = torch.mean(ensemble[:, :, 3:], dim=1).detach().cpu().numpy()
+            analysis[:, t] = torch.mean(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            ens_var[:, t] = torch.var(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            param_arr[:, t] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         results = []
@@ -1438,7 +1396,7 @@ class JointETKF(ETKF):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b, params=param_arr[b],
-                ensemble=np.zeros((N, num_steps, 3)),
+                ensemble=np.zeros((N, num_steps, sd)),
                 ensemble_variance=ens_var[b],
             ))
         return results

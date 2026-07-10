@@ -15,12 +15,12 @@ Remove hardcoded L63-specific assumptions behind abstract interfaces. No functio
 
 | # | Agent | Description | Files | Est. | Status | Git tag |
 |---|-------|-------------|-------|------|--------|---------|
-| 1 | Config | Split L63 fields → `config/case_study/lorenz63.yaml`; create `config/config.yaml`; update experiment defaults | `config/` | 1h | pending | `p1-config` |
-| 2 | Dynamics | Create `DynamicsBase(ABC)` + refactor `Lorenz63Dynamics` as subclass + factory | `models/dynamics.py`, `models/lorenz63_dynamics.py` | 1.5h | pending | `p1-dynamics` |
-| 3 | Model dims | Parameterize `obs_dim`, `param_dim`, `FlowMatchingBatch` from config | `models/direct_unet.py`, `models/vanilla_cfm.py`, `data/dataloader.py` | 1h | pending | `p1-model-dims` |
-| 4 | Metrics | Generalize RMSE keys from X/Y/Z to config-driven `state_names` | `evaluation/metrics.py`, `train.py` (partial) | 0.5h | pending | `p1-metrics` |
-| 5 | Datasets | Extract `generate_long_trajectory` → dynamics; generalize `Lorenz63Dataset`, `RandomBiasDataset`, `RandomParamDataset` | `data/lorenz63.py`, `data/random_bias_dataset.py`, `data/random_param_dataset.py` | 2h | pending | `p1-datasets` |
-| 6 | DA baselines | Parameterize `Weak4DVar`, `Strong4DVar`, `EnKF`, `ETKF` to accept `DynamicsBase` | `evaluation/baselines.py` | 3h | pending | `p1-baselines` |
+| 1 | Config | Add `data.system` to `lorenz63_default.yaml`; create `config.yaml` + `case_study/lorenz63.yaml` skeleton | `config/` | 1h | completed | `p1-config` |
+| 2 | Dynamics | Create `DynamicsBase(ABC)` + refactor `Lorenz63Dynamics` as subclass + factory | `models/dynamics.py`, `models/lorenz63_dynamics.py` | 1.5h | completed | `p1-dynamics` |
+| 3 | Model dims | Parameterize `obs_dim`, `param_dim`, `FlowMatchingBatch` + `collate_fm` from config | `models/direct_unet.py`, `models/vanilla_cfm.py`, `data/dataloader.py`, `train.py` | 1h | completed | `p1-model-dims` |
+| 4 | Metrics | Generalize RMSE keys from X/Y/Z to config-driven `state_names` | `evaluation/metrics.py`, `train.py` (partial) | 0.5h | completed | `p1-metrics` |
+| 5 | Datasets | Refactor datasets to use `DynamicsBase` internally; `generate_full_trajectory` on `Lorenz63Dynamics` | `data/lorenz63.py`, `data/random_bias_dataset.py`, `data/random_param_dataset.py` | 2h | completed | `p1-datasets` |
+| 6 | DA baselines | Parameterize `Weak4DVar`, `Strong4DVar`, `EnKF`, `ETKF` to accept `DynamicsBase` | `evaluation/baselines.py` | 3h | completed | `p1-baselines` |
 | 7 | Pipeline | Wire `model_factory`, `get_dynamics`, evaluation loop + full validation | `train.py`, `eval_baselines.py`, `training/`, `evaluate_all.py` | 1.5h | pending | `p1-pipeline` |
 
 ### Verifications (run after each agent)
