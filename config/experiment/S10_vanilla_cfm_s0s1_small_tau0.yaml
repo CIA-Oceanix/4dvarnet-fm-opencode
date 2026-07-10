@@ -1,0 +1,34 @@
+# @package _global_
+defaults:
+  - /lorenz63_default
+  - _self_
+
+model:
+  model_type: vanilla_cfm
+  vanilla_cfm:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: true
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+baselines:
+  da_window_steps: 50
+  enkf:
+    inflation: 2.0
+  etkf:
+    inflation: 2.0

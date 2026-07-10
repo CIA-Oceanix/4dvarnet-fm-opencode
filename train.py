@@ -97,6 +97,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             N_outer=vc.N_outer,
             sigma_prior=vc.sigma_prior,
             dropout=vc.dropout,
+            train_tau_0_only=vc.get("train_tau_0_only", False),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM

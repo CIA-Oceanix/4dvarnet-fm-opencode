@@ -13,7 +13,7 @@ def _make_cond(obs, forcing, params):
 
 
 class VanillaCFM(nn.Module):
-    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1):
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False):
         super().__init__()
         self.obs_dim = state_dim + 1 + 4
         self.unet = UNet1D(
@@ -29,6 +29,7 @@ class VanillaCFM(nn.Module):
         self.N_outer = N_outer
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
         cond = _make_cond(batch.obs, batch.forcing, batch.params)
@@ -38,7 +39,7 @@ class VanillaCFM(nn.Module):
     def compute_cfm_loss(self, batch):
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         v_target = batch.states - x0
@@ -51,8 +52,11 @@ class VanillaCFM(nn.Module):
         obs = batch.obs
         B, T, D = obs.shape
         device = obs.device
-        dt = 1.0 / N_outer
         x = torch.randn_like(obs) * self.sigma_prior
+        if self.train_tau_0_only:
+            v = self.forward(x, batch, tau=torch.zeros(B, device=device))
+            return x + v
+        dt = 1.0 / N_outer
         for step in range(N_outer):
             tau = torch.full((B,), step / N_outer, device=device)
             v = self.forward(x, batch, tau)
@@ -101,10 +105,7 @@ class JointCFM(VanillaCFM):
     def compute_cfm_loss(self, batch):
         B = batch.obs.shape[0]
         device = batch.obs.device
-        if self.train_tau_0_only:
-            tau = torch.zeros(B, device=device)
-        else:
-            tau = torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         v_target = batch.states - x0

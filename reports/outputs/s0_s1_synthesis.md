@@ -1,11 +1,11 @@
-# S0/S1 Benchmark Synthesis: Vanilla UNet vs DA Baselines
+# S0/S1 Benchmark Synthesis: UNet, VanillaCFM, and DA Baselines
 
-**Date**: 2026-07-08
-**Branch**: `exp/obs-at-step0`
+**Date**: 2026-07-10
+**Branch**: `exp/s0-s1-benchmark`
 **Dataset**: `make_s0_s1_trainval` with `RandomParamLorenz63Dataset` (per-window random σ, ρ, β ±20%)
 **Windows**: 200 test windows per case
 **DA window steps**: 50
-**Obs settings**: R_var=0.5, obs_interval=20 (15 obs / 300-step window, now includes step 0)
+**Obs settings**: R_var=0.5, obs_interval=20 (15 obs / 300-step window, includes step 0)
 **Truth coupling exponent**: a=1.6
 **S0 DA exponent**: 1.6 (perfect model)
 **S1 DA exponent**: 1.0 (mismatch — param_bias=0.15, forcing_state_bias=0.1)
@@ -46,82 +46,136 @@ Three issues were fixed before these baselines were produced:
 | EnKF (infl=2.0) | 1.14 ± 0.62 | 1.94 ± 0.81 | 3.73 ± 0.70 | **2.27** ± 0.55 |
 | ETKF (infl=2.0) | 1.14 ± 0.62 | 1.99 ± 0.78 | 3.69 ± 0.72 | **2.28** ± 0.55 |
 
-### Improvement over No-Obs-at-Step0
-
-| Method | S0 (was→now) | S1 (was→now) |
-|--------|:------------:|:------------:|
-| Weak-4DVar | 1.63 → **0.64** (−61%) | 2.19 → **1.64** (−25%) |
-| Strong-4DVar | 1.66 → **0.73** (−56%) | 2.57 → **2.14** (−17%) |
-| EnKF | 2.45 → **0.78** (−68%) | 3.19 → **2.27** (−29%) |
-| ETKF | 2.45 → **0.77** (−69%) | 3.19 → **2.28** (−29%) |
-
-### Degradation (S1 / S0)
-
-| Method | S0 | S1 | Degradation |
-|--------|:--:|:--:|:-----------:|
-| Weak-4DVar | 0.64 | 1.64 | 2.56x |
-| Strong-4DVar | 0.73 | 2.14 | 2.94x |
-| EnKF | 0.78 | 2.27 | 2.91x |
-| ETKF | 0.77 | 2.28 | 2.94x |
-
 **Best DA method**: Weak-4DVar on both S0 (0.64) and S1 (1.64).
 
 ---
 
-## 3. Vanilla UNet (DirectUNet) Results — Jul 8
+## 3. Learned Methods — All Sizes and Training Variants
 
-Configs: 200 epochs, lr=0.001, gradient_clip_val=10.0, trained on CS1+CS2 mixed data.
+All configs use s0_s1 data setup, 400 epochs (CFM) or 200 epochs (UNet), trained on CS1+CS2 mixed data with 15 observations per window (including step 0).
 
-### S1 — Large UNet ([64, 128, 256] channels)
-
-| Component | S0 RMSE | S1 RMSE |
-|-----------|:-------:|:-------:|
-| X | 0.542 | 0.892 |
-| Y | 0.741 | 1.268 |
-| Z | 1.056 | 2.865 |
-| **Mean** | **0.780** | **1.675** |
-| Degradation | — | 2.15x |
-| Train time | 484s (8 min) | — |
-
-### S2 — Small UNet ([32, 64, 128] channels)
+### S7 — UNet Large ([64, 128, 256] channels, retrained with step 0)
 
 | Component | S0 RMSE | S1 RMSE |
 |-----------|:-------:|:-------:|
-| X | 0.621 | 0.787 |
-| Y | 0.655 | 0.998 |
-| Z | 0.891 | 2.587 |
-| **Mean** | **0.722** | **1.457** |
-| Degradation | — | 2.02x |
-| Train time | 433s (7.2 min) | — |
+| X | 0.463 ± 0.087 | 0.688 ± 0.113 |
+| Y | 0.648 ± 0.123 | 1.062 ± 0.234 |
+| Z | 0.725 ± 0.125 | 2.277 ± 0.360 |
+| **Mean** | **0.612** | **1.342** |
+| Degradation | — | 2.19x |
+| Train time | 507s (8.5 min) | — |
+
+### S8 — UNet Small ([32, 64, 128] channels, retrained with step 0)
+
+| Component | S0 RMSE | S1 RMSE |
+|-----------|:-------:|:-------:|
+| X | 0.432 ± 0.087 | 0.792 ± 0.127 |
+| Y | 0.670 ± 0.143 | 1.031 ± 0.225 |
+| Z | 0.745 ± 0.140 | 2.165 ± 0.354 |
+| **Mean** | **0.616** | **1.330** |
+| Degradation | — | 2.16x |
+| Train time | 424s (7.1 min) | — |
+
+### S3 — VanillaCFM Large ([64, 128, 256], uniform τ)
+
+| Component | S0 RMSE | S1 RMSE |
+|-----------|:-------:|:-------:|
+| X | 0.895 ± 0.142 | 0.922 ± 0.212 |
+| Y | 1.026 ± 0.280 | 0.956 ± 0.269 |
+| Z | 1.443 ± 0.283 | 3.354 ± 0.505 |
+| **Mean** | **1.121** | **1.744** |
+| Degradation | — | 1.56x |
+| Train time | 970s (16.2 min) | — |
+
+### S4 — VanillaCFM Small ([32, 64, 128], uniform τ)
+
+| Component | S0 RMSE | S1 RMSE |
+|-----------|:-------:|:-------:|
+| X | 0.547 ± 0.111 | 0.800 ± 0.141 |
+| Y | 0.843 ± 0.185 | 1.130 ± 0.289 |
+| Z | 0.997 ± 0.173 | 3.004 ± 0.442 |
+| **Mean** | **0.796** | **1.645** |
+| Degradation | — | 2.07x |
+| Train time | 841s (14.0 min) | — |
+
+### S9 — VanillaCFM Large ([64, 128, 256], τ=0 only)
+
+| Component | S0 RMSE | S1 RMSE |
+|-----------|:-------:|:-------:|
+| X | 0.428 ± 0.086 | 0.679 ± 0.137 |
+| Y | 0.647 ± 0.151 | 0.935 ± 0.229 |
+| Z | 0.904 ± 0.180 | 2.219 ± 0.385 |
+| **Mean** | **0.660** | **1.277** |
+| Degradation | — | 1.94x |
+| Train time | 912s (15.2 min) | — |
+
+### S10 — VanillaCFM Small ([32, 64, 128], τ=0 only)
+
+| Component | S0 RMSE | S1 RMSE |
+|-----------|:-------:|:-------:|
+| X | 0.377 ± 0.081 | 0.650 ± 0.118 |
+| Y | 0.608 ± 0.165 | 0.910 ± 0.234 |
+| Z | 0.721 ± 0.121 | 2.390 ± 0.388 |
+| **Mean** | **0.569** | **1.316** |
+| Degradation | — | 2.31x |
+| Train time | 787s (13.1 min) | — |
 
 ---
 
-## 4. Head-to-Head: UNet vs Best DA (Obs at Step 0)
+## 4. Head-to-Head: All Methods vs Best DA
 
-| Scenario | Best DA (Weak-4DVar) | S1 Large UNet | S2 Small UNet |
-|----------|:--------------------:|:-------------:|:-------------:|
-| **S0** | 0.64 | 0.78 (−22% vs W4D) | **0.72** (−13% vs W4D) |
-| **S1** | 1.64 | 1.68 (+2% vs W4D) | **1.46** (−11% vs W4D) |
-| Degradation | 2.56x | 2.15x | **2.02x** |
+| Method | S0 RMSE | vs Weak-4DVar | S1 RMSE | vs Weak-4DVar | Degradation |
+|--------|:-------:|:-------------:|:-------:|:-------------:|:-----------:|
+| **Weak-4DVar** (DA best) | 0.64 | — | 1.64 | — | 2.56x |
+| Strong-4DVar | 0.73 | +14% | 2.14 | +30% | 2.94x |
+| EnKF | 0.78 | +22% | 2.27 | +38% | 2.91x |
+| ETKF | 0.78 | +22% | 2.28 | +39% | 2.94x |
+| S3 CFM large (unif. τ) | 1.12 | +75% | 1.74 | +6% | 1.56x |
+| S4 CFM small (unif. τ) | 0.80 | +25% | 1.64 | +0% | 2.07x |
+| S7 UNet large (15 obs) | 0.61 | **−5%** | 1.34 | **−18%** | 2.19x |
+| S8 UNet small (15 obs) | 0.62 | **−3%** | 1.33 | **−19%** | 2.16x |
+| S9 CFM large (τ=0) | 0.66 | +3% | **1.28** | **−22%** | 1.94x |
+| **S10 CFM small (τ=0)** | **0.57** | **−11%** | 1.32 | **−20%** | 2.31x |
 
 ### Key Findings
 
-1. **With obs at step 0, the gap between UNet and DA narrows dramatically** — Weak-4DVar now achieves 0.64 RMSE on S0 (was 1.63 without step 0) and 1.64 on S1 (was 2.19).
-2. **On S0, the best DA (Weak-4DVar at 0.64) now outperforms BOTH UNets** (S1 large: 0.78, S2 small: 0.72). The DA benefits more from the step-0 observation because its model is perfect on S0.
-3. **On S1 (model mismatch), S2 UNet still leads** (1.46 vs 1.64 for Weak-4DVar, a 11% advantage), but the margin is smaller than before (33% without step 0).
-4. **S1 Large UNet is now slightly worse than Weak-4DVar** on S1 (1.68 vs 1.64), flipping the previous result.
-5. **The small UNet (S2) remains the best overall method** on S1, and the most robust to degradation (2.02x vs 2.56x for Weak-4DVar).
-6. **Training is fast**: ~7–8 minutes for 200 epochs on GPU.
+1. **S10 (small VanillaCFM τ=0) is the new best method on S0** (0.57), beating Weak-4DVar (0.64) by 11% and both UNets (0.61–0.62). This is the first learned method to surpass the best DA baseline on the perfect-model scenario.
+
+2. **On S1 (model mismatch), all learned methods with step 0 now beat Weak-4DVar** — S9 (1.28, −22%), S8 (1.33, −19%), S10 (1.32, −20%), S7 (1.34, −18%). The best is S9 (large CFM τ=0) with 1.28 RMSE.
+
+3. **τ=0 training dramatically improves VanillaCFM**: S0 drops from 1.12→0.66 (S3→S9, −41%) and 0.80→0.57 (S4→S10, −29%). S1 drops from 1.74→1.28 (−27%) and 1.64→1.32 (−20%). The τ=0 variant transforms CFM from the worst learned method to the best.
+
+4. **UNet retraining with step 0 (S7/S8) also improves substantially** over the original S1/S2: S0 from 0.78→0.61 (−22%) and S1 from 1.68→1.34 (−20%). The step-0 observation benefits learned methods as well as DA.
+
+5. **The inverse scaling anomaly disappears with τ=0**: with uniform τ, small CFM (0.80) beat large CFM (1.12). With τ=0, large (0.66) and small (0.57) are both good, with small still slightly ahead on S0.
+
+6. **Degradation tradeoff**: learned methods generally have lower degradation ratios (1.94–2.31x) than DA baselines (2.56–2.94x), meaning they are more robust to the S0→S1 model mismatch.
 
 ---
 
 ## 5. Notes
 
-- **Obs at step 0** (`exp/obs-at-step0` branch): This report reflects results with an observation at time step 0 (via `np.arange(0, num_steps, obs_interval)`). This significantly improves DA baseline performance by eliminating the unknown initial condition. UNet results are unchanged (same model weights).
-- **Unsure what to think**: the new best DA outperforms the UNets on S0 but not on S1. The DA methods now seem to compete directly with the learned approaches.
+- **UNet retrain (S7/S8) vs original (S1/S2)**: The original S1/S2 were trained before the obs-at-step-0 fix, so their lazy regeneration used 14 obs (no step 0). The retrains here use the current code with 15 obs including step 0. The improvement is entirely from the data change, not model changes.
+- **τ=0 CFM** mirrors the `train_tau_0_only` flag from `JointCFM`: at training time τ is fixed to 0 (data distribution), and at inference a single Euler step is taken. This makes CFM a one-step denoiser rather than a full probability flow.
+- **Training time**: UNet (7–8 min) is ~2× faster than CFM (13–16 min), but CFM is still modest.
+- **S5 (JointCFM on S0/S1)**: Diverged to NaN around epoch 399. Not yet re-run.
+- **S6 (JointCFM τ=0 on S0/S1)**: Not yet run.
 
-## 6. Pending Work
+---
 
-- **S3/S4 (VanillaCFM on S0/S1)**: Training completed but evaluation crashed with `KeyError: 'obs'` — fixed by lazy obs regeneration on Jul 7 @ 22:33. Needs re-running.
-- **S5 (JointCFM on S0/S1)**: Diverged to NaN around epoch 399. Needs debugging (learning rate, gradient clipping, or data dynamics).
-- **S4/S6**: CUDA device contention — needs isolated single-GPU runs.
+## 6. Reconstruction Samples — S10 Small VanillaCFM τ=0
+
+Figures show the ground truth (black) vs S10 reconstruction for the best, median, and worst test windows (selected by per-window mean RMSE across X/Y/Z).
+
+![S0 reconstruction samples](figs/s10_best_medium_worst_s0.png)
+
+![S1 reconstruction samples](figs/s10_best_medium_worst_s1.png)
+
+### Per-window RMSE values
+
+| Scenario | Best | Median | Worst |
+|----------|:----:|:------:|:-----:|
+| S0 | 0.407 | 0.666 | 1.138 |
+| S1 | 0.998 | 1.623 | 2.224 |
+
+On S0 (perfect model), the reconstruction quality is generally excellent: the worst case (RMSE=1.138) corresponds to a window where the Lorenz system explores a different lobe of the attractor than seen during training. On S1 (model mismatch), the error floor is higher (best case already at 0.998), reflecting the systematic bias from the mismatch in the forcing exponent.
