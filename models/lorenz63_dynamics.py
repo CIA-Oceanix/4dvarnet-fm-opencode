@@ -14,12 +14,44 @@ class Lorenz63Dynamics(DynamicsBase):
     param_dim = 3
 
     def __init__(self, dt: float = 0.01, coupling_type: str = "linear",
-                 c1: float = 1.0, clip_range: float = 50.0):
+                 c1: float = 1.0, clip_range: float = 50.0,
+                 sigma_0: float = 0.08, gamma: float = 0.05,
+                 W_L_bar: float = 0.0, c2: float = 0.1,
+                 sigma_L: float = 0.20):
         super().__init__()
         self.dt = dt
         self.c1 = c1
         self.clip_range = clip_range
         self.coupling_type = coupling_type
+        self.sigma_0 = sigma_0
+        self.gamma = gamma
+        self.W_L_bar = W_L_bar
+        self.c2 = c2
+        self.sigma_L = sigma_L
+
+    def generate_full_trajectory(self, num_steps: int, seed: int = 42,
+                                  device=None, sigma=10.0, rho=28.0,
+                                  beta=8/3, c1=None, c2=None,
+                                  W_L_bar=None, gamma=None,
+                                  sigma_0=None, sigma_L=None,
+                                  coupling_exponent: float = 1.6,
+                                  spinup_steps: int = 10000) -> tuple:
+        from data.lorenz63 import generate_long_trajectory
+        c1 = c1 if c1 is not None else self.c1
+        c2 = c2 if c2 is not None else self.c2
+        gamma = gamma if gamma is not None else self.gamma
+        W_L_bar = W_L_bar if W_L_bar is not None else self.W_L_bar
+        sigma_0 = sigma_0 if sigma_0 is not None else self.sigma_0
+        sigma_L = sigma_L if sigma_L is not None else self.sigma_L
+        traj = generate_long_trajectory(
+            num_steps=num_steps + spinup_steps, dt=self.dt, seed=seed,
+            sigma=sigma, rho=rho, beta=beta,
+            gamma=gamma, W_L_bar=W_L_bar, c1=c1, c2=c2,
+            sigma_0=sigma_0, sigma_L=sigma_L,
+            device=device, coupling_exponent=coupling_exponent,
+        )
+        seg = traj[-num_steps:].clone()
+        return seg[:, :3], seg[:, 3]
 
     def step(self, state: torch.Tensor, forcing: torch.Tensor,
              sigma, rho, beta) -> torch.Tensor:

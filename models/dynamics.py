@@ -7,6 +7,7 @@ class DynamicsBase(ABC, nn.Module):
     state_dim: int
     param_names: list[str]
     param_dim: int
+    forcing_dim: int = 1
 
     def __init__(self):
         super().__init__()
@@ -16,13 +17,19 @@ class DynamicsBase(ABC, nn.Module):
              *args, **kwargs) -> torch.Tensor:
         pass
 
+    def generate_forcing(self, num_steps: int, seed: int = 42,
+                         device=None, **params) -> torch.Tensor:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement generate_forcing"
+        )
+
     def rollout(self, x0: torch.Tensor, forcing: torch.Tensor,
-                steps: int, *args, **kwargs) -> torch.Tensor:
+                steps: int, *args, **kwargs) -> tuple:
         traj = [x0]
         for t in range(1, steps):
             next_s = self.step(traj[-1], forcing[..., t - 1], *args, **kwargs)
             traj.append(next_s)
-        return torch.stack(traj, dim=-2)
+        return torch.stack(traj, dim=-2), forcing
 
 
 def get_dynamics(cfg) -> DynamicsBase:

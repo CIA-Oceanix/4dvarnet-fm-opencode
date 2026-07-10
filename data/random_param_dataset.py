@@ -1,18 +1,24 @@
 import torch
 from typing import Dict
-from data.lorenz63 import (
-    Lorenz63Config,
-    generate_long_trajectory,
-    generate_corrupted_forcing,
-    generate_observations,
-)
+from data.lorenz63 import Lorenz63Config, generate_corrupted_forcing, generate_observations
+from models.dynamics import DynamicsBase
+from models.lorenz63_dynamics import Lorenz63Dynamics
 
 
-class RandomParamLorenz63Dataset:
-    def __init__(self, cfg: Lorenz63Config, param_noise: float = 0.2,
+class RandomParamDataset:
+    def __init__(self, cfg, param_noise: float = 0.2,
+                 dynamics: DynamicsBase = None,
                  cached_windows: list = None,
                  max_window_retries: int = 10):
-        self.cfg = cfg
+        if dynamics is None and isinstance(cfg, Lorenz63Config):
+            dynamics = Lorenz63Dynamics(
+                dt=cfg.dt, coupling_type=cfg.forcing_coupling,
+                c1=cfg.c1, sigma_0=cfg.sigma_0,
+                gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
+                c2=cfg.c2, sigma_L=cfg.sigma_L,
+            )
+        self.cfg = cfg if isinstance(cfg, Lorenz63Config) else cfg
+        self.dynamics = dynamics
         self.param_noise = param_noise
         self.device = torch.device("cpu")
 
@@ -37,31 +43,26 @@ class RandomParamLorenz63Dataset:
                 beta = torch.empty(1, device=self.device).uniform_(cfg.beta_true * lo, cfg.beta_true * hi, generator=rng).item()
 
                 try:
-                    traj = generate_long_trajectory(
-                        num_steps=total_steps, dt=cfg.dt, seed=traj_seed,
-                        sigma=sigma, rho=rho, beta=beta,
-                        gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
-                        c1=cfg.c1, c2=cfg.c2,
-                        sigma_0=cfg.sigma_0, sigma_L=cfg.sigma_L,
+                    true_fluid, W_L_true = dynamics.generate_full_trajectory(
+                        num_steps=cfg.num_steps, seed=traj_seed,
                         device=self.device,
+                        sigma=sigma, rho=rho, beta=beta,
+                        spinup_steps=cfg.spinup_steps,
                         coupling_exponent=cfg.coupling_exponent_truth,
                     )
                 except RuntimeError:
                     continue
 
-                if torch.isfinite(traj).all():
+                if torch.isfinite(true_fluid).all():
                     break
             else:
                 raise RuntimeError(
-                    f"RandomParamLorenz63Dataset window {i} unstable after "
+                    f"RandomParamDataset window {i} unstable after "
                     f"{max_window_retries} retries (cfg.seed={cfg.seed})"
                 )
 
-            seg = traj[-cfg.num_steps:].clone()
-            true_fluid = seg[:, :3]
-            W_L_true = seg[:, 3]
-
-            if cfg.use_corrupted_forcing:
+            use_corrupted = cfg.use_corrupted_forcing
+            if use_corrupted:
                 W_L_star = generate_corrupted_forcing(
                     W_L_true, true_fluid[:, 0], cfg.num_steps, cfg.dt,
                     cfg.tau_eta, cfg.sigma_eta, traj_seed,
@@ -103,3 +104,6 @@ class RandomParamLorenz63Dataset:
             w["obs"] = obs
             w["obs_mask"] = obs_mask
         return w
+
+
+RandomParamLorenz63Dataset = RandomParamDataset

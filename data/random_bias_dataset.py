@@ -1,20 +1,26 @@
 import torch
 from typing import Dict, Tuple
-from data.lorenz63 import (
-    Lorenz63Config,
-    generate_long_trajectory,
-    generate_corrupted_forcing,
-    generate_observations,
-)
+from data.lorenz63 import Lorenz63Config, generate_corrupted_forcing, generate_observations
+from models.dynamics import DynamicsBase
+from models.lorenz63_dynamics import Lorenz63Dynamics
 
 
-class RandomBiasLorenz63Dataset:
-    def __init__(self, cfg: Lorenz63Config, param_noise: float = 0.2,
+class RandomBiasDataset:
+    def __init__(self, cfg, param_noise: float = 0.2,
                  bias_range: Tuple[float, float] = (0.0, 0.20),
                  bias_mode: str = 'random',
+                 dynamics: DynamicsBase = None,
                  cached_windows: list = None,
                  max_window_retries: int = 10):
+        if dynamics is None and isinstance(cfg, Lorenz63Config):
+            dynamics = Lorenz63Dynamics(
+                dt=cfg.dt, coupling_type=cfg.forcing_coupling,
+                c1=cfg.c1, sigma_0=cfg.sigma_0,
+                gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
+                c2=cfg.c2, sigma_L=cfg.sigma_L,
+            )
         self.cfg = cfg
+        self.dynamics = dynamics
         self.param_noise = param_noise
         self.bias_range = bias_range
         self.bias_mode = bias_mode
@@ -57,29 +63,24 @@ class RandomBiasLorenz63Dataset:
                     da_c1 = cfg.c1
 
                 try:
-                    traj = generate_long_trajectory(
-                        num_steps=total_steps, dt=cfg.dt, seed=traj_seed,
-                        sigma=truth_sigma, rho=truth_rho, beta=truth_beta,
-                        gamma=cfg.gamma, W_L_bar=cfg.W_L_bar,
-                        c1=truth_c1, c2=cfg.c2,
-                        sigma_0=cfg.sigma_0, sigma_L=cfg.sigma_L,
+                    true_fluid, W_L_true = dynamics.generate_full_trajectory(
+                        num_steps=cfg.num_steps, seed=traj_seed,
                         device=self.device,
+                        sigma=truth_sigma, rho=truth_rho, beta=truth_beta,
+                        c1=truth_c1,
+                        spinup_steps=cfg.spinup_steps,
                         coupling_exponent=cfg.coupling_exponent_truth,
                     )
                 except RuntimeError:
                     continue
 
-                if torch.isfinite(traj).all():
+                if torch.isfinite(true_fluid).all():
                     break
             else:
                 raise RuntimeError(
-                    f"RandomBiasLorenz63Dataset window {i} unstable after "
+                    f"RandomBiasDataset window {i} unstable after "
                     f"{max_window_retries} retries (cfg.seed={cfg.seed})"
                 )
-
-            seg = traj[-cfg.num_steps:].clone()
-            true_fluid = seg[:, :3]
-            W_L_true = seg[:, 3]
 
             if cfg.use_corrupted_forcing or (bias_mode == 'fixed' and abs(f_bias) > 0):
                 W_L_star = generate_corrupted_forcing(
@@ -130,3 +131,6 @@ class RandomBiasLorenz63Dataset:
             w["obs"] = obs
             w["obs_mask"] = obs_mask
         return w
+
+
+RandomBiasLorenz63Dataset = RandomBiasDataset
