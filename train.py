@@ -331,19 +331,17 @@ def main(cfg: DictConfig):
             save_trajectories(model, datasets[key], device, model_type,
                               os.path.join(exp_dir, f"trajectories_{case}.npz"))
 
+    state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
+    param_names = cfg.data.get("param_names", ["sigma", "rho", "beta", "c1"])
+
     def _rmse_entry(m, s):
-        return {
-            "X": {"mean": float(m[0]), "std": float(s[0])},
-            "Y": {"mean": float(m[1]), "std": float(s[1])},
-            "Z": {"mean": float(m[2]), "std": float(s[2])},
-            "mean": float(np.mean(m)),
-        }
+        d = {"mean": float(np.mean(m))}
+        for i, nm in enumerate(state_names):
+            d[nm] = {"mean": float(m[i]), "std": float(s[i])}
+        return d
 
     def _param_entry(p):
-        return {
-            "sigma": float(p[0]), "rho": float(p[1]),
-            "beta": float(p[2]), "c1": float(p[3]),
-        }
+        return {nm: float(p[i]) for i, nm in enumerate(param_names)}
 
     s0 = results_metrics.get("test_s0")
     s1 = results_metrics.get("test_s1")
@@ -396,24 +394,29 @@ def main(cfg: DictConfig):
     with open(results_path, "w") as f:
         json.dump(result, f, indent=2)
 
+    def _fmt_rmse(m):
+        parts = [f"{nm}={m[i]:.4f}" for i, nm in enumerate(state_names)]
+        return " ".join(parts) + f"  mean={np.mean(m):.4f}"
+
     print(f"\n  ── Results ─────────────────────────────────")
     if s0:
         m0, _ = s0
-        print(f"  S0: X={m0[0]:.4f} Y={m0[1]:.4f} Z={m0[2]:.4f}  mean={np.mean(m0):.4f}")
+        print(f"  S0: {_fmt_rmse(m0)}")
     if s1:
         m1, _ = s1
-        print(f"  S1: X={m1[0]:.4f} Y={m1[1]:.4f} Z={m1[2]:.4f}  mean={np.mean(m1):.4f}")
+        print(f"  S1: {_fmt_rmse(m1)}")
     if cs1:
         m1, s1 = cs1
-        print(f"  CS1: X={m1[0]:.4f} Y={m1[1]:.4f} Z={m1[2]:.4f}  mean={np.mean(m1):.4f}")
+        print(f"  CS1: {_fmt_rmse(m1)}")
     if cs2:
         m2, s2 = cs2
-        print(f"  CS2: X={m2[0]:.4f} Y={m2[1]:.4f} Z={m2[2]:.4f}  mean={np.mean(m2):.4f}")
+        print(f"  CS2: {_fmt_rmse(m2)}")
     if is_joint:
         for k in ["test_s0", "test_s1"]:
             if k in param_metrics:
                 p = param_metrics[k]
-                print(f"  {k} param RMSE: s={p[0]:.4f} r={p[1]:.4f} b={p[2]:.4f} c1={p[3]:.4f}")
+                parts = " ".join(f"{nm}={p[i]:.4f}" for i, nm in enumerate(param_names))
+                print(f"  {k} param RMSE: {parts}")
     print(f"  Total: {total_t:.0f}s")
 
 
