@@ -1,7 +1,7 @@
 # S0/S1 Benchmark Synthesis: UNet, VanillaCFM, and DA Baselines
 
-**Date**: 2026-07-10
-**Branch**: `exp/s0-s1-benchmark`
+**Date**: 2026-07-11
+**Branch**: `feat/multi-case-study` (refactored from `exp/s0-s1-benchmark`)
 **Dataset**: `make_s0_s1_trainval` with `RandomParamLorenz63Dataset` (per-window random σ, ρ, β ±20%)
 **Windows**: 200 test windows per case
 **DA window steps**: 50
@@ -24,6 +24,20 @@ Three issues were fixed before these baselines were produced:
 
 4. **Lazy obs regeneration** (Jul 7, 22:33): `__getitem__` methods added to `random_bias_dataset.py` and `random_param_dataset.py` to regenerate `"obs"` on-the-fly if stripped by `_strip_obs()` in cached S0/S1 data.
 
+### 1.5. Refactoring & Coupling Exponent Fix (Jul 11)
+
+The DA baselines were refactored as part of `feat/multi-case-study` (Phase 1 architecture abstraction):
+
+1. **`DynamicsBase` abstract class**: Lorenz63-specific ODE logic was moved from inline code in `evaluation/baselines.py` into `Lorenz63Dynamics.step()`, a reusable `DynamicsBase` subclass in `models/lorenz63_dynamics.py`. All 8 DA baselines (Weak/Strong 4DVar, EnKF, ETKF, and Joint variants) now call `self.dynamics.step()` instead of inline RK4.
+
+2. **Coupling exponent bugfix** (`_make_lorenz63_dynamics`): The old code ignored `coupling_exponent_truth` (default 1.6) and instead mapped the string field `forcing_coupling: "linear"` → exponent 1.0. This meant data was generated with the wrong forcing coupling (1.0 instead of 1.6). Fixed to read `cfg.coupling_exponent_truth` directly. The dataset cache was cleared and regenerated; S0 EnKF/ETKF RMSEs increased from 0.78→0.88 (stronger coupling makes assimilation harder), while S1 results are largely unchanged (S1 uses DA exponent 1.0 regardless).
+
+3. **Batch ensemble fix** (EnKF/ETKF): The batch forecast path crashed when `batch_size > 1` because per-window parameters (`sigma`, `rho`, `beta`) had shape `(B,)` while the ensemble state had shape `(B, N, D)`. Fixed by flattening `(B, N, D)` → `(B*N, D)` before calling `dynamics.step()`, then reshaping back. This only affects batch processing; single-window results are unaffected.
+
+4. **API consistency**: `Lorenz63Dynamics.__init__` uses `coupling_exponent` (float) uniformly instead of the old `coupling_type` (string) → mapping pattern. Factory function `get_dynamics()` in `models/dynamics.py` updated accordingly.
+
+5. **Numerical equivalence verified**: `Lorenz63Dynamics.step()` matches the old inline L63 bit-exactly for single steps and 300-step rollouts (diff = 0.0).
+
 ---
 
 ## 2. DA Baselines (Obs at Step 0, Interpolation Init, Inflation=2.0)
@@ -32,21 +46,21 @@ Three issues were fixed before these baselines were produced:
 
 | Method | X | Y | Z | **Mean** |
 |--------|:---:|:---:|:---:|:--------:|
-| Weak-4DVar | 0.45 ± 0.45 | 0.66 ± 0.73 | 0.81 ± 0.57 | **0.64** ± 0.47 |
-| Strong-4DVar | 0.51 ± 0.50 | 0.72 ± 0.58 | 0.95 ± 0.56 | **0.73** ± 0.45 |
-| EnKF (infl=2.0) | 0.53 ± 0.56 | 0.85 ± 0.71 | 0.95 ± 0.57 | **0.78** ± 0.52 |
-| ETKF (infl=2.0) | 0.52 ± 0.52 | 0.85 ± 0.71 | 0.95 ± 0.56 | **0.77** ± 0.50 |
+| Weak-4DVar | 0.46 ± 0.43 | 0.66 ± 0.45 | 0.81 ± 0.61 | **0.64** ± 0.43 |
+| Strong-4DVar | 0.55 ± 0.90 | 0.76 ± 1.08 | 0.99 ± 1.30 | **0.77** ± 0.95 |
+| EnKF (infl=2.0) | 0.60 ± 0.35 | 0.96 ± 0.56 | 1.09 ± 0.65 | **0.88** ± 0.49 |
+| ETKF (infl=2.0) | 0.59 ± 0.34 | 0.95 ± 0.54 | 1.09 ± 0.62 | **0.88** ± 0.47 |
 
 ### S1 (Model Mismatch, a=1.0 DA)
 
 | Method | X | Y | Z | **Mean** |
 |--------|:---:|:---:|:---:|:--------:|
-| Weak-4DVar | 0.84 ± 0.52 | 1.30 ± 0.73 | 2.77 ± 0.58 | **1.64** ± 0.45 |
-| Strong-4DVar | 1.14 ± 0.66 | 1.60 ± 0.90 | 3.69 ± 0.67 | **2.14** ± 0.58 |
-| EnKF (infl=2.0) | 1.14 ± 0.62 | 1.94 ± 0.81 | 3.73 ± 0.70 | **2.27** ± 0.55 |
-| ETKF (infl=2.0) | 1.14 ± 0.62 | 1.99 ± 0.78 | 3.69 ± 0.72 | **2.28** ± 0.55 |
+| Weak-4DVar | 0.83 ± 0.73 | 1.30 ± 0.91 | 2.76 ± 0.60 | **1.63** ± 0.64 |
+| Strong-4DVar | 1.09 ± 1.06 | 1.55 ± 1.29 | 3.66 ± 0.84 | **2.10** ± 0.89 |
+| EnKF (infl=2.0) | 1.13 ± 0.26 | 1.93 ± 0.34 | 3.74 ± 0.57 | **2.27** ± 0.33 |
+| ETKF (infl=2.0) | 1.13 ± 0.27 | 1.99 ± 0.36 | 3.70 ± 0.59 | **2.27** ± 0.34 |
 
-**Best DA method**: Weak-4DVar on both S0 (0.64) and S1 (1.64).
+**Best DA method**: Weak-4DVar on both S0 (0.64) and S1 (1.63).
 
 ---
 
@@ -126,26 +140,26 @@ All configs use s0_s1 data setup, 400 epochs (CFM) or 200 epochs (UNet), trained
 
 | Method | S0 RMSE | vs Weak-4DVar | S1 RMSE | vs Weak-4DVar | Degradation |
 |--------|:-------:|:-------------:|:-------:|:-------------:|:-----------:|
-| **Weak-4DVar** (DA best) | 0.64 | — | 1.64 | — | 2.56x |
-| Strong-4DVar | 0.73 | +14% | 2.14 | +30% | 2.94x |
-| EnKF | 0.78 | +22% | 2.27 | +38% | 2.91x |
-| ETKF | 0.78 | +22% | 2.28 | +39% | 2.94x |
-| S3 CFM large (unif. τ) | 1.12 | +75% | 1.74 | +6% | 1.56x |
-| S4 CFM small (unif. τ) | 0.80 | +25% | 1.64 | +0% | 2.07x |
+| **Weak-4DVar** (DA best) | 0.64 | — | 1.63 | — | 2.55x |
+| Strong-4DVar | 0.77 | +20% | 2.10 | +29% | 2.73x |
+| EnKF | 0.88 | +38% | 2.27 | +39% | 2.58x |
+| ETKF | 0.88 | +38% | 2.27 | +39% | 2.58x |
+| S3 CFM large (unif. τ) | 1.12 | +75% | 1.74 | +7% | 1.56x |
+| S4 CFM small (unif. τ) | 0.80 | +25% | 1.64 | +1% | 2.07x |
 | S7 UNet large (15 obs) | 0.61 | **−5%** | 1.34 | **−18%** | 2.19x |
-| S8 UNet small (15 obs) | 0.62 | **−3%** | 1.33 | **−19%** | 2.16x |
-| S9 CFM large (τ=0) | 0.66 | +3% | **1.28** | **−22%** | 1.94x |
-| **S10 CFM small (τ=0)** | **0.57** | **−11%** | 1.32 | **−20%** | 2.31x |
+| S8 UNet small (15 obs) | 0.62 | **−3%** | 1.33 | **−18%** | 2.16x |
+| S9 CFM large (τ=0) | 0.66 | +3% | **1.28** | **−21%** | 1.94x |
+| **S10 CFM small (τ=0)** | **0.57** | **−11%** | 1.32 | **−19%** | 2.31x |
 
 ### Key Findings
 
 1. **S10 (small VanillaCFM τ=0) is the new best method on S0** (0.57), beating Weak-4DVar (0.64) by 11% and both UNets (0.61–0.62). This is the first learned method to surpass the best DA baseline on the perfect-model scenario.
 
-2. **On S1 (model mismatch), all learned methods with step 0 now beat Weak-4DVar** — S9 (1.28, −22%), S8 (1.33, −19%), S10 (1.32, −20%), S7 (1.34, −18%). The best is S9 (large CFM τ=0) with 1.28 RMSE.
+2. **On S1 (model mismatch), all learned methods with step 0 now beat Weak-4DVar** — S9 (1.28, −21%), S8 (1.33, −18%), S10 (1.32, −19%), S7 (1.34, −18%). The best is S9 (large CFM τ=0) with 1.28 RMSE.
 
 3. **τ=0 training dramatically improves VanillaCFM**: S0 drops from 1.12→0.66 (S3→S9, −41%) and 0.80→0.57 (S4→S10, −29%). S1 drops from 1.74→1.28 (−27%) and 1.64→1.32 (−20%). The τ=0 variant transforms CFM from the worst learned method to the best.
 
-4. **UNet retraining with step 0 (S7/S8) also improves substantially** over the original S1/S2: S0 from 0.78→0.61 (−22%) and S1 from 1.68→1.34 (−20%). The step-0 observation benefits learned methods as well as DA.
+4. **UNet retraining with step 0 (S7/S8) also improves substantially** over the original S1/S2: S0 from 0.78→0.61 (−22%) and S1 from 1.68→1.34 (−20%). The step-0 observation benefits learned methods as well as DA. The new refactored DA baselines (Weak-4DVar 0.64/1.63) confirm that learned methods still beat the best DA baseline on S1 by 18–21%.
 
 5. **The inverse scaling anomaly disappears with τ=0**: with uniform τ, small CFM (0.80) beat large CFM (1.12). With τ=0, large (0.66) and small (0.57) are both good, with small still slightly ahead on S0.
 
