@@ -477,7 +477,14 @@ class ETKF:
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
+            B0, N, D = ensemble.shape
+            ensemble = self.dynamics.step(
+                ensemble.reshape(B0 * N, D),
+                W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
+                sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma,
+                rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho,
+                beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta,
+            ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -608,7 +615,14 @@ class EnKF:
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
+            B0, N, D = ensemble.shape
+            ensemble = self.dynamics.step(
+                ensemble.reshape(B0 * N, D),
+                W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
+                sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma,
+                rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho,
+                beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta,
+            ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
                 y_t = observations[:, t]

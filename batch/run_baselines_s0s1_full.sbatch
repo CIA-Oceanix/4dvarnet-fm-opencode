@@ -49,7 +49,7 @@ print(f'test_s1: {len(datasets[\"test_s1\"])} windows')
 
 results = run_and_cache_baselines(
     datasets, device,
-    batch_size=200, da_window_steps=50,
+    batch_size=50, da_window_steps=50,
     weak_config={'opt_steps': 150, 'lr': 0.02},
     strong_config={'max_iter': 40, 'lr': 0.1},
     enkf_config={'N_ensemble': 30, 'inflation': 2.0},
