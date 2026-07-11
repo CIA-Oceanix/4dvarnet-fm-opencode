@@ -34,14 +34,25 @@ class DynamicsBase(ABC, nn.Module):
 
 def get_dynamics(cfg) -> DynamicsBase:
     system = cfg.data.get("system", "lorenz63")
+    dc = cfg.data
     if system == "lorenz63":
         from models.lorenz63_dynamics import Lorenz63Dynamics
-        dc = cfg.data
         exponent = dc.get("coupling_exponent_truth",
                          dc.get("coupling_exponent_da", 1.6))
         return Lorenz63Dynamics(
             dt=dc.dt, coupling_exponent=exponent,
             c1=dc.c1, sigma_0=dc.sigma_0, gamma=dc.gamma,
+            W_L_bar=dc.W_L_bar, c2=dc.c2, sigma_L=dc.sigma_L,
+        )
+    if system == "lorenz96":
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        exponent = dc.get("coupling_exponent_truth",
+                         dc.get("coupling_exponent_da", 1.6))
+        return Lorenz96Dynamics(
+            dt=dc.dt, coupling_exponent=exponent,
+            c1=dc.c1, NO=dc.get("NO", 8), J=dc.get("J", 4),
+            h=dc.get("h", 1.0), hx=dc.get("hx", 1.0), eps=dc.get("eps", 0.1),
+            sigma_0=dc.sigma_0, gamma=dc.gamma,
             W_L_bar=dc.W_L_bar, c2=dc.c2, sigma_L=dc.sigma_L,
         )
     raise ValueError(f"Unknown dynamical system: {system}")

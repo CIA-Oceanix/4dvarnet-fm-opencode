@@ -1,0 +1,54 @@
+# @package _global_
+
+data:
+  system: lorenz96
+  state_names: ["X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"]
+  param_names: ["F", "c1"]
+  dt: 0.001
+  T_max: 3.0
+  obs_interval: 200
+  R_var: 0.5
+  B_var: 2.0
+  num_windows: 2000
+  window_spacing: 2000
+  spinup_steps: 10000
+  seed: 42
+  NO: 8
+  J: 4
+  h: 1.0
+  hx: 1.0
+  eps: 0.1
+  F_true: 8.0
+  F_da: 8.0
+  gamma: 0.05
+  W_L_bar: 0.0
+  c1: 1.0
+  c2: 0.1
+  sigma_0: 0.08
+  sigma_L: 0.20
+  tau_eta: 5.0
+  sigma_eta: 0.7071067811865476
+  forcing_state_bias: 0.0
+  forcing_coupling: linear
+  param_bias: 0.0
+  case: 1
+
+model:
+  state_dim: 40
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  K_inner: 5
+  N_outer: 10
+  nu: 1.0
+  use_obs: true
+  use_energy: true
+  dropout: 0.1
+
+cs1:
+  param_bias: 0.0
+  forcing_coupling: linear
+
+cs2:
+  param_bias: 0.15
+  forcing_state_bias: 0.15
+  forcing_coupling: quartic

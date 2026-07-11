@@ -12,8 +12,9 @@ Refactor the codebase to support multiple dynamical systems (Lorenz63, Lorenz96,
 - **Phase 1** — fully committed and tagged (p1-config through p1-fixes)
 - **Bug fix** — EnKF/ETKF batch forecast path now flattens `(B,N,D)` → `(B*N,D)` before `dynamics.step()` to handle per-window sigma/rho/beta correctly. Committed as `0a5c35f`.
 - **Full S0/S1 DA baseline run** — submitted as SLURM job **42642** (200 test windows, report-matched config, batch_size=50, A40 GPU)
-- **Phase 2 (Lorenz96)** — detailed plan below, pending implementation
-- **Remaining issues to fix before Phase 2**:
+- **Edge-effect sensitivity** — trimmed RMSE (steps 50–250) vs full RMSE compared; differences ≤ 0.053, no ranking changes (`bc50a64`)
+- **Phase 2 (Lorenz96)** — initial implementation committed (dynamics, data, config, factory, baseline kwargs refactor)
+- **Remaining issues**:
   - `DataConfig` in `conf/schema.py` still has `forcing_coupling: str` — should add `coupling_exponent_truth` and `coupling_exponent_da` fields; `to_lorenz63_config()` should pass them _(low priority — non-breaking, only affects Hydra pipeline)_
   - Configs still use `forcing_coupling: linear/quartic` — should migrate to `coupling_exponent_truth: 1.6` / `coupling_exponent_da: 1.0` _(same)_
   - `eval_baselines.py` (Hydra pipeline) doesn't create dynamics with correct coupling exponents — uses `get_dynamics()` which now needs `coupling_exponent_truth` from config _(same)_
@@ -106,13 +107,15 @@ Parameters: NO=8, J=4, FO=8, FA=8, coupling parameters matching the L96 specific
 
 ### Agents
 
-| # | Name | Description | Files | Est. |
-|---|------|-------------|-------|------|
-| 1 | Dynamics | `Lorenz96Dynamics` subclass of `DynamicsBase` with `step()` + forcing generation + `generate_full_trajectory()` | `models/lorenz96_dynamics.py` | 1.5h |
-| 2 | Config | `config/case_study/lorenz96.yaml` with system defaults; experiment configs for CS1–CS7 analogous to L63 | `config/case_study/lorenz96.yaml`, `config/experiment/l96_*.yaml` | 1h |
-| 3 | Data | `data/lorenz96.py` — dataset classes (analogous to `data/lorenz63.py`) using `Lorenz96Dynamics`; `Lorenz96Config` dataclass | `data/lorenz96.py` | 2h |
-| 4 | Factory | Update `get_dynamics()` to dispatch to `Lorenz96Dynamics` based on `data.system: lorenz96` | `models/dynamics.py` | 0.5h |
-| 5 | Pipeline | End-to-end validation: training + baselines + evaluation with L96 config | `train.py`, `eval_baselines.py` | 1h |
+| # | Name | Description | Files | Est. | Status |
+|---|------|-------------|-------|------|--------|
+| 0 | Baseline API | Refactor all `dynamics.step()` calls to use `**kwargs` pattern; remove vestigial `_apply_coupling` from baselines.py | `evaluation/baselines.py`, `models/lorenz63_dynamics.py` | 1h | committed |
+| 1 | Dynamics | `Lorenz96Dynamics` subclass of `DynamicsBase` with `step()` + forcing generation + `generate_full_trajectory()` | `models/lorenz96_dynamics.py` | 1.5h | committed |
+| 2 | Config | `config/case_study/lorenz96.yaml` with system defaults | `config/case_study/lorenz96.yaml` | 0.5h | committed |
+| 3 | Data | `data/lorenz96.py` — dataset classes using `Lorenz96Dynamics`; `Lorenz96Config` dataclass | `data/lorenz96.py` | 2h | committed |
+| 4 | Factory | Update `get_dynamics()` to dispatch to `Lorenz96Dynamics` based on `data.system: lorenz96` | `models/dynamics.py` | 0.5h | committed |
+| 5 | Pipeline | End-to-end validation: training + baselines + evaluation with L96 config | `train.py`, `eval_baselines.py`, `evaluate_all.py` | 1h | pending |
+| — | Lint | `ruff check . --select=E,F` — no functional errors (only pre-existing E501) | — | — | verified |
 
 ### Verifications
 - `ruff check . --select=E,F` — no errors

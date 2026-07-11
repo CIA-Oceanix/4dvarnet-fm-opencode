@@ -56,7 +56,10 @@ class Lorenz63Dynamics(DynamicsBase):
         return seg[:, :3], seg[:, 3]
 
     def step(self, state: torch.Tensor, forcing: torch.Tensor,
-             sigma, rho, beta) -> torch.Tensor:
+             **kwargs) -> torch.Tensor:
+        sigma = kwargs.get("sigma", 10.0)
+        rho = kwargs.get("rho", 28.0)
+        beta = kwargs.get("beta", 8 / 3)
         X, Y, Z = state[..., 0], state[..., 1], state[..., 2]
         W = forcing
         coupling = _apply_coupling(W, self.c1, self.coupling_exponent)
@@ -74,10 +77,10 @@ class Lorenz63Dynamics(DynamicsBase):
 
     def rollout_with_q(self, x0: torch.Tensor, q: torch.Tensor,
                         forcing: torch.Tensor, steps: int,
-                        sigma, rho, beta) -> torch.Tensor:
+                        **kwargs) -> torch.Tensor:
         traj = [x0]
         for t in range(1, steps):
-            next_s = self.step(traj[-1], forcing[..., t - 1], sigma, rho, beta)
+            next_s = self.step(traj[-1], forcing[..., t - 1], **kwargs)
             next_s = next_s + q[..., t, :]
             traj.append(next_s)
         return torch.stack(traj, dim=-2)

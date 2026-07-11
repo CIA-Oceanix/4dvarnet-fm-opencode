@@ -5,14 +5,6 @@ from dataclasses import dataclass
 from models.dynamics import DynamicsBase
 
 
-def _apply_coupling(W: torch.Tensor, c1, exponent: float = 1.0) -> torch.Tensor:
-    if isinstance(c1, torch.Tensor) and c1.dim() == 1:
-        c1 = c1.view(-1, *([1] * (W.dim() - 1)))
-    if exponent == 1.0:
-        return c1 * W
-    return c1 * torch.sign(W) * torch.abs(W) ** exponent
-
-
 def _interp_observations(observations, obs_mask):
     B, T, D = observations.shape
     obs_np = observations.cpu().numpy()
@@ -104,7 +96,7 @@ class Weak4DVar:
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
-                traj = self._forward_weak(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma, rho, beta, c1)
+                traj = self._forward_weak(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_o = torch.tensor(0.0, device=self.device)
@@ -116,11 +108,11 @@ class Weak4DVar:
                 opt.step()
 
             final_traj = self._forward_weak(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             next_forecast = self._forward_weak(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             current_bg = next_forecast[-1].detach()
 
@@ -128,23 +120,23 @@ class Weak4DVar:
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse)
 
-    def _forward_weak(self, x0, q, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
+    def _forward_weak(self, x0, q, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
             W = forcing[t - 1]
-            next_s = self.dynamics.step(s, W, sigma, rho, beta) + q[t]
+            next_s = self.dynamics.step(s, W, **kwargs) + q[t]
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
         return torch.stack(traj)
 
-    def _forward_weak_batch(self, x0, q, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
+    def _forward_weak_batch(self, x0, q, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
             W = forcing[:, t - 1]
-            next_s = self.dynamics.step(s, W, sigma, rho, beta) + q[:, t]
+            next_s = self.dynamics.step(s, W, **kwargs) + q[:, t]
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -184,7 +176,7 @@ class Weak4DVar:
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
-                traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma, rho, beta, c1)
+                traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
@@ -196,11 +188,11 @@ class Weak4DVar:
                 opt.step()
 
             final_traj = self._forward_weak_batch(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             next_forecast = self._forward_weak_batch(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             current_bg = next_forecast[:, -1].detach()
 
@@ -269,7 +261,7 @@ class Strong4DVar:
 
             def closure():
                 opt.zero_grad()
-                traj = self._forward_strong(x_ctrl, self.da_window_steps, start, win_force, sigma, rho, beta, c1)
+                traj = self._forward_strong(x_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_o = torch.tensor(0.0, device=self.device)
                 for t in range(self.da_window_steps):
@@ -283,7 +275,7 @@ class Strong4DVar:
                 opt.step(closure)
 
             final_traj = self._forward_strong(
-                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             current_bg = final_traj[-1].detach()
@@ -292,23 +284,23 @@ class Strong4DVar:
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse)
 
-    def _forward_strong(self, x0, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
+    def _forward_strong(self, x0, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
             W = forcing[t - 1]
-            next_s = self.dynamics.step(s, W, sigma, rho, beta)
+            next_s = self.dynamics.step(s, W, **kwargs)
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
         return torch.stack(traj)
 
-    def _forward_strong_batch(self, x0, steps, start_idx, forcing, sigma, rho, beta, c1, clip_range=50.0):
+    def _forward_strong_batch(self, x0, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
         for t in range(1, steps):
             s = traj[-1]
             W = forcing[:, t - 1]
-            next_s = self.dynamics.step(s, W, sigma, rho, beta)
+            next_s = self.dynamics.step(s, W, **kwargs)
             if clip_range is not None:
                 next_s = torch.clamp(next_s, -clip_range, clip_range)
             traj.append(next_s)
@@ -347,7 +339,7 @@ class Strong4DVar:
 
             for _ in range(self.max_iter * 4 if hasattr(self, 'max_iter') else 160):
                 opt.zero_grad()
-                traj = self._forward_strong_batch(x_ctrl, self.da_window_steps, start, win_force, sigma, rho, beta, c1)
+                traj = self._forward_strong_batch(x_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
                 diff = traj - win_obs_clean
@@ -358,7 +350,7 @@ class Strong4DVar:
                 opt.step()
 
             final_traj = self._forward_strong_batch(
-                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma, rho, beta, c1
+                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             current_bg = final_traj[:, -1].detach()
@@ -418,7 +410,7 @@ class ETKF:
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
+            ensemble = self.dynamics.step(ensemble, W, sigma=sigma, rho=rho, beta=beta)
 
 
             if obs_mask[t]:
@@ -478,12 +470,13 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
+            sig_exp = sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma
+            rho_exp = rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho
+            bet_exp = beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
-                sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma,
-                rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho,
-                beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta,
+                sigma=sig_exp, rho=rho_exp, beta=bet_exp,
             ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
@@ -570,7 +563,7 @@ class EnKF:
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma, rho, beta)
+            ensemble = self.dynamics.step(ensemble, W, sigma=sigma, rho=rho, beta=beta)
 
             if obs_mask[t]:
                 y_t = observations[t]
@@ -616,12 +609,13 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
+            sig_exp = sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma
+            rho_exp = rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho
+            bet_exp = beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
-                sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma,
-                rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho,
-                beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta,
+                sigma=sig_exp, rho=rho_exp, beta=bet_exp,
             ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
@@ -724,7 +718,7 @@ class JointWeak4DVar(Weak4DVar):
                 s_val, r_val, b_val = torch.exp(ls), torch.exp(lr_), torch.exp(lb)
                 c_val = torch.exp(lc)
                 traj = self._forward_weak(x0_ctrl, q_ctrl, self.da_window_steps,
-                                          start, win_force, s_val, r_val, b_val, c_val)
+                                          start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_p = ((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
@@ -741,14 +735,14 @@ class JointWeak4DVar(Weak4DVar):
             c_val = torch.exp(lc.detach())
             final_traj = self._forward_weak(
                 x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             param_arr[start:end] = np.tile(
                 [float(s_val), float(r_val), float(b_val), float(c_val)], (self.da_window_steps, 1))
             next_forecast = self._forward_weak(
                 x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             current_bg = next_forecast[-1].detach()
             log_s, log_r, log_b, log_c = ls.detach(), lr_.detach(), lb.detach(), lc.detach()
@@ -812,7 +806,7 @@ class JointWeak4DVar(Weak4DVar):
                 s_val, r_val, b_val = torch.exp(ls), torch.exp(lr_), torch.exp(lb)
                 c_val = torch.exp(lc)
                 traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps,
-                                                start, win_force, s_val, r_val, b_val, c_val)
+                                                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
@@ -828,14 +822,14 @@ class JointWeak4DVar(Weak4DVar):
             c_val = torch.exp(lc.detach())
             final_traj = self._forward_weak_batch(
                 x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             param_arr[:, start:end] = torch.stack([s_val, r_val, b_val, c_val], dim=1).unsqueeze(1).expand(
                 B, self.da_window_steps, 4).detach().cpu().numpy()
             next_forecast = self._forward_weak_batch(
                 x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             current_bg = next_forecast[:, -1].detach()
             log_s, log_r, log_b, log_c = ls.detach(), lr_.detach(), lb.detach(), lc.detach()
@@ -917,7 +911,7 @@ class JointStrong4DVar(Strong4DVar):
                 s_val, r_val, b_val = torch.exp(ls), torch.exp(lr_), torch.exp(lb)
                 c_val = torch.exp(lc)
                 traj = self._forward_strong(x_ctrl, self.da_window_steps,
-                                            start, win_force, s_val, r_val, b_val, c_val)
+                                            start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_p = ((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                        (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
@@ -933,7 +927,7 @@ class JointStrong4DVar(Strong4DVar):
             c_val = torch.exp(lc.detach())
             final_traj = self._forward_strong(
                 x_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             param_arr[start:end] = np.tile(
@@ -999,7 +993,7 @@ class JointStrong4DVar(Strong4DVar):
                 s_val, r_val, b_val = torch.exp(ls), torch.exp(lr_), torch.exp(lb)
                 c_val = torch.exp(lc)
                 traj = self._forward_strong_batch(x_ctrl, self.da_window_steps,
-                                                  start, win_force, s_val, r_val, b_val, c_val)
+                                                  start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                                 (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
@@ -1014,7 +1008,7 @@ class JointStrong4DVar(Strong4DVar):
             c_val = torch.exp(lc.detach())
             final_traj = self._forward_strong_batch(
                 x_ctrl.detach(), self.da_window_steps,
-                start, win_force, s_val, r_val, b_val, c_val
+                start, win_force, sigma=s_val, rho=r_val, beta=b_val, c1=c_val
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             param_arr[:, start:end] = torch.stack([s_val, r_val, b_val, c_val], dim=1).unsqueeze(1).expand(
@@ -1106,7 +1100,7 @@ class JointEnKF(EnKF):
             sig_e = ensemble[:, 3].clamp(min=1e-6)
             rho_e = ensemble[:, 4].clamp(min=1e-6)
             beta_e = ensemble[:, 5].clamp(min=1e-6)
-            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.expand(N), sig_e, rho_e, beta_e)
+            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.expand(N), sigma=sig_e, rho=rho_e, beta=beta_e)
 
             if obs_mask[t]:
                 y_t = observations[t]
@@ -1171,7 +1165,7 @@ class JointEnKF(EnKF):
             sig_e = ensemble[:, :, 3].clamp(min=1e-6)
             rho_e = ensemble[:, :, 4].clamp(min=1e-6)
             beta_e = ensemble[:, :, 5].clamp(min=1e-6)
-            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sig_e, rho_e, beta_e)
+            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sigma=sig_e, rho=rho_e, beta=beta_e)
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -1273,7 +1267,7 @@ class JointETKF(ETKF):
             sig_e = ensemble[:, 3].clamp(min=1e-6)
             rho_e = ensemble[:, 4].clamp(min=1e-6)
             beta_e = ensemble[:, 5].clamp(min=1e-6)
-            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.unsqueeze(1).expand(N), sig_e, rho_e, beta_e)
+            ensemble[:, :sd] = self.dynamics.step(ensemble[:, :sd], W.unsqueeze(1).expand(N), sigma=sig_e, rho=rho_e, beta=beta_e)
 
             if obs_mask[t]:
                 y_t = observations[t]
@@ -1363,7 +1357,7 @@ class JointETKF(ETKF):
             sig_e = ensemble[:, :, 3].clamp(min=1e-6)
             rho_e = ensemble[:, :, 4].clamp(min=1e-6)
             beta_e = ensemble[:, :, 5].clamp(min=1e-6)
-            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sig_e, rho_e, beta_e)
+            ensemble[:, :, :sd] = self.dynamics.step(ensemble[:, :, :sd], W.expand(B, -1), sigma=sig_e, rho=rho_e, beta=beta_e)
 
             if obs_mask[:, t].any():
                 for b in range(B):
