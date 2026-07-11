@@ -45,55 +45,29 @@ class Lorenz96Dynamics(DynamicsBase):
         self.c2 = c2
         self.sigma_L = sigma_L
 
-    def _slow_derivative(self, X, Y_sum, forcing, F):
+    def _derivative(self, state, forcing, F):
+        NO, J, h, hx, eps = self.NO, self.J, self.h, self.hx, self.eps
+        X = state[..., :NO]
+        Y = state[..., NO:].reshape(*state.shape[:-1], NO, J)
+        Y_sum = Y.sum(dim=-1)
         Xm1 = _periodic_shift(X, 1)
         Xp1 = _periodic_shift(X, -1)
         Xm2 = _periodic_shift(X, 2)
-        adv = Xm1 * (Xp1 - Xm2)
-        W = forcing
-        coupling = _apply_coupling(W, self.c1, self.coupling_exponent)
-        return adv - X + F - self.h * Y_sum + coupling
-
-    def _fast_derivative(self, Y, X_k):
+        adv_slow = Xm1 * (Xp1 - Xm2)
+        coupling = _apply_coupling(forcing, self.c1, self.coupling_exponent)
+        dX = adv_slow - X + F - h * Y_sum + coupling
         Yp1 = _periodic_shift(Y, -1)
         Ym1 = _periodic_shift(Y, 1)
         Ym2 = _periodic_shift(Y, 2)
-        adv = Yp1 * (Ym1 - Ym2)
-        return (adv - Y + self.hx * X_k) / self.eps
-
-    def _slow_derivative_np(self, X, Y_sum, forcing, F):
-        Xm1 = _periodic_shift(X, 1)
-        Xp1 = _periodic_shift(X, -1)
-        Xm2 = _periodic_shift(X, 2)
-        adv = Xm1 * (Xp1 - Xm2)
-        W = forcing
-        coupling = _apply_coupling(torch.from_numpy(W), self.c1, self.coupling_exponent)
-        return adv + coupling.numpy() - X + F - self.h * Y_sum
-
-    def _fast_derivative_np(self, Y, X_k):
-        Yp1 = _periodic_shift(Y, -1)
-        Ym1 = _periodic_shift(Y, 1)
-        Ym2 = _periodic_shift(Y, 2)
-        adv = Yp1 * (Ym1 - Ym2)
-        return (adv - Y + self.hx * X_k) / self.eps
+        adv_fast = Yp1 * (Ym1 - Ym2)
+        dY = (adv_fast - Y + hx * X.unsqueeze(-1)) / eps
+        return torch.cat([dX, dY.reshape(*state.shape[:-1], NO * J)], dim=-1)
 
     def _rk4_step(self, state, forcing, F, dt):
-        NO, J = self.NO, self.J
-
-        def derivs(s):
-            x = s[:NO]
-            y = s[NO:].reshape(NO, J)
-            ys = y.sum(axis=-1)
-            dx = self._slow_derivative(x, ys, forcing, F)
-            dy = torch.zeros(NO, J, device=state.device, dtype=state.dtype)
-            for k in range(NO):
-                dy[k] = self._fast_derivative(y[k], x[k])
-            return torch.cat([dx, dy.reshape(-1)])
-
-        k1 = derivs(state)
-        k2 = derivs(state + 0.5 * dt * k1)
-        k3 = derivs(state + 0.5 * dt * k2)
-        k4 = derivs(state + dt * k3)
+        k1 = self._derivative(state, forcing, F)
+        k2 = self._derivative(state + 0.5 * dt * k1, forcing, F)
+        k3 = self._derivative(state + 0.5 * dt * k2, forcing, F)
+        k4 = self._derivative(state + dt * k3, forcing, F)
         next_s = state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
         if self.clip_range is not None:
             next_s = torch.clamp(next_s, -self.clip_range, self.clip_range)
@@ -103,6 +77,23 @@ class Lorenz96Dynamics(DynamicsBase):
              **kwargs) -> torch.Tensor:
         F = kwargs.get("F", 8.0)
         return self._rk4_step(state, forcing, F, self.dt)
+
+    def _forecast_loop(self, s0, forcing_arr, steps, F):
+        s = s0
+        for i in range(steps):
+            s = self._rk4_step(s, forcing_arr[i], F, self.dt)
+        return s
+
+    def _build_forcing(self, length, seed, c1, c2, gamma, W_L_bar, sigma_0, sigma_L, coupling_exponent):
+        rng = np.random.RandomState(seed)
+        W_raw = rng.randn(length) * sigma_0
+        W_AR = np.zeros(length)
+        for i in range(1, length):
+            W_AR[i] = gamma * W_AR[i - 1] + np.sqrt(1 - gamma ** 2) * W_raw[i]
+        W_AR += W_L_bar
+        W_AR += c2 * np.sin(np.arange(length) * 2 * np.pi / 80.0)
+        W_arr = c1 * np.sign(W_AR) * np.abs(W_AR) ** coupling_exponent
+        return W_arr
 
     def generate_full_trajectory(self, num_steps: int, seed: int = 42,
                                   device=None, F=8.0, c1=None, c2=None,
@@ -116,33 +107,27 @@ class Lorenz96Dynamics(DynamicsBase):
         W_L_bar = W_L_bar if W_L_bar is not None else self.W_L_bar
         sigma_0 = sigma_0 if sigma_0 is not None else self.sigma_0
         sigma_L = sigma_L if sigma_L is not None else self.sigma_L
-        rng = np.random.RandomState(seed)
 
-        X0 = rng.randn(self.NO) * 0.01
-        Y0 = rng.randn(self.NO * self.J) * 0.01
-        s0_np = np.concatenate([X0, Y0])
-
-        s0_t = torch.from_numpy(s0_np).float()
-        spin_trajs = []
-        s = s0_t
         total = num_steps + spinup_steps
+        W_arr = self._build_forcing(total, seed, c1, c2, gamma, W_L_bar, sigma_0, sigma_L, coupling_exponent)
 
-        W_raw = rng.randn(total) * sigma_0
-        W_AR = np.zeros(total)
-        for i in range(1, total):
-            W_AR[i] = gamma * W_AR[i - 1] + np.sqrt(1 - gamma ** 2) * W_raw[i]
-        W_AR += W_L_bar
-        W_AR += c2 * np.sin(np.arange(total) * 2 * np.pi / 80.0)
-        W_arr = c1 * np.sign(W_AR) * np.abs(W_AR) ** coupling_exponent
+        rng = np.random.RandomState(seed + 1)
+        s0 = torch.tensor(np.concatenate([
+            rng.randn(self.NO) * 0.01,
+            rng.randn(self.NO * self.J) * 0.01,
+        ]), dtype=torch.float32)
 
-        for i in range(total):
-            force = torch.tensor(W_arr[i], dtype=s.dtype, device=device)
-            s = self._rk4_step(s, force, F, self.dt)
-            if i >= spinup_steps - 1:
-                spin_trajs.append(s.clone())
+        W_t = torch.tensor(W_arr, dtype=torch.float32)
+        s = s0
+        for i in range(spinup_steps):
+            s = self._rk4_step(s, W_t[i], F, self.dt)
 
-        traj = torch.stack(spin_trajs)
-        forcing_t = torch.tensor(W_arr[-num_steps:], dtype=s.dtype, device=device)
+        traj_list = [s.clone()]
+        for i in range(spinup_steps, total - 1):
+            s = self._rk4_step(s, W_t[i], F, self.dt)
+            traj_list.append(s.clone())
+        traj = torch.stack(traj_list)
+        forcing_t = W_t[-num_steps:]
         return traj, forcing_t
 
     def rollout_with_q(self, x0: torch.Tensor, q: torch.Tensor,

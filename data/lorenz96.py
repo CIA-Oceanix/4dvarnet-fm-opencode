@@ -73,13 +73,14 @@ def _generate_observations(
     device: torch.device = torch.device("cpu"),
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     num_steps = true_fluid.shape[0]
+    sd = true_fluid.shape[-1]
     rng = torch.Generator(device=device).manual_seed(seed)
     obs_indices = np.arange(0, num_steps, obs_interval)
     obs_mask = torch.zeros(num_steps, dtype=torch.bool, device=device)
     obs_mask[obs_indices] = True
-    noisy_obs = torch.full_like(true_fluid, float('nan'))
+    noisy_obs = torch.full((num_steps, sd), float('nan'), device=device)
     noisy_obs[obs_indices] = true_fluid[obs_indices] + (
-        torch.randn((len(obs_indices), true_fluid.shape[-1]), device=device, generator=rng) * np.sqrt(R_var)
+        torch.randn((len(obs_indices), sd), device=device, generator=rng) * np.sqrt(R_var)
     )
     return noisy_obs, obs_mask
 
@@ -163,4 +164,155 @@ def make_datasets(cfg: Lorenz96Config) -> Dict[str, Lorenz96Dataset]:
         "val": Lorenz96Dataset(val_cfg),
         "test_cs1": Lorenz96Dataset(test_cfg_cs1),
         "test_cs2": Lorenz96Dataset(test_cfg_cs2),
+    }
+
+
+def _make_obs(cfg, true_fluid, obs_seed, device=None):
+    device = device or torch.device("cpu")
+    return _generate_observations(true_fluid, cfg.obs_interval, cfg.R_var, obs_seed, device)
+
+
+def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):
+    device = device or torch.device("cpu")
+    num_steps = cfg.num_steps
+    eta = np.zeros(num_steps)
+    rng = np.random.RandomState(seed)
+    sqrt_dt = np.sqrt(cfg.dt)
+    for et in range(1, num_steps):
+        d_eta = -(1.0 / cfg.tau_eta) * eta[et - 1] * cfg.dt + cfg.sigma_eta * np.sqrt(2.0 / cfg.tau_eta) * rng.normal(0, sqrt_dt)
+        eta[et] = eta[et - 1] + d_eta
+    return W_L_true + cfg.forcing_state_bias * true_fluid[:, 0] + torch.tensor(eta, dtype=true_fluid.dtype, device=device)
+
+
+class RandomParamLorenz96Dataset:
+    def __init__(self, cfg: Lorenz96Config, param_noise: float = 0.2,
+                 dynamics=None, cached_windows: list = None,
+                 max_window_retries: int = 10):
+        self.cfg = cfg
+        self.param_noise = param_noise
+        self.device = torch.device("cpu")
+        self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
+
+        if cached_windows is not None:
+            self.windows = cached_windows
+            return
+
+        self.windows = []
+        for i in range(cfg.num_windows):
+            base_seed = cfg.seed + i * 100
+            for attempt in range(max_window_retries):
+                traj_seed = base_seed + attempt
+                obs_seed = cfg.seed + i * 100 + 1 + attempt
+                lo = 1.0 - param_noise
+                hi = 1.0 + param_noise
+                rng_seed = traj_seed
+                rng_np = np.random.RandomState(rng_seed)
+                F = cfg.F_true * rng_np.uniform(lo, hi)
+                try:
+                    true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
+                        num_steps=cfg.num_steps, seed=traj_seed, F=F,
+                        spinup_steps=cfg.spinup_steps,
+                        coupling_exponent=cfg.coupling_exponent_truth,
+                    )
+                except RuntimeError:
+                    continue
+                if torch.isfinite(true_fluid).all():
+                    break
+            else:
+                raise RuntimeError(f"RandomParamLorenz96Dataset window {i} unstable (seed={cfg.seed})")
+
+            if cfg.use_corrupted_forcing:
+                W_L_star = _make_corrupted_forcing(cfg, W_L_true, true_fluid, traj_seed, self.device)
+            else:
+                W_L_star = W_L_true.clone()
+
+            noisy_obs, obs_mask = _make_obs(cfg, true_fluid, obs_seed, self.device)
+            self.windows.append({
+                "true_state": true_fluid, "obs": noisy_obs, "obs_mask": obs_mask,
+                "forcing_true": W_L_true, "forcing_corrupted": W_L_star,
+                "F": F, "true_F": F,
+                "obs_seed": obs_seed,
+            })
+
+    def __len__(self):
+        return len(self.windows)
+
+    def __getitem__(self, idx):
+        w = self.windows[idx]
+        if "obs" not in w or "obs_mask" not in w:
+            obs_seed = w.get("obs_seed", self.cfg.obs_interval + idx)
+            obs, obs_mask = _make_obs(self.cfg, w["true_state"], obs_seed, self.device)
+            w["obs"] = obs
+            w["obs_mask"] = obs_mask
+        return w
+
+
+class RandomBiasLorenz96Dataset:
+    def __init__(self, cfg: Lorenz96Config, param_noise: float = 0.2,
+                 dynamics=None, cached_windows: list = None,
+                 max_window_retries: int = 10):
+        self.cfg = cfg
+        self.param_noise = param_noise
+        self.device = torch.device("cpu")
+        self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
+
+        if cached_windows is not None:
+            self.windows = cached_windows
+            return
+
+        self.windows = []
+        for i in range(cfg.num_windows):
+            base_seed = cfg.seed + i * 100
+            for attempt in range(max_window_retries):
+                traj_seed = base_seed + attempt
+                obs_seed = cfg.seed + i * 100 + 1 + attempt
+                lo = 1.0 - param_noise
+                hi = 1.0 + param_noise
+                rng_np = np.random.RandomState(traj_seed)
+                F = cfg.F_true * rng_np.uniform(lo, hi)
+                try:
+                    true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
+                        num_steps=cfg.num_steps, seed=traj_seed, F=F,
+                        spinup_steps=cfg.spinup_steps,
+                        coupling_exponent=cfg.coupling_exponent_truth,
+                    )
+                except RuntimeError:
+                    continue
+                if torch.isfinite(true_fluid).all():
+                    break
+            else:
+                raise RuntimeError(f"RandomBiasLorenz96Dataset window {i} unstable (seed={cfg.seed})")
+
+            W_L_star = _make_corrupted_forcing(cfg, W_L_true, true_fluid, traj_seed, self.device)
+            noisy_obs, obs_mask = _make_obs(cfg, true_fluid, obs_seed, self.device)
+            self.windows.append({
+                "true_state": true_fluid, "obs": noisy_obs, "obs_mask": obs_mask,
+                "forcing_true": W_L_true, "forcing_corrupted": W_L_star,
+                "F": F, "true_F": F,
+                "obs_seed": obs_seed,
+            })
+
+    def __len__(self):
+        return len(self.windows)
+
+    def __getitem__(self, idx):
+        w = self.windows[idx]
+        if "obs" not in w or "obs_mask" not in w:
+            obs_seed = w.get("obs_seed", self.cfg.obs_interval + idx)
+            obs, obs_mask = _make_obs(self.cfg, w["true_state"], obs_seed, self.device)
+            w["obs"] = obs
+            w["obs_mask"] = obs_mask
+        return w
+
+
+def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
+                            num_test_windows: int = 200) -> Dict:
+    dynamics = _make_lorenz96_dynamics(cfg)
+    test_s0_cfg = Lorenz96Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.0,
+        "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
+    test_s1_cfg = Lorenz96Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.15,
+        "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
+    return {
+        "test_s0": RandomParamLorenz96Dataset(test_s0_cfg, param_noise=0.2, dynamics=dynamics),
+        "test_s1": RandomBiasLorenz96Dataset(test_s1_cfg, param_noise=0.2, dynamics=dynamics),
     }
