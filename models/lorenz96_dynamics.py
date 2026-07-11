@@ -76,6 +76,8 @@ class Lorenz96Dynamics(DynamicsBase):
     def step(self, state: torch.Tensor, forcing: torch.Tensor,
              **kwargs) -> torch.Tensor:
         F = kwargs.get("F", 8.0)
+        if isinstance(F, torch.Tensor) and F.dim() >= 1 and state.dim() > F.dim():
+            F = F.reshape(*F.shape, *([1] * (state.dim() - F.dim())))
         return self._rk4_step(state, forcing, F, self.dt)
 
     def _forecast_loop(self, s0, forcing_arr, steps, F):
