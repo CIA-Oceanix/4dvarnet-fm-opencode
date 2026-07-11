@@ -72,7 +72,10 @@ class Weak4DVar:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         sd = self.state_dim
         num_steps = observations.shape[0]
         num_windows = num_steps // self.da_window_steps
@@ -96,7 +99,7 @@ class Weak4DVar:
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
-                traj = self._forward_weak(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
+                traj = self._forward_weak(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, **params)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_o = torch.tensor(0.0, device=self.device)
@@ -108,11 +111,11 @@ class Weak4DVar:
                 opt.step()
 
             final_traj = self._forward_weak(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             next_forecast = self._forward_weak(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             current_bg = next_forecast[-1].detach()
 
@@ -152,7 +155,10 @@ class Weak4DVar:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         sd = self.state_dim
         B, num_steps, _ = observations.shape
         num_windows = num_steps // self.da_window_steps
@@ -176,7 +182,7 @@ class Weak4DVar:
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
-                traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
+                traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, **params)
                 J_b = torch.sum((x0_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
@@ -188,11 +194,11 @@ class Weak4DVar:
                 opt.step()
 
             final_traj = self._forward_weak_batch(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             next_forecast = self._forward_weak_batch(
-                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x0_ctrl.detach(), q_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             current_bg = next_forecast[:, -1].detach()
 
@@ -238,7 +244,10 @@ class Strong4DVar:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -261,7 +270,7 @@ class Strong4DVar:
 
             def closure():
                 opt.zero_grad()
-                traj = self._forward_strong(x_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
+                traj = self._forward_strong(x_ctrl, self.da_window_steps, start, win_force, **params)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_o = torch.tensor(0.0, device=self.device)
                 for t in range(self.da_window_steps):
@@ -275,7 +284,7 @@ class Strong4DVar:
                 opt.step(closure)
 
             final_traj = self._forward_strong(
-                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             current_bg = final_traj[-1].detach()
@@ -316,7 +325,10 @@ class Strong4DVar:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -339,7 +351,7 @@ class Strong4DVar:
 
             for _ in range(self.max_iter * 4 if hasattr(self, 'max_iter') else 160):
                 opt.zero_grad()
-                traj = self._forward_strong_batch(x_ctrl, self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1)
+                traj = self._forward_strong_batch(x_ctrl, self.da_window_steps, start, win_force, **params)
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
                 diff = traj - win_obs_clean
@@ -350,7 +362,7 @@ class Strong4DVar:
                 opt.step()
 
             final_traj = self._forward_strong_batch(
-                x_ctrl.detach(), self.da_window_steps, start, win_force, sigma=sigma, rho=rho, beta=beta, c1=c1
+                x_ctrl.detach(), self.da_window_steps, start, win_force, **params
             )
             analysis[:, start:end] = final_traj.detach().cpu().numpy()
             current_bg = final_traj[:, -1].detach()
@@ -393,7 +405,10 @@ class ETKF:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         sd = self.state_dim
         N = self.N_ensemble
@@ -453,7 +468,10 @@ class ETKF:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
         N1 = N - 1
@@ -470,13 +488,11 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
-            sig_exp = sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma
-            rho_exp = rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho
-            bet_exp = beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta
+            step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
-                sigma=sig_exp, rho=rho_exp, beta=bet_exp,
+                **step_params,
             ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
@@ -551,7 +567,10 @@ class EnKF:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = interp_obs[0].unsqueeze(0).repeat(self.N_ensemble, 1) + torch.randn((self.N_ensemble, self.state_dim), device=self.device) * 1.5
@@ -596,7 +615,10 @@ class EnKF:
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = interp_obs[:, 0].unsqueeze(1).repeat(1, self.N_ensemble, 1) + torch.randn((B, self.N_ensemble, self.state_dim), device=self.device) * 1.5
@@ -609,13 +631,11 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
-            sig_exp = sigma.unsqueeze(1).expand(B0, N).reshape(B0 * N) if sigma.dim() == 1 else sigma
-            rho_exp = rho.unsqueeze(1).expand(B0, N).reshape(B0 * N) if rho.dim() == 1 else rho
-            bet_exp = beta.unsqueeze(1).expand(B0, N).reshape(B0 * N) if beta.dim() == 1 else beta
+            step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
-                sigma=sig_exp, rho=rho_exp, beta=bet_exp,
+                **step_params,
             ).reshape(B0, N, D)
 
             if obs_mask[:, t].any():
@@ -681,7 +701,10 @@ class JointWeak4DVar(Weak4DVar):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -761,7 +784,10 @@ class JointWeak4DVar(Weak4DVar):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -875,7 +901,10 @@ class JointStrong4DVar(Strong4DVar):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -949,7 +978,10 @@ class JointStrong4DVar(Strong4DVar):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         sd = self.state_dim
         num_windows = num_steps // self.da_window_steps
@@ -1078,7 +1110,10 @@ class JointEnKF(EnKF):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         N = self.N_ensemble
         N_dim = self.state_dim + 4
@@ -1143,7 +1178,10 @@ class JointEnKF(EnKF):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
         sd = self.state_dim
@@ -1234,7 +1272,10 @@ class JointETKF(ETKF):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> BaselineResult:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         num_steps = observations.shape[0]
         N = self.N_ensemble
         sd = self.state_dim
@@ -1318,7 +1359,10 @@ class JointETKF(ETKF):
         rho: float = 28.0,
         beta: float = 8 / 3,
         c1: float = 1.0,
+            **kwargs,
     ) -> list:
+        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
+
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
         sd = self.state_dim

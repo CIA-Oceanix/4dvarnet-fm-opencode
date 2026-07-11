@@ -29,8 +29,8 @@ $PYTHON -c "import torch; print('torch', torch.__version__, flush=True)"
 echo "  Running evaluate_all_l96.py..."
 $PYTHON -u evaluate_all_l96.py \
     --da-window-steps 500 \
-    --num-test-windows 10 \
-    --batch-size 5 \
+    --num-test-windows 3 \
+    --batch-size 3 \
     --t-max 0.5 \
     --enkf-inflation 2.0 \
     --etkf-inflation 2.0

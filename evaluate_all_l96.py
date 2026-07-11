@@ -14,7 +14,8 @@ EXP_DIR = os.path.join(BASE, "experiments")
 
 
 def run_baselines(datasets, device, da_window_steps=None,
-                  enkf_inflation=None, etkf_inflation=None, suffix=""):
+                  enkf_inflation=None, etkf_inflation=None, suffix="",
+                  weak_config=None, strong_config=None):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -22,7 +23,9 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        da_window_steps=da_window_steps,
                                        enkf_config=enkf_config,
                                        etkf_config=etkf_config,
-                                       suffix=suffix)
+                                       suffix=suffix,
+                                       weak_config=weak_config,
+                                       strong_config=strong_config)
     return results
 
 
@@ -101,7 +104,9 @@ def main():
                                       da_window_steps=args.da_window_steps,
                                       enkf_inflation=args.enkf_inflation,
                                       etkf_inflation=args.etkf_inflation,
-                                      suffix=args.suffix)
+                                      suffix=args.suffix,
+                                      weak_config={"opt_steps": 50, "lr": 0.1},
+                                      strong_config={"max_iter": 10, "lr": 0.2})
 
     print("\n── L96 S0/S1 Comparison Table ──")
     headers = ["Case"] + _BASELINE_METHODS

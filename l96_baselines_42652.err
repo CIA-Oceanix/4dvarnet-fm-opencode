@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 124, in <module>
+    main()
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 103, in main
+    baseline_results = run_baselines(datasets, device,
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 22, in run_baselines
+    results = run_and_cache_baselines(datasets, device, batch_size=200,
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/run_l96.py", line 138, in run_and_cache_baselines
+    (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/run_l96.py", line 48, in evaluate_baseline
+    results = method.assimilate_batch(obs, mask, force, truth, F=F)
+TypeError: Weak4DVar.assimilate_batch() got an unexpected keyword argument 'F'
