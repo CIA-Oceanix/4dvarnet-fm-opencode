@@ -24,10 +24,14 @@ echo ""
 
 # Run L96 S0/S1 baseline evaluation
 echo "Starting L96 baseline evaluation..."
-$PYTHON evaluate_all_l96.py \
+$PYTHON -c "import sys; print('Python OK', flush=True)"
+$PYTHON -c "import torch; print('torch', torch.__version__, flush=True)"
+echo "  Running evaluate_all_l96.py..."
+$PYTHON -u evaluate_all_l96.py \
     --da-window-steps 500 \
-    --num-test-windows 200 \
-    --batch-size 20 \
+    --num-test-windows 10 \
+    --batch-size 5 \
+    --t-max 0.5 \
     --enkf-inflation 2.0 \
     --etkf-inflation 2.0
 

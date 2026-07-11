@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--da-window-steps", type=int, default=500)
     parser.add_argument("--num-test-windows", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=20)
+    parser.add_argument("--t-max", type=float, default=3.0, help="Trajectory length in time units")
     parser.add_argument("--r-var", type=float, default=0.5)
     parser.add_argument("--obs-interval", type=int, default=200)
     parser.add_argument("--suffix", type=str, default="")
@@ -74,7 +75,7 @@ def main():
         print(f"Device: {device}")
 
     base_cfg = Lorenz96Config(
-        dt=0.001, T_max=3.0, obs_interval=args.obs_interval,
+        dt=0.001, T_max=args.t_max, obs_interval=args.obs_interval,
         R_var=args.r_var, B_var=2.0,
         num_windows=2000, window_spacing=2000,
         spinup_steps=10000, seed=42,

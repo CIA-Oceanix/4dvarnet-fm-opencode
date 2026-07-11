@@ -84,6 +84,12 @@ class Lorenz96Dynamics(DynamicsBase):
             s = self._rk4_step(s, forcing_arr[i], F, self.dt)
         return s
 
+    def _forecast_loop_batch(self, s0_batch, forcing_arr, steps, F_batch):
+        s = s0_batch
+        for i in range(steps):
+            s = self._rk4_step(s, forcing_arr[i], F_batch, self.dt)
+        return s
+
     def _build_forcing(self, length, seed, c1, c2, gamma, W_L_bar, sigma_0, sigma_L, coupling_exponent):
         rng = np.random.RandomState(seed)
         W_raw = rng.randn(length) * sigma_0
@@ -128,6 +134,48 @@ class Lorenz96Dynamics(DynamicsBase):
             traj_list.append(s.clone())
         traj = torch.stack(traj_list)
         forcing_t = W_t[-num_steps:]
+        return traj, forcing_t
+
+    def generate_batch_trajectories(self, num_windows: int, num_steps: int,
+                                  spinup_steps: int = 10000,
+                                  F_values: torch.Tensor = None,
+                                  seed: int = 42,
+                                  device=None) -> tuple:
+        if device is None:
+            device = torch.device("cpu")
+        NO, J = self.NO, self.J
+        sd = self.state_dim
+
+        rng = np.random.RandomState(seed)
+        W_arr = self._build_forcing(num_steps + spinup_steps, seed,
+                                     self.c1, self.c2, self.gamma,
+                                     self.W_L_bar, self.sigma_0, self.sigma_L,
+                                     self.coupling_exponent)
+        W_t = torch.tensor(W_arr, dtype=torch.float32, device=device)
+
+        rng_np = np.random.RandomState(seed + 1)
+        s0 = torch.tensor(np.concatenate([
+            rng_np.randn(NO) * 0.01,
+            rng_np.randn(NO * J) * 0.01,
+        ]), dtype=torch.float32, device=device)
+
+        if F_values is None:
+            F_values = torch.full((num_windows,), 8.0, device=device)
+        B = num_windows
+
+        s = s0.unsqueeze(0).expand(B, -1).clone()
+        F = F_values
+
+        for i in range(spinup_steps):
+            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt)
+
+        traj_list = [s.clone()]
+        for i in range(spinup_steps, num_steps + spinup_steps):
+            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt)
+            traj_list.append(s.clone())
+
+        traj = torch.stack(traj_list, dim=1)
+        forcing_t = W_t[-num_steps:].expand(B, -1)
         return traj, forcing_t
 
     def rollout_with_q(self, x0: torch.Tensor, q: torch.Tensor,
