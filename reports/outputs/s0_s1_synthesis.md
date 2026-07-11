@@ -38,6 +38,23 @@ The DA baselines were refactored as part of `feat/multi-case-study` (Phase 1 arc
 
 5. **Numerical equivalence verified**: `Lorenz63Dynamics.step()` matches the old inline L63 bit-exactly for single steps and 300-step rollouts (diff = 0.0).
 
+### 1.6. Edge-Effect Sensitivity Analysis (Jul 11)
+
+A sensitivity check was performed comparing the **full-window RMSE** (300 steps) against a **trimmed RMSE** (steps 50–250, skipping 50 steps at each end to remove edge/spin-up effects). The trimmed RMSE uses per-window averaging (same methodology as the full RMSE). Results:
+
+| Case/Method | Full (0–300) | Trimmed (50–250) | Δ mean |
+|:-----------:|:------------:|:----------------:|:------:|
+| S0/Weak-4DVar | 0.642 | 0.631 | −0.011 |
+| S0/Strong-4DVar | 0.767 | 0.763 | −0.004 |
+| S0/EnKF | 0.881 | 0.866 | −0.015 |
+| S0/ETKF | 0.878 | 0.856 | −0.021 |
+| S1/Weak-4DVar | 1.633 | 1.685 | +0.053 |
+| S1/Strong-4DVar | 2.100 | 2.121 | +0.022 |
+| S1/EnKF | 2.267 | 2.252 | −0.015 |
+| S1/ETKF | 2.271 | 2.258 | −0.013 |
+
+Differences are small (≤ 0.053) and no ranking changes: Weak-4DVar remains the best DA baseline on both S0 and S1. The trimmed RMSE is very slightly lower on S0 (edges include spin-up transients) and very slightly higher on S1 Weak-4DVar (mismatch model performs worse mid-window). The overall conclusions are unchanged.
+
 ---
 
 ## 2. DA Baselines (Obs at Step 0, Interpolation Init, Inflation=2.0)
