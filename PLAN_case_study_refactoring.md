@@ -10,13 +10,13 @@ Refactor the codebase to support multiple dynamical systems (Lorenz63, Lorenz96,
 ## Current Status (Jul 11)
 
 - **Phase 1** — fully committed and tagged (p1-config through p1-fixes)
-- **Full S0/S1 DA baseline run** — submitted as SLURM job 42633 (200 test windows, report-matched config, ~3hr on A40)
+- **Bug fix** — EnKF/ETKF batch forecast path now flattens `(B,N,D)` → `(B*N,D)` before `dynamics.step()` to handle per-window sigma/rho/beta correctly. Committed as `0a5c35f`.
+- **Full S0/S1 DA baseline run** — submitted as SLURM job **42642** (200 test windows, report-matched config, batch_size=50, A40 GPU)
 - **Phase 2 (Lorenz96)** — detailed plan below, pending implementation
 - **Remaining issues to fix before Phase 2**:
-  - `get_dynamics()` in `models/dynamics.py` still uses old `coupling_type` API — **fixed in p1-fixes**
-  - `DataConfig` in `conf/schema.py` still has `forcing_coupling: str` — should add `coupling_exponent_truth` and `coupling_exponent_da` fields; `to_lorenz63_config()` should pass them
-  - Configs still use `forcing_coupling: linear/quartic` — should migrate to `coupling_exponent_truth: 1.6` / `coupling_exponent_da: 1.0`
-  - `eval_baselines.py` (Hydra pipeline) doesn't create dynamics with correct coupling exponents — uses `get_dynamics()` which now needs `coupling_exponent_truth` from config
+  - `DataConfig` in `conf/schema.py` still has `forcing_coupling: str` — should add `coupling_exponent_truth` and `coupling_exponent_da` fields; `to_lorenz63_config()` should pass them _(low priority — non-breaking, only affects Hydra pipeline)_
+  - Configs still use `forcing_coupling: linear/quartic` — should migrate to `coupling_exponent_truth: 1.6` / `coupling_exponent_da: 1.0` _(same)_
+  - `eval_baselines.py` (Hydra pipeline) doesn't create dynamics with correct coupling exponents — uses `get_dynamics()` which now needs `coupling_exponent_truth` from config _(same)_
 
 ---
 
@@ -36,6 +36,7 @@ Remove hardcoded L63-specific assumptions behind abstract interfaces. No functio
 | 6 | DA baselines | Parameterize `Weak4DVar`, `Strong4DVar`, `EnKF`, `ETKF` to accept `DynamicsBase` | `evaluation/baselines.py` | 3h | completed | `p1-baselines` |
 | 7 | Pipeline | Wire `model_factory`, `get_dynamics`, evaluation loop + full validation | `train.py`, `eval_baselines.py`, `training/`, `evaluate_all.py` | 1.5h | completed | `p1-pipeline` |
 | — | Fixes | `coupling_exponent_truth` bugfix, dynamics pooling, numerical equivalence tests, `get_dynamics` API fix | `data/*.py`, `evaluation/run.py`, `models/*.py`, `tests/*.py` | — | completed | `p1-fixes` |
+| — | Batch fix | Flatten ensemble dim in EnKF/ETKF batch forecast step for `dynamics.step()` API compatibility | `evaluation/baselines.py` | — | completed | `p1-batch-fix` |
 
 ### Verifications (run after each agent)
 
