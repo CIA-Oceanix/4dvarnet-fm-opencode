@@ -55,6 +55,8 @@ class Lorenz96Dynamics(DynamicsBase):
         Xm2 = _periodic_shift(X, 2)
         adv_slow = Xm1 * (Xp1 - Xm2)
         coupling = _apply_coupling(forcing, self.c1, self.coupling_exponent)
+        while coupling.dim() < X.dim():
+            coupling = coupling.unsqueeze(-1)
         dX = adv_slow - X + F - h * Y_sum + coupling
         Yp1 = _periodic_shift(Y, -1)
         Ym1 = _periodic_shift(Y, 1)
@@ -76,8 +78,9 @@ class Lorenz96Dynamics(DynamicsBase):
     def step(self, state: torch.Tensor, forcing: torch.Tensor,
              **kwargs) -> torch.Tensor:
         F = kwargs.get("F", 8.0)
-        if isinstance(F, torch.Tensor) and F.dim() >= 1 and state.dim() > F.dim():
-            F = F.reshape(*F.shape, *([1] * (state.dim() - F.dim())))
+        if isinstance(F, torch.Tensor):
+            while F.dim() < state.dim():
+                F = F.unsqueeze(-1)
         return self._rk4_step(state, forcing, F, self.dt)
 
     def _forecast_loop(self, s0, forcing_arr, steps, F):

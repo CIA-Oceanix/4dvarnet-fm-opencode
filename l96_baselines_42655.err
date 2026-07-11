@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 124, in <module>
+    main()
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 103, in main
+    baseline_results = run_baselines(datasets, device,
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluate_all_l96.py", line 22, in run_baselines
+    results = run_and_cache_baselines(datasets, device, batch_size=200,
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/run_l96.py", line 138, in run_and_cache_baselines
+    (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/run_l96.py", line 48, in evaluate_baseline
+    results = method.assimilate_batch(obs, mask, force, truth, F=F)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/baselines.py", line 185, in assimilate_batch
+    traj = self._forward_weak_batch(x0_ctrl, q_ctrl, self.da_window_steps, start, win_force, **params)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/baselines.py", line 142, in _forward_weak_batch
+    next_s = self.dynamics.step(s, W, **kwargs) + q[:, t]
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/../models/lorenz96_dynamics.py", line 81, in step
+    return self._rk4_step(state, forcing, F, self.dt)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/../models/lorenz96_dynamics.py", line 67, in _rk4_step
+    k1 = self._derivative(state, forcing, F)
+  File "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/evaluation/../models/lorenz96_dynamics.py", line 58, in _derivative
+    dX = adv_slow - X + F - h * Y_sum + coupling
+RuntimeError: The size of tensor a (8) must match the size of tensor b (3) at non-singleton dimension 1
