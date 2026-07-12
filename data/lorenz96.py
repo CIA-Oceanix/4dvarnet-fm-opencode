@@ -39,6 +39,13 @@ class Lorenz96Config:
     forcing_coupling: str = "linear"
     coupling_exponent_truth: float = 1.6
     coupling_exponent_da: float = 1.0
+    obs_var_indices: Tuple[int, ...] = None
+
+    @property
+    def obs_dim(self) -> int:
+        if self.obs_var_indices is not None:
+            return len(self.obs_var_indices)
+        return self.state_dim
 
     @property
     def num_steps(self) -> int:
@@ -71,16 +78,22 @@ class Lorenz96Config:
 def _generate_observations(
     true_fluid: torch.Tensor, obs_interval: int, R_var: float, seed: int,
     device: torch.device = torch.device("cpu"),
+    obs_var_indices: np.ndarray = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    num_steps = true_fluid.shape[0]
-    sd = true_fluid.shape[-1]
+    num_steps, sd = true_fluid.shape[0], true_fluid.shape[-1]
+    obs_dim = len(obs_var_indices) if obs_var_indices is not None else sd
     rng = torch.Generator(device=device).manual_seed(seed)
-    obs_indices = np.arange(0, num_steps, obs_interval)
+    obs_time_indices = np.arange(0, num_steps, obs_interval)
     obs_mask = torch.zeros(num_steps, dtype=torch.bool, device=device)
-    obs_mask[obs_indices] = True
-    noisy_obs = torch.full((num_steps, sd), float('nan'), device=device)
-    noisy_obs[obs_indices] = true_fluid[obs_indices] + (
-        torch.randn((len(obs_indices), sd), device=device, generator=rng) * np.sqrt(R_var)
+    obs_mask[obs_time_indices] = True
+    noisy_obs = torch.full((num_steps, obs_dim), float('nan'), device=device)
+    if obs_var_indices is not None:
+        selected = true_fluid[:, obs_var_indices]
+        obs_fluid = selected[obs_time_indices]
+    else:
+        obs_fluid = true_fluid[obs_time_indices]
+    noisy_obs[obs_time_indices] = obs_fluid + (
+        torch.randn((len(obs_time_indices), obs_dim), device=device, generator=rng) * np.sqrt(R_var)
     )
     return noisy_obs, obs_mask
 
@@ -132,6 +145,7 @@ class Lorenz96Dataset:
 
             noisy_obs, obs_mask = _generate_observations(
                 true_fluid, cfg.obs_interval, cfg.R_var, cfg.seed + 1, self.device,
+                obs_var_indices=cfg.obs_var_indices,
             )
 
             self.windows.append({
@@ -169,7 +183,8 @@ def make_datasets(cfg: Lorenz96Config) -> Dict[str, Lorenz96Dataset]:
 
 def _make_obs(cfg, true_fluid, obs_seed, device=None):
     device = device or torch.device("cpu")
-    return _generate_observations(true_fluid, cfg.obs_interval, cfg.R_var, obs_seed, device)
+    return _generate_observations(true_fluid, cfg.obs_interval, cfg.R_var, obs_seed, device,
+                                  obs_var_indices=cfg.obs_var_indices)
 
 
 def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):

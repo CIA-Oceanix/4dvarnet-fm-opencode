@@ -33,6 +33,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
     has_per_window_F = "F" in dataset[0]
+    obs_var_indices = cfg.obs_var_indices
 
     if batch_size > 1 and hasattr(method, 'assimilate_batch'):
         for i in range(0, len(dataset), batch_size):
@@ -46,7 +47,11 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             else:
                 F = cfg.F_da
             results = method.assimilate_batch(obs, mask, force, truth, F=F)
-            for result in results:
+            for result_idx, result in enumerate(results):
+                analysis = result.trajectory
+                if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
+                    ref = truth[result_idx].detach().cpu().numpy()[..., obs_var_indices]
+                    result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
                 rmse_list.append(result.rmse)
                 results_list.append(result)
     else:
@@ -58,6 +63,11 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             force = w[force_key].to(device)
             F = w.get("F", cfg.F_da)
             result = method.assimilate(obs, mask, force, truth, F=F)
+            analysis = result.trajectory
+            if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
+                ref = truth.numpy()[..., obs_var_indices]
+                result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+                result.trajectory = analysis
             rmse_list.append(result.rmse)
             results_list.append(result)
 
