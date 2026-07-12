@@ -15,7 +15,7 @@ from evaluation.run_l96 import evaluate_baseline
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
 
-_METHODS = ["Strong-4DVar", "EnKF", "ETKF", "Weak-4DVar"]
+_METHODS = ["EnKF", "ETKF", "Strong-4DVar", "Weak-4DVar"]
 
 
 def make_obs_j_indices(NO, J_truth, J_obs):
@@ -62,6 +62,14 @@ def run():
                         help="Number of fast vars to observe per slow node (default: all J_truth)")
     parser.add_argument("--s1-j", type=int, default=None,
                         help="Number of fast vars in S1 DA model (default: same as truth J)")
+    parser.add_argument("--obs-interval", type=int, default=200,
+                        help="Observation interval in steps (default: 200)")
+    parser.add_argument("--ensemble-size", type=int, default=30,
+                        help="Ensemble size for EnKF/ETKF (default: 30)")
+    parser.add_argument("--inflation", type=float, default=2.0,
+                        help="Inflation factor for EnKF/ETKF (default: 2.0)")
+    parser.add_argument("--loc-radius", type=float, default=None,
+                        help="R-localization radius in nodes for EnKF (default: none)")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -80,7 +88,7 @@ def run():
     s1_J = args.s1_j if args.s1_j is not None else J_truth
 
     base_cfg = Lorenz96Config(
-        dt=dt, T_max=3.0, obs_interval=200,
+        dt=dt, T_max=3.0, obs_interval=args.obs_interval,
         R_var=0.5, B_var=2.0,
         num_windows=args.num_windows, window_spacing=args.num_windows,
         spinup_steps=5000, seed=42,
@@ -100,6 +108,7 @@ def run():
     print(f"  param_bias={args.param_bias}, forcing_state_bias={args.forcing_state_bias}")
     print(f"  F_da = {base_cfg.F_true * (1 - args.param_bias):.2f}")
     print(f"  num_windows={args.num_windows}")
+    print(f"  ensemble_size={args.ensemble_size}, inflation={args.inflation}, loc_radius={args.loc_radius}")
     labels = []
     if args.s1_single_scale: labels.append("single-scale DA")
     if args.s1_no_inflation: labels.append("no inflation")
@@ -128,12 +137,14 @@ def run():
     if args.skip_weak:
         methods_to_run.remove("Weak-4DVar")
 
+    enkf_kwargs = dict(dt=dt, device=device, N_ensemble=args.ensemble_size, obs_operator=obs_op)
+    etkf_kwargs = dict(dt=dt, device=device, N_ensemble=args.ensemble_size, obs_operator=obs_op)
+
     results = {}
-    for case_key, case_label, da_expo, obs_op in [
-        ("s0", "S0", 1.6, s0_obs_op), ("s1", "S1", 1.0, s1_obs_op)]:
+    for case_key, case_label, da_expo, obs_op, j_val in [
+        ("s0", "S0", 1.6, s0_obs_op, J_truth), ("s1", "S1", 1.0, s1_obs_op, s1_J)]:
         ds = datasets[case_key]
-        enkf_inf = 1.0 if (args.s1_no_inflation and case_key == "s1") else 2.0
-        etkf_inf = 1.0 if (args.s1_no_inflation and case_key == "s1") else 2.0
+        inf = args.inflation
         dyn = s1_dynamics if (s1_dynamics is not None and case_key == "s1") else dynamics_pool[1.0]
         method_map = {
             "Weak-4DVar": Weak4DVar(dt=dt, da_window_steps=args.da_window_steps, device=device,
@@ -142,9 +153,12 @@ def run():
                                           coupling_exponent=da_expo, dynamics=dyn,
                                           max_iter=10, lr=0.2, obs_operator=obs_op),
             "EnKF": EnKF(dt=dt, device=device, coupling_exponent=da_expo,
-                          dynamics=dyn, inflation=enkf_inf, obs_operator=obs_op),
+                          dynamics=dyn, inflation=inf, obs_operator=obs_op,
+                          N_ensemble=args.ensemble_size,
+                          loc_radius=args.loc_radius, NO=8, J=j_val),
             "ETKF": ETKF(dt=dt, device=device, coupling_exponent=da_expo,
-                           dynamics=dyn, inflation=etkf_inf, obs_operator=obs_op),
+                           dynamics=dyn, inflation=inf, obs_operator=obs_op,
+                           N_ensemble=args.ensemble_size),
         }
         results[case_key] = {}
         for name in methods_to_run:
@@ -172,10 +186,14 @@ def run():
             "F_da": base_cfg.F_true * (1 - args.param_bias),
             "s1_single_scale": args.s1_single_scale,
             "s1_no_inflation": args.s1_no_inflation,
+            "ensemble_size": args.ensemble_size,
+            "inflation": args.inflation,
+            "loc_radius": args.loc_radius,
             "J_truth": J_truth,
             "s1_J": s1_J,
             "obs_J": args.obs_j,
             "obs_dim": obs_dim,
+            "obs_interval": args.obs_interval,
             "obs_indices": obs_indices,
         },
         "results": results,

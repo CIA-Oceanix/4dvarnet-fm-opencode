@@ -5,6 +5,50 @@ from dataclasses import dataclass
 from models.dynamics import DynamicsBase
 
 
+def _gaspari_cohn(z):
+    z = float(z)
+    if z >= 2.0:
+        return 0.0
+    z2 = z * z
+    z3 = z2 * z
+    z4 = z3 * z
+    z5 = z4 * z
+    if z >= 1.0:
+        return (1.0/12.0)*z5 - 0.5*z4 + (5.0/8.0)*z3 + (5.0/3.0)*z2 - 5.0*z + 4.0 - 2.0/(3.0*z)
+    return -0.25*z5 + 0.5*z4 + (5.0/8.0)*z3 - (5.0/3.0)*z2 + 1.0
+
+
+def _build_loc_matrices(state_dim, obs_operator, NO, J, loc_radius, device):
+    if obs_operator.indices is not None:
+        obs_indices = obs_operator.indices.cpu().numpy()
+    else:
+        obs_indices = np.arange(state_dim)
+    obs_dim = len(obs_indices)
+
+    def pos(i):
+        return float(i) if i < NO else float((i - NO) // J)
+
+    state_pos = torch.tensor([pos(i) for i in range(state_dim)], device=device)
+    obs_pos = torch.tensor([pos(i) for i in obs_indices], device=device)
+
+    L_x = torch.zeros((state_dim, obs_dim), device=device)
+    L_y = torch.zeros((obs_dim, obs_dim), device=device)
+
+    for si in range(state_dim):
+        for oj in range(obs_dim):
+            d = abs(float(state_pos[si] - obs_pos[oj]))
+            d = min(d, NO - d)
+            L_x[si, oj] = _gaspari_cohn(d / loc_radius)
+
+    for oi in range(obs_dim):
+        for oj in range(obs_dim):
+            d = abs(float(obs_pos[oi] - obs_pos[oj]))
+            d = min(d, NO - d)
+            L_y[oi, oj] = _gaspari_cohn(d / loc_radius)
+
+    return L_x, L_y
+
+
 class ObsOperator:
     def __init__(self, state_dim: int, obs_indices=None):
         if obs_indices is not None:
@@ -496,6 +540,7 @@ class ETKF:
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device).unsqueeze(0).repeat(N, 1)
+        ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
@@ -561,6 +606,7 @@ class ETKF:
 
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, N, 1)
+        ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
@@ -632,6 +678,9 @@ class EnKF:
         coupling_exponent: float = 1.0,
         dynamics: DynamicsBase = None,
         obs_operator: ObsOperator = None,
+        loc_radius: float = None,
+        NO: int = 8,
+        J: int = 4,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -642,6 +691,10 @@ class EnKF:
         self.dynamics = dynamics
         self.state_dim = dynamics.state_dim if dynamics else 3
         self.obs_operator = obs_operator or ObsOperator(self.state_dim)
+        self.loc_radius = loc_radius
+        if loc_radius is not None:
+            self.loc_Lx, self.loc_Ly = _build_loc_matrices(
+                self.state_dim, self.obs_operator, NO, J, loc_radius, device)
 
     def assimilate(
         self,
@@ -662,6 +715,7 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
+        ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
@@ -680,8 +734,12 @@ class EnKF:
                 H_mean_e = torch.mean(H_ens, dim=0)
                 HA = H_ens - H_mean_e.unsqueeze(0)
                 P_obs = (HA.T @ HA) / (self.N_ensemble - 1)
+                cross_cov = (A.T @ HA) / (self.N_ensemble - 1)
+                if self.loc_radius is not None:
+                    P_obs = self.loc_Ly * P_obs
+                    cross_cov = self.loc_Lx * cross_cov
                 R_obs = torch.eye(od, device=self.device) * self.R_var
-                K = (A.T @ HA) / (self.N_ensemble - 1) @ torch.inverse(P_obs + R_obs)
+                K = cross_cov @ torch.inverse(P_obs + R_obs)
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn(od, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - H(ensemble[n]))
@@ -716,6 +774,7 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
+        ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
@@ -740,8 +799,12 @@ class EnKF:
                 H_mean_e = torch.mean(H_ens, dim=1)
                 HA = H_ens - H_mean_e.unsqueeze(1)
                 P_obs = (HA.transpose(1, 2) @ HA) / (self.N_ensemble - 1)
+                cross_cov = (A.transpose(1, 2) @ HA) / (self.N_ensemble - 1)
+                if self.loc_radius is not None:
+                    P_obs = self.loc_Ly.unsqueeze(0) * P_obs
+                    cross_cov = self.loc_Lx.unsqueeze(0) * cross_cov
                 R_obs = torch.eye(od, device=self.device).unsqueeze(0) * self.R_var
-                K = (A.transpose(1, 2) @ HA) / (self.N_ensemble - 1) @ torch.inverse(P_obs + R_obs)
+                K = cross_cov @ torch.inverse(P_obs + R_obs)
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn((B, od), device=self.device) * np.sqrt(self.R_var)
                     ensemble[:, n] += (K @ (perturbed - H(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
