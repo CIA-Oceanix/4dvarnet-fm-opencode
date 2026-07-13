@@ -310,10 +310,13 @@ Param bias has no measurable impact on S1 RMSE — the J-mismatch dominates comp
 
 ### Key ablation findings
 
-1. **J=2 is the unique sweet spot**: any other J value degrades S1. J=1 underfits, J=3/4 overfit with unobserved fast vars.
-2. **Truth fast weights don't affect S1 RMSE**: the S1 analysis is determined by the observations, not the truth coupling. The EV benefit comes from lower truth variance.
-3. **Inflation and ensemble size are well-tuned at inf=1.1, N=30**.
-4. **Param bias is irrelevant** on top of J-mismatch.
+| Factor | Range | Baseline | Impact on S1 RMSE | Takeaway |
+|---|---|---|---|---|
+| **s1_J** | 1, 2, 3, 4 | **2** | **J=1**: 0.935 (↑), J=3: 7.27 (↑↑), J=4: 3.94 (↑↑) | J=2 is the unique sweet spot — all fast vars observed |
+| **Truth weights** | 0.01–1.0 | **0.1** | Flat at ~0.881 across all values | RMSE unchanged — EV benefit comes from lower truth variance |
+| **Inflation** | 1.0–1.5 | **1.1** | 1.0: 1.83 (↑↑), 1.05: 1.10 (↑), 1.2: 0.785 (↓), 1.5: 0.619 (↓↓) | 1.1 is the best compromise for S0+S1 |
+| **Ensemble size** | 10–100 | **30** | N=10: 1.12 (↑), N≥20: ~0.88 | N=30 near-optimal; N≥20 all similar |
+| **Param bias** | 0.0–0.3 | **0.0** | Flat at ~0.882 across all values | F bias invisible on top of J-mismatch |
 
 ---
 
