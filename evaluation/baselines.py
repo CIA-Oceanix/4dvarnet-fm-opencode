@@ -553,7 +553,7 @@ class ETKF:
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma=sigma, rho=rho, beta=beta)
+            ensemble = self.dynamics.step(ensemble, W, **params)
 
 
             if obs_mask[t]:
@@ -736,7 +736,7 @@ class EnKF:
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            ensemble = self.dynamics.step(ensemble, W, sigma=sigma, rho=rho, beta=beta)
+            ensemble = self.dynamics.step(ensemble, W, **params)
 
             if obs_mask[t]:
                 y_t = observations[t]
