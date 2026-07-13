@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Tuple
 
 
@@ -40,7 +40,7 @@ class Lorenz96Config:
     coupling_exponent_truth: float = 1.6
     coupling_exponent_da: float = 1.0
     obs_var_indices: Tuple[int, ...] = None
-    fast_weights: list = None
+    fast_weights: list = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
 
     @property
     def obs_dim(self) -> int:
