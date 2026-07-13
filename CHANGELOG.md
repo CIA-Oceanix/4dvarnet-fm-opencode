@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Shallow water rotating two-layer dynamics (`ShallowWaterDynamics`)
+- SW config, dataset, and Hydra YAML config
+- SW per-component (ocean/atmosphere) evaluation metrics and EV targets
+- SW baseline runner (`evaluation/run_sw.py`) and top-level evaluation script (`evaluate_all_sw.py`)
+- SW test suite with performance target validation
+- SLURM scripts for SW tests and full baseline evaluation
+- EV performance targets: S0 ≥95% both layers; S1 ≥70% ocean / ≥85% atmosphere
+
+### Fixed
+- Pass **kwargs in single-window EnKF/ETKF step calls (was hardcoded for L63)
+- Added `window_steps` field to `DataConfig` (was missing, causing silent mapping error)
+
+
 ## 2026-06-30: Initialize opencode project guidelines
 
 **Summary:** Added AGENTS.md, opencode.json, and initial CHANGELOG.md to establish a consistent workflow for opencode sessions.

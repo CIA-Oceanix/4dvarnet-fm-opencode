@@ -148,3 +148,22 @@ Parameters: NO=8, J=4, FO=8, FA=8, coupling parameters matching the L96 specific
 4. **`get_dynamics(cfg)` factory**: Dispatches `data.system` → `Lorenz63Dynamics`, `Lorenz96Dynamics`, `ShallowWaterDynamics`
 5. **Checkpoint compatibility**: Model architecture is deterministically determined by config dimensions, so same config = same architecture = compatible checkpoints.
 6. **Dataset caching**: Cache key includes `data.system` to prevent cross-case-study cache collisions.
+## Phase 3: Shallow Water Case Study (in progress)
+
+| # | Agent | Description | Files | Est. | Status | Git tag |
+|---|-------|-------------|-------|------|--------|---------|
+| 0 | Baseline fix | Replace hardcoded L63 params with **params | `evaluation/baselines.py` | 5min | DONE | psw-fix |
+| 1 | Metrics | Add EV + per-component metrics | `evaluation/metrics.py` | 1h | DONE | psw-metrics |
+| 2 | Dynamics | `ShallowWaterDynamics` class | `models/shallow_water_dynamics.py` | 3h | DONE | psw-dynamics |
+| 3 | Config & Data | `ShallowWaterConfig`, datasets, YAML | `data/shallow_water.py`, config/, conf/ | 2h | DONE | psw-config |
+| 4 | DA + Eval | `run_sw.py`, `evaluate_all_sw.py` | `evaluation/run_sw.py`, `evaluate_all_sw.py` | 2h | DONE | psw-da |
+| 5 | Tests | SW tests with EV performance targets | `tests/test_shallow_water.py` | 2h | DONE | psw-tests |
+| 6 | SLURM + Docs | SBATCH scripts, PLAN update, CHANGELOG | `batch/run_sw_*.sbatch` | 1h | DONE | psw-sbatch |
+
+### Resume after crash
+```bash
+# Check current state
+git log --oneline feat/multi-case-study | head -20
+git tag -l 'psw-*'
+grep '| pending |' PLAN_case_study_refactoring.md
+```
