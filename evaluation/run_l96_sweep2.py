@@ -54,6 +54,7 @@ def run():
     parser.add_argument("--num-windows", type=int, default=20)
     parser.add_argument("--da-window-steps", type=int, default=500)
     parser.add_argument("--skip-weak", action="store_true", default=False)
+    parser.add_argument("--skip-strong", action="store_true", default=False)
     parser.add_argument("--s1-single-scale", action="store_true", default=False,
                         help="Use single-scale L96 (NO=40,J=0) for S1 DA dynamics")
     parser.add_argument("--s1-no-inflation", action="store_true", default=False,
@@ -92,6 +93,10 @@ def run():
     obs_dim = len(obs_indices) if obs_indices is not None else NO * (1 + J_truth)
     s1_J = args.s1_j if args.s1_j is not None else J_truth
     s1_state_dim = NO + NO * s1_J
+    s1_obs_j = args.obs_j if args.obs_j is not None else J_truth
+    s1_obs_j = min(s1_J, s1_obs_j)
+    s1_obs_indices = list(range(NO + NO * s1_obs_j))
+    s1_obs_dim = len(s1_obs_indices)
 
     if args.truth_fast_weights_unobserved is not None:
         obs_j = args.obs_j if args.obs_j is not None else J_truth
@@ -117,7 +122,7 @@ def run():
     print(f"\n── {args.label}: Config ──")
     print(f"  Truth: NO={NO}, J={J_truth}, dim={NO + NO * J_truth}")
     print(f"  Observed fast vars per node: {'all' if args.obs_j is None else args.obs_j} → obs_dim={obs_dim}")
-    print(f"  S1 DA J: {s1_J} → state_dim={NO + NO * s1_J}")
+    print(f"  S1 DA J: {s1_J} → state_dim={NO + NO * s1_J}, obs_dim={s1_obs_dim}")
     print(f"  param_bias={args.param_bias}, forcing_state_bias={args.forcing_state_bias}")
     print(f"  F_da = {base_cfg.F_true * (1 - args.param_bias):.2f}")
     print(f"  num_windows={args.num_windows}")
@@ -136,7 +141,7 @@ def run():
     print(f"  Dataset gen: {time.time()-t0:.1f}s")
 
     s0_obs_op = ObsOperator(NO + NO * J_truth, obs_indices)
-    s1_obs_op = ObsOperator(NO + NO * s1_J, None)
+    s1_obs_op = ObsOperator(NO + NO * s1_J, s1_obs_indices)
 
     dynamics_pool = {
         1.0: Lorenz96Dynamics(dt=dt, coupling_exponent=1.0, fast_weights=truth_fast_weights),
@@ -151,6 +156,8 @@ def run():
     methods_to_run = _METHODS[:]
     if args.skip_weak:
         methods_to_run.remove("Weak-4DVar")
+    if args.skip_strong:
+        methods_to_run.remove("Strong-4DVar")
 
     results = {}
     for case_key, case_label, da_expo, obs_op, j_val in [
@@ -174,12 +181,17 @@ def run():
                            loc_radius=args.loc_radius, NO=8, J=j_val,
                            loc_mode=args.etkf_loc_mode),
         }
+        if case_key == "s1" and s1_obs_dim < obs_dim:
+            for w in ds.windows:
+                w["obs"] = w["obs"][:, :s1_obs_dim]
+        eval_cfg = Lorenz96Config(**{**base_cfg.__dict__,
+            "obs_var_indices": list(range(s1_state_dim)) if case_key == "s1" else base_cfg.obs_var_indices})
         results[case_key] = {}
         for name in methods_to_run:
             method = method_map[name]
             print(f"  {case_label}/{name} ...", end=" ", flush=True)
             t1 = time.time()
-            m, s = evaluate_baseline(method, ds, cfg=base_cfg, device=device,
+            m, s = evaluate_baseline(method, ds, cfg=eval_cfg, device=device,
                                       return_trajs=False,
                                       batch_size=min(20, args.num_windows))
             m_common = m[:s1_state_dim] if case_key == "s0" else m

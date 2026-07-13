@@ -208,6 +208,12 @@ RMSE and EV are computed on the **common 24 variables** shared by both S0 and S1
 | EnKF | 0.975 | 0.953 | 0.954 | 0.705 | 0.622 | 0.612 |
 | ETKF | 0.974 | 0.951 | 0.953 | **0.804** | **0.713** | **0.707** |
 
+### Example trajectories: truth vs S0/S1 reconstruction (ETKF, N=30, inf=1.1)
+
+![S0 vs S1 reconstruction](figs/l96_reconstruction_comparison.png)
+
+Six panels showing the truth trajectory (black) and ETKF reconstruction (colored) for one 3.0-tu window. **Top row**: S0 (J=4, perfect model) reconstruction. **Bottom row**: S1 (J=2, model mismatch) reconstruction. Columns correspond to a slow variable (X₁), the first observed fast variable (Y₁¹), and the second observed fast variable (Y₂¹), all from the first slow node. S0 reconstruction is near-exact across all variable types. S1 shows visible but bounded deviations — the J=2 model captures the large-scale dynamics well but misses some of the finer fast-scale structure, especially in Y₂¹, consistent with the S1 Slow EV=0.80 vs Fast EV=0.71 per-group breakdown.
+
 ### Key findings
 
 1. **Weighted coupling (w=0.1 for unobserved vars) dramatically improves S1 EV for all methods compared to equal-weight coupling:** Strong-4DVar goes from −0.22 to +0.50, EnKF from 0.14 to 0.65, ETKF from 0.37 to 0.74. This confirms the unobserved Y3/Y4 fast variables are the primary source of model mismatch difficulty.
@@ -240,6 +246,77 @@ Unlike Wave 2 where all methods had deeply negative S1 EV (−1.5 to −10), the
 
 ---
 
+## Ablation Study: S1 ETKF Sensitivity (ETKF-only, 5 windows, S1 RMSE)
+
+Five one-factor-at-a-time sweeps, each varying one aspect of the S1 configuration while keeping defaults for the rest (w=0.1, J=2, N=30, inf=1.1, no loc). S1 ETKF RMSE is the primary metric.
+
+### s1_J — S1 DA model order
+
+| J | S0 RMSE | S1 RMSE | Observation |
+|---|---|---|---|
+| 1 | 0.323 | 0.935 | Underfits — too few fast vars to capture truth dynamics |
+| 2 | 0.363 | **0.882** | Sweet spot — all fast vars observed, structural mismatch is minimal |
+| 3 | 0.362 | 7.271 | Overfits — unobserved fast vars (Y3) drift without constraints |
+| 4 | 0.386 | 3.943 | Overfits — full J=4 model but only 2/4 fast vars observed |
+
+J=2 is the best S1 configuration. J=1 underfits (state_dim < obs_dim, missing fast dynamics). J=3/4 introduce unobserved fast variables that drift away from the truth.
+
+### truth_fast_weights — weight of unobserved Y3/Y4 in truth
+
+| Weight | S0 RMSE | S1 RMSE | Observation |
+|---|---|---|---|
+| 1.0 | 0.284 | 0.881 | Equal weights — unobserved vars fully coupled |
+| 0.5 | 0.319 | 0.881 | Moderate weight |
+| 0.1 (default) | 0.373 | 0.880 | Default — unobserved vars at 10% |
+| 0.01 | 0.373 | 0.881 | Near-decoupled |
+
+The S1 ETKF RMSE is essentially flat (~0.881) across all weight values. This is because the S1 analysis is determined by the observations (which are the same) and the S1 dynamics (J=2, independent of truth weights). The truth trajectory changes with weights, but the RMSE against the common 24 variables barely moves.
+
+### inflation
+
+| Inf | S0 RMSE | S1 RMSE | Observation |
+|---|---|---|---|
+| 1.0 | 1.755 | 1.829 | No inflation — ensemble collapses for S0 |
+| 1.05 | 0.303 | 1.104 | Slightly under-inflated for S0; S1 still high |
+| 1.1 (default) | 0.358 | **0.883** | Good balance |
+| 1.2 | 0.511 | **0.785** | Over-inflation helps S1 (more spread on unobserved vars) but hurts S0 |
+| 1.5 | 0.973 | 0.619 | S0 strongly degraded; S1 RMSE drops but at S0's expense |
+
+The default inf=1.1 is a good compromise. Higher inflation helps S1 at S0's expense.
+
+### ensemble_size
+
+| N | S0 RMSE | S1 RMSE | Observation |
+|---|---|---|---|
+| 10 | 1.267 | 1.119 | Too few members — sampling error dominates |
+| 20 | 0.359 | 0.890 | Adequate |
+| 30 (default) | 0.332 | 0.882 | Good |
+| 50 | 0.341 | 0.879 | Marginal gain |
+| 100 | 0.327 | 0.879 | Diminishing returns |
+
+N=30 is near-optimal. N=10 is insufficient. N≥20 all perform similarly.
+
+### param_bias — F bias in S1 dynamics
+
+| Bias | F_da | S0 RMSE | S1 RMSE | Observation |
+|---|---|---|---|---|
+| 0.0 (default) | 8.00 | 0.356 | 0.882 | No bias |
+| 0.05 | 7.60 | 0.337 | 0.881 | Negligible effect |
+| 0.1 | 7.20 | 0.343 | 0.882 | Negligible effect |
+| 0.2 | 6.40 | 0.343 | 0.883 | Negligible effect |
+| 0.3 | 5.60 | 0.355 | 0.880 | Negligible effect |
+
+Param bias has no measurable impact on S1 RMSE — the J-mismatch dominates completely. F bias alone (the Wave 1 setup) only degrades EV by ~0.05, and the same bias applied on top of J-mismatch is invisible.
+
+### Key ablation findings
+
+1. **J=2 is the unique sweet spot**: any other J value degrades S1. J=1 underfits, J=3/4 overfit with unobserved fast vars.
+2. **Truth fast weights don't affect S1 RMSE**: the S1 analysis is determined by the observations, not the truth coupling. The EV benefit comes from lower truth variance.
+3. **Inflation and ensemble size are well-tuned at inf=1.1, N=30**.
+4. **Param bias is irrelevant** on top of J-mismatch.
+
+---
+
 ## Files
 
 - **`experiments/l96_sweep_b2-validate.json`**: 200-window validation results (Wave 2)
@@ -250,3 +327,4 @@ Unlike Wave 2 where all methods had deeply negative S1 EV (−1.5 to −10), the
 - **`experiments/l96_sweep_weighted_fast_01.json`**: Default weighted coupling (w=0.1, N=30, inf=1.1, Wave 3)
 - **`experiments/l96_sweep_weighted_fast_10.json`**: Equal-weight reference (w=1.0, N=30, inf=1.1, Wave 3)
 - **`experiments/l96_sweep_weighted_fast_loc.json`**: Weighted coupling + per-member localization (w=0.1, N=100, loc=2, inf=1.1, Wave 3)
+- **`experiments/l96_sweep_ablation_*.json`**: Ablation study results (21 files), 5 factors × 5 values, ETKF-only S1 sensitivity

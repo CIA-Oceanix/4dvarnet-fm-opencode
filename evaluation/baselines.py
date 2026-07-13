@@ -110,7 +110,12 @@ def _init_bg_from_obs(interp_obs, obs_operator, state_dim, noise_std, device):
 def _safe_ref(ref, analysis, obs_operator):
     if analysis.shape[-1] != ref.shape[-1]:
         if obs_operator is not None and obs_operator.indices is not None:
-            ref = ref[..., obs_operator.indices.cpu().numpy()]
+            n_obs = len(obs_operator.indices)
+            n_an = analysis.shape[-1]
+            if n_an <= n_obs:
+                ref = ref[..., obs_operator.indices[:n_an].cpu().numpy()]
+            else:
+                ref = ref[..., :n_an]
         else:
             ref = ref[..., :analysis.shape[-1]]
     return ref
