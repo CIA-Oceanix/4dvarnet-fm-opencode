@@ -784,7 +784,9 @@ class EnKF:
                     P_obs = self.loc_Ly * P_obs
                     cross_cov = self.loc_Lx * cross_cov
                 R_obs = torch.eye(od, device=self.device) * self.R_var
-                K = cross_cov @ torch.inverse(P_obs + R_obs)
+                ridge = 1e-6 * torch.eye(od, device=self.device)
+                Ph = P_obs + R_obs + ridge
+                K = cross_cov @ torch.linalg.solve(Ph, torch.eye(od, device=self.device))
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn(od, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - H(ensemble[n]))
@@ -853,7 +855,9 @@ class EnKF:
                     P_obs = self.loc_Ly.unsqueeze(0) * P_obs
                     cross_cov = self.loc_Lx.unsqueeze(0) * cross_cov
                 R_obs = torch.eye(od, device=self.device).unsqueeze(0) * self.R_var
-                K = cross_cov @ torch.inverse(P_obs + R_obs)
+                ridge = 1e-6 * torch.eye(od, device=self.device).unsqueeze(0)
+                Ph = P_obs + R_obs + ridge
+                K = torch.linalg.solve(Ph, cross_cov.transpose(1, 2)).transpose(1, 2)
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn((B, od), device=self.device) * np.sqrt(self.R_var)
                     ensemble[:, n] += (K @ (perturbed - H(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
