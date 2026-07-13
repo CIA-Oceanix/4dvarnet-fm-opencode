@@ -841,6 +841,13 @@ class EnKF:
                 W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
                 **step_params,
             ).reshape(B0, N, D)
+            # NaN safety: replace any ensemble members that blew up
+            nan_mask_step = torch.isnan(ensemble).any(dim=-1)
+            if nan_mask_step.any():
+                mean_e_pre = torch.mean(ensemble, dim=1)
+                for b in range(B):
+                    if nan_mask_step[b].any():
+                        ensemble[b, nan_mask_step[b]] = mean_e_pre[b]
 
             if obs_mask[:, t].any():
                 y_t = observations[:, t]
@@ -855,9 +862,12 @@ class EnKF:
                     P_obs = self.loc_Ly.unsqueeze(0) * P_obs
                     cross_cov = self.loc_Lx.unsqueeze(0) * cross_cov
                 R_obs = torch.eye(od, device=self.device).unsqueeze(0) * self.R_var
-                ridge = 1e-6 * torch.eye(od, device=self.device).unsqueeze(0)
+                ridge = 1e-4 * torch.eye(od, device=self.device).unsqueeze(0)
                 Ph = P_obs + R_obs + ridge
-                K = torch.linalg.solve(Ph, cross_cov.transpose(1, 2)).transpose(1, 2)
+                # Use lstsq for numerical robustness with underdetermined systems
+                K = torch.linalg.lstsq(
+                    Ph, cross_cov.transpose(1, 2)
+                ).solution.transpose(1, 2)
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn((B, od), device=self.device) * np.sqrt(self.R_var)
                     ensemble[:, n] += (K @ (perturbed - H(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
