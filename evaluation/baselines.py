@@ -821,7 +821,7 @@ class EnKF:
                     P_obs = self.loc_Ly * P_obs
                     cross_cov = self.loc_Lx * cross_cov
                 R_obs = torch.eye(od, device=self.device) * self.R_var
-                ridge = 1e-6 * torch.eye(od, device=self.device)
+                ridge = 1e-4 * torch.eye(od, device=self.device)
                 Ph = P_obs + R_obs + ridge
                 K = cross_cov @ torch.linalg.solve(Ph, torch.eye(od, device=self.device))
                 for n in range(self.N_ensemble):
