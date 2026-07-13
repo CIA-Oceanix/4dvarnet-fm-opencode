@@ -1,0 +1,40 @@
+# @package _global_
+
+data:
+  system: shallow_water
+  Nx: 64
+  Ny: 64
+  dt: 0.01
+  K: 5
+  tau0: 0.08
+  f_cor: 0.1
+  g1: 0.02
+  g2: 0.01
+  coupling: 0.05
+  friction: 0.1
+  viscosity: 0.001
+  obs_noise_std: 0.1
+  obs_stride_ocean: 8
+  obs_stride_atmos: 4
+  spinup_steps: 1000
+  num_windows: 200
+  window_steps: 500
+  seed: 42
+  land_mask_type: "none"
+
+model:
+  state_dim: 24576    # 6 * 64 * 64
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  K_inner: 5
+  N_outer: 10
+  nu: 1.0
+  use_obs: true
+  use_energy: true
+  dropout: 0.1
+
+training:
+  batch_size: 32
+  num_workers: 4
+  learning_rate: 1e-3
+  max_epochs: 100

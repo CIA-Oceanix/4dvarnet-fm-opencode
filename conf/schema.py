@@ -36,6 +36,22 @@ class DataConfig:
     test_randparam: bool = True
     test_param_noise: float = 0.2
 
+    # Shallow Water (rotating SW)
+    Nx: int = 64
+    Ny: int = 64
+    tau0: float = 0.08
+    f_cor: float = 0.1
+    g1: float = 0.02
+    g2: float = 0.01
+    coupling: float = 0.05
+    friction: float = 0.1
+    viscosity: float = 0.001
+    obs_stride_ocean: int = 8
+    obs_stride_atmos: int = 4
+    land_mask_type: str = "none"
+    K: int = 5
+    obs_noise_std: float = 0.1
+
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)
@@ -75,6 +91,25 @@ class DataConfig:
             tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
+        )
+
+
+    def to_shallow_water_config(self):
+        """Convert DataConfig to ShallowWaterConfig."""
+        from data.shallow_water import ShallowWaterConfig
+        return ShallowWaterConfig(
+            Nx=self.Nx, Ny=self.Ny, dt=self.dt, K=self.K,
+            tau0=self.tau0, f_cor=self.f_cor, g1=self.g1, g2=self.g2,
+            coupling=self.coupling, friction=self.friction,
+            viscosity=self.viscosity,
+            obs_noise_std=self.obs_noise_std,
+            obs_stride_ocean=self.obs_stride_ocean,
+            obs_stride_atmos=self.obs_stride_atmos,
+            spinup_steps=self.spinup_steps,
+            num_windows=self.num_windows,
+            window_steps=self.num_windows,
+            seed=self.seed,
+            land_mask_type=self.land_mask_type,
         )
 
 
