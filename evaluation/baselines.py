@@ -514,6 +514,7 @@ class ETKF:
         loc_radius: float = None,
         NO: int = 8,
         J: int = 4,
+        loc_mode: str = "square_root",
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -525,6 +526,7 @@ class ETKF:
         self.state_dim = dynamics.state_dim if dynamics else 3
         self.obs_operator = obs_operator or ObsOperator(self.state_dim)
         self.loc_radius = loc_radius
+        self.loc_mode = loc_mode
         if loc_radius is not None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
@@ -577,14 +579,19 @@ class ETKF:
                 dy = y_t - mu_obs
 
                 if self.loc_radius is not None:
-                    Pf_Ht = A @ HA.T
-                    H_Pf_Ht = HA @ HA.T
+                    Pf_Ht = A.T @ HA
+                    H_Pf_Ht = HA.T @ HA
                     loc_Pf_Ht = self.loc_Lx * Pf_Ht
                     loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
                     R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
                     K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
                     mu = mu + K @ dy
-                    ensemble = mu + (A - K @ HA)
+                    if self.loc_mode == "square_root":
+                        ensemble = mu.unsqueeze(0) + A - HA @ K.T
+                    else:
+                        for n in range(N):
+                            perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
+                            ensemble[n] += K @ (perturbed - H(ensemble[n]))
                 else:
                     HA_w = HA * R_sym_sqrt_inv
                     U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
@@ -645,7 +652,7 @@ class ETKF:
             step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
-                W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
+                W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
                 **step_params,
             ).reshape(B0, N, D)
 
@@ -662,14 +669,16 @@ class ETKF:
                     dy = y_t - mu_obs
 
                     if self.loc_radius is not None:
-                        Pf_Ht = A @ HA.T
-                        H_Pf_Ht = HA @ HA.T
+                        Pf_Ht = A.T @ HA
+                        H_Pf_Ht = HA.T @ HA
                         loc_Pf_Ht = self.loc_Lx * Pf_Ht
                         loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
                         R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
                         K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
                         mu = mu + K @ dy
-                        ens_b = mu + (A - K @ HA)
+                        for n in range(N):
+                            perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
+                            ens_b[n] += K @ (perturbed - H(ens_b[n]))
                     else:
                         HA_w = HA * R_sym_sqrt_inv
                         U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
@@ -827,7 +836,7 @@ class EnKF:
             step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
-                W.unsqueeze(1).expand(B0, N).reshape(B0 * N),
+                W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
                 **step_params,
             ).reshape(B0, N, D)
 
