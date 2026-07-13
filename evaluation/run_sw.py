@@ -325,6 +325,7 @@ def run_sw_baselines(
                 dynamics=dynamics,
                 obs_operator=obs_operator,
                 inflation=enkf_inflation,
+                noise_init_std=0.05,
             ),
             "ETKF": ETKF(
                 dt=config.dt,
@@ -332,6 +333,7 @@ def run_sw_baselines(
                 dynamics=dynamics,
                 obs_operator=obs_operator,
                 inflation=etkf_inflation,
+                noise_init_std=0.05,
             ),
         }
 
