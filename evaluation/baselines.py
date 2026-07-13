@@ -540,12 +540,11 @@ class ETKF:
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device).unsqueeze(0).repeat(N, 1)
+        noise = torch.randn_like(ensemble) * 1.5
         if self.obs_operator.indices is not None:
-            noise = torch.randn_like(ensemble) * 1.5
-            noise[..., self.obs_operator.indices] = 0.0
-            ensemble += noise
-        else:
-            ensemble += torch.randn_like(ensemble) * 1.5
+            noise_obs = torch.randn((N, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise[..., self.obs_operator.indices] = noise_obs
+        ensemble += noise
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
@@ -611,12 +610,11 @@ class ETKF:
 
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, N, 1)
+        noise = torch.randn_like(ensemble) * 1.5
         if self.obs_operator.indices is not None:
-            noise = torch.randn_like(ensemble) * 1.5
-            noise[..., self.obs_operator.indices] = 0.0
-            ensemble += noise
-        else:
-            ensemble += torch.randn_like(ensemble) * 1.5
+            noise_obs = torch.randn((B, N, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise[..., self.obs_operator.indices] = noise_obs
+        ensemble += noise
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
@@ -725,12 +723,11 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
+        noise = torch.randn_like(ensemble) * 1.5
         if self.obs_operator.indices is not None:
-            noise = torch.randn_like(ensemble) * 1.5
-            noise[..., self.obs_operator.indices] = 0.0
-            ensemble += noise
-        else:
-            ensemble += torch.randn_like(ensemble) * 1.5
+            noise_obs = torch.randn((self.N_ensemble, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise[..., self.obs_operator.indices] = noise_obs
+        ensemble += noise
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
@@ -789,12 +786,11 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
+        noise = torch.randn_like(ensemble) * 1.5
         if self.obs_operator.indices is not None:
-            noise = torch.randn_like(ensemble) * 1.5
-            noise[..., self.obs_operator.indices] = 0.0
-            ensemble += noise
-        else:
-            ensemble += torch.randn_like(ensemble) * 1.5
+            noise_obs = torch.randn((B, self.N_ensemble, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise[..., self.obs_operator.indices] = noise_obs
+        ensemble += noise
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
