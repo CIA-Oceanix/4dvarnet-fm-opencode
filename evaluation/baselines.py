@@ -540,7 +540,12 @@ class ETKF:
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device).unsqueeze(0).repeat(N, 1)
-        ensemble += torch.randn_like(ensemble) * 1.5
+        if self.obs_operator.indices is not None:
+            noise = torch.randn_like(ensemble) * 1.5
+            noise[..., self.obs_operator.indices] = 0.0
+            ensemble += noise
+        else:
+            ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
@@ -606,7 +611,12 @@ class ETKF:
 
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, N, 1)
-        ensemble += torch.randn_like(ensemble) * 1.5
+        if self.obs_operator.indices is not None:
+            noise = torch.randn_like(ensemble) * 1.5
+            noise[..., self.obs_operator.indices] = 0.0
+            ensemble += noise
+        else:
+            ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
@@ -715,7 +725,12 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
-        ensemble += torch.randn_like(ensemble) * 1.5
+        if self.obs_operator.indices is not None:
+            noise = torch.randn_like(ensemble) * 1.5
+            noise[..., self.obs_operator.indices] = 0.0
+            ensemble += noise
+        else:
+            ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
@@ -774,7 +789,12 @@ class EnKF:
         od = H.obs_dim
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, 1.5, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
-        ensemble += torch.randn_like(ensemble) * 1.5
+        if self.obs_operator.indices is not None:
+            noise = torch.randn_like(ensemble) * 1.5
+            noise[..., self.obs_operator.indices] = 0.0
+            ensemble += noise
+        else:
+            ensemble += torch.randn_like(ensemble) * 1.5
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
