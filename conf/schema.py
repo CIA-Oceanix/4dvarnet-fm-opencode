@@ -50,6 +50,7 @@ class DataConfig:
     obs_stride_atmos: int = 4
     land_mask_type: str = "none"
     K: int = 5
+    window_steps: int = 500
     obs_noise_std: float = 0.1
 
     @property
@@ -107,7 +108,7 @@ class DataConfig:
             obs_stride_atmos=self.obs_stride_atmos,
             spinup_steps=self.spinup_steps,
             num_windows=self.num_windows,
-            window_steps=self.num_windows,
+            window_steps=self.window_steps,
             seed=self.seed,
             land_mask_type=self.land_mask_type,
         )

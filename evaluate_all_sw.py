@@ -19,9 +19,19 @@ Outputs
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder that converts NaN/Inf to null for RFC 8259 compliance."""
+
+    def default(self, obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return super().default(obj)
 
 import torch
 
@@ -117,7 +127,7 @@ def main():
     output_path = os.path.join(args.output_dir, "sw_metrics.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(results, f, indent=2, cls=_SafeEncoder)
     print(f"\nResults saved to {output_path}")
 
 
