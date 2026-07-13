@@ -199,11 +199,14 @@ class Strong4DVarConfig:
 @dataclass
 class EnKFConfig:
     inflation: float = 1.0
+    loc_radius: float = -1.0
 
 
 @dataclass
 class ETKFConfig:
     inflation: float = 1.0
+    loc_radius: float = -1.0
+    loc_mode: str = "square_root"
 
 
 @dataclass

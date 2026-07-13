@@ -1,11 +1,11 @@
 # L96 Baseline Report — Observation Config & Trajectory Examples
 
-**Date**: 2026-07-11
+**Date**: 2026-07-13
 **System**: Two-scale Lorenz96 (NO=8, J=4, state_dim=40)
 **Model**: `Lorenz96Dynamics` with RK4 integration, `dt=0.001`, T_max=3.0 (3000 steps/window)
 **Forcing**: F=8.0, coupling exponent=1.6, AR(1) stochastic forcing with sinusoidal component
-**Observations**: Full-state (all 40 dims), `obs_interval=200` (every 0.2 tu), R_var=0.5
-**Climatological variance** (200k-step free run on truth dynamics): slow vars 1.052 ± 0.001, fast vars 1.360 ± 0.004, overall ≈ 1.30. Per-variable values saved in `reports/outputs/l96_clim_var.json`. Explained variance (EV) is defined as EV = 1 − MSE / Var<sub>clim</sub>.
+**Observations**: Full-state (all 40 dims) for Wave 1/2; partial (2/4 fast vars per node → 24D) for Wave 3, `obs_interval=5` (every 0.005 tu), R_var=0.5
+**Climatological variance** (200k-step free run on truth dynamics): slow vars 1.052 ± 0.001, fast vars 1.360 ± 0.004, overall ≈ 1.30. For J-mismatch experiments (Wave 3), EV is computed on the common 24 variables shared between S0 and S1 (first 24 dims: X[0-7], Y1[0-7], Y2[0-7]), with truth variance computed from the dataset (slow: 1.184, fast1: 1.541, fast2: 1.584, overall: 1.436). Explained variance is EV = 1 − MSE / Var<sub>truth</sub>.
 
 ---
 
@@ -166,9 +166,87 @@ The 200-window run gives slightly better S0 and S1 numbers (less extreme degrada
 
 ---
 
+## Wave 3: J-mismatch with partial observations
+
+S1 uses a **lower-resolution dynamics model** (J=2 instead of J=4) inside the DA, while the truth remains two-scale (J=4). Observations are **partial** — only 2 out of 4 fast variables per slow node are observed, giving 24 observed dimensions from the 40D state. This introduces both model mismatch (J=2 vs J=4) and a rectangular observation operator for S0 (H: 40→24).
+
+### Setup
+
+| Component | S0 | S1 |
+|---|---|---|
+| Truth dynamics | J=4, NO=8 (40D) | J=4, NO=8 (40D) |
+| DA dynamics | J=4, NO=8 (40D) | **J=2, NO=8 (24D)** |
+| Observation | 2/4 fast vars per node (24D) | 2/4 fast vars per node (24D) |
+| Obs operator | Rectangular H (40→24) | Identity H (24→24) |
+| Obs interval | 5 steps (0.005 tu) | 5 steps |
+| EnKF/ETKF init | Independent noise v3 (all 4 init sites) | same |
+| Inflation | 1.1 (tuned) | same |
+
+### Common 24 variables
+
+RMSE and EV are computed on the **common 24 variables** shared by both S0 and S1: the first 24 dimensions of the 40D truth (X[0-7], Y1[0-7], Y2[0-7]). Truth variance on this subset: slow=1.184, fast1=1.541, fast2=1.584, overall=1.436.
+
+### Representative results (5 windows, inf=1.1)
+
+| Config | Method | S0 RMSE | S0 EV | S1 RMSE | S1 EV |
+|---|---|---|---|---|---|
+| **N=30, no loc** | Strong-4DVar | 0.149 | **0.985** | 1.229 | **−0.051** |
+| | EnKF | 0.265 | **0.951** | 1.034 | **0.256** |
+| | ETKF | 0.300 | **0.937** | 0.881 | **0.460** |
+| **N=100, no loc** | EnKF | 0.333 | 0.923 | 0.928 | 0.400 |
+| | ETKF | 0.296 | **0.939** | 0.879 | **0.462** |
+| **N=100, loc=4, square_root** | EnKF | 0.342 | 0.918 | 0.914 | 0.418 |
+| | ETKF | 0.318 | 0.930 | 1.008 | 0.293 |
+| **N=100, loc=2, per_member** | ETKF | 0.979 | 0.333 | **0.703** | **0.656** |
+
+### Per-group EV breakdown (inf=1.1, N=30, no loc)
+
+| Method | S0 Slow EV | S0 Fast1 EV | S0 Fast2 EV | S1 Slow EV | S1 Fast1 EV | S1 Fast2 EV |
+|---|---|---|---|---|---|---|
+| Strong-4DVar | 0.995 | 0.978 | 0.979 | 0.402 | −0.319 | −0.270 |
+| EnKF | **0.978** | **0.931** | **0.941** | **0.683** | −0.004 | 0.022 |
+| ETKF | 0.972 | 0.920 | 0.915 | **0.881** | **0.165** | **0.189** |
+
+### Key findings
+
+1. **Strong-4DVar S1 EV is negative** (−0.05 overall, −0.27 to −0.32 on fast vars) — same pattern as the single-scale model mismatch (Wave 2). The J-mismatch fundamentally breaks the gradient-based optimization.
+
+2. **EnKF is the most balanced** (S0 EV=0.951, S1 EV=0.256). Slow variables retain moderate skill (S1 Slow EV=0.68), fast variables are near zero. Runs in 11s vs Strong-4DVar's 510s.
+
+3. **ETKF without localization gives the best S1 EV** (0.460) among the three methods, with slow EV=0.881 — nearly retains slow-variable skill. Fast variables show modest but positive EV (0.17-0.19). S0 EV=0.937.
+
+4. **Localization with per-member stochastic update** pushes ETKF S1 EV to **0.656** (best S1 by far, fast var EV=0.67-0.69) but collapses S0 EV to 0.333 (per-member stochastic noise overwhelms the rectangular-H cross-covariances).
+
+5. **Square-root localization** fixes the S0 collapse (S0 EV=0.93) but loses the S1 benefit (S1 EV=0.29). Localization tapers cross-covariances that are already rank-deficient for the rectangular H case.
+
+6. **Larger ensemble (N=100)** without localization does not significantly improve S0 or S1 ETKF EV over N=30, suggesting the benefit of larger ensembles is marginal given the current init and inflation tuning.
+
+### Best config per method
+
+| Method | Config | S0 EV | S1 EV | Runtime |
+|---|---|---|---|---|
+| Strong-4DVar | max_iter=10, lr=0.2 | 0.985 | −0.051 | 510s |
+| **EnKF** | N=30, inf=1.1 | **0.951** | **0.256** | **11s** |
+| ETKF (best S1) | N=100, inf=1.1, no loc | 0.939 | **0.462** | 9s |
+| ETKF (best S1 with loc) | N=100, loc=2, per_member | 0.333 | **0.656** | 48s |
+
+### Comparison with Wave 2 (single-scale model mismatch)
+
+Unlike Wave 2 where all methods had deeply negative S1 EV (−1.5 to −10), the J-mismatch case preserves some skill:
+- EnKF/ETKF maintain **positive S1 EV** (0.26–0.46) — the J=2 model still captures the slow dynamics reasonably well
+- The J-mismatch affects fast variables most (EV near zero or slightly positive), while Wave 2's single-scale model had no fast variables at all
+- Strong-4DVar fails similarly in both waves (negative S1 EV) — iterative 4DVar cannot self-correct when the dynamics model is wrong
+
+---
+
 ## Files
 
-- **`experiments/l96_sweep_b2-validate.json`**: 200-window validation results (this file)
+- **`experiments/l96_sweep_b2-validate.json`**: 200-window validation results (Wave 2)
 - **`reports/outputs/l96_clim_var.json`**: Per-variable climatological variance (40 dims)
 - **`reports/compute_explained_var.py`**: Script to compute EV = 1 − MSE / Var<sub>clim</sub> from sweep JSON
-- **`experiments/l96_sweep_{a1..a6,b1..b4}.json`**: 5-window sweep results
+- **`experiments/l96_sweep_{a1..a6,b1..b4}.json`**: 5-window sweep results (Wave 1/2)
+- **`experiments/l96_sweep_kf_inf11.json`**: Best EnKF/ETKF config (N=30, inf=1.1, Wave 3)
+- **`experiments/l96_sweep_kf_inf11_ens100.json`**: Large ensemble reference (N=100, Wave 3)
+- **`experiments/l96_sweep_kf_loc_sr.json`**: Square-root localization (loc=2, Wave 3)
+- **`experiments/l96_sweep_kf_loc4_sr.json`**: Square-root localization (loc=4, Wave 3)
+- **`experiments/l96_sweep_kf_loc.json`**: Per-member localization baseline (Wave 3)

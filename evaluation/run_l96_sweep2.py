@@ -69,7 +69,10 @@ def run():
     parser.add_argument("--inflation", type=float, default=2.0,
                         help="Inflation factor for EnKF/ETKF (default: 2.0)")
     parser.add_argument("--loc-radius", type=float, default=None,
-                        help="R-localization radius in nodes for EnKF (default: none)")
+                        help="R-localization radius in nodes (default: none)")
+    parser.add_argument("--etkf-loc-mode", type=str, default="square_root",
+                        choices=["square_root", "per_member"],
+                        help="ETKF localization update mode (default: square_root)")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -86,6 +89,7 @@ def run():
     obs_indices = make_obs_j_indices(NO, J_truth, args.obs_j)
     obs_dim = len(obs_indices) if obs_indices is not None else NO * (1 + J_truth)
     s1_J = args.s1_j if args.s1_j is not None else J_truth
+    s1_state_dim = NO + NO * s1_J
 
     base_cfg = Lorenz96Config(
         dt=dt, T_max=3.0, obs_interval=args.obs_interval,
@@ -108,7 +112,7 @@ def run():
     print(f"  param_bias={args.param_bias}, forcing_state_bias={args.forcing_state_bias}")
     print(f"  F_da = {base_cfg.F_true * (1 - args.param_bias):.2f}")
     print(f"  num_windows={args.num_windows}")
-    print(f"  ensemble_size={args.ensemble_size}, inflation={args.inflation}, loc_radius={args.loc_radius}")
+    print(f"  ensemble_size={args.ensemble_size}, inflation={args.inflation}, loc_radius={args.loc_radius}, etkf_loc_mode={args.etkf_loc_mode}")
     labels = []
     if args.s1_single_scale: labels.append("single-scale DA")
     if args.s1_no_inflation: labels.append("no inflation")
@@ -137,9 +141,6 @@ def run():
     if args.skip_weak:
         methods_to_run.remove("Weak-4DVar")
 
-    enkf_kwargs = dict(dt=dt, device=device, N_ensemble=args.ensemble_size, obs_operator=obs_op)
-    etkf_kwargs = dict(dt=dt, device=device, N_ensemble=args.ensemble_size, obs_operator=obs_op)
-
     results = {}
     for case_key, case_label, da_expo, obs_op, j_val in [
         ("s0", "S0", 1.6, s0_obs_op, J_truth), ("s1", "S1", 1.0, s1_obs_op, s1_J)]:
@@ -158,7 +159,9 @@ def run():
                           loc_radius=args.loc_radius, NO=8, J=j_val),
             "ETKF": ETKF(dt=dt, device=device, coupling_exponent=da_expo,
                            dynamics=dyn, inflation=inf, obs_operator=obs_op,
-                           N_ensemble=args.ensemble_size),
+                           N_ensemble=args.ensemble_size,
+                           loc_radius=args.loc_radius, NO=8, J=j_val,
+                           loc_mode=args.etkf_loc_mode),
         }
         results[case_key] = {}
         for name in methods_to_run:
@@ -168,13 +171,15 @@ def run():
             m, s = evaluate_baseline(method, ds, cfg=base_cfg, device=device,
                                       return_trajs=False,
                                       batch_size=min(20, args.num_windows))
+            m_common = m[:s1_state_dim] if case_key == "s0" else m
+            s_common = s[:s1_state_dim] if case_key == "s0" else s
             results[case_key][name] = {
-                "mean_rmse": float(np.mean(m)),
-                "per_var_mean": m.tolist(),
-                "per_var_std": s.tolist(),
+                "mean_rmse": float(np.mean(m_common)),
+                "per_var_mean": m_common.tolist(),
+                "per_var_std": s_common.tolist(),
             }
             elapsed = time.time() - t1
-            print(f"  mu={np.mean(m):.4f} [{elapsed:.1f}s]")
+            print(f"  mu={np.mean(m_common):.4f} [{elapsed:.1f}s]")
 
     out = {
         "label": args.label,
@@ -189,10 +194,12 @@ def run():
             "ensemble_size": args.ensemble_size,
             "inflation": args.inflation,
             "loc_radius": args.loc_radius,
+            "etkf_loc_mode": args.etkf_loc_mode,
             "J_truth": J_truth,
             "s1_J": s1_J,
             "obs_J": args.obs_j,
             "obs_dim": obs_dim,
+            "s1_state_dim": s1_state_dim,
             "obs_interval": args.obs_interval,
             "obs_indices": obs_indices,
         },

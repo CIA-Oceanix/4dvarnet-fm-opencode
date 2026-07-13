@@ -33,5 +33,8 @@ baselines:
     lr: 0.1
   enkf:
     inflation: 1.0
+    loc_radius: -1.0
   etkf:
     inflation: 1.0
+    loc_radius: -1.0
+    loc_mode: square_root
