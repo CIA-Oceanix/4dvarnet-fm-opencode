@@ -570,6 +570,11 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[t - 1]
             ensemble = self.dynamics.step(ensemble, W, **params)
+            # NaN safety: replace blown-up members with the mean
+            nan_mask = torch.isnan(ensemble).any(dim=-1)
+            if nan_mask.any():
+                mu_nan = torch.mean(ensemble, dim=0)
+                ensemble[nan_mask] = mu_nan
 
 
             if obs_mask[t]:
@@ -595,8 +600,12 @@ class ETKF:
                             perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
                             ensemble[n] += K @ (perturbed - H(ensemble[n]))
                 else:
-                    HA_w = HA * R_sym_sqrt_inv
-                    U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                    HA_w = torch.nan_to_num(HA * R_sym_sqrt_inv)
+                    try:
+                        U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                    except RuntimeError:
+                        U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
+                        U, s, Vt = U.to(HA_w.device), s.to(HA_w.device), Vt.to(HA_w.device)
                     s2 = s ** 2
                     d = s2 + N1
                     Pw = U @ torch.diag(1.0 / d) @ U.T
@@ -657,6 +666,13 @@ class ETKF:
                 W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
                 **step_params,
             ).reshape(B0, N, D)
+            # NaN safety: replace blown-up ensemble members
+            nan_mask = torch.isnan(ensemble).any(dim=-1)
+            if nan_mask.any():
+                mu_nan = torch.mean(ensemble, dim=1)
+                for b in range(B):
+                    if nan_mask[b].any():
+                        ensemble[b, nan_mask[b]] = mu_nan[b]
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -682,8 +698,12 @@ class ETKF:
                             perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
                             ens_b[n] += K @ (perturbed - H(ens_b[n]))
                     else:
-                        HA_w = HA * R_sym_sqrt_inv
-                        U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                        HA_w = torch.nan_to_num(HA * R_sym_sqrt_inv)
+                        try:
+                            U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                        except RuntimeError:
+                            U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
+                            U, s, Vt = U.to(HA.device), s.to(HA.device), Vt.to(HA.device)
                         s2 = s ** 2
                         d = s2 + N1
                         Pw = U @ torch.diag(1.0 / d) @ U.T
@@ -774,6 +794,10 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[t - 1]
             ensemble = self.dynamics.step(ensemble, W, **params)
+            nan_mask = torch.isnan(ensemble).any(dim=-1)
+            if nan_mask.any():
+                mu_nan = torch.mean(ensemble, dim=0)
+                ensemble[nan_mask] = mu_nan
 
             if obs_mask[t]:
                 y_t = observations[t]
