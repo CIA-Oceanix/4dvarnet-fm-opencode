@@ -57,6 +57,12 @@ def main():
     parser.add_argument("--output-dir", type=str, default="outputs/sw_baselines")
     parser.add_argument("--Nx", type=int, default=64)
     parser.add_argument("--Ny", type=int, default=64)
+    parser.add_argument(
+        "--methods", nargs="+",
+        default=["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"],
+        choices=["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"],
+        help="DA methods to run (default: all four)",
+    )
     args = parser.parse_args()
 
     # ---- device ----
@@ -91,6 +97,7 @@ def main():
         enkf_inflation=args.enkf_inflation,
         etkf_inflation=args.etkf_inflation,
         output_dir=args.output_dir,
+        methods=args.methods,
     )
     print(f"\nTotal wall-clock: {time.time() - t0:.1f}s")
 

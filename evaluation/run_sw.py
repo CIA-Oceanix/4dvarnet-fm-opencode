@@ -223,6 +223,7 @@ def run_sw_baselines(
     enkf_inflation: float = 2.0,
     etkf_inflation: float = 2.0,
     output_dir: str = "outputs/sw_baselines",
+    methods: list[str] | None = None,
 ) -> dict:
     """Run all four DA baselines on the rotating SW S0/S1 scenarios.
 
@@ -246,6 +247,8 @@ def run_sw_baselines(
         Multiplicative inflation for ETKF.
     output_dir : str
         Directory for cached artefacts (created if absent).
+    methods : list[str], optional
+        Subset of DA methods to run.  Defaults to all four.
 
     Returns
     -------
@@ -299,7 +302,9 @@ def run_sw_baselines(
         dynamics = _create_sw_dynamics(ds_config, scenario=case_name)
         obs_operator = ObsOperator(config.state_dim, obs_indices)
 
-        methods = {
+        _run_methods = methods or _BASELINE_METHODS
+
+        method_instances = {
             "Weak-4DVar": Weak4DVar(
                 dt=config.dt,
                 da_window_steps=da_window_steps,
@@ -333,8 +338,8 @@ def run_sw_baselines(
         if case_name not in results:
             results[case_name] = {}
 
-        for name in _BASELINE_METHODS:
-            method = methods[name]
+        for name in _run_methods:
+            method = method_instances[name]
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
 
