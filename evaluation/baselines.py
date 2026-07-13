@@ -570,11 +570,11 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[t - 1]
             ensemble = self.dynamics.step(ensemble, W, **params)
-            # NaN safety: replace blown-up members with the mean
+            # NaN safety: replace blown-up members with the mean of valid members
             nan_mask = torch.isnan(ensemble).any(dim=-1)
             if nan_mask.any():
-                mu_nan = torch.mean(ensemble, dim=0)
-                ensemble[nan_mask] = mu_nan
+                mu_nan = torch.nanmean(ensemble, dim=0)
+                ensemble[nan_mask] = mu_nan.masked_fill(mu_nan.isnan(), 0.0)
 
 
             if obs_mask[t]:
@@ -613,6 +613,13 @@ class ETKF:
                     R_inv = 1.0 / self.R_var
                     w = (dy * R_inv) @ HA.T @ Pw
                     ensemble = mu + w @ A + Tmat @ A
+
+                # NaN safety after analysis
+                nan_mask = torch.isnan(ensemble).any(dim=-1)
+                if nan_mask.any():
+                    ensemble = torch.nan_to_num(ensemble)
+                    mu_fix = torch.mean(ensemble, dim=0)
+                    ensemble[nan_mask] = mu_fix
 
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
@@ -669,6 +676,7 @@ class ETKF:
             # NaN safety: replace blown-up ensemble members
             nan_mask = torch.isnan(ensemble).any(dim=-1)
             if nan_mask.any():
+                ensemble = torch.nan_to_num(ensemble)
                 mu_nan = torch.mean(ensemble, dim=1)
                 for b in range(B):
                     if nan_mask[b].any():
@@ -796,6 +804,7 @@ class EnKF:
             ensemble = self.dynamics.step(ensemble, W, **params)
             nan_mask = torch.isnan(ensemble).any(dim=-1)
             if nan_mask.any():
+                ensemble = torch.nan_to_num(ensemble)
                 mu_nan = torch.mean(ensemble, dim=0)
                 ensemble[nan_mask] = mu_nan
 
@@ -821,6 +830,10 @@ class EnKF:
 
                 mean_e = torch.mean(ensemble, dim=0)
                 ensemble = mean_e + self.inflation * (ensemble - mean_e)
+                # NaN safety after analysis+inflation
+                nan_mask = torch.isnan(ensemble).any(dim=-1)
+                if nan_mask.any():
+                    ensemble = torch.nan_to_num(ensemble)
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
@@ -902,6 +915,9 @@ class EnKF:
 
                 mean_e = torch.mean(ensemble, dim=1)
                 ensemble = mean_e.unsqueeze(1) + self.inflation * (ensemble - mean_e.unsqueeze(1))
+                nan_mask = torch.isnan(ensemble).any(dim=-1)
+                if nan_mask.any():
+                    ensemble = torch.nan_to_num(ensemble)
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()
