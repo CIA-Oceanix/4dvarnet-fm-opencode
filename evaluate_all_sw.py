@@ -24,6 +24,14 @@ import os
 import sys
 import time
 
+import torch
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from data.shallow_water import ShallowWaterConfig
+from evaluation.metrics import print_sw_metrics_table, validate_ev_targets
+from evaluation.run_sw import run_sw_baselines
+
 
 class _SafeEncoder(json.JSONEncoder):
     """JSON encoder that converts NaN/Inf to null for RFC 8259 compliance."""
@@ -32,14 +40,6 @@ class _SafeEncoder(json.JSONEncoder):
         if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
             return None
         return super().default(obj)
-
-import torch
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from data.shallow_water import ShallowWaterConfig
-from evaluation.metrics import print_sw_metrics_table, validate_ev_targets
-from evaluation.run_sw import run_sw_baselines
 
 
 def main():
