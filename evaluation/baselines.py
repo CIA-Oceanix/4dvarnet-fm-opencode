@@ -84,8 +84,13 @@ def _expand_obs_to_state(interp_obs, obs_operator, state_dim):
     sd = state_dim
     if obs_operator.indices is None:
         return interp_obs
-    *batch_dims, T = interp_obs.shape[:-1]
-    last_dim = interp_obs.shape[-1]
+    # Handle 1D input (single timestep) – previously crashed with
+    # ``*batch_dims, T = interp_obs.shape[:-1]`` when shape was ``(obs_dim,)``.
+    if interp_obs.dim() == 1:
+        full = torch.zeros(sd, device=interp_obs.device, dtype=interp_obs.dtype)
+        full[obs_operator.indices] = interp_obs
+        return full
+    *batch_dims, _unused = interp_obs.shape[:-1]
     full = torch.zeros(interp_obs.shape[:-1] + (sd,), device=interp_obs.device, dtype=interp_obs.dtype)
     full[..., obs_operator.indices] = interp_obs
     return full
@@ -506,6 +511,9 @@ class ETKF:
         coupling_exponent: float = 1.0,
         dynamics: DynamicsBase = None,
         obs_operator: ObsOperator = None,
+        loc_radius: float = None,
+        NO: int = 8,
+        J: int = 4,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -516,6 +524,10 @@ class ETKF:
         self.dynamics = dynamics
         self.state_dim = dynamics.state_dim if dynamics else 3
         self.obs_operator = obs_operator or ObsOperator(self.state_dim)
+        self.loc_radius = loc_radius
+        if loc_radius is not None:
+            self.loc_Lx, self.loc_Ly = _build_loc_matrices(
+                self.state_dim, self.obs_operator, NO, J, loc_radius, device)
 
     def assimilate(
         self,
@@ -564,19 +576,25 @@ class ETKF:
                 HA = H(ensemble) - mu_obs.unsqueeze(0)
                 dy = y_t - mu_obs
 
-                HA_w = HA * R_sym_sqrt_inv
-
-                U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
-                s2 = s ** 2
-                d = s2 + N1
-
-                Pw = U @ torch.diag(1.0 / d) @ U.T
-                Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
-
-                R_inv = 1.0 / self.R_var
-                w = (dy * R_inv) @ HA.T @ Pw
-
-                ensemble = mu + w @ A + Tmat @ A
+                if self.loc_radius is not None:
+                    Pf_Ht = A @ HA.T
+                    H_Pf_Ht = HA @ HA.T
+                    loc_Pf_Ht = self.loc_Lx * Pf_Ht
+                    loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
+                    R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
+                    K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
+                    mu = mu + K @ dy
+                    ensemble = mu + (A - K @ HA)
+                else:
+                    HA_w = HA * R_sym_sqrt_inv
+                    U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                    s2 = s ** 2
+                    d = s2 + N1
+                    Pw = U @ torch.diag(1.0 / d) @ U.T
+                    Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                    R_inv = 1.0 / self.R_var
+                    w = (dy * R_inv) @ HA.T @ Pw
+                    ensemble = mu + w @ A + Tmat @ A
 
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
@@ -643,19 +661,25 @@ class ETKF:
                     HA = H(ens_b) - mu_obs.unsqueeze(0)
                     dy = y_t - mu_obs
 
-                    HA_w = HA * R_sym_sqrt_inv
-
-                    U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
-                    s2 = s ** 2
-                    d = s2 + N1
-
-                    Pw = U @ torch.diag(1.0 / d) @ U.T
-                    Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
-
-                    R_inv = 1.0 / self.R_var
-                    w = (dy * R_inv) @ HA.T @ Pw
-
-                    ens_b = mu + w @ A + Tmat @ A
+                    if self.loc_radius is not None:
+                        Pf_Ht = A @ HA.T
+                        H_Pf_Ht = HA @ HA.T
+                        loc_Pf_Ht = self.loc_Lx * Pf_Ht
+                        loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
+                        R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
+                        K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
+                        mu = mu + K @ dy
+                        ens_b = mu + (A - K @ HA)
+                    else:
+                        HA_w = HA * R_sym_sqrt_inv
+                        U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                        s2 = s ** 2
+                        d = s2 + N1
+                        Pw = U @ torch.diag(1.0 / d) @ U.T
+                        Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                        R_inv = 1.0 / self.R_var
+                        w = (dy * R_inv) @ HA.T @ Pw
+                        ens_b = mu + w @ A + Tmat @ A
                     mu = torch.mean(ens_b, dim=0)
                     ensemble[b] = mu + self.inflation * (ens_b - mu)
 

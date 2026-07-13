@@ -138,14 +138,22 @@ class ShallowWaterDynamics(DynamicsBase):
     # ------------------------------------------------------------------
 
     def _clip_layer_thickness(self, state: torch.Tensor) -> torch.Tensor:
-        """Clamp layer thicknesses *h1* and *h2* to ``>= 1e-6`` (in place)."""
+        """Clamp layer thicknesses *h1* and *h2* to ``>= 1e-6``.
+
+        Uses out-of-place operations so that the result is differentiable
+        (autograd-safe).
+        """
         NxNy = self.Nx * self.Ny
-        state = state.clone()
-        state[..., :NxNy] = torch.clamp(state[..., :NxNy], min=1e-6)
-        state[..., 3 * NxNy : 4 * NxNy] = torch.clamp(
-            state[..., 3 * NxNy : 4 * NxNy], min=1e-6,
-        )
-        return state
+        h1 = torch.clamp(state[..., :NxNy], min=1e-6)
+        h2 = torch.clamp(state[..., 3 * NxNy : 4 * NxNy], min=1e-6)
+        return torch.cat([
+            h1,                                  # h1 (clamped)
+            state[..., NxNy : 2 * NxNy],         # u1
+            state[..., 2 * NxNy : 3 * NxNy],     # v1
+            h2,                                  # h2 (clamped)
+            state[..., 4 * NxNy : 5 * NxNy],     # u2
+            state[..., 5 * NxNy : 6 * NxNy],     # v2
+        ], dim=-1)
 
     # ------------------------------------------------------------------
     # Right-hand side
