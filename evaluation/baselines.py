@@ -823,7 +823,7 @@ class EnKF:
                 R_obs = torch.eye(od, device=self.device) * self.R_var
                 ridge = 1e-4 * torch.eye(od, device=self.device)
                 Ph = P_obs + R_obs + ridge
-                K = cross_cov @ torch.linalg.solve(Ph, torch.eye(od, device=self.device))
+                K = torch.linalg.lstsq(Ph, cross_cov.T).solution.T
                 for n in range(self.N_ensemble):
                     perturbed = y_t + torch.randn(od, device=self.device) * np.sqrt(self.R_var)
                     ensemble[n] += K @ (perturbed - H(ensemble[n]))
