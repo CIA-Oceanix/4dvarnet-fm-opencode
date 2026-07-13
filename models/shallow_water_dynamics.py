@@ -213,8 +213,9 @@ class ShallowWaterDynamics(DynamicsBase):
         while f2.dim() < state.dim():
             f2 = f2.unsqueeze(-1)
 
-        wind1 = tau0 * self.wind_pattern * (1.0 + f1)
-        wind2 = tau0 * self.wind_pattern * (1.0 + f2)
+        wind_pattern = self.wind_pattern.to(state.device)
+        wind1 = tau0 * wind_pattern * (1.0 + f1)
+        wind2 = tau0 * wind_pattern * (1.0 + f2)
 
         # Spatial gradients for momentum (vector-invariant form) ------------
         du1dx, du1dy = self._grad_x(u1), self._grad_y(u1)
@@ -285,7 +286,7 @@ class ShallowWaterDynamics(DynamicsBase):
         )
 
         # Apply land mask (zero out tendencies on land cells) ---------------
-        M = self.land_mask
+        M = self.land_mask.to(state.device)
         while M.dim() < state.dim():
             M = M.unsqueeze(0)
         dh1dt = dh1dt * M
