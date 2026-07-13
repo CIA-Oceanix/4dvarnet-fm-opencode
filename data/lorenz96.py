@@ -40,6 +40,7 @@ class Lorenz96Config:
     coupling_exponent_truth: float = 1.6
     coupling_exponent_da: float = 1.0
     obs_var_indices: Tuple[int, ...] = None
+    fast_weights: list = None
 
     @property
     def obs_dim(self) -> int:
@@ -105,6 +106,7 @@ def _make_lorenz96_dynamics(cfg: Lorenz96Config):
         c1=cfg.c1, NO=cfg.NO, J=cfg.J, h=cfg.h, hx=cfg.hx, eps=cfg.eps,
         sigma_0=cfg.sigma_0, gamma=cfg.gamma,
         W_L_bar=cfg.W_L_bar, c2=cfg.c2, sigma_L=cfg.sigma_L,
+        fast_weights=cfg.fast_weights,
     )
 
 

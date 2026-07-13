@@ -27,7 +27,8 @@ class Lorenz96Dynamics(DynamicsBase):
                  c1: float = 1.0, clip_range: float = 50.0,
                  NO: int = 8, J: int = 4, h: float = 1.0, hx: float = 1.0,
                  eps: float = 0.1, sigma_0: float = 0.08, gamma: float = 0.05,
-                 W_L_bar: float = 0.0, c2: float = 0.1, sigma_L: float = 0.20):
+                 W_L_bar: float = 0.0, c2: float = 0.1, sigma_L: float = 0.20,
+                 fast_weights=None):
         super().__init__()
         self.dt = dt
         self.c1 = c1
@@ -44,12 +45,20 @@ class Lorenz96Dynamics(DynamicsBase):
         self.W_L_bar = W_L_bar
         self.c2 = c2
         self.sigma_L = sigma_L
+        if fast_weights is not None:
+            self.fast_weights = torch.tensor(fast_weights, dtype=torch.float32)
+        else:
+            self.fast_weights = None
 
     def _derivative(self, state, forcing, F):
         NO, J, h, hx, eps = self.NO, self.J, self.h, self.hx, self.eps
         X = state[..., :NO]
         Y = state[..., NO:].reshape(*state.shape[:-1], NO, J)
-        Y_sum = Y.sum(dim=-1)
+        if self.fast_weights is not None:
+            w = self.fast_weights.to(Y.device)
+            Y_sum = (Y * w).sum(dim=-1)
+        else:
+            Y_sum = Y.sum(dim=-1)
         Xm1 = _periodic_shift(X, 1)
         Xp1 = _periodic_shift(X, -1)
         Xm2 = _periodic_shift(X, 2)

@@ -73,6 +73,8 @@ def run():
     parser.add_argument("--etkf-loc-mode", type=str, default="square_root",
                         choices=["square_root", "per_member"],
                         help="ETKF localization update mode (default: square_root)")
+    parser.add_argument("--truth-fast-weights-unobserved", type=float, default=None,
+                        help="Weight for unobserved fast vars in truth slow dynamics (default: 1.0 = equal weights)")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -91,6 +93,12 @@ def run():
     s1_J = args.s1_j if args.s1_j is not None else J_truth
     s1_state_dim = NO + NO * s1_J
 
+    if args.truth_fast_weights_unobserved is not None:
+        obs_j = args.obs_j if args.obs_j is not None else J_truth
+        truth_fast_weights = [1.0] * obs_j + [args.truth_fast_weights_unobserved] * (J_truth - obs_j)
+    else:
+        truth_fast_weights = None
+
     base_cfg = Lorenz96Config(
         dt=dt, T_max=3.0, obs_interval=args.obs_interval,
         R_var=0.5, B_var=2.0,
@@ -103,6 +111,7 @@ def run():
         tau_eta=5.0, sigma_eta=np.sqrt(0.5),
         param_bias=args.param_bias, forcing_state_bias=args.forcing_state_bias,
         obs_var_indices=obs_indices,
+        fast_weights=truth_fast_weights,
     )
 
     print(f"\n── {args.label}: Config ──")
@@ -113,6 +122,8 @@ def run():
     print(f"  F_da = {base_cfg.F_true * (1 - args.param_bias):.2f}")
     print(f"  num_windows={args.num_windows}")
     print(f"  ensemble_size={args.ensemble_size}, inflation={args.inflation}, loc_radius={args.loc_radius}, etkf_loc_mode={args.etkf_loc_mode}")
+    if truth_fast_weights is not None:
+        print(f"  truth_fast_weights={truth_fast_weights}")
     labels = []
     if args.s1_single_scale: labels.append("single-scale DA")
     if args.s1_no_inflation: labels.append("no inflation")
@@ -128,8 +139,8 @@ def run():
     s1_obs_op = ObsOperator(NO + NO * s1_J, None)
 
     dynamics_pool = {
-        1.0: Lorenz96Dynamics(dt=dt, coupling_exponent=1.0),
-        1.6: Lorenz96Dynamics(dt=dt, coupling_exponent=1.6),
+        1.0: Lorenz96Dynamics(dt=dt, coupling_exponent=1.0, fast_weights=truth_fast_weights),
+        1.6: Lorenz96Dynamics(dt=dt, coupling_exponent=1.6, fast_weights=truth_fast_weights),
     }
     s1_dynamics = Lorenz96Dynamics(dt=dt, NO=40, J=0, h=0.0, hx=0.0,
                                    coupling_exponent=1.0) if args.s1_single_scale else None
@@ -202,6 +213,7 @@ def run():
             "s1_state_dim": s1_state_dim,
             "obs_interval": args.obs_interval,
             "obs_indices": obs_indices,
+            "truth_fast_weights": truth_fast_weights,
         },
         "results": results,
     }
