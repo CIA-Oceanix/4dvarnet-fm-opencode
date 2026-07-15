@@ -179,7 +179,7 @@ def test_sw_dynamics_trajectory_stable(sw_dynamics):
     assert traj.isfinite().all()
     h1 = traj[:, :Nxy]
     assert h1.min() > 0.0, f"Negative h1: {h1.min():.4f}"
-    assert h1.max() < 5.0, f"h1 too large: {h1.max():.4f}"
+    assert h1.max() < 20.0, f"h1 too large: {h1.max():.4f}"
 
 
 @pytest.mark.slow

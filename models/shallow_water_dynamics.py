@@ -39,15 +39,15 @@ class ShallowWaterDynamics(DynamicsBase):
         self,
         Nx: int = 64,
         Ny: int = 64,
-        dt: float = 0.01,
+        dt: float = 0.1,
         K: int = 5,
-        tau0: float = 0.01,
+        tau0: float = 0.0,
         f_cor: float = 0.1,
-        g1: float = 0.02,
-        g2: float = 0.01,
-        coupling: float = 0.05,
-        friction: float = 0.1,
-        viscosity: float = 0.001,
+        g1: float = 0.5,
+        g2: float = 2.0,
+        coupling: float = 0.01,
+        friction: float = 0.001,
+        viscosity: float = 0.0001,
         land_mask_type: str = "none",
     ):
         super().__init__()
@@ -72,8 +72,11 @@ class ShallowWaterDynamics(DynamicsBase):
         self.land_mask_type = land_mask_type
         self.land_mask = self._build_land_mask()
 
-        # Static wind-stress spatial pattern: sin(2*pi*y / Ly) ---------------
+        # Bickley-jet parameters -------------------------------------------------
         y_coords = torch.arange(Ny, dtype=torch.float32) * self.dy
+        self.y_center = y_coords - self.Ly / 2.0  # centered at domain mid
+
+        # Static wind-stress spatial pattern: sin(2*pi*y / Ly) ---------------
         self.wind_pattern = (
             torch.sin(2.0 * torch.pi * y_coords / self.Ly)
             .unsqueeze(0)
@@ -103,6 +106,81 @@ class ShallowWaterDynamics(DynamicsBase):
             # Placeholder: uniform ocean for now
             return torch.ones(Nx * Ny, dtype=torch.float32)
         raise ValueError(f"Unknown land_mask_type: {self.land_mask_type!r}")
+
+    # ------------------------------------------------------------------
+    # Bickley-jet initial condition
+    # ------------------------------------------------------------------
+
+    def _init_bickley_jet(
+        self,
+        seed: int = 42,
+        U: float = 0.05,
+        U2: float = 0.03,
+        L_jet_frac: float = 0.05,
+        epsilon: float = 1e-4,
+        H_ref: float = 10.0,
+    ) -> torch.Tensor:
+        """Geostrophically balanced Bickley jet initial condition.
+
+        Both layers contain a ``sech²(y / L_jet)`` jet profile centred
+        at the domain mid-point.  The free-surface height is obtained
+        from geostrophic balance for each layer *l*:
+
+            ∂_y h_l = -(f / g_l) u_l
+
+        so that
+
+            h_l(y) = H_ref - (f / g_l) * L_jet * tanh(y / L_jet)
+
+        A small random perturbation *epsilon* is added to seed the
+        barotropic/baroclinic instability.
+
+        Parameters
+        ----------
+        seed : int
+            RNG seed for the perturbation.
+        U : float
+            Maximum jet velocity for layer 1 (ocean).
+        U2 : float
+            Maximum jet velocity for layer 2 (atmosphere).
+        L_jet_frac : float
+            Jet half-width as a fraction of domain width *Ly*.
+        epsilon : float
+            Amplitude of the random perturbation.
+        H_ref : float
+            Reference layer thickness.
+
+        Returns
+        -------
+        state : Tensor ``(state_dim,)``
+        """
+        Nx, Ny = self.Nx, self.Ny
+        NxNy = Nx * Ny
+        y_center = self.y_center  # (Ny,) centred at 0
+        L_jet = self.Ly * L_jet_frac
+
+        # y_center needs to be expanded to (Nx*Ny,) for flat state layout
+        y = y_center.unsqueeze(0).expand(Nx, -1).reshape(-1).clone()
+
+        # Layer 1 (ocean) jet
+        u1 = U * (1.0 / torch.cosh(y / L_jet)) ** 2
+        v1 = torch.zeros(NxNy)
+        h1 = H_ref - (self.f_cor / self.g1) * L_jet * torch.tanh(y / L_jet)
+
+        # Layer 2 (atmosphere) jet
+        u2 = U2 * (1.0 / torch.cosh(y / L_jet)) ** 2
+        v2 = torch.zeros(NxNy)
+        h2 = H_ref - (self.f_cor / self.g2) * L_jet * torch.tanh(y / L_jet)
+
+        # Small random perturbation to seed instability
+        rng = torch.Generator()
+        rng.manual_seed(seed)
+        h1 = h1 + epsilon * torch.randn(NxNy, generator=rng)
+        u1 = u1 + epsilon * torch.randn(NxNy, generator=rng)
+        h2 = h2 + epsilon * torch.randn(NxNy, generator=rng)
+
+        state = torch.stack([h1, u1, v1, h2, u2, v2])
+        return state.reshape(-1)  # (state_dim,)
 
     # ------------------------------------------------------------------
     # Spatial gradients  (central differences, periodic BC)
@@ -359,16 +437,35 @@ class ShallowWaterDynamics(DynamicsBase):
         seed: int = 42,
         device=None,
         spinup_steps: int = 500,
+        bickley_jet: bool = True,
+        tau0: float | None = None,
+        bickley_U: float = 0.05,
+        bickley_U2: float = 0.03,
+        bickley_H_ref: float = 10.0,
     ) -> tuple:
-        """Generate a trajectory with temporally varying wind-stress forcing.
+        """Generate a trajectory, optionally from a Bickley jet initial condition.
+
+        When *bickley_jet* is True the initial state is a geostrophically
+        balanced Bickley jet (both layers) superposed with a small random
+        perturbation.  Otherwise the old perturbed-resting-state init is used.
+
+        Parameters
+        ----------
+        num_steps : int
+            Number of steps to collect.
+        seed : int
+            RNG seed.
+        spinup_steps : int
+            Number of spin-up steps (discarded).
+        bickley_jet : bool
+            If True, use Bickley jet initial condition.
+        tau0 : float, optional
+            Wind-stress amplitude.  Defaults to ``self.tau0``.
 
         Returns
         -------
         traj : Tensor ``(num_steps, state_dim)``
-            The trajectory after spin-up.
         forcing : Tensor ``(num_steps, 2)``
-            Temporal perturbation series ``(eps_layer1, eps_layer2)`` that was
-            used during the trajectory window (post spin-up).
         """
         rng = np.random.RandomState(seed)
         total = num_steps + spinup_steps
@@ -382,23 +479,28 @@ class ShallowWaterDynamics(DynamicsBase):
             eps[i] = gamma_ar * eps[i - 1] + np.sqrt(1.0 - gamma_ar**2) * eps_raw[i]
 
         forcing_t = torch.tensor(eps, dtype=torch.float32)
+        tau0_eff = self.tau0 if tau0 is None else tau0
 
-        # Initial condition: small perturbation around h = 1, u = v = 0
-        rng2 = np.random.RandomState(seed + 100)
-        NxNy = self.Nx * self.Ny
-        h1_0 = 1.0 + torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        u1_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        v1_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        h2_0 = 1.0 + torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        u2_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        v2_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
-        s0 = torch.cat([h1_0, u1_0, v1_0, h2_0, u2_0, v2_0])
+        # Initial condition
+        if bickley_jet:
+            s0 = self._init_bickley_jet(seed=seed + 100, U=bickley_U, U2=bickley_U2,
+                                         H_ref=bickley_H_ref)
+        else:
+            rng2 = np.random.RandomState(seed + 100)
+            NxNy = self.Nx * self.Ny
+            h1_0 = 1.0 + torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            u1_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            v1_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            h2_0 = 1.0 + torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            u2_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            v2_0 = torch.tensor(rng2.randn(NxNy) * 0.01, dtype=torch.float32)
+            s0 = torch.cat([h1_0, u1_0, v1_0, h2_0, u2_0, v2_0])
 
         # Spin-up (discard transient)
         s = s0
         for i in range(spinup_steps):
             s = self._rk4_step(
-                s, forcing_t[i], self.tau0, self.f_cor,
+                s, forcing_t[i], tau0_eff, self.f_cor,
                 self.g1, self.g2, self.coupling_coeff,
                 self.friction, self.viscosity, self.dt,
             )
@@ -407,7 +509,7 @@ class ShallowWaterDynamics(DynamicsBase):
         traj_list = [s.clone()]
         for i in range(spinup_steps, spinup_steps + num_steps - 1):
             s = self._rk4_step(
-                s, forcing_t[i], self.tau0, self.f_cor,
+                s, forcing_t[i], tau0_eff, self.f_cor,
                 self.g1, self.g2, self.coupling_coeff,
                 self.friction, self.viscosity, self.dt,
             )

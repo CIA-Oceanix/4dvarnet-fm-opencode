@@ -49,18 +49,15 @@ def _create_sw_dynamics(
 ) -> ShallowWaterDynamics:
     """Create a ShallowWaterDynamics instance for the given scenario.
 
-    ``"S1"`` applies a 15 % perturbation to the wind-stress amplitude
-    ``tau0`` (matching the dataset generator).
+    The S0/S1 perturbation is embedded in the dataset (different
+    Bickley jet amplitudes), so the dynamics itself is the same.
     """
-    tau0 = config.tau0
-    if scenario == "S1":
-        tau0 = config.tau0 * 1.15
     return ShallowWaterDynamics(
         Nx=config.Nx,
         Ny=config.Ny,
         dt=config.dt,
         K=config.K,
-        tau0=tau0,
+        tau0=config.tau0,
         f_cor=config.f_cor,
         g1=config.g1,
         g2=config.g2,
