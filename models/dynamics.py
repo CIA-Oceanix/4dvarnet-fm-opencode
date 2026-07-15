@@ -60,11 +60,11 @@ def get_dynamics(cfg) -> DynamicsBase:
         return ShallowWaterDynamics(
             Nx=dc.get("Nx", 64), Ny=dc.get("Ny", 64),
             dt=dc.dt, K=dc.get("K", 5),
-            tau0=dc.get("tau0", 0.08), f_cor=dc.get("f_cor", 0.1),
-            g1=dc.get("g1", 0.02), g2=dc.get("g2", 0.01),
-            coupling=dc.get("coupling", 0.05),
-            friction=dc.get("friction", 0.1),
-            viscosity=dc.get("viscosity", 0.001),
+            tau0=dc.get("tau0", 0.0), f_cor=dc.get("f_cor", 0.1),
+            g1=dc.get("g1", 1.0), g2=dc.get("g2", 4.0),
+            coupling=dc.get("coupling", 0.01),
+            friction=dc.get("friction", 0.0),
+            viscosity=dc.get("viscosity", 0.0001),
             land_mask_type=dc.get("land_mask_type", "none"),
         )
     raise ValueError(f"Unknown dynamical system: {system}")

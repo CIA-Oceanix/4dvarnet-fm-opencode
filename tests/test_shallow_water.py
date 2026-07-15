@@ -131,6 +131,8 @@ def test_sw_config_hydra():
     assert config.Nx == 64
     assert config.state_dim == 6 * 64 * 64
     assert config.land_mask_type == "none"
+    assert config.f_cor == 0.1
+    assert config.bickley_perturbation_mode == "random_balanced"
 
 
 @pytest.mark.unit
@@ -140,8 +142,8 @@ def test_sw_factory():
     cfg = _DotDict(data=_DotDict(
         system="shallow_water",
         Nx=8, Ny=8, K=3, dt=0.01,
-        tau0=0.08, f_cor=0.1, g1=0.02, g2=0.01,
-        coupling=0.05, friction=0.1, viscosity=0.001,
+        tau0=0.0, f_cor=1.0, g1=1.0, g2=4.0,
+        coupling=0.01, friction=0.0, viscosity=0.0001,
         land_mask_type="none",
     ))
     dyn = get_dynamics(cfg)
@@ -165,6 +167,45 @@ def test_make_sw_obs_indices():
     assert ocean_h_obs == 4
     atmos_h_obs = len(indices[(indices >= 3 * Nxy) & (indices < 4 * Nxy)])
     assert atmos_h_obs == 16
+
+
+@pytest.mark.unit
+def test_sw_sinusoidal_perturbation():
+    """Sinusoidal perturbation seeds x-variation in initial condition."""
+    from models.shallow_water_dynamics import ShallowWaterDynamics
+    Nx, Ny = 16, 16
+    dyn = ShallowWaterDynamics(Nx=Nx, Ny=Ny, f_cor=1.0, g1=1.0, g2=4.0)
+    # Generate IC with sinusoidal perturbation
+    state = dyn._init_bickley_jet(U=1.0, U2=0.6, H_ref=1.0,
+                                   perturbation_mode="sinusoidal")
+    Nxy = Nx * Ny
+    # Extract u1 and reshape to (Nx, Ny)
+    u1 = state[Nxy : 2 * Nxy].reshape(Nx, Ny)
+    # Row means should vary across rows (x-direction)
+    row_means = u1.mean(dim=1)
+    x_variation = row_means.std().item()
+    assert x_variation > 1e-6, f"x-variation too small: {x_variation:.8f}"
+    # Columns should also have structure (y-direction from jet)
+    col_means = u1.mean(dim=0)
+    y_variation = col_means.std().item()
+    assert y_variation > 0.01, f"y-variation too small: {y_variation:.8f}"
+
+
+@pytest.mark.unit
+def test_sw_random_perturbation():
+    """Random perturbation produces IC but no systematic x-structure."""
+    from models.shallow_water_dynamics import ShallowWaterDynamics
+    Nx, Ny = 16, 16
+    dyn = ShallowWaterDynamics(Nx=Nx, Ny=Ny, f_cor=1.0, g1=1.0, g2=4.0)
+    state = dyn._init_bickley_jet(U=1.0, U2=0.6, H_ref=1.0,
+                                   perturbation_mode="random")
+    Nxy = Nx * Ny
+    u1 = state[Nxy : 2 * Nxy].reshape(Nx, Ny)
+    # Random pert: x-variation should be tiny (same noise added to all columns)
+    row_means = u1.mean(dim=1)
+    x_variation = row_means.std().item()
+    # The jet is y-only, so row means should all be ~0 (mean of sech²)
+    assert x_variation < 0.01, f"Random pert x-variation too large: {x_variation:.4f}"
 
 
 # ── GPU tests (mark as slow) ────────────────────────────────────────

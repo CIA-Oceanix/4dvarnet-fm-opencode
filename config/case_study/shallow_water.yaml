@@ -14,13 +14,18 @@ data:
   friction: 0.0
   viscosity: 0.0001
   obs_noise_std: 0.1
-  obs_stride_ocean: 8
-  obs_stride_atmos: 4
-  spinup_steps: 2000
+  obs_stride_ocean: 16
+  obs_stride_atmos: 8
+  spinup_steps: 10000
   num_windows: 200
   window_steps: 500
   seed: 42
   land_mask_type: "none"
+  bickley_U: 0.5
+  bickley_U2: 0.3
+  bickley_H_ref: 10.0
+  bickley_perturbation_mode: "random_balanced"
+  bickley_epsilon: 0.01
 
 model:
   state_dim: 24576    # 6 * 64 * 64

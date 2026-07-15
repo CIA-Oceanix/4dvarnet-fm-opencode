@@ -5,6 +5,7 @@ Layer 1 = ocean (slow), Layer 2 = atmosphere (fast).
 Periodic boundary conditions via torch.roll.
 """
 
+import math
 import numpy as np
 import torch
 
@@ -42,11 +43,11 @@ class ShallowWaterDynamics(DynamicsBase):
         dt: float = 0.1,
         K: int = 5,
         tau0: float = 0.0,
-        f_cor: float = 0.1,
+        f_cor: float = 1.0,
         g1: float = 1.0,
         g2: float = 4.0,
         coupling: float = 0.01,
-        friction: float = 0.001,
+        friction: float = 0.0,
         viscosity: float = 0.0001,
         land_mask_type: str = "none",
     ):
@@ -114,11 +115,12 @@ class ShallowWaterDynamics(DynamicsBase):
     def _init_bickley_jet(
         self,
         seed: int = 42,
-U: float = 0.50,
-U2: float = 0.30,
+        U: float = 1.0,
+        U2: float = 0.6,
         L_jet_frac: float = 0.15,
         epsilon: float = 1e-4,
-H_ref: float = 10.0,
+        H_ref: float = 1.0,
+        perturbation_mode: str = "sinusoidal",
     ) -> torch.Tensor:
         """Geostrophically balanced Bickley jet initial condition.
 
@@ -130,10 +132,10 @@ H_ref: float = 10.0,
 
         so that
 
-            h_l(y) = H_ref - (f / g_l) * L_jet * tanh(y / L_jet)
+            h_l(y) = H_ref - (f / g_l) * U_l * L_jet * tanh(y / L_jet)
 
-        A small random perturbation *epsilon* is added to seed the
-        barotropic/baroclinic instability.
+        A small perturbation *epsilon* (sinusoidal or random) is added to
+        seed the barotropic/baroclinic instability.
 
         Parameters
         ----------
@@ -165,19 +167,53 @@ H_ref: float = 10.0,
         # Layer 1 (ocean) jet
         u1 = U * (1.0 / torch.cosh(y / L_jet)) ** 2
         v1 = torch.zeros(NxNy)
-        h1 = H_ref - (self.f_cor / self.g1) * L_jet * torch.tanh(y / L_jet)
+        h1 = H_ref - (self.f_cor / self.g1) * U * L_jet * torch.tanh(y / L_jet)
 
         # Layer 2 (atmosphere) jet
         u2 = U2 * (1.0 / torch.cosh(y / L_jet)) ** 2
         v2 = torch.zeros(NxNy)
-        h2 = H_ref - (self.f_cor / self.g2) * L_jet * torch.tanh(y / L_jet)
+        h2 = H_ref - (self.f_cor / self.g2) * U2 * L_jet * torch.tanh(y / L_jet)
 
-        # Small random perturbation to seed instability
-        rng = torch.Generator()
-        rng.manual_seed(seed)
-        h1 = h1 + epsilon * torch.randn(NxNy, generator=rng)
-        u1 = u1 + epsilon * torch.randn(NxNy, generator=rng)
-        h2 = h2 + epsilon * torch.randn(NxNy, generator=rng)
+        # Small perturbation to seed instability
+        if perturbation_mode == "sinusoidal":
+            # Product of cosines: cos(kx*x) * cos(ky*y)
+            # kx = 2π/Lx (full wave in x), ky = π/Ly (half wave in y, non-zero mean)
+            Lx, Ly = self.Lx, self.Ly
+            x = torch.linspace(0, Lx, Nx + 1)[:-1]  # (Nx,)
+            y_coords = self.y_center                    # (Ny,)
+            xx, yy = torch.meshgrid(x, y_coords, indexing="ij")
+            pert = (torch.cos(xx * (2.0 * math.pi / Lx))
+                    * torch.cos(yy * (math.pi / Ly))).reshape(-1)
+            # Normalize so rms = epsilon
+            pert = pert / pert.std() * epsilon
+            h1 = h1 + pert
+            u1 = u1 + pert
+            v1 = v1 + pert
+            h2 = h2 + pert
+            u2 = u2 + pert
+            v2 = v2 + pert
+        elif perturbation_mode == "random_balanced":
+            # Add small ageostrophic random perturbation to all velocity components.
+            # This seeds 2D structure directly in u and v (not through geostrophic balance,
+            # which would force zero y-mean in u).  The SW dynamics adjusts the height
+            # field toward geostrophic balance within a few inertial periods.
+            rng = torch.Generator()
+            rng.manual_seed(seed)
+
+            # Random velocity perturbations (independent for each component)
+            u1 = u1 + epsilon * torch.randn(NxNy, generator=rng)
+            v1 = v1 + epsilon * torch.randn(NxNy, generator=rng)
+            h1 = h1 + epsilon * torch.randn(NxNy, generator=rng) * (self.f_cor / self.g1)
+            u2 = u2 + epsilon * torch.randn(NxNy, generator=rng)
+            v2 = v2 + epsilon * torch.randn(NxNy, generator=rng)
+            h2 = h2 + epsilon * torch.randn(NxNy, generator=rng) * (self.f_cor / self.g2)
+        else:
+            # Original random perturbation
+            rng = torch.Generator()
+            rng.manual_seed(seed)
+            h1 = h1 + epsilon * torch.randn(NxNy, generator=rng)
+            u1 = u1 + epsilon * torch.randn(NxNy, generator=rng)
+            h2 = h2 + epsilon * torch.randn(NxNy, generator=rng)
 
         state = torch.stack([h1, u1, v1, h2, u2, v2])
         return state.reshape(-1)  # (state_dim,)
@@ -188,28 +224,31 @@ H_ref: float = 10.0,
 
     def _grad_x(self, f: torch.Tensor) -> torch.Tensor:
         """Central difference along the *x* (row) axis, periodic."""
+        f2d = f.reshape(self.Nx, self.Ny)
         return (
-            torch.roll(f, -self.Ny, dims=-1) - torch.roll(f, self.Ny, dims=-1)
-        ) / (2.0 * self.dx)
+            torch.roll(f2d, -1, dims=0) - torch.roll(f2d, 1, dims=0)
+        ).reshape(-1) / (2.0 * self.dx)
 
     def _grad_y(self, f: torch.Tensor) -> torch.Tensor:
         """Central difference along the *y* (column) axis, periodic."""
-        return (torch.roll(f, -1, dims=-1) - torch.roll(f, 1, dims=-1)) / (
-            2.0 * self.dy
-        )
+        f2d = f.reshape(self.Nx, self.Ny)
+        return (
+            torch.roll(f2d, -1, dims=1) - torch.roll(f2d, 1, dims=1)
+        ).reshape(-1) / (2.0 * self.dy)
 
     def _laplacian(self, f: torch.Tensor) -> torch.Tensor:
         """5-point Laplacian on the periodic 2-D grid (flat layout).
 
         The flat index ``i*Ny + j`` corresponds to grid point ``(i, j)``.
         """
+        f2d = f.reshape(self.Nx, self.Ny)
         return (
-            torch.roll(f, -self.Ny, dims=-1)
-            + torch.roll(f, self.Ny, dims=-1)
-            + torch.roll(f, -1, dims=-1)
-            + torch.roll(f, 1, dims=-1)
-            - 4.0 * f
-        ) / (self.dx * self.dy)
+            torch.roll(f2d, -1, dims=0)
+            + torch.roll(f2d, 1, dims=0)
+            + torch.roll(f2d, -1, dims=1)
+            + torch.roll(f2d, 1, dims=1)
+            - 4.0 * f2d
+        ).reshape(-1) / (self.dx * self.dy)
 
     # ------------------------------------------------------------------
     # State helpers
@@ -439,10 +478,12 @@ H_ref: float = 10.0,
         spinup_steps: int = 500,
         bickley_jet: bool = True,
         tau0: float | None = None,
-        bickley_U: float = 0.50,
-        bickley_U2: float = 0.30,
-        bickley_H_ref: float = 10.0,
+        bickley_U: float = 1.0,
+        bickley_U2: float = 0.6,
+        bickley_H_ref: float = 1.0,
         bickley_L_jet_frac: float = 0.15,
+        bickley_perturbation_mode: str = "sinusoidal",
+        bickley_epsilon: float = 0.01,
     ) -> tuple:
         """Generate a trajectory, optionally from a Bickley jet initial condition.
 
@@ -485,7 +526,9 @@ H_ref: float = 10.0,
         # Initial condition
         if bickley_jet:
             s0 = self._init_bickley_jet(seed=seed + 100, U=bickley_U, U2=bickley_U2,
-                                         H_ref=bickley_H_ref, L_jet_frac=bickley_L_jet_frac)
+                                          H_ref=bickley_H_ref, L_jet_frac=bickley_L_jet_frac,
+                                          perturbation_mode=bickley_perturbation_mode,
+                                          epsilon=bickley_epsilon)
         else:
             rng2 = np.random.RandomState(seed + 100)
             NxNy = self.Nx * self.Ny

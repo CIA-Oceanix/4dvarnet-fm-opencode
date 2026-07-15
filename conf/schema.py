@@ -46,12 +46,19 @@ class DataConfig:
     coupling: float = 0.01
     friction: float = 0.0
     viscosity: float = 0.0001
-    obs_stride_ocean: int = 8
-    obs_stride_atmos: int = 4
+    obs_stride_ocean: int = 16
+    obs_stride_atmos: int = 8
     land_mask_type: str = "none"
     K: int = 5
     window_steps: int = 500
     obs_noise_std: float = 0.1
+    spinup_steps: int = 10000
+    num_windows: int = 200
+    bickley_U: float = 0.5
+    bickley_U2: float = 0.3
+    bickley_H_ref: float = 10.0
+    bickley_perturbation_mode: str = "random_balanced"
+    bickley_epsilon: float = 0.01
 
     @property
     def num_steps(self) -> int:
@@ -111,6 +118,11 @@ class DataConfig:
             window_steps=self.window_steps,
             seed=self.seed,
             land_mask_type=self.land_mask_type,
+            bickley_U=self.bickley_U,
+            bickley_U2=self.bickley_U2,
+            bickley_H_ref=self.bickley_H_ref,
+            bickley_perturbation_mode=self.bickley_perturbation_mode,
+            bickley_epsilon=self.bickley_epsilon,
         )
 
 
