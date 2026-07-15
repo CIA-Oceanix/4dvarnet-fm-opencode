@@ -23,6 +23,7 @@ from data.shallow_water import (
     ShallowWaterConfig,
     ShallowWaterDataset,
     make_sw_obs_indices,
+    make_sw_obs_noise_std,
     make_sw_s0_s1_datasets,
 )
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF, ObsOperator
@@ -176,7 +177,7 @@ def evaluate_sw_baseline(
             )  # (B, K, 2)
 
             batch_results = method.assimilate_batch(
-                obs_vals.to(device), tmask, force.to(device), truth,
+                obs_vals.to(device), tmask, force.to(device), truth.to(device),
             )
             results_list.extend(batch_results)
     else:
@@ -189,7 +190,7 @@ def evaluate_sw_baseline(
             force = w["forcing"]  # (K, 2)
 
             result = method.assimilate(
-                obs_vals.to(device), tmask, force.to(device), truth,
+                obs_vals.to(device), tmask, force.to(device), truth.to(device),
             )
             results_list.append(result)
 
@@ -224,6 +225,7 @@ def run_sw_baselines(
     etkf_inflation: float = 2.0,
     output_dir: str = "outputs/sw_baselines",
     methods: list[str] | None = None,
+    loc_radius: float | None = None,
 ) -> dict:
     """Run all four DA baselines on the rotating SW S0/S1 scenarios.
 
@@ -304,6 +306,9 @@ def run_sw_baselines(
 
         _run_methods = methods or _BASELINE_METHODS
 
+        r_var_vec = make_sw_obs_noise_std(config) ** 2
+        r_var_scalar = float(r_var_vec.mean().item())
+
         method_instances = {
             "Weak-4DVar": Weak4DVar(
                 dt=config.dt,
@@ -311,6 +316,8 @@ def run_sw_baselines(
                 device=device,
                 dynamics=dynamics,
                 obs_operator=obs_operator,
+                noise_init_std=0.05,
+                R_var=r_var_scalar,
             ),
             "Strong-4DVar": Strong4DVar(
                 dt=config.dt,
@@ -318,6 +325,11 @@ def run_sw_baselines(
                 device=device,
                 dynamics=dynamics,
                 obs_operator=obs_operator,
+                noise_init_std=0.01,
+                B_var=0.01,
+                R_var=r_var_vec,
+                lr=0.01,
+                opt_steps=500,
             ),
             "EnKF": EnKF(
                 dt=config.dt,
@@ -326,6 +338,10 @@ def run_sw_baselines(
                 obs_operator=obs_operator,
                 inflation=enkf_inflation,
                 noise_init_std=0.05,
+                loc_radius=loc_radius,
+                Nx=config.Nx,
+                Ny=config.Ny,
+                R_var=r_var_vec,
             ),
             "ETKF": ETKF(
                 dt=config.dt,
@@ -334,6 +350,10 @@ def run_sw_baselines(
                 obs_operator=obs_operator,
                 inflation=etkf_inflation,
                 noise_init_std=0.05,
+                loc_radius=loc_radius,
+                Nx=config.Nx,
+                Ny=config.Ny,
+                R_var=r_var_vec,
             ),
         }
 

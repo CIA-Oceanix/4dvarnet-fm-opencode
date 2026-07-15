@@ -4,13 +4,13 @@ data:
   system: shallow_water
   Nx: 64
   Ny: 64
-  dt: 0.01
+  dt: 0.1
   K: 5
-  tau0: 0.08
+  tau0: 0.01
   f_cor: 0.1
-  g1: 0.02
-  g2: 0.01
-  coupling: 0.05
+  g1: 0.5
+  g2: 2.0
+  coupling: 0.01
   friction: 0.1
   viscosity: 0.001
   obs_noise_std: 0.1

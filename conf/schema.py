@@ -39,19 +39,20 @@ class DataConfig:
     # Shallow Water (rotating SW)
     Nx: int = 64
     Ny: int = 64
-    tau0: float = 0.08
+    tau0: float = 0.01
     f_cor: float = 0.1
-    g1: float = 0.02
-    g2: float = 0.01
-    coupling: float = 0.05
+    g1: float = 0.5
+    g2: float = 2.0
+    coupling: float = 0.01
     friction: float = 0.1
     viscosity: float = 0.001
-    obs_stride_ocean: int = 8
-    obs_stride_atmos: int = 4
+    obs_stride_ocean: int = 5
+    obs_stride_atmos: int = 3
     land_mask_type: str = "none"
     K: int = 5
     window_steps: int = 500
     obs_noise_std: float = 0.1
+    obs_noise_pct: float = 0.05
 
     @property
     def num_steps(self) -> int:

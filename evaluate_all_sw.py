@@ -54,6 +54,8 @@ def main():
     parser.add_argument("--t-max", type=float, default=3.0)
     parser.add_argument("--enkf-inflation", type=float, default=2.0)
     parser.add_argument("--etkf-inflation", type=float, default=2.0)
+    parser.add_argument("--loc-radius", type=float, default=None,
+                        help="Localization radius (grid points) for EnKF/ETKF")
     parser.add_argument("--output-dir", type=str, default="outputs/sw_baselines")
     parser.add_argument("--Nx", type=int, default=64)
     parser.add_argument("--Ny", type=int, default=64)
@@ -85,6 +87,7 @@ def main():
         f"  enkf_inflation={args.enkf_inflation}  "
         f"etkf_inflation={args.etkf_inflation}"
     )
+    print(f"  loc_radius={args.loc_radius}")
 
     # ---- run baselines ----
     t0 = time.time()
@@ -98,6 +101,7 @@ def main():
         etkf_inflation=args.etkf_inflation,
         output_dir=args.output_dir,
         methods=args.methods,
+        loc_radius=args.loc_radius,
     )
     print(f"\nTotal wall-clock: {time.time() - t0:.1f}s")
 

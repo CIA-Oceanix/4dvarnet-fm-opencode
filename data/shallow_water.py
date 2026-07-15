@@ -6,7 +6,7 @@ Layer 1 = ocean (slow), Layer 2 = atmosphere (fast).
 
 import torch
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 
 @dataclass
@@ -16,20 +16,24 @@ class ShallowWaterConfig:
     # Physical parameters
     Nx: int = 64
     Ny: int = 64
-    dt: float = 0.01
+    dt: float = 0.1
     K: int = 5           # steps per DA window
-    tau0: float = 0.08   # wind stress amplitude
+    tau0: float = 0.01   # wind stress amplitude
     f_cor: float = 0.1   # Coriolis parameter
-    g1: float = 0.02     # layer 1 reduced gravity
-    g2: float = 0.01     # layer 2 reduced gravity
-    coupling: float = 0.05
+    g1: float = 0.5      # layer 1 (ocean) reduced gravity → c1=0.707, Rd1=7.07 dx
+    g2: float = 2.0      # layer 2 (atmosphere) reduced gravity → c2=1.414, Rd2=14.14 dx
+    coupling: float = 0.01
     friction: float = 0.1
     viscosity: float = 0.001
 
     # Observation parameters
     obs_noise_std: float = 0.1
-    obs_stride_ocean: int = 8     # ocean obs stride (sparser)
-    obs_stride_atmos: int = 4     # atmosphere obs stride (denser)
+    obs_noise_pct: float = 0.05   # noise as fraction of state std (per-component)
+    obs_state_stds: Tuple[float, float, float, float, float, float] = (
+        0.134, 0.069, 0.005, 0.036, 0.071, 0.001,
+    )
+    obs_stride_ocean: int = 5     # ocean obs stride (sparser, ~3.5%)
+    obs_stride_atmos: int = 3     # atmosphere obs stride (denser, ~14%)
 
     # Dataset parameters
     spinup_steps: int = 1000
@@ -93,6 +97,22 @@ def make_sw_obs_indices(config: ShallowWaterConfig) -> torch.Tensor:
     return torch.cat([idx_ocean, idx_atmos])
 
 
+def make_sw_obs_noise_std(config: ShallowWaterConfig) -> torch.Tensor:
+    """Return per-observation noise std vector ``(n_obs,)`` based on 5% of each component's state std.
+
+    Matches ``make_sw_obs_indices`` ordering:
+    ocean [h1, u1, v1] then atmosphere [h2, u2, v2].
+    """
+    Nxy = config.Nx * config.Ny
+    obs_indices = make_sw_obs_indices(config)
+    comp_of_idx = obs_indices // Nxy
+    noise_std = torch.tensor(
+        [config.obs_state_stds[c] * config.obs_noise_pct for c in comp_of_idx],
+        dtype=torch.float32,
+    )
+    return noise_std
+
+
 def make_sw_obs_mask(config: ShallowWaterConfig) -> torch.Tensor:
     """Return boolean mask of shape ``(state_dim,)`` where True = observed."""
     indices = make_sw_obs_indices(config)
@@ -104,7 +124,7 @@ def make_sw_obs_mask(config: ShallowWaterConfig) -> torch.Tensor:
 def _generate_sw_observations(
     true_state: torch.Tensor,      # (K, state_dim)
     obs_indices: torch.Tensor,     # (n_obs,)
-    obs_noise_std: float,
+    obs_noise_std: float | torch.Tensor,
     seed: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generate noisy spatial observations for one DA window.
@@ -115,8 +135,9 @@ def _generate_sw_observations(
         Ground-truth trajectory for one window.
     obs_indices : Tensor ``(n_obs,)``
         Indices of observed state components.
-    obs_noise_std : float
-        Standard deviation of Gaussian observation noise.
+    obs_noise_std : float or Tensor ``(n_obs,)``
+        Standard deviation(s) of Gaussian observation noise.
+        If Tensor, each observation gets its own noise std (per-component).
     seed : int
         RNG seed for reproducibility.
 
@@ -202,7 +223,8 @@ class ShallowWaterDataset:
             frc = forcing[start:end].clone()  # (K, 2)
 
             obs, obs_mask = _generate_sw_observations(
-                seg, self.obs_indices, cfg.obs_noise_std,
+                seg, self.obs_indices,
+                make_sw_obs_noise_std(cfg),
                 seed=cfg.seed + w + 1,
             )
 

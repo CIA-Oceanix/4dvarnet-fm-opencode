@@ -39,13 +39,13 @@ class ShallowWaterDynamics(DynamicsBase):
         self,
         Nx: int = 64,
         Ny: int = 64,
-        dt: float = 0.01,
+        dt: float = 0.1,
         K: int = 5,
         tau0: float = 0.01,
         f_cor: float = 0.1,
-        g1: float = 0.02,
-        g2: float = 0.01,
-        coupling: float = 0.05,
+        g1: float = 0.5,
+        g2: float = 2.0,
+        coupling: float = 0.01,
         friction: float = 0.1,
         viscosity: float = 0.001,
         land_mask_type: str = "none",
@@ -138,22 +138,25 @@ class ShallowWaterDynamics(DynamicsBase):
     # ------------------------------------------------------------------
 
     def _clip_layer_thickness(self, state: torch.Tensor) -> torch.Tensor:
-        """Clamp layer thicknesses *h1* and *h2* to ``>= 1e-6``.
+        """Clamp state to physically safe ranges.
+
+        Layer thicknesses are clamped to ``[0.1, 3.0]`` and velocities
+        to ``[-5.0, 5.0]``.  These bounds are never reached in a normal
+        simulation (true h1 stays within ``[0.86, 1.14]`` and u1 within
+        ``[-0.08, 0.08]``) and exist solely to keep the DA optimisation
+        in a dynamically stable regime.
 
         Uses out-of-place operations so that the result is differentiable
         (autograd-safe).
         """
         NxNy = self.Nx * self.Ny
-        h1 = torch.clamp(state[..., :NxNy], min=1e-6)
-        h2 = torch.clamp(state[..., 3 * NxNy : 4 * NxNy], min=1e-6)
-        return torch.cat([
-            h1,                                  # h1 (clamped)
-            state[..., NxNy : 2 * NxNy],         # u1
-            state[..., 2 * NxNy : 3 * NxNy],     # v1
-            h2,                                  # h2 (clamped)
-            state[..., 4 * NxNy : 5 * NxNy],     # u2
-            state[..., 5 * NxNy : 6 * NxNy],     # v2
-        ], dim=-1)
+        h1 = torch.clamp(state[..., :NxNy], min=0.1, max=3.0)
+        u1 = torch.clamp(state[..., NxNy : 2 * NxNy], -5.0, 5.0)
+        v1 = torch.clamp(state[..., 2 * NxNy : 3 * NxNy], -5.0, 5.0)
+        h2 = torch.clamp(state[..., 3 * NxNy : 4 * NxNy], min=0.1, max=3.0)
+        u2 = torch.clamp(state[..., 4 * NxNy : 5 * NxNy], -5.0, 5.0)
+        v2 = torch.clamp(state[..., 5 * NxNy : 6 * NxNy], -5.0, 5.0)
+        return torch.cat([h1, u1, v1, h2, u2, v2], dim=-1)
 
     # ------------------------------------------------------------------
     # Right-hand side
