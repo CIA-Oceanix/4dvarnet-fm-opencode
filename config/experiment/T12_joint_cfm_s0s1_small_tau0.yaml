@@ -6,7 +6,7 @@ defaults:
 model:
   model_type: joint_cfm
   vanilla_cfm:
-    hidden_channels: [64, 128, 256]
+    hidden_channels: [32, 64, 128]
     time_emb_dim: 64
     N_outer: 10
     sigma_prior: 0.5
@@ -27,7 +27,7 @@ training:
 data:
   data_setup: s0_s1
   bias_max: 0.2
-  num_train_windows: 1000
+  num_train_windows: 2000
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2

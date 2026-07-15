@@ -114,6 +114,17 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_loss_weight=jc.param_loss_weight,
             train_tau_0_only=jc.train_tau_0_only,
         )
+    elif model_type == "joint_direct_unet":
+        from models.direct_unet import JointDirectUNet
+        jd = cfg.model.joint_direct_unet
+        dc = cfg.model.direct_unet
+        model = JointDirectUNet(
+            state_dim=cfg.model.state_dim,
+            param_dim=jd.param_dim,
+            hidden_channels=dc.hidden_channels,
+            dropout=dc.dropout,
+            param_loss_weight=jd.param_loss_weight,
+        )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     return model.to(device)
@@ -156,6 +167,15 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
                   w.get("true_beta", w.get("beta")),
                   w.get("true_c1", w.get("c1", 1.0))]
             true_param_list.append(np.array(tp))
+        elif model_type == "joint_direct_unet":
+            pred, params = model.predict(batch, return_params=True)
+            pred = pred.detach().cpu().numpy()[0]
+            param_list.append(params.detach().cpu().numpy()[0])
+            tp = [w.get("true_sigma", w.get("sigma")),
+                  w.get("true_rho", w.get("rho")),
+                  w.get("true_beta", w.get("beta")),
+                  w.get("true_c1", w.get("c1", 1.0))]
+            true_param_list.append(np.array(tp))
         truth = w["true_state"].numpy()
         rmse_list.append(rmse(pred, truth))
     all_rmse = np.stack(rmse_list, axis=0)
@@ -181,6 +201,8 @@ def save_trajectories(model, dataset, device, model_type, save_path):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "joint_direct_unet":
+            pred = model.predict(batch).detach().cpu().numpy()[0]
         trajs.append(pred)
         truths.append(w["true_state"].numpy())
     np.savez_compressed(save_path,
@@ -192,7 +214,7 @@ def save_trajectories(model, dataset, device, model_type, save_path):
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     dev_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     print(f"Device: {device} ({dev_name})")
 
@@ -259,7 +281,7 @@ def main(cfg: DictConfig):
         base_cfg=base_cfg,
         num_train_windows=dc.get("num_train_windows", 1000),
         data_setup=data_setup,
-        with_params=(model_type == "joint_cfm"),
+        with_params=(model_type in ("joint_cfm", "joint_direct_unet")),
     )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
@@ -309,7 +331,7 @@ def main(cfg: DictConfig):
     t0 = time.time()
     results_metrics = {}
     param_metrics = {}
-    is_joint = model_type == "joint_cfm"
+    is_joint = model_type in ("joint_cfm", "joint_direct_unet")
     for key in test_keys:
         if key not in datasets:
             continue
@@ -350,7 +372,7 @@ def main(cfg: DictConfig):
     cs3 = results_metrics.get("test_cs3")
     cs4 = results_metrics.get("test_cs4")
 
-    hc_src = (cfg.model.direct_unet if model_type == "direct_unet"
+    hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm")
               else cfg.model)
     result = {

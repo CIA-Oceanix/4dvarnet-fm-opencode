@@ -4,17 +4,22 @@ defaults:
   - _self_
 
 model:
-  model_type: vanilla_cfm
+  model_type: joint_cfm
   vanilla_cfm:
     hidden_channels: [32, 64, 128]
     time_emb_dim: 64
     N_outer: 10
     sigma_prior: 0.5
     dropout: 0.1
-    train_tau_0_only: true
+  joint_cfm:
+    param_dim: 4
+    param_loss_weight: 0.1
+    param_noise_min: 0.0
+    param_noise_max: 0.3
+    train_tau_0_only: false
 training:
   stage1:
-    epochs: 400
+    epochs: 1000
     lr: 0.001
     gradient_clip_val: 10.0
   stage2:
@@ -22,7 +27,7 @@ training:
 data:
   data_setup: s0_s1
   bias_max: 0.2
-  num_train_windows: 1000
+  num_train_windows: 2000
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2
