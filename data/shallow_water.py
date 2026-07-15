@@ -20,8 +20,8 @@ class ShallowWaterConfig:
     K: int = 5           # steps per DA window
     tau0: float = 0.0    # wind stress amplitude (0 = Bickley jet, no wind)
     f_cor: float = 0.1   # Coriolis parameter
-    g1: float = 0.5      # layer 1 reduced gravity
-    g2: float = 2.0      # layer 2 reduced gravity
+    g1: float = 1.0      # layer 1 (ocean) reduced gravity
+    g2: float = 4.0      # layer 2 reduced gravity
     coupling: float = 0.01
     friction: float = 0.0
     viscosity: float = 0.0001
@@ -166,11 +166,11 @@ class ShallowWaterDataset:
         self.obs_mask = make_sw_obs_mask(config)
 
         # S1 scenario: perturb the Bickley jet amplitude
-        self.bickley_U = 0.05
-        self.bickley_U2 = 0.03
+        self.bickley_U = 0.50
+        self.bickley_U2 = 0.30
         if scenario == "S1":
-            self.bickley_U = 0.05 * 1.15    # 15% stronger jet
-            self.bickley_U2 = 0.03 * 0.85   # 15% weaker layer-2 jet
+            self.bickley_U = 0.50 * 1.15    # 15% stronger jet
+            self.bickley_U2 = 0.30 * 0.85   # 15% weaker layer-2 jet
 
         self.dynamics = ShallowWaterDynamics(
             Nx=config.Nx, Ny=config.Ny, dt=config.dt,
