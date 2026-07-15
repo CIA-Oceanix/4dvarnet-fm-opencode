@@ -18,13 +18,13 @@ class ShallowWaterConfig:
     Ny: int = 64
     dt: float = 0.1
     K: int = 5           # steps per DA window
-    tau0: float = 0.01   # wind stress amplitude
+    tau0: float = 0.0    # wind stress amplitude (0 = Bickley jet, no wind)
     f_cor: float = 0.1   # Coriolis parameter
-    g1: float = 0.5      # layer 1 (ocean) reduced gravity → c1=0.707, Rd1=7.07 dx
-    g2: float = 2.0      # layer 2 (atmosphere) reduced gravity → c2=1.414, Rd2=14.14 dx
+    g1: float = 0.5      # layer 1 (ocean) reduced gravity
+    g2: float = 2.0      # layer 2 (atmosphere) reduced gravity
     coupling: float = 0.01
-    friction: float = 0.1
-    viscosity: float = 0.001
+    friction: float = 0.001
+    viscosity: float = 0.0001
 
     # Observation parameters
     obs_noise_std: float = 0.1
@@ -186,14 +186,16 @@ class ShallowWaterDataset:
         self.obs_indices = make_sw_obs_indices(config)
         self.obs_mask = make_sw_obs_mask(config)
 
-        # Build dynamics -- S1 uses a perturbed tau0
-        tau0 = config.tau0
+        # S1 scenario: perturb the Bickley jet amplitude
+        self.bickley_U = 0.05
+        self.bickley_U2 = 0.03
         if scenario == "S1":
-            tau0 = config.tau0 * 1.15  # 15% perturbation
+            self.bickley_U = 0.05 * 1.15    # 15% stronger jet
+            self.bickley_U2 = 0.03 * 0.85   # 15% weaker layer-2 jet
 
         self.dynamics = ShallowWaterDynamics(
             Nx=config.Nx, Ny=config.Ny, dt=config.dt,
-            K=config.K, tau0=tau0, f_cor=config.f_cor,
+            K=config.K, tau0=config.tau0, f_cor=config.f_cor,
             g1=config.g1, g2=config.g2, coupling=config.coupling,
             friction=config.friction, viscosity=config.viscosity,
             land_mask_type=config.land_mask_type,
@@ -209,6 +211,8 @@ class ShallowWaterDataset:
             num_steps=total_steps,
             seed=cfg.seed,
             spinup_steps=0,  # we manage spinup here
+            bickley_U=self.bickley_U,
+            bickley_U2=self.bickley_U2,
         )
 
         # Discard the first spinup_steps
