@@ -43,8 +43,8 @@ class ShallowWaterDynamics(DynamicsBase):
         K: int = 5,
         tau0: float = 0.0,
         f_cor: float = 0.1,
-        g1: float = 0.5,
-        g2: float = 2.0,
+        g1: float = 1.0,
+        g2: float = 4.0,
         coupling: float = 0.01,
         friction: float = 0.001,
         viscosity: float = 0.0001,
@@ -114,11 +114,11 @@ class ShallowWaterDynamics(DynamicsBase):
     def _init_bickley_jet(
         self,
         seed: int = 42,
-        U: float = 0.05,
-        U2: float = 0.03,
-        L_jet_frac: float = 0.05,
+U: float = 0.50,
+U2: float = 0.30,
+        L_jet_frac: float = 0.15,
         epsilon: float = 1e-4,
-        H_ref: float = 10.0,
+H_ref: float = 10.0,
     ) -> torch.Tensor:
         """Geostrophically balanced Bickley jet initial condition.
 
@@ -439,9 +439,10 @@ class ShallowWaterDynamics(DynamicsBase):
         spinup_steps: int = 500,
         bickley_jet: bool = True,
         tau0: float | None = None,
-        bickley_U: float = 0.05,
-        bickley_U2: float = 0.03,
+        bickley_U: float = 0.50,
+        bickley_U2: float = 0.30,
         bickley_H_ref: float = 10.0,
+        bickley_L_jet_frac: float = 0.15,
     ) -> tuple:
         """Generate a trajectory, optionally from a Bickley jet initial condition.
 
@@ -484,7 +485,7 @@ class ShallowWaterDynamics(DynamicsBase):
         # Initial condition
         if bickley_jet:
             s0 = self._init_bickley_jet(seed=seed + 100, U=bickley_U, U2=bickley_U2,
-                                         H_ref=bickley_H_ref)
+                                         H_ref=bickley_H_ref, L_jet_frac=bickley_L_jet_frac)
         else:
             rng2 = np.random.RandomState(seed + 100)
             NxNy = self.Nx * self.Ny

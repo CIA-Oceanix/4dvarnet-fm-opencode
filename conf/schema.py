@@ -41,8 +41,8 @@ class DataConfig:
     Ny: int = 64
     tau0: float = 0.0
     f_cor: float = 0.1
-    g1: float = 0.5
-    g2: float = 2.0
+    g1: float = 1.0
+    g2: float = 4.0
     coupling: float = 0.01
     friction: float = 0.0
     viscosity: float = 0.0001

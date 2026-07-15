@@ -30,20 +30,21 @@ CMAP = "RdBu_r"
 
 RESOLUTIONS = [64, 128, 256]
 RES_OVERRIDES = {
-    256: {"dt": 0.05, "friction": 0.005, "spinup_steps": 200, "num_steps": 400},
+    256: {"dt": 0.02, "friction": 0.005, "spinup_steps": 200, "num_steps": 400},
 }
 BASE_CFG = dict(
     dt=0.1,
     tau0=0.0,
     f_cor=0.1,
-    g1=0.5,
-    g2=2.0,
+    g1=1.0,
+    g2=4.0,
     coupling=0.01,
     friction=0.001,
     viscosity=1e-4,
-    bickley_U=0.05,
-    bickley_U2=0.03,
+    bickley_U=0.50,
+    bickley_U2=0.30,
     bickley_H_ref=10.0,
+    bickley_L_jet_frac=0.15,
     spinup_steps=300,
     num_steps=500,
 )
@@ -142,6 +143,7 @@ def main():
             bickley_U=cfg["bickley_U"],
             bickley_U2=cfg["bickley_U2"],
             bickley_H_ref=cfg["bickley_H_ref"],
+            bickley_L_jet_frac=cfg["bickley_L_jet_frac"],
         )
         elapsed = time.time() - t0
         print(f"  Generated {cfg['num_steps']} steps (spinup={cfg['spinup_steps']}) in {elapsed:.1f}s")
