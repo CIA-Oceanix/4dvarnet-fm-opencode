@@ -99,12 +99,13 @@ def sw_config():
 
 @pytest.fixture
 def sw_dynamics(sw_config):
-    """SW dynamics instance."""
+    """SW dynamics instance (uses new Bickley-jet defaults)."""
     from models.shallow_water_dynamics import ShallowWaterDynamics
     return ShallowWaterDynamics(
         Nx=sw_config.Nx, Ny=sw_config.Ny, dt=sw_config.dt,
         K=sw_config.K, tau0=sw_config.tau0, f_cor=sw_config.f_cor,
         g1=sw_config.g1, g2=sw_config.g2, coupling=sw_config.coupling,
+        friction=sw_config.friction, viscosity=sw_config.viscosity,
     )
 
 @pytest.fixture
