@@ -1,4 +1,4 @@
-import os, sys, json, time, subprocess
+import os, sys, json, time, subprocess, random
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -17,6 +17,16 @@ _BASELINE_CASES = [
 ]
 
 
+def _seed_all(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
     key = f"{case_name}_{method_name.replace('-', '_').replace(' ', '_')}"
     return os.path.join(EXP_DIR, f"baselines_trajs{dws_suffix}{param_suffix}_{key}.npz")
@@ -32,6 +42,8 @@ def fmt_rmse(mean_arr, std_arr):
 
 
 def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
+    _seed_all(cfg.seed)
+
     sig, rho, bet = cfg.da_params
     rmse_list = []
     results_list = []
@@ -120,8 +132,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, **etkf_cfg),
         }
 
-    cfg_s0 = Lorenz63Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
-    cfg_s1 = Lorenz63Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131)
+    cfg_s0 = Lorenz63Config(case=1, param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
+    cfg_s1 = Lorenz63Config(case=2, param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131)
     cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:

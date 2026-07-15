@@ -12,6 +12,29 @@ def _apply_coupling(W: torch.Tensor, c1, exponent: float = 1.0) -> torch.Tensor:
     return c1 * torch.sign(W) * torch.abs(W) ** exponent
 
 
+# Physical bounds for jointly-estimated sigma/rho/beta/c1 (log-space), matching
+# the ensemble clamp ranges used by JointEnKF/JointETKF. Gradient-based joint
+# methods (JointWeak4DVar/JointStrong4DVar) previously had no such bounds and
+# optimized the log-parameters in the same Adam param group as the state
+# control with the *state* learning rate -- for Strong4DVar (lr=0.1, tuned for
+# state-only 4DVar) that step size is large enough in log-space to blow the
+# unconstrained sigma/c1 estimates up past 1e1-1e2 within max_iter*4 steps,
+# regardless of how close the prior was to the truth.
+_LOG_PARAM_MIN = float(np.log(1e-6))
+_LOG_SIGMA_MAX = float(np.log(30.0))
+_LOG_RHO_MAX = float(np.log(50.0))
+_LOG_BETA_MAX = float(np.log(10.0))
+_LOG_C1_MAX = float(np.log(5.0))
+
+
+def _clamp_log_params(ls: torch.Tensor, lr_: torch.Tensor, lb: torch.Tensor, lc: torch.Tensor) -> None:
+    with torch.no_grad():
+        ls.clamp_(_LOG_PARAM_MIN, _LOG_SIGMA_MAX)
+        lr_.clamp_(_LOG_PARAM_MIN, _LOG_RHO_MAX)
+        lb.clamp_(_LOG_PARAM_MIN, _LOG_BETA_MAX)
+        lc.clamp_(_LOG_PARAM_MIN, _LOG_C1_MAX)
+
+
 def _interp_observations(observations, obs_mask):
     B, T, D = observations.shape
     obs_np = observations.cpu().numpy()
@@ -686,6 +709,7 @@ class JointWeak4DVar(Weak4DVar):
         Q_var: float = 0.05,
         P_var: float = 1.0,
         lr: float = 0.02,
+        param_lr: float = 0.02,
         opt_steps: int = 150,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
@@ -698,6 +722,7 @@ class JointWeak4DVar(Weak4DVar):
             device=device, coupling_exponent=coupling_exponent,
         )
         self.P_var = P_var
+        self.param_lr = param_lr
 
     def assimilate(
         self,
@@ -738,7 +763,10 @@ class JointWeak4DVar(Weak4DVar):
             lc = log_c.clone().detach().requires_grad_(True)
             x_bg_ref = current_bg.clone().detach()
 
-            opt = optim.Adam([x0_ctrl, q_ctrl, ls, lr_, lb, lc], lr=self.lr)
+            opt = optim.Adam([
+                {"params": [x0_ctrl, q_ctrl], "lr": self.lr},
+                {"params": [ls, lr_, lb, lc], "lr": self.param_lr},
+            ])
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
@@ -757,6 +785,7 @@ class JointWeak4DVar(Weak4DVar):
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.5 * J_q + 0.1 * J_p
                 J_total.backward()
                 opt.step()
+                _clamp_log_params(ls, lr_, lb, lc)
 
             s_val, r_val, b_val = torch.exp(ls.detach()), torch.exp(lr_.detach()), torch.exp(lb.detach())
             c_val = torch.exp(lc.detach())
@@ -825,7 +854,10 @@ class JointWeak4DVar(Weak4DVar):
             lc = log_c.clone().detach().requires_grad_(True)
             x_bg_ref = current_bg.clone().detach()
 
-            opt = optim.Adam([x0_ctrl, q_ctrl, ls, lr_, lb, lc], lr=self.lr)
+            opt = optim.Adam([
+                {"params": [x0_ctrl, q_ctrl], "lr": self.lr},
+                {"params": [ls, lr_, lb, lc], "lr": self.param_lr},
+            ])
 
             for _ in range(self.opt_steps):
                 opt.zero_grad()
@@ -837,12 +869,14 @@ class JointWeak4DVar(Weak4DVar):
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                                 (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
-                diff = traj - win_obs
+                win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
+                diff = traj - win_obs_clean
                 masked_diff = diff * win_mask.unsqueeze(-1)
                 J_o = torch.sum(masked_diff ** 2) / self.R_var
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.5 * J_q + 0.1 * J_p
                 J_total.backward()
                 opt.step()
+                _clamp_log_params(ls, lr_, lb, lc)
 
             s_val, r_val, b_val = torch.exp(ls.detach()), torch.exp(lr_.detach()), torch.exp(lb.detach())
             c_val = torch.exp(lc.detach())
@@ -877,6 +911,7 @@ class JointStrong4DVar(Strong4DVar):
         P_var: float = 1.0,
         max_iter: int = 40,
         lr: float = 0.1,
+        param_lr: float = 0.02,
         dt: float = 0.01,
         device: torch.device = torch.device("cpu"),
         coupling_exponent: float = 1.0,
@@ -888,6 +923,7 @@ class JointStrong4DVar(Strong4DVar):
             device=device, coupling_exponent=coupling_exponent,
         )
         self.P_var = P_var
+        self.param_lr = param_lr
 
     def assimilate(
         self,
@@ -927,7 +963,10 @@ class JointStrong4DVar(Strong4DVar):
             lc = log_c.clone().detach().requires_grad_(True)
             x_bg_ref = current_bg.clone().detach()
 
-            opt = optim.Adam([x_ctrl, ls, lr_, lb, lc], lr=self.lr)
+            opt = optim.Adam([
+                {"params": [x_ctrl], "lr": self.lr},
+                {"params": [ls, lr_, lb, lc], "lr": self.param_lr},
+            ])
 
             for _ in range(self.max_iter * 4):
                 opt.zero_grad()
@@ -945,6 +984,7 @@ class JointStrong4DVar(Strong4DVar):
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.1 * J_p
                 J_total.backward()
                 opt.step()
+                _clamp_log_params(ls, lr_, lb, lc)
 
             s_val, r_val, b_val = torch.exp(ls.detach()), torch.exp(lr_.detach()), torch.exp(lb.detach())
             c_val = torch.exp(lc.detach())
@@ -1008,7 +1048,10 @@ class JointStrong4DVar(Strong4DVar):
             lc = log_c.clone().detach().requires_grad_(True)
             x_bg_ref = current_bg.clone().detach()
 
-            opt = optim.Adam([x_ctrl, ls, lr_, lb, lc], lr=self.lr)
+            opt = optim.Adam([
+                {"params": [x_ctrl], "lr": self.lr},
+                {"params": [ls, lr_, lb, lc], "lr": self.param_lr},
+            ])
 
             for _ in range(self.max_iter * 4):
                 opt.zero_grad()
@@ -1019,12 +1062,14 @@ class JointStrong4DVar(Strong4DVar):
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                                 (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
-                diff = traj - win_obs
+                win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
+                diff = traj - win_obs_clean
                 masked_diff = diff * win_mask.unsqueeze(-1)
                 J_o = torch.sum(masked_diff ** 2) / self.R_var
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.1 * J_p
                 J_total.backward()
                 opt.step()
+                _clamp_log_params(ls, lr_, lb, lc)
 
             s_val, r_val, b_val = torch.exp(ls.detach()), torch.exp(lr_.detach()), torch.exp(lb.detach())
             c_val = torch.exp(lc.detach())
