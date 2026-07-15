@@ -65,6 +65,8 @@ class LitModel(pl.LightningModule):
         elif self.model_type == "direct_unet":
             pred = self.model(batch)
             loss = self.loss_fn(pred, batch.states)
+        elif self.model_type == "joint_direct_unet":
+            loss = self.model.compute_loss(batch, self.loss_fn)
         elif self.model_type == "vanilla_cfm":
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type == "joint_cfm":
@@ -84,7 +86,7 @@ class LitModel(pl.LightningModule):
         return loss
 
     def forward(self, batch, **kwargs):
-        if self.model_type == "direct_unet":
+        if self.model_type in ("direct_unet", "joint_direct_unet"):
             return self.model(batch)
         return self.model(batch, **kwargs)
 
