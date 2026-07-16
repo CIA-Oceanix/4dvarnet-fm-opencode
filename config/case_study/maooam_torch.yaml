@@ -1,0 +1,92 @@
+# 4DVarNet-FM case study: MAOOAM via PyTorch-native RHS
+# GPU-capable, no numba JIT compilation needed
+
+data:
+  system: maooam_torch
+
+  dt: 0.1
+  K: 5
+  window_steps: 500
+
+  # Atmosphere truncation
+  maooam_atm_nx: 4
+  maooam_atm_ny: 4
+
+  # Ocean truncation
+  maooam_occ_nx: 4
+  maooam_occ_ny: 4
+
+  # Atmosphere physics
+  maooam_kd: 0.0290
+  maooam_kdp: 0.0290
+  maooam_sigma: 0.2
+
+  # Ocean physics
+  maooam_r: 1e-7
+  maooam_h: 136.5
+  maooam_d: 1.1e-7
+
+  # Temperature
+  maooam_eps: 0.7
+  maooam_T0_atm: 289.3
+  maooam_hlambda: 15.06
+  maooam_gamma_oc: 5.6e8
+  maooam_T0_oc: 301.46
+
+  # Insolation
+  maooam_C_atm: 103.33
+  maooam_C_oc: 310.0
+
+  # Domain
+  maooam_scale: 5e6
+  maooam_f0: 1.032e-4
+  maooam_n_ratio: 1.5
+
+  # Radiation
+  maooam_T4: false
+  maooam_dynamic_T: false
+
+  # Observation
+  maooam_obs_mode: all
+  obs_noise_std: 0.1
+
+  # Dataset
+  spinup_steps: 5000
+  num_windows: 200
+  seed: 42
+
+  # Stochastic forcing
+  maooam_stochastic_forcing: false
+  maooam_forcing_amplitude: 0.01
+
+  # Device
+  device: "cuda"
+
+model:
+  state_dim: 104
+  use_obs: true
+  use_energy: true
+  K_inner: 5
+  N_outer: 10
+
+training:
+  stage1:
+    epochs: 200
+    lr: 1.0e-3
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 400
+    lr: 1.0e-3
+    gradient_clip_val: 1.0
+  batch_size: 32
+
+baselines:
+  da_window_steps: 500
+  N_ensemble: 30
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints/maooam_torch
+  checkpoint_stage1: checkpoints/maooam_torch/stage1.pt
+  checkpoint_stage2: checkpoints/maooam_torch/stage2.pt
+  outputs_dir: reports/outputs/figs/maooam_torch

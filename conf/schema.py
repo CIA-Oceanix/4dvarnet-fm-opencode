@@ -99,6 +99,9 @@ class DataConfig:
     maooam_stochastic_forcing: bool = False
     maooam_forcing_amplitude: float = 0.01
 
+    # Device
+    device: str = "cpu"
+
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)
