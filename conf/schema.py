@@ -60,6 +60,45 @@ class DataConfig:
     bickley_perturbation_mode: str = "random_balanced"
     bickley_epsilon: float = 0.01
 
+    # --- MAOOAM parameters ---
+    # Atmosphere truncation
+    maooam_atm_nx: int = 2
+    maooam_atm_ny: int = 2
+    # Ocean truncation
+    maooam_occ_nx: int = 2
+    maooam_occ_ny: int = 4
+    # Atmosphere physics
+    maooam_kd: float = 0.0290
+    maooam_kdp: float = 0.0290
+    maooam_sigma: float = 0.2
+    # Ocean physics
+    maooam_r: float = 1e-7
+    maooam_h: float = 136.5
+    maooam_d: float = 1.1e-7
+    # Temperature
+    maooam_eps: float = 0.7
+    maooam_T0_atm: float = 289.3
+    maooam_hlambda: float = 15.06
+    maooam_gamma_oc: float = 5.6e8
+    maooam_T0_oc: float = 301.46
+    # Insolation
+    maooam_C_atm: float = 103.33
+    maooam_C_oc: float = 310.0
+    # Domain
+    maooam_scale: float = 5e6
+    maooam_f0: float = 1.032e-4
+    maooam_n_ratio: float = 1.5
+    # Radiation
+    maooam_T4: bool = False
+    maooam_dynamic_T: bool = False
+    # Observation
+    maooam_obs_mode: str = "all"
+    maooam_obs_atm_frac: float = 1.0
+    maooam_obs_oc_frac: float = 1.0
+    # Stochastic forcing
+    maooam_stochastic_forcing: bool = False
+    maooam_forcing_amplitude: float = 0.01
+
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)
@@ -123,6 +162,34 @@ class DataConfig:
             bickley_H_ref=self.bickley_H_ref,
             bickley_perturbation_mode=self.bickley_perturbation_mode,
             bickley_epsilon=self.bickley_epsilon,
+        )
+
+    def to_maooam_config(self):
+        """Convert DataConfig to MaooamConfig."""
+        from data.maooam import MaooamConfig
+        return MaooamConfig(
+            dt=self.dt, K=self.K,
+            atm_nx=self.maooam_atm_nx, atm_ny=self.maooam_atm_ny,
+            occ_nx=self.maooam_occ_nx, occ_ny=self.maooam_occ_ny,
+            kd=self.maooam_kd, kdp=self.maooam_kdp, sigma=self.maooam_sigma,
+            r=self.maooam_r, h=self.maooam_h, d=self.maooam_d,
+            eps=self.maooam_eps, T0_atm=self.maooam_T0_atm,
+            hlambda=self.maooam_hlambda,
+            gamma_oc=self.maooam_gamma_oc, T0_oc=self.maooam_T0_oc,
+            C_atm=self.maooam_C_atm, C_oc=self.maooam_C_oc,
+            scale=self.maooam_scale, f0=self.maooam_f0,
+            n_ratio=self.maooam_n_ratio,
+            T4=self.maooam_T4, dynamic_T=self.maooam_dynamic_T,
+            obs_mode=self.maooam_obs_mode,
+            obs_atm_frac=self.maooam_obs_atm_frac,
+            obs_oc_frac=self.maooam_obs_oc_frac,
+            obs_noise_std=self.obs_noise_std,
+            spinup_steps=self.spinup_steps,
+            num_windows=self.num_windows,
+            window_steps=self.window_steps,
+            seed=self.seed,
+            stochastic_forcing=self.maooam_stochastic_forcing,
+            forcing_amplitude=self.maooam_forcing_amplitude,
         )
 
 
