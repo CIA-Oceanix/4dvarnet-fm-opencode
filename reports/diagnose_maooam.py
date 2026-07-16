@@ -26,7 +26,7 @@ def run_trajectory(dynamics, num_steps=50000, seed=42):
     return traj
 
 
-def compute_metrics(traj, dt=0.1):
+def compute_metrics(traj, dt=0.1, Natm=36, Noc=16):
     """Compute the 6 validation metrics."""
     x = traj.numpy()
     N = x.shape[0]
@@ -45,14 +45,12 @@ def compute_metrics(traj, dt=0.1):
         ac += np.corrcoef(x[:-1, i], x[1:, i])[0, 1]
     ac /= x.shape[1]
 
-    # 4. Fraction of variance in slow modes (indices 0..9 = psi_a)
-    slow_var = np.var(x[:, :10])
+    # 4. Fraction of variance in slow modes (atm: psi_a + theta_a)
+    slow_var = np.var(x[:, :2*Natm])
     total_var = np.var(x)
     slow_frac = slow_var / total_var
 
     # 5. Variance per variable block
-    Natm = 10
-    Noc = 8
     var_psi_a = np.var(x[:, :Natm]).item()
     var_theta_a = np.var(x[:, Natm:2*Natm]).item()
     var_psi_o = np.var(x[:, 2*Natm:2*Natm+Noc]).item()
@@ -80,10 +78,9 @@ def compute_metrics(traj, dt=0.1):
     }
 
 
-def plot_timeseries_and_spectra(traj, output_dir, dt=0.1):
+def plot_timeseries_and_spectra(traj, output_dir, dt=0.1, Natm=36, Noc=16):
     """Plot 4-panel: timeseries + spectra for each variable block."""
     x = traj.numpy()
-    Natm, Noc = 10, 8
     labels = ["psi_a (atm barotropic)", "theta_a (atm baroclinic)",
               "psi_o (ocean)", "dT_o (ocean temp)"]
     slices = [slice(0, Natm), slice(Natm, 2*Natm),
@@ -122,15 +119,15 @@ def plot_timeseries_and_spectra(traj, output_dir, dt=0.1):
     print("  saved maooam_timeseries_spectra.png")
 
 
-def plot_physical_fields(dynamics, traj, output_dir):
-    """Plot physical-field snapshots at different times."""
+def plot_physical_fields(dynamics, traj, output_dir, interp_size=64):
+    """Plot physical-field snapshots at different times, interpolated to finer grid."""
     times = [0, len(traj)//4, len(traj)//2, 3*len(traj)//4, len(traj)-1]
     fields_to_plot = ["psi_upper", "psi_oc", "T_atm", "T_oc"]
 
     fig, axes = plt.subplots(len(times), len(fields_to_plot), figsize=(16, 3.2*len(times)))
 
     for i, t in enumerate(times):
-        phys = dynamics.spectral_to_physical(traj[t].numpy())
+        phys = dynamics.spectral_to_physical(traj[t].numpy(), interp_size=interp_size)
         for j, fname in enumerate(fields_to_plot):
             ax = axes[i, j]
             data = phys[fname]
@@ -147,17 +144,16 @@ def plot_physical_fields(dynamics, traj, output_dir):
             ax.set_xticks([])
             ax.set_yticks([])
 
-    plt.suptitle("MAOOAM physical fields", fontsize=14, y=1.01)
+    plt.suptitle(f"MAOOAM physical fields ({interp_size}×{interp_size} interpolated)", fontsize=14, y=1.01)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "maooam_physical_fields.png"), dpi=150, bbox_inches="tight")
     plt.close()
     print("  saved maooam_physical_fields.png")
 
 
-def plot_slow_fast_separation(traj, output_dir, dt=0.1):
+def plot_slow_fast_separation(traj, output_dir, dt=0.1, Natm=36, Noc=16):
     """Plot slow (ocean) vs fast (atmosphere) time series."""
     x = traj.numpy()
-    Natm, Noc = 10, 8
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
     time = np.arange(x.shape[0]) * dt
@@ -203,14 +199,16 @@ def main():
     traj = run_trajectory(dynamics, num_steps=args.num_steps, seed=args.seed)
 
     print("\n--- Metrics ---")
-    m = compute_metrics(traj, dt=0.1)
+    m = compute_metrics(traj, dt=0.1, Natm=dynamics.Natm, Noc=dynamics.Npsi_o)
     for k, v in m.items():
         print(f"  {k}: {v:.6f}")
 
     print("\nGenerating figures...")
-    plot_timeseries_and_spectra(traj, args.output, dt=0.1)
+    plot_timeseries_and_spectra(traj, args.output, dt=0.1,
+                                Natm=dynamics.Natm, Noc=dynamics.Npsi_o)
     plot_physical_fields(dynamics, traj, args.output)
-    plot_slow_fast_separation(traj, args.output, dt=0.1)
+    plot_slow_fast_separation(traj, args.output, dt=0.1,
+                              Natm=dynamics.Natm, Noc=dynamics.Npsi_o)
 
     print("\nDone.")
 

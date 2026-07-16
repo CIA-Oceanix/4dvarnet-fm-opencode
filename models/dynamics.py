@@ -71,9 +71,9 @@ def get_dynamics(cfg) -> DynamicsBase:
         from models.maooam_dynamics import MaooamDynamics
         return MaooamDynamics(
             dt=dc.dt, K=dc.get("K", 5),
-            atm_nx=dc.get("maooam_atm_nx", 2),
-            atm_ny=dc.get("maooam_atm_ny", 2),
-            occ_nx=dc.get("maooam_occ_nx", 2),
+            atm_nx=dc.get("maooam_atm_nx", 4),
+            atm_ny=dc.get("maooam_atm_ny", 4),
+            occ_nx=dc.get("maooam_occ_nx", 4),
             occ_ny=dc.get("maooam_occ_ny", 4),
             kd=dc.get("maooam_kd", 0.0290),
             kdp=dc.get("maooam_kdp", 0.0290),

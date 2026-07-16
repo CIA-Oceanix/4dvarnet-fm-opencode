@@ -109,13 +109,13 @@ class MaooamDynamics(DynamicsBase):
         dt: float = 0.1,
         K: int = 5,
         # Atmosphere
-        atm_nx: int = 2,
-        atm_ny: int = 2,
+        atm_nx: int = 4,
+        atm_ny: int = 4,
         kd: float = 0.0290,
         kdp: float = 0.0290,
         sigma: float = 0.2,
         # Ocean
-        occ_nx: int = 2,
+        occ_nx: int = 4,
         occ_ny: int = 4,
         r: float = 1e-7,
         h: float = 136.5,
@@ -308,14 +308,15 @@ class MaooamDynamics(DynamicsBase):
     # Physical field reconstruction
     # ------------------------------------------------------------------
 
-    def spectral_to_physical(self, state: np.ndarray, n_x: int = 64, n_y: int = 64):
+    def spectral_to_physical(self, state: np.ndarray, interp_size: int | None = None):
         """Reconstruct physical fields from spectral state.
 
         Parameters
         ----------
         state : ndarray (state_dim,)
-        n_x, n_y : int
-            Physical grid resolution (unused; grid size set by qgs truncation).
+        interp_size : int or None
+            If set, interpolate all fields to (interp_size, interp_size) using
+            cubic spline (scipy.ndimage.zoom).
 
         Returns
         -------
@@ -345,13 +346,23 @@ class MaooamDynamics(DynamicsBase):
         T_atm  = MiddleAtmosphericTemperatureAnomalyDiagnostic(self._qgs_params)
         T_oc   = OceanicLayerTemperatureAnomalyDiagnostic(self._qgs_params)
 
-        return {
+        fields = {
             'psi_upper': psi_up(t, state_2d)[0],
             'psi_lower': psi_lo(t, state_2d)[0],
             'psi_oc':    psi_oc(t, state_2d)[0],
             'T_atm':     T_atm(t, state_2d)[0],
             'T_oc':      T_oc(t, state_2d)[0],
         }
+
+        if interp_size is not None:
+            from scipy.ndimage import zoom
+            out = {}
+            for k, v in fields.items():
+                zoom_factor = interp_size / v.shape[0]
+                out[k] = zoom(v, zoom_factor, order=3)
+            return out
+
+        return fields
 
     def get_field_names(self) -> list[str]:
         return ['psi_upper', 'psi_lower', 'psi_oc', 'T_atm', 'T_oc']

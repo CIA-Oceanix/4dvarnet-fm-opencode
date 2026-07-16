@@ -9,11 +9,11 @@ data:
   window_steps: 500
 
   # Atmosphere truncation
-  maooam_atm_nx: 2
-  maooam_atm_ny: 2
+  maooam_atm_nx: 4
+  maooam_atm_ny: 4
 
   # Ocean truncation
-  maooam_occ_nx: 2
+  maooam_occ_nx: 4
   maooam_occ_ny: 4
 
   # Atmosphere physics
@@ -60,7 +60,7 @@ data:
   maooam_forcing_amplitude: 0.01
 
 model:
-  state_dim: 36
+  state_dim: 104
   use_obs: true
   use_energy: true
   K_inner: 5

@@ -62,10 +62,10 @@ class DataConfig:
 
     # --- MAOOAM parameters ---
     # Atmosphere truncation
-    maooam_atm_nx: int = 2
-    maooam_atm_ny: int = 2
+    maooam_atm_nx: int = 4
+    maooam_atm_ny: int = 4
     # Ocean truncation
-    maooam_occ_nx: int = 2
+    maooam_occ_nx: int = 4
     maooam_occ_ny: int = 4
     # Atmosphere physics
     maooam_kd: float = 0.0290

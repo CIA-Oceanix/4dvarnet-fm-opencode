@@ -23,11 +23,11 @@ class MaooamConfig:
     K: int = 5  # steps per DA window
 
     # --- Atmosphere truncation ---
-    atm_nx: int = 2
-    atm_ny: int = 2
+    atm_nx: int = 4
+    atm_ny: int = 4
 
     # --- Ocean truncation ---
-    occ_nx: int = 2
+    occ_nx: int = 4
     occ_ny: int = 4
 
     # --- Atmosphere parameters ---
