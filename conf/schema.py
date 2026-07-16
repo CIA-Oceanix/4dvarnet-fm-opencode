@@ -53,6 +53,9 @@ class DataConfig:
     window_steps: int = 500
     obs_noise_std: float = 0.1
 
+    # Device
+    device: str = "cpu"
+
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)

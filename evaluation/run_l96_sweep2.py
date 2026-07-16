@@ -84,6 +84,12 @@ def run():
                         help="Additive inflation for ETKF (default: 0.0)")
     parser.add_argument("--skip-const-bias", action="store_true", default=False,
                         help="Skip constant-bias S1 case")
+    parser.add_argument("--s1-f-bias", type=float, default=0.0,
+                        help="Fractional bias for F in S1 DA (default: 0.0)")
+    parser.add_argument("--s1-c1-bias", type=float, default=0.0,
+                        help="Fractional bias for c1 in S1 DA dynamics (default: 0.0)")
+    parser.add_argument("--s1-coupling-exponent", type=float, default=1.0,
+                        help="Coupling exponent for S1 DA dynamics (default: 1.0)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--dataset-cache", default=None,
                         help="Cache file for dataset (.pt); load if exists, save after gen")
@@ -154,6 +160,8 @@ def run():
     if args.s1_single_scale: labels.append("single-scale DA")
     if args.s1_no_inflation: labels.append("no inflation")
     if labels: print(f"  S1 special: {', '.join(labels)}")
+    if args.s1_f_bias != 0.0 or args.s1_c1_bias != 0.0 or args.s1_coupling_exponent != 1.0:
+        print(f"  S1 DA biases: F_bias={args.s1_f_bias:+.2f}, c1_bias={args.s1_c1_bias:+.2f}, coupling_exponent={args.s1_coupling_exponent}")
 
     t0 = time.time()
     if args.dataset_cache and os.path.exists(args.dataset_cache):
@@ -179,7 +187,8 @@ def run():
                                    coupling_exponent=1.0) if args.s1_single_scale else None
     if not args.s1_single_scale and s1_J != J_truth:
         s1_dynamics = Lorenz96Dynamics(dt=dt, NO=NO, J=s1_J, h=1.0, hx=1.0, eps=0.1,
-                                       coupling_exponent=1.0)
+                                       coupling_exponent=args.s1_coupling_exponent,
+                                       c1=1.0 + args.s1_c1_bias)
 
     methods_to_run = _METHODS[:]
     if args.skip_weak:
@@ -225,6 +234,9 @@ def run():
         }
         if args.skip_const_bias and case_key == "s1":
             methods_to_run = [m for m in methods_to_run if m != "EnKF" and m != "ETKF"]
+        if case_key == "s1" and args.s1_f_bias != 0.0:
+            for w in ds.windows:
+                w["F"] = w["F"] * (1 - args.s1_f_bias)
         eval_cfg = Lorenz96Config(**{**base_cfg.__dict__,
             "obs_var_indices": obs_indices if case_key == "s1" else base_cfg.obs_var_indices})
         results[case_key] = {}
@@ -271,6 +283,9 @@ def run():
             "etkf_ridge": args.etkf_ridge,
             "etkf_additive_inflation": args.etkf_additive_inflation,
             "skip_const_bias": args.skip_const_bias,
+            "s1_f_bias": args.s1_f_bias,
+            "s1_c1_bias": args.s1_c1_bias,
+            "s1_coupling_exponent": args.s1_coupling_exponent,
         },
         "results": results,
     }
