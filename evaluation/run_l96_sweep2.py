@@ -7,7 +7,7 @@ import os, sys, json, argparse, time
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.lorenz96 import Lorenz96Config, RandomParamLorenz96Dataset, RandomBiasLorenz96Dataset
+from data.lorenz96 import Lorenz96Config, RandomParamLorenz96Dataset, RandomBiasLorenz96Dataset, estimate_l96_component_variances
 from models.lorenz96_dynamics import Lorenz96Dynamics
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF, ObsOperator
 from evaluation.run_l96 import evaluate_baseline
@@ -76,7 +76,17 @@ def run():
                         help="ETKF localization update mode (default: square_root)")
     parser.add_argument("--truth-fast-weights-unobserved", type=float, default=None,
                         help="Weight for unobserved fast vars in truth slow dynamics (default: 1.0 = equal weights)")
+    parser.add_argument("--r-var-pct", type=float, default=None,
+                        help="Per-component R_var as pct of state variance; overrides base R_var")
+    parser.add_argument("--etkf-ridge", type=float, default=0.0,
+                        help="Ridge parameter for ETKF SVD (default: 0.0)")
+    parser.add_argument("--etkf-additive-inflation", type=float, default=0.0,
+                        help="Additive inflation for ETKF (default: 0.0)")
+    parser.add_argument("--skip-const-bias", action="store_true", default=False,
+                        help="Skip constant-bias S1 case")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--dataset-cache", default=None,
+                        help="Cache file for dataset (.pt); load if exists, save after gen")
     args = parser.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -97,6 +107,17 @@ def run():
     s1_obs_j = min(s1_J, s1_obs_j)
     s1_obs_indices = list(range(NO + NO * s1_obs_j))
     s1_obs_dim = len(s1_obs_indices)
+
+    if args.r_var_pct is not None:
+        var_per_dim = estimate_l96_component_variances(NO=NO, J=J_truth, dt=dt)
+        r_var_all = var_per_dim * args.r_var_pct / 100.0
+        rvar_s0 = r_var_all[obs_indices] if obs_indices is not None else r_var_all
+        rvar_s1 = r_var_all[s1_obs_indices]
+        print(f"  Per-component R_var from {args.r_var_pct}% of state variance")
+        print(f"  S0 R_var range: [{rvar_s0.min():.4f}, {rvar_s0.max():.4f}], mean={rvar_s0.mean():.4f}")
+        print(f"  S1 R_var range: [{rvar_s1.min():.4f}, {rvar_s1.max():.4f}], mean={rvar_s1.mean():.4f}")
+    else:
+        var_per_dim = None
 
     if args.truth_fast_weights_unobserved is not None:
         obs_j = args.obs_j if args.obs_j is not None else J_truth
@@ -135,9 +156,16 @@ def run():
     if labels: print(f"  S1 special: {', '.join(labels)}")
 
     t0 = time.time()
-    datasets = make_s0_s1_datasets(base_cfg, args.num_windows,
-                                    args.param_bias, args.forcing_state_bias,
-                                    obs_indices)
+    if args.dataset_cache and os.path.exists(args.dataset_cache):
+        datasets = torch.load(args.dataset_cache, weights_only=False)
+        print(f"  Loaded dataset from {args.dataset_cache}")
+    else:
+        datasets = make_s0_s1_datasets(base_cfg, args.num_windows,
+                                        args.param_bias, args.forcing_state_bias,
+                                        obs_indices)
+        if args.dataset_cache:
+            torch.save(datasets, args.dataset_cache)
+            print(f"  Saved dataset to {args.dataset_cache}")
     print(f"  Dataset gen: {time.time()-t0:.1f}s")
 
     s0_obs_op = ObsOperator(NO + NO * J_truth, obs_indices)
@@ -165,6 +193,16 @@ def run():
         ds = datasets[case_key]
         inf = args.inflation
         dyn = s1_dynamics if (s1_dynamics is not None and case_key == "s1") else dynamics_pool[1.0]
+
+        if args.r_var_pct is not None:
+            if case_key == "s0":
+                obs_indices_for_rvar = obs_indices
+            else:
+                obs_indices_for_rvar = s1_obs_indices
+            r_var_for_method = r_var_all[obs_indices_for_rvar].copy()
+        else:
+            r_var_for_method = None
+
         method_map = {
             "Weak-4DVar": Weak4DVar(dt=dt, da_window_steps=args.da_window_steps, device=device,
                                      coupling_exponent=da_expo, dynamics=dyn, obs_operator=obs_op),
@@ -174,18 +212,21 @@ def run():
             "EnKF": EnKF(dt=dt, device=device, coupling_exponent=da_expo,
                           dynamics=dyn, inflation=inf, obs_operator=obs_op,
                           N_ensemble=args.ensemble_size,
-                          loc_radius=args.loc_radius, NO=8, J=j_val),
+                          loc_radius=args.loc_radius, NO=8, J=j_val,
+                          R_var_vec=r_var_for_method),
             "ETKF": ETKF(dt=dt, device=device, coupling_exponent=da_expo,
                            dynamics=dyn, inflation=inf, obs_operator=obs_op,
                            N_ensemble=args.ensemble_size,
                            loc_radius=args.loc_radius, NO=8, J=j_val,
-                           loc_mode=args.etkf_loc_mode),
+                           loc_mode=args.etkf_loc_mode,
+                           etkf_ridge=args.etkf_ridge,
+                           etkf_additive=args.etkf_additive_inflation,
+                           R_var_vec=r_var_for_method),
         }
-        if case_key == "s1" and s1_obs_dim < obs_dim:
-            for w in ds.windows:
-                w["obs"] = w["obs"][:, :s1_obs_dim]
+        if args.skip_const_bias and case_key == "s1":
+            methods_to_run = [m for m in methods_to_run if m != "EnKF" and m != "ETKF"]
         eval_cfg = Lorenz96Config(**{**base_cfg.__dict__,
-            "obs_var_indices": list(range(s1_state_dim)) if case_key == "s1" else base_cfg.obs_var_indices})
+            "obs_var_indices": obs_indices if case_key == "s1" else base_cfg.obs_var_indices})
         results[case_key] = {}
         for name in methods_to_run:
             method = method_map[name]
@@ -226,6 +267,10 @@ def run():
             "obs_interval": args.obs_interval,
             "obs_indices": obs_indices,
             "truth_fast_weights": truth_fast_weights,
+            "r_var_pct": args.r_var_pct,
+            "etkf_ridge": args.etkf_ridge,
+            "etkf_additive_inflation": args.etkf_additive_inflation,
+            "skip_const_bias": args.skip_const_bias,
         },
         "results": results,
     }

@@ -521,9 +521,13 @@ class ETKF:
         J: int = 4,
         loc_mode: str = "square_root",
         noise_init_std: float = 1.5,
+        etkf_ridge: float = 0.0,
+        etkf_additive: float = 0.0,
+        R_var_vec: np.ndarray = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
+        self.R_var_vec = R_var_vec
         self.inflation = inflation
         self.dt = dt
         self.device = device
@@ -534,6 +538,8 @@ class ETKF:
         self.loc_radius = loc_radius
         self.loc_mode = loc_mode
         self.noise_init_std = noise_init_std
+        self.etkf_ridge = etkf_ridge
+        self.etkf_additive = etkf_additive
         if loc_radius is not None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
@@ -556,14 +562,21 @@ class ETKF:
         sd = self.state_dim
         N = self.N_ensemble
         N1 = N - 1
-        R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
         H = self.obs_operator
+        od = H.obs_dim
+
+        if self.R_var_vec is not None:
+            r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
+            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
+        else:
+            r_sqrt = np.sqrt(self.R_var)
+            r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, self.noise_init_std, self.device).unsqueeze(0).repeat(N, 1)
         noise = torch.randn_like(ensemble) * self.noise_init_std
         if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((N, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise_obs = torch.randn((N, od), device=self.device) * r_sqrt
             noise[..., self.obs_operator.indices] = noise_obs
         ensemble += noise
 
@@ -595,29 +608,34 @@ class ETKF:
                     H_Pf_Ht = HA.T @ HA
                     loc_Pf_Ht = self.loc_Lx * Pf_Ht
                     loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
-                    R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
-                    K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
+                    if self.R_var_vec is not None:
+                        R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
+                    else:
+                        R_obs = torch.eye(od, device=self.device) * self.R_var
+                    Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od, device=self.device)
+                    K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                     mu = mu + K @ dy
                     if self.loc_mode == "square_root":
                         ensemble = mu.unsqueeze(0) + A - HA @ K.T
                     else:
                         for n in range(N):
-                            perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
+                            perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
                             ensemble[n] += K @ (perturbed - H(ensemble[n]))
                 else:
-                    HA_w = torch.nan_to_num(HA * R_sym_sqrt_inv)
+                    HA_w = torch.nan_to_num(HA / r_sqrt)
                     try:
                         U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
                     except RuntimeError:
                         U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
                         U, s, Vt = U.to(HA_w.device), s.to(HA_w.device), Vt.to(HA_w.device)
                     s2 = s ** 2
-                    d = s2 + N1
+                    d = s2 + N1 + self.etkf_ridge * s2.max()
                     Pw = U @ torch.diag(1.0 / d) @ U.T
                     Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
-                    R_inv = 1.0 / self.R_var
-                    w = (dy * R_inv) @ HA.T @ Pw
+                    w = (dy * r_inv) @ HA.T @ Pw
                     ensemble = mu + w @ A + Tmat @ A
+                    if self.etkf_additive > 0.0:
+                        ensemble += torch.randn_like(ensemble) * self.etkf_additive
 
                 # NaN safety after analysis
                 nan_mask = torch.isnan(ensemble).any(dim=-1)
@@ -653,14 +671,21 @@ class ETKF:
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
         N1 = N - 1
-        R_sym_sqrt_inv = 1.0 / np.sqrt(self.R_var)
         H = self.obs_operator
+        od = H.obs_dim
+
+        if self.R_var_vec is not None:
+            r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
+            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
+        else:
+            r_sqrt = np.sqrt(self.R_var)
+            r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, N, 1)
         noise = torch.randn_like(ensemble) * self.noise_init_std
         if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((B, N, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise_obs = torch.randn((B, N, od), device=self.device) * r_sqrt
             noise[..., self.obs_operator.indices] = noise_obs
         ensemble += noise
 
@@ -704,26 +729,34 @@ class ETKF:
                         H_Pf_Ht = HA.T @ HA
                         loc_Pf_Ht = self.loc_Lx * Pf_Ht
                         loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
-                        R_obs = torch.eye(H.obs_dim, device=self.device) * self.R_var
-                        K = loc_Pf_Ht @ torch.linalg.inv(loc_H_Pf_Ht + R_obs)
+                        if self.R_var_vec is not None:
+                            R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
+                        else:
+                            R_obs = torch.eye(od, device=self.device) * self.R_var
+                        Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od, device=self.device)
+                        K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                         mu = mu + K @ dy
-                        for n in range(N):
-                            perturbed = y_t + torch.randn(H.obs_dim, device=self.device) * np.sqrt(self.R_var)
-                            ens_b[n] += K @ (perturbed - H(ens_b[n]))
+                        if self.loc_mode == "square_root":
+                            ens_b = mu.unsqueeze(0) + A - HA @ K.T
+                        else:
+                            for n in range(N):
+                                perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
+                                ens_b[n] += K @ (perturbed - H(ens_b[n]))
                     else:
-                        HA_w = torch.nan_to_num(HA * R_sym_sqrt_inv)
+                        HA_w = torch.nan_to_num(HA / r_sqrt)
                         try:
                             U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
                         except RuntimeError:
                             U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
                             U, s, Vt = U.to(HA.device), s.to(HA.device), Vt.to(HA.device)
                         s2 = s ** 2
-                        d = s2 + N1
+                        d = s2 + N1 + self.etkf_ridge * s2.max()
                         Pw = U @ torch.diag(1.0 / d) @ U.T
                         Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
-                        R_inv = 1.0 / self.R_var
-                        w = (dy * R_inv) @ HA.T @ Pw
+                        w = (dy * r_inv) @ HA.T @ Pw
                         ens_b = mu + w @ A + Tmat @ A
+                        if self.etkf_additive > 0.0:
+                            ens_b += torch.randn_like(ens_b) * self.etkf_additive
                     mu = torch.mean(ens_b, dim=0)
                     ensemble[b] = mu + self.inflation * (ens_b - mu)
 
@@ -758,9 +791,11 @@ class EnKF:
         NO: int = 8,
         J: int = 4,
         noise_init_std: float = 1.5,
+        R_var_vec: np.ndarray = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
+        self.R_var_vec = R_var_vec
         self.inflation = inflation
         self.dt = dt
         self.device = device
@@ -791,11 +826,19 @@ class EnKF:
         num_steps = observations.shape[0]
         H = self.obs_operator
         od = H.obs_dim
+
+        if self.R_var_vec is not None:
+            r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
+            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
+        else:
+            r_sqrt = np.sqrt(self.R_var)
+            r_inv = 1.0 / self.R_var
+
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
         noise = torch.randn_like(ensemble) * self.noise_init_std
         if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((self.N_ensemble, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise_obs = torch.randn((self.N_ensemble, od), device=self.device) * r_sqrt
             noise[..., self.obs_operator.indices] = noise_obs
         ensemble += noise
 
@@ -826,11 +869,13 @@ class EnKF:
                     P_obs = self.loc_Ly * P_obs
                     cross_cov = self.loc_Lx * cross_cov
                 R_obs = torch.eye(od, device=self.device) * self.R_var
+                if self.R_var_vec is not None:
+                    R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
                 ridge = 1e-4 * torch.eye(od, device=self.device)
                 Ph = P_obs + R_obs + ridge
                 K = torch.linalg.lstsq(Ph, cross_cov.T).solution.T
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn(od, device=self.device) * np.sqrt(self.R_var)
+                    perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
                     ensemble[n] += K @ (perturbed - H(ensemble[n]))
 
                 mean_e = torch.mean(ensemble, dim=0)
@@ -865,11 +910,19 @@ class EnKF:
         B, num_steps, _ = observations.shape
         H = self.obs_operator
         od = H.obs_dim
+
+        if self.R_var_vec is not None:
+            r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
+            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
+        else:
+            r_sqrt = np.sqrt(self.R_var)
+            r_inv = 1.0 / self.R_var
+
         interp_obs = _interp_observations(observations, obs_mask)
         ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
         noise = torch.randn_like(ensemble) * self.noise_init_std
         if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((B, self.N_ensemble, H.obs_dim), device=self.device) * np.sqrt(self.R_var)
+            noise_obs = torch.randn((B, self.N_ensemble, od), device=self.device) * r_sqrt
             noise[..., self.obs_operator.indices] = noise_obs
         ensemble += noise
 

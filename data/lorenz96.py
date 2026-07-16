@@ -81,8 +81,13 @@ def _generate_observations(
     device: torch.device = torch.device("cpu"),
     obs_var_indices: np.ndarray = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    true_fluid = true_fluid.to(device=device)
     num_steps, sd = true_fluid.shape[0], true_fluid.shape[-1]
     obs_dim = len(obs_var_indices) if obs_var_indices is not None else sd
+    if isinstance(R_var, np.ndarray):
+        noise_std = np.sqrt(R_var)
+    else:
+        noise_std = np.sqrt(R_var)
     rng = torch.Generator(device=device).manual_seed(seed)
     obs_time_indices = np.arange(0, num_steps, obs_interval)
     obs_mask = torch.zeros(num_steps, dtype=torch.bool, device=device)
@@ -94,9 +99,20 @@ def _generate_observations(
     else:
         obs_fluid = true_fluid[obs_time_indices]
     noisy_obs[obs_time_indices] = obs_fluid + (
-        torch.randn((len(obs_time_indices), obs_dim), device=device, generator=rng) * np.sqrt(R_var)
+        torch.randn((len(obs_time_indices), obs_dim), device=device, generator=rng) * torch.tensor(noise_std, dtype=torch.float32, device=device)
     )
     return noisy_obs, obs_mask
+
+
+def estimate_l96_component_variances(NO=8, J=4, dt=0.001, T_max=50.0, F=8.0, seed=42):
+    from models.lorenz96_dynamics import Lorenz96Dynamics
+    dyn = Lorenz96Dynamics(dt=dt, coupling_exponent=1.6)
+    traj, _ = dyn.generate_full_trajectory(
+        num_steps=int(T_max / dt), seed=seed, F=F,
+        coupling_exponent=1.6, spinup_steps=5000,
+    )
+    var_per_dim = torch.var(traj, dim=0).numpy()
+    return var_per_dim
 
 
 def _make_lorenz96_dynamics(cfg: Lorenz96Config):
