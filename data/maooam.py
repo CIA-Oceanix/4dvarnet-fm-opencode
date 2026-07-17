@@ -85,23 +85,14 @@ class MaooamConfig:
         from models.maooam_dynamics import _count_atm_modes, _count_oc_modes
         Natm = _count_atm_modes(self.atm_nx, self.atm_ny)
         Noc = _count_oc_modes(self.occ_nx, self.occ_ny)
-        return 2 * Natm + 2 * Noc  # psi_a + theta_a + psi_o + dT_o
+        return 2 * Natm + 2 * Noc
 
 
 def make_maooam_obs_indices(config: MaooamConfig) -> torch.Tensor:
-    """Create observation indices for the spectral state vector.
-
-    ``obs_mode="all"``: observe every spectral coefficient.
-    ``obs_mode="partial"``: observe a fraction of modes per variable.
-
-    Returns
-    -------
-    obs_indices : Tensor ``(n_obs,)`` of long indices into the flat state vector.
-    """
     from models.maooam_dynamics import _count_atm_modes, _count_oc_modes
     Natm = _count_atm_modes(config.atm_nx, config.atm_ny)
     Noc = _count_oc_modes(config.occ_nx, config.occ_ny)
-    state_dim = 2 * Natm + 2 * Noc
+    state_dim = config.state_dim
 
     if config.obs_mode == "all":
         return torch.arange(state_dim, dtype=torch.long)

@@ -228,7 +228,7 @@ class MaooamDynamics(DynamicsBase):
         k3 = f(0.0, x + 0.5 * dt * k2)
         k4 = f(0.0, x + dt * k3)
 
-        x_new = x + dt * (k1/6.0 + k2/3.0 + k3/3.0 + k4/4.0)
+        x_new = x + dt * (k1/6.0 + k2/3.0 + k3/3.0 + k4/6.0)
 
         # Add stochastic forcing if requested
         if q is not None:
