@@ -100,6 +100,7 @@ def get_dynamics(cfg) -> DynamicsBase:
         from models.maooam_torch import MaooamTorchDynamics
         return MaooamTorchDynamics(
             device=dc.get("device", "cpu"),
+            compile=dc.get("compile", True),
             dt=dc.dt, K=dc.get("K", 5),
             atm_nx=dc.get("maooam_atm_nx", 4),
             atm_ny=dc.get("maooam_atm_ny", 4),

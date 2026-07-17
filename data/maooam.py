@@ -76,6 +76,10 @@ class MaooamConfig:
     stochastic_forcing: bool = False
     forcing_amplitude: float = 0.01
 
+    # --- Device ---
+    device: str = "cpu"
+    compile: bool = True
+
     @property
     def state_dim(self) -> int:
         from models.maooam_dynamics import _count_atm_modes, _count_oc_modes
@@ -135,10 +139,11 @@ def _generate_maooam_observations(
     """Generate noisy spectral observations for one DA window."""
     K, state_dim = true_state.shape
     n_obs = obs_indices.numel()
-    rng = torch.Generator().manual_seed(seed)
+    device = true_state.device
+    rng = torch.Generator(device=device).manual_seed(seed)
 
     obs = torch.full_like(true_state, float("nan"))
-    noise = torch.randn(K, n_obs, generator=rng) * obs_noise_std
+    noise = torch.randn(K, n_obs, device=device, generator=rng) * obs_noise_std
     obs[:, obs_indices] = true_state[:, obs_indices] + noise
 
     full_mask = torch.zeros(state_dim, dtype=torch.bool)
@@ -164,9 +169,7 @@ class MaooamDataset:
         ``"S0"`` for the reference scenario, ``"S1"`` for perturbed coupling.
     """
 
-    def __init__(self, config: MaooamConfig, scenario: str = "S0"):
-        from models.maooam_dynamics import MaooamDynamics
-
+    def __init__(self, config: MaooamConfig, scenario: str = "S0", dynamics=None):
         self.config = config
         self.scenario = scenario
         self.obs_indices = make_maooam_obs_indices(config)
@@ -177,20 +180,42 @@ class MaooamDataset:
         if scenario == "S1":
             d = config.d * 1.5  # 50% stronger coupling
 
-        self.dynamics = MaooamDynamics(
-            dt=config.dt, K=config.K,
-            atm_nx=config.atm_nx, atm_ny=config.atm_ny,
-            occ_nx=config.occ_nx, occ_ny=config.occ_ny,
-            kd=config.kd, kdp=config.kdp, sigma=config.sigma,
-            r=config.r, h=config.h, d=d,
-            eps=config.eps, T0_atm=config.T0_atm, hlambda=config.hlambda,
-            gamma_oc=config.gamma_oc, T0_oc=config.T0_oc,
-            C_atm=config.C_atm, C_oc=config.C_oc,
-            scale=config.scale, f0=config.f0, n_ratio=config.n_ratio,
-            T4=config.T4, dynamic_T=config.dynamic_T,
-            stochastic_forcing=config.stochastic_forcing,
-            forcing_amplitude=config.forcing_amplitude,
-        )
+        # Allow passing a pre-built dynamics instance (avoids qgs tensor re-extraction)
+        if dynamics is not None:
+            self.dynamics = dynamics
+        elif config.device != "cpu":
+            from models.maooam_torch import MaooamTorchDynamics
+            self.dynamics = MaooamTorchDynamics(
+                device=config.device, compile=config.compile,
+                dt=config.dt, K=config.K,
+                atm_nx=config.atm_nx, atm_ny=config.atm_ny,
+                occ_nx=config.occ_nx, occ_ny=config.occ_ny,
+                kd=config.kd, kdp=config.kdp, sigma=config.sigma,
+                r=config.r, h=config.h, d=d,
+                eps=config.eps, T0_atm=config.T0_atm, hlambda=config.hlambda,
+                gamma_oc=config.gamma_oc, T0_oc=config.T0_oc,
+                C_atm=config.C_atm, C_oc=config.C_oc,
+                scale=config.scale, f0=config.f0, n_ratio=config.n_ratio,
+                T4=config.T4, dynamic_T=config.dynamic_T,
+                stochastic_forcing=config.stochastic_forcing,
+                forcing_amplitude=config.forcing_amplitude,
+            )
+        else:
+            from models.maooam_dynamics import MaooamDynamics
+            self.dynamics = MaooamDynamics(
+                dt=config.dt, K=config.K,
+                atm_nx=config.atm_nx, atm_ny=config.atm_ny,
+                occ_nx=config.occ_nx, occ_ny=config.occ_ny,
+                kd=config.kd, kdp=config.kdp, sigma=config.sigma,
+                r=config.r, h=config.h, d=d,
+                eps=config.eps, T0_atm=config.T0_atm, hlambda=config.hlambda,
+                gamma_oc=config.gamma_oc, T0_oc=config.T0_oc,
+                C_atm=config.C_atm, C_oc=config.C_oc,
+                scale=config.scale, f0=config.f0, n_ratio=config.n_ratio,
+                T4=config.T4, dynamic_T=config.dynamic_T,
+                stochastic_forcing=config.stochastic_forcing,
+                forcing_amplitude=config.forcing_amplitude,
+            )
 
         self.windows = self._generate()
 

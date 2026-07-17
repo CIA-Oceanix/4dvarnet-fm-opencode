@@ -99,8 +99,9 @@ class DataConfig:
     maooam_stochastic_forcing: bool = False
     maooam_forcing_amplitude: float = 0.01
 
-    # Device
+    # Device / compile
     device: str = "cpu"
+    compile: bool = True
 
     @property
     def num_steps(self) -> int:
