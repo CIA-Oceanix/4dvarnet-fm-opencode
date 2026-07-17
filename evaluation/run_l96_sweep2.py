@@ -244,18 +244,26 @@ def run():
             method = method_map[name]
             print(f"  {case_label}/{name} ...", end=" ", flush=True)
             t1 = time.time()
-            m, s = evaluate_baseline(method, ds, cfg=eval_cfg, device=device,
-                                      return_trajs=False,
-                                      batch_size=min(20, args.num_windows))
+            (m, s), (ev_m, ev_s) = evaluate_baseline(method, ds, cfg=eval_cfg, device=device,
+                                                       return_trajs=False,
+                                                       batch_size=min(20, args.num_windows))
             m_common = m[:s1_state_dim] if case_key == "s0" else m
             s_common = s[:s1_state_dim] if case_key == "s0" else s
+            ev_m_common = ev_m[:s1_state_dim] if case_key == "s0" else ev_m
+            ev_s_common = ev_s[:s1_state_dim] if case_key == "s0" else ev_s
+            fast_idx = list(range(NO, len(m_common)))
+            slow_idx = list(range(NO))
             results[case_key][name] = {
                 "mean_rmse": float(np.mean(m_common)),
                 "per_var_mean": m_common.tolist(),
                 "per_var_std": s_common.tolist(),
+                "mean_expvar_slow": float(np.mean(ev_m_common[slow_idx])),
+                "mean_expvar_fast": float(np.mean(ev_m_common[fast_idx])),
+                "per_var_expvar_mean": ev_m_common.tolist(),
+                "per_var_expvar_std": ev_s_common.tolist(),
             }
             elapsed = time.time() - t1
-            print(f"  mu={np.mean(m_common):.4f} [{elapsed:.1f}s]")
+            print(f"  mu={np.mean(m_common):.4f}, ev_fast={np.mean(ev_m_common[fast_idx]):.4f} [{elapsed:.1f}s]")
 
     out = {
         "label": args.label,
@@ -304,6 +312,18 @@ def run():
         s1_m = results["s1"][name]["mean_rmse"]
         pct = (s1_m / s0_m - 1) * 100
         print(f"{name:<20} {s0_m:<10.4f} {s1_m:<10.4f} {pct:<+10.1f}%")
+
+    print(f"\n── Explained Variance (per group) ──")
+    print(f"{'Method':<20} {'S0 slow':<10} {'S0 fast':<10} {'S1 slow':<10} {'S1 fast':<10}")
+    print("-" * 60)
+    for name in methods_to_run:
+        if name not in results["s0"] or name not in results["s1"]:
+            continue
+        s0_slow = results["s0"][name]["mean_expvar_slow"]
+        s0_fast = results["s0"][name]["mean_expvar_fast"]
+        s1_slow = results["s1"][name]["mean_expvar_slow"]
+        s1_fast = results["s1"][name]["mean_expvar_fast"]
+        print(f"{name:<20} {s0_slow:<10.4f} {s0_fast:<10.4f} {s1_slow:<10.4f} {s1_fast:<10.4f}")
 
 if __name__ == "__main__":
     run()

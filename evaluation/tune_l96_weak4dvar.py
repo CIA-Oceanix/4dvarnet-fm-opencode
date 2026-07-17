@@ -64,7 +64,7 @@ def main():
                            coupling_exponent=1.6, dynamics=ms_dynamics,
                            opt_steps=opt_steps, lr=lr)
         t1 = time.time()
-        m, s = evaluate_baseline(method, ds_s0, base_cfg, device, return_trajs=False, batch_size=3)
+        (m, s), (ev_m, ev_s) = evaluate_baseline(method, ds_s0, base_cfg, device, return_trajs=False, batch_size=3)
         mu = float(np.mean(m))
         elapsed = time.time() - t1
         print(f"  mu={mu:.4f} [{elapsed:.1f}s]")
@@ -82,7 +82,7 @@ def main():
                            coupling_exponent=1.0, dynamics=ss_dynamics,
                            opt_steps=opt_steps, lr=lr)
         t1 = time.time()
-        m, s = evaluate_baseline(method, ds_s1, base_cfg, device, return_trajs=False, batch_size=3)
+        (m, s), (ev_m, ev_s) = evaluate_baseline(method, ds_s1, base_cfg, device, return_trajs=False, batch_size=3)
         mu = float(np.mean(m))
         elapsed = time.time() - t1
         print(f"  mu={mu:.4f} [{elapsed:.1f}s]")

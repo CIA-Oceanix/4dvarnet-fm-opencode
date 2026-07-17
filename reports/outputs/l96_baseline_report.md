@@ -1,11 +1,11 @@
 # L96 Baseline Report — Observation Config & Trajectory Examples
 
-**Date**: 2026-07-13
+**Date**: 2026-07-16
 **System**: Two-scale Lorenz96 (NO=8, J=4, state_dim=40), with **weighted fast-variable coupling**: unobserved fast variables (Y3, Y4) have 10% influence on the slow dynamics (vs 100% for observed Y1, Y2). This avoids exaggerating the impact of fast variables that are not seen by the S1 DA model.
 **Model**: `Lorenz96Dynamics` with RK4 integration, `dt=0.001`, T_max=3.0 (3000 steps/window)
 **Forcing**: F=8.0, coupling exponent=1.6, AR(1) stochastic forcing with sinusoidal component
 **Observations**: Full-state (all 40 dims) for Wave 1/2; partial (2/4 fast vars per node → 24D) for Wave 3, `obs_interval=5` (every 0.005 tu), R_var=0.5
-**Explained variance** (EV = 1 − MSE / Var<sub>truth</sub>) is computed on the **common 24 variables** shared between S0 and S1 (first 24 dims: X[0-7], Y1[0-7], Y2[0-7]). For the weighted coupling system, truth variance on this subset is 3.00 (slow≈2.49, fast1≈3.16, fast2≈3.35).
+**Explained variance** (EV = 1 − MSE / Var<sub>truth</sub>) is computed using **pooled variance** across all windows (concatenating all time steps and computing variance on the full concatenated array), not per-window variance. Per-window EV (`mean(1 − MSE_i / var_i)`) was found to be dominated by low-variance windows (X-vars have per-window variance < 0.1 in ~26% of windows), giving negative mean EV even when the DA is skillful. Pooled EV avoids this artifact. EV is computed on the **common 24 variables** shared between S0 and S1.
 
 ---
 
@@ -319,6 +319,116 @@ Param bias has no measurable impact on S1 RMSE — the J-mismatch dominates comp
 | **Param bias** | 0.0–0.3 | **0.0** | Flat at ~0.882 across all values | F bias invisible on top of J-mismatch |
 
 ---
+
+## Wave 4: Corrected Pooled EV — 200-Window Experiments with Optimal ETKF
+
+Following the EV computation fix (pooled variance across all windows instead of per-window), 200-window experiments with the tuned optimal ETKF config (`etkf_ridge=1.0, etkf_additive_inflation=0.05, inflation=1.1, r_var_pct=5`) were re-run. Pooled EV correctly reflects DA skill: slow variables with climatological per-window variance ~0.98 now have positive EV instead of the artifactually negative per-window values.
+
+### Experiment A — Unbiased S1 (`ev_full_all200_kf`)
+S1 uses J=2 dynamics with no parameter bias.
+
+| Method | S0 mu | S1 mu | Delta% |
+|---|---|---|---|
+| EnKF | 0.3383 | 0.8832 | +161.1% |
+| ETKF | **0.3160** | **0.7861** | **+148.7%** |
+
+| Method | S0 slow EV | S0 fast EV | S1 slow EV | S1 fast EV |
+|---|---|---|---|---|
+| EnKF | 0.9142 | 0.8973 | 0.7245 | 0.1814 |
+| ETKF | **0.9452** | **0.9027** | **0.9220** | **0.2265** |
+
+### Experiment B — Biased S1 (`ev_s1_biased_f15_c115_ce08`)
+S1 adds: F=−15%, c₁=+15%, coupling_exponent=0.8.
+
+| Method | S0 mu | S1 mu | Delta% |
+|---|---|---|---|
+| EnKF | 0.3399 | 0.8913 | +162.3% |
+| ETKF | **0.3166** | **0.7830** | **+147.3%** |
+
+| Method | S0 slow EV | S0 fast EV | S1 slow EV | S1 fast EV |
+|---|---|---|---|---|
+| EnKF | 0.9142 | 0.8950 | 0.6877 | 0.1875 |
+| ETKF | **0.9450** | **0.9019** | **0.9209** | **0.2341** |
+
+### Experiment C — Strong-4DVar (`ev_full_all200_strong4dvar`)
+
+| Method | S0 mu | S1 mu | Delta% |
+|---|---|---|---|
+| EnKF | 0.3403 | 0.8822 | +159.3% |
+| ETKF | **0.3212** | **0.7873** | +145.1% |
+| Strong-4DVar | 0.3406 | 1.0578 | **+210.6%** |
+
+| Method | S0 slow EV | S0 fast EV | S1 slow EV | S1 fast EV |
+|---|---|---|---|---|
+| EnKF | 0.9141 | 0.8949 | 0.7255 | 0.1828 |
+| ETKF | **0.9445** | **0.8977** | **0.9223** | **0.2231** |
+| Strong-4DVar | 0.8751 | **0.9135** | 0.4603 | −0.0631 |
+
+### Key findings
+
+1. **Pooled EV gives sensible slow-variable EV** (~0.94 S0, ~0.92 S1 for ETKF) — the ~26% of windows with X variance < 0.1 no longer dominate the average, since MSE and variance are pooled across all time steps.
+
+2. **S1 slow EV is robust to model reduction**: ETKF drops from 0.945 (S0) to 0.922 (S1, −2.4%). EnKF drops from 0.914 to 0.725 (−20.8%). ETKF handles the J=2 mismatch far better.
+
+3. **Parameter biases are invisible** on top of J-mismatch: S1 ETKF slow EV is 0.9220 (unbiased) vs 0.9209 (biased). The J=2 reduction dominates.
+
+4. **Strong-4DVar S1 degrades severely**: Slow EV drops to 0.4603, fast EV goes negative (−0.063). The J=2 mismatch breaks the gradient-based DA, while ensemble methods (ETKF slow EV=0.922) remain robust. Strong-4DVar is also ~25–50× slower (~5000s vs ~100–200s per 200-window run).
+
+---
+
+## Wave 4: Corrected Pooled EV — 200-Window Experiments with Optimal ETKF
+
+Following the EV computation fix (pooled variance across all windows instead of per-window), the 200-window experiments were re-run. The pooled EV correctly reflects the DA skill: slow variables with climatological per-window variance ~0.98 now have positive EV instead of the artifactually negative per-window values. Fast variables (per-window variance ~1.5) are largely unaffected.
+
+### Experiment A — Unbiased S1 (`ev_full_all200_kf`)
+
+S1 uses J=2 dynamics with no parameter bias (same as S0 for forcing).
+
+#### RMSE
+
+| Method | S0 mu | S1 mu | Delta% |
+|---|---|---|---|
+| EnKF | 0.3383 | 0.8832 | +161.1% |
+| ETKF | **0.3160** | **0.7861** | +148.7% |
+
+#### Explained Variance (pooled)
+
+| Method | S0 slow EV | S0 fast EV | S1 slow EV | S1 fast EV |
+|---|---|---|---|---|
+| EnKF | 0.9142 | 0.8973 | 0.7245 | 0.1814 |
+| ETKF | **0.9452** | **0.9027** | **0.9220** | **0.2265** |
+
+### Experiment B — Biased S1 (`ev_s1_biased_f15_c115_ce08`)
+
+S1 adds parameter biases: F=−15%, c₁=+15%, coupling_exponent=0.8.
+
+#### RMSE
+
+| Method | S0 mu | S1 mu | Delta% |
+|---|---|---|---|
+| EnKF | 0.3399 | 0.8913 | +162.3% |
+| ETKF | **0.3166** | **0.7830** | +147.3% |
+
+#### Explained Variance (pooled)
+
+| Method | S0 slow EV | S0 fast EV | S1 slow EV | S1 fast EV |
+|---|---|---|---|---|
+| EnKF | 0.9142 | 0.8950 | 0.6877 | 0.1875 |
+| ETKF | **0.9450** | **0.9019** | **0.9209** | **0.2341** |
+
+### Key Findings
+
+1. **Slow EV is now positive** (~0.94 S0, ~0.92 S1 for ETKF) — the pooled variance fix resolved the negative spike caused by low-variance X windows (26% of windows have X variance < 0.1).
+
+2. **Fast EV is physically meaningful** (~0.90 S0, ~0.23 S1 for ETKF). The S0→S1 drop from 0.90 to 0.23 reflects the J=2 model reduction's impact on the observed fast variables. The ETKF still captures ~23% of the fast dynamics variance despite using only half the fast variables.
+
+3. **S1 slow EV is robust to model reduction**: ETKF drops from 0.945 (S0) to 0.922 (S1), a modest 2.4% relative decline. EnKF drops from 0.914 to 0.724 (−20.8%), confirming ETKF's superior handling of the J-mismatch.
+
+4. **Parameter biases are invisible on top of J-mismatch**: S1 ETKF slow EV is 0.9220 (unbiased) vs 0.9209 (biased F=−15%, c₁=+15%, ce=0.8). The J=2 model reduction dominates performance; extra parameter biases add negligible impact.
+
+### Strong-4DVar Results
+
+*(Pending — job submitted)*
 
 ## Files
 

@@ -67,7 +67,7 @@ def get_dynamics(cfg) -> DynamicsBase:
             viscosity=dc.get("viscosity", 0.001),
             land_mask_type=dc.get("land_mask_type", "none"),
         )
-if system == "maooam":
+    if system == "maooam":
         from models.maooam_dynamics import MaooamDynamics
         return MaooamDynamics(
             dt=dc.dt, K=dc.get("K", 5),
@@ -94,12 +94,13 @@ if system == "maooam":
             T4=dc.get("maooam_T4", False),
             dynamic_T=dc.get("maooam_dynamic_T", False),
             stochastic_forcing=dc.get("maooam_stochastic_forcing", False),
-            forcing_amplitude=dc.get("maooam_forcing_amplitude", 0.01),
+forcing_amplitude=dc.get("maooam_forcing_amplitude", 0.01),
         )
     if system == "maooam_torch":
         from models.maooam_torch import MaooamTorchDynamics
         return MaooamTorchDynamics(
             device=dc.get("device", "cpu"),
+            compile=dc.get("compile", True),
             dt=dc.dt, K=dc.get("K", 5),
             atm_nx=dc.get("maooam_atm_nx", 4),
             atm_ny=dc.get("maooam_atm_ny", 4),

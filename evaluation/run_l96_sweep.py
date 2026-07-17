@@ -112,8 +112,8 @@ def run():
             method = method_map[name]
             print(f"  {case_label}/{name} ...", end=" ", flush=True)
             t1 = time.time()
-            m, s = evaluate_baseline(method, ds, cfg, device, return_trajs=False,
-                                      batch_size=min(20, args.num_windows))
+            (m, s), (ev_m, ev_s) = evaluate_baseline(method, ds, cfg, device, return_trajs=False,
+                                                       batch_size=min(20, args.num_windows))
             results[case_key][name] = {
                 "mean_rmse": float(np.mean(m)),
                 "per_var_mean": m.tolist(),

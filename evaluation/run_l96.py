@@ -30,6 +30,8 @@ def fmt_rmse(mean_arr, std_arr):
 def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
     rmse_list = []
     results_list = []
+    all_sq_err = []
+    all_ref = []
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
     has_per_window_F = "F" in dataset[0]
@@ -52,6 +54,12 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
                     ref = truth[result_idx].detach().cpu().numpy()[..., obs_var_indices]
                     result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+                else:
+                    ref = truth[result_idx].detach().cpu().numpy()
+                    if analysis.shape[-1] != ref.shape[-1]:
+                        ref = ref[..., :analysis.shape[-1]]
+                all_sq_err.append((analysis - ref) ** 2)
+                all_ref.append(ref)
                 rmse_list.append(result.rmse)
                 results_list.append(result)
     else:
@@ -68,14 +76,27 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 ref = truth.numpy()[..., obs_var_indices]
                 result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
                 result.trajectory = analysis
+            else:
+                ref = truth.numpy()
+                if analysis.shape[-1] != ref.shape[-1]:
+                    ref = ref[..., :analysis.shape[-1]]
+            all_sq_err.append((analysis - ref) ** 2)
+            all_ref.append(ref)
             rmse_list.append(result.rmse)
             results_list.append(result)
 
     all_rmse = np.stack(rmse_list, axis=0)
-    stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
+    rmse_stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
+    all_sq_err = np.concatenate(all_sq_err, axis=0)
+    all_ref = np.concatenate(all_ref, axis=0)
+    pooled_mse = np.mean(all_sq_err, axis=0)
+    pooled_var = np.var(all_ref, axis=0)
+    pooled_var = np.maximum(pooled_var, 1e-12)
+    expvar = 1 - pooled_mse / pooled_var
+    expvar_stats = (expvar, np.zeros_like(expvar))
     if return_trajs:
-        return stats, results_list
-    return stats
+        return (rmse_stats, expvar_stats), results_list
+    return rmse_stats, expvar_stats
 
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,

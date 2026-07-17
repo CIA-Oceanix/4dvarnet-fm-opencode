@@ -26,6 +26,8 @@ def evaluate_model(model, dataset, device):
 def evaluate_baseline(method, dataset, cfg, device):
     sig, rho, bet = cfg.da_params
     rmse_list = []
+    all_sq_err = []
+    all_ref = []
     for i in range(len(dataset)):
         w = dataset[i]
         obs = w["obs"]
@@ -36,9 +38,20 @@ def evaluate_baseline(method, dataset, cfg, device):
         else:
             force = w["forcing_true"]
         result = method.assimilate(obs, mask, force, truth, sigma=sig, rho=rho, beta=bet)
+        analysis = result.trajectory
+        ref = truth.numpy()
+        all_sq_err.append((analysis - ref) ** 2)
+        all_ref.append(ref)
         rmse_list.append(result.rmse)
     all_rmse = np.stack(rmse_list, axis=0)
-    return np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0)
+    all_sq_err = np.concatenate(all_sq_err, axis=0)
+    all_ref = np.concatenate(all_ref, axis=0)
+    pooled_mse = np.mean(all_sq_err, axis=0)
+    pooled_var = np.var(all_ref, axis=0)
+    pooled_var = np.maximum(pooled_var, 1e-12)
+    expvar = 1 - pooled_mse / pooled_var
+    expvar_stats = (expvar, np.zeros_like(expvar))
+    return (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0)), expvar_stats
 
 
 def main():
@@ -130,9 +143,9 @@ def main():
     enkf = EnKF(dt=0.01, device=device)
 
     bl_cs1 = {}
-    bl_cs1["Weak-4DVar"] = evaluate_baseline(w4d, ds_cs1, cfg_cs1, device)
-    bl_cs1["Strong-4DVar"] = evaluate_baseline(s4d, ds_cs1, cfg_cs1, device)
-    bl_cs1["EnKF"] = evaluate_baseline(enkf, ds_cs1, cfg_cs1, device)
+    bl_cs1["Weak-4DVar"] = evaluate_baseline(w4d, ds_cs1, cfg_cs1, device)[0]
+    bl_cs1["Strong-4DVar"] = evaluate_baseline(s4d, ds_cs1, cfg_cs1, device)[0]
+    bl_cs1["EnKF"] = evaluate_baseline(enkf, ds_cs1, cfg_cs1, device)[0]
 
     print("\n" + "=" * 60)
     print("STEP 7: Evaluating baselines on Case Study 2")
@@ -144,9 +157,9 @@ def main():
     ds_cs2 = datasets["test_cs2"]
 
     bl_cs2 = {}
-    bl_cs2["Weak-4DVar"] = evaluate_baseline(w4d, ds_cs2, cfg_cs2, device)
-    bl_cs2["Strong-4DVar"] = evaluate_baseline(s4d, ds_cs2, cfg_cs2, device)
-    bl_cs2["EnKF"] = evaluate_baseline(enkf, ds_cs2, cfg_cs2, device)
+    bl_cs2["Weak-4DVar"] = evaluate_baseline(w4d, ds_cs2, cfg_cs2, device)[0]
+    bl_cs2["Strong-4DVar"] = evaluate_baseline(s4d, ds_cs2, cfg_cs2, device)[0]
+    bl_cs2["EnKF"] = evaluate_baseline(enkf, ds_cs2, cfg_cs2, device)[0]
 
     print("\n" + "=" * 60)
     print("DEGRADATION ANALYSIS (200 windows each)")

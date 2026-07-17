@@ -81,9 +81,9 @@ def main():
         case_results = {}
         for method_name, factory in method_factories.items():
             method = factory(coupling_exponent)
-            stats, bl_results = evaluate_baseline(
+            (rmse_stats, expvar_stats), bl_results = evaluate_baseline(
                 method, ds, cfg, device, return_trajs=True, batch_size=200)
-            mean_rmse = stats[0]
+            mean_rmse = rmse_stats[0]
 
             entry = {
                 "state_rmse": {

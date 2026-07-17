@@ -90,9 +90,10 @@ def main():
             method = pool[coupling_type]
             print(f"    {label}/{method_name:<15} ...", end=" ", flush=True)
             t1 = time.time()
-            (m, s), bl_results = evaluate_baseline(
+            (rmse_stats, expvar_stats), bl_results = evaluate_baseline(
                 method, ds, cfg, device, return_trajs=True, batch_size=200,
             )
+            m, s = rmse_stats
             elapsed = time.time() - t1
 
             if case_name not in results:
