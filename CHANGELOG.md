@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-19: L96 all-5-param randomization + neural training infrastructure
+
+**Summary:** On new branch `feat/l96-neural-training` (from master @ `0687e07`), extended the two-scale Lorenz-96 system so all 5 model parameters (F, c₁, h, hx, ε) are randomized per window (±20% of reference), enabled neural models (DirectUNet, VanillaCFM-τ=0) with `param_dim=0` (observation + corrupted-forcing input only), wired `train.py` to the new S0/S1 train/val/test factory, passed per-window all-5 params to the DA baselines, and created the sbatch pipeline (one-epoch smoke, DA consistency, neural training, evaluate-all). S0 = each param U(0.8·ref, 1.2·ref); S1 = same ±20% plus a per-param bias of ±10% (the DA forward model uses the biased `*_da` params, matching the neural test config).
+
+**Files modified:**
+- `models/lorenz96_dynamics.py` — `_derivative`/`step`/trajectory generators accept and forward `c1,h,hx,eps` + `F` as kwargs; fixed per-batch broadcast of params/forcing
+- `data/lorenz96.py` — `_draw_l96_params`/`_per-window *_da` keys; `RandomParamLorenz96Dataset` (all-5 ±20%); `RandomBiasLorenz96Dataset` (`bias_mode='fixed'|'random'`, stores true + biased `*_da` params); new `make_l96_s0_s1_trainval()`
+- `models/direct_unet.py`, `models/vanilla_cfm.py` — `param_dim=0` guard (obs + forcing only, `obs_dim = state_dim + 1`)
+- `train.py` — L96 `s0_s1` dispatch to `make_l96_s0_s1_trainval`; `_make_eval_batch`/`evaluate_model`/`save_trajectories` accept `param_dim`; fixed pre-existing `to_lorenz96_config` DictConfig bug by building `Lorenz96Config` manually
+- `evaluate_all_l96.py`, `evaluation/run_l96.py` — per-window all-5 params to DA baselines (`_per_window_params` prefers `*_da`)
+- `config/lorenz96_default.yaml` — new top-level L96 default (`state_dim=40`, `param_dim=0`, `system=lorenz96`)
+- `config/experiment/L1_direct_unet_s0s1.yaml`, `config/experiment/L2_vanilla_cfm_s0s1.yaml` — rewritten to `param_dim=0` (L2 = VanillaCFM τ=0), base `/lorenz96_default`
+- `tests/test_lorenz96_training.py` — 6 new tests (all-5 params, `*_da` bias, `param_dim=0`, trainval structure); now 11 tests total
+- `batch/run_one_epoch_tests_l96.sbatch`, `batch/run_l96_da_consistency.sbatch`, `batch/run_l96_neural_training.sbatch`, `batch/run_l96_evaluate_all.sbatch` — new
+- `batch/run_config_validation.sbatch` — add L1/L2, drop non-existent G configs
+- `reports/generate_l96_neural_comparison.py` — new: DA vs neural comparison table
+- `L96_NEURAL_TRAINING_PROGRESS.md` — new: per-WP progress tracker for handoff
+
+**Rationale:** Mirror the L63 S0/S1 benchmark on the two-scale L96 system while randomizing all 5 model parameters and removing explicit parameter conditioning (the model must infer from observations + corrupted forcing). DA baselines run on the same randomized test configuration for a fair DA-vs-neural comparison. See `L96_NEURAL_TRAINING_PROGRESS.md` for the multi-agent iterative plan and next steps (DA consistency re-run, L1/L2 training, comparison).
+
+**Verification:** `pytest tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_hydra_config.py tests/test_baselines_hydra.py tests/test_metrics.py -m "not slow"` — 44 passed. All 4 L96 DA methods (Weak/Strong-4DVar, EnKF, ETKF) verified on S0/S1 with all-5 per-window params (scalar + batch paths). L1/L2 configs compose (`system=lorenz96`, `state_dim=40`, `param_dim=0`, L2 τ=0). End-to-end `train.py` smoke (1 epoch) for L1 and L2 succeeds. Pre-existing master test failures unchanged (not caused here).
+
+
 ## 2026-08-18: Merge L96 case study into master + L96 training infrastructure
 
 **Summary:** Merged the L96 case-study + dynamics-refactoring branch (`feat/weighted-fast-coupling`) into master, deliberately excluding the Shallow-Water and MAOOAM code (deferred to separate branches). Then added the L96 training infrastructure so `train.py` can dispatch to the two-scale Lorenz-96 system for UNet/VanillaCFM training, with configs and smoke tests.
