@@ -6,7 +6,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_datasets
+from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval
 from evaluation.run_l96 import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -93,9 +93,13 @@ def main():
     print(f"  R_var={args.r_var} obs_interval={args.obs_interval} dws={args.da_window_steps}")
     print(f"  enkf_inflation={args.enkf_inflation} etkf_inflation={args.etkf_inflation}")
 
-    print("\n── Generating L96 S0/S1 datasets ──")
+    print("\n── Generating L96 S0/S1 datasets (all-5-param randomization) ──")
     t0 = time.time()
-    datasets = make_l96_s0_s1_datasets(base_cfg, num_test_windows=args.num_test_windows)
+    datasets = make_l96_s0_s1_trainval(
+        base_cfg, num_train_windows=2, num_val_windows=2,
+        num_test_windows=args.num_test_windows,
+        param_noise=0.2, bias_range=(0.0, 0.2),
+    )
     print(f"  test_s0: {len(datasets['test_s0'])} windows")
     print(f"  test_s1: {len(datasets['test_s1'])} windows")
     print(f"  Dataset generation: {time.time() - t0:.1f}s")

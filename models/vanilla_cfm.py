@@ -5,17 +5,21 @@ from models.unet import UNet1D
 from models.interpolant import LinearInterpolant
 
 
-def _make_cond(obs, forcing, params):
+def _make_cond(obs, forcing, params, param_dim=0):
     obs_clean = torch.nan_to_num(obs, nan=0.0)
     B, T, D = obs.shape
-    params_t = params.unsqueeze(1).expand(B, T, -1)
-    return torch.cat([obs_clean, forcing.unsqueeze(-1), params_t], dim=-1)
+    cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
+    if param_dim > 0:
+        params_t = params.unsqueeze(1).expand(B, T, -1)
+        cond = torch.cat([cond, params_t], dim=-1)
+    return cond
 
 
 class VanillaCFM(nn.Module):
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4):
         super().__init__()
         self.obs_dim = state_dim + 1 + param_dim
+        self.param_dim = param_dim
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=self.obs_dim,
@@ -32,7 +36,7 @@ class VanillaCFM(nn.Module):
         self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params)
+        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim)
         v = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return v.transpose(1, 2)
 
@@ -87,7 +91,7 @@ class JointCFM(VanillaCFM):
         self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params)
+        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim)
         v = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         v = v.transpose(1, 2)
         v_state = v[..., :self.state_dim]

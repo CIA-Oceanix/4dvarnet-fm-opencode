@@ -11,10 +11,18 @@ EXP_DIR = os.path.join(BASE, "experiments")
 os.makedirs(EXP_DIR, exist_ok=True)
 
 _BASELINE_METHODS = ["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"]
+_L96_PARAMS = ["F", "c1", "h", "hx", "eps"]
 _BASELINE_CASES = [
     ("s0", "test_s0", 1, 0.0, "S0", 1.6),
     ("s1", "test_s1", 1, 0.15, "S1", 1.0),
 ]
+
+
+def _per_window_params(w, cfg):
+    params = {}
+    for k in _L96_PARAMS:
+        params[k] = w.get(f"{k}_da", w.get(k, getattr(cfg, "F_da" if k == "F" else k, 1.0)))
+    return params
 
 
 def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
@@ -34,7 +42,6 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
     all_ref = []
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
-    has_per_window_F = "F" in dataset[0]
     obs_var_indices = cfg.obs_var_indices
 
     if batch_size > 1 and hasattr(method, 'assimilate_batch'):
@@ -44,11 +51,9 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = torch.stack([w["obs_mask"].to(device) for w in batch], dim=0)
             truth = torch.stack([w["true_state"] for w in batch], dim=0)
             force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
-            if has_per_window_F:
-                F = torch.tensor([w["F"] for w in batch], device=device)
-            else:
-                F = cfg.F_da
-            results = method.assimilate_batch(obs, mask, force, truth, F=F)
+            pw = [_per_window_params(w, cfg) for w in batch]
+            kw = {k: torch.tensor([p[k] for p in pw], device=device) for k in _L96_PARAMS}
+            results = method.assimilate_batch(obs, mask, force, truth, **kw)
             for result_idx, result in enumerate(results):
                 analysis = result.trajectory
                 if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
@@ -69,8 +74,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = w["obs_mask"].to(device)
             truth = w["true_state"]
             force = w[force_key].to(device)
-            F = w.get("F", cfg.F_da)
-            result = method.assimilate(obs, mask, force, truth, F=F)
+            kw = _per_window_params(w, cfg)
+            result = method.assimilate(obs, mask, force, truth, **kw)
             analysis = result.trajectory
             if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
                 ref = truth.numpy()[..., obs_var_indices]

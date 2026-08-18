@@ -1,12 +1,11 @@
 # @package _global_
 defaults:
-  - /case_study/lorenz96
+  - /lorenz96_default
   - _self_
 
 model:
   model_type: direct_unet
-  state_dim: 40
-  param_dim: 1
+  param_dim: 0
   direct_unet:
     hidden_channels: [64, 128, 256]
     dropout: 0.1
@@ -21,6 +20,7 @@ training:
 
 data:
   data_setup: s0_s1
+  bias_max: 0.2
   num_train_windows: 1000
   num_val_windows: 100
   num_test_windows: 200

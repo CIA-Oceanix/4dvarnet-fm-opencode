@@ -32,25 +32,24 @@ from models.solver import TweedieSolver
 EXPS = [
     'E1_direct_unet_default', 'E2_direct_unet_small', 'E3_direct_unet_rand',
     'F1_vanilla_cfm_default', 'F2_vanilla_cfm_small', 'F3_vanilla_cfm_rand',
-    'G1_vanilla_cfm_t0_default', 'G2_vanilla_cfm_t0_small', 'G3_vanilla_cfm_t0_rand',
+    'L1_direct_unet_s0s1', 'L2_vanilla_cfm_s0s1',
 ]
 
 for exp in EXPS:
     with hydra.initialize(config_path='config'):
         cfg = hydra.compose('experiment/' + exp)
     model = model_factory(cfg, torch.device('cpu'))
-    if exp.startswith('E'):
+    if exp.startswith(('E', 'L1')):
         expected = DirectUNet
-    elif exp.startswith(('F', 'G')):
+    elif exp.startswith(('F', 'L2')):
         expected = VanillaCFM
     else:
         raise ValueError(f'Unknown prefix: {exp}')
-    # For G experiments, verify tau flag is set
-    if exp.startswith('G'):
+    assert isinstance(model, expected), f'{exp}: expected {expected.__name__}, got {type(model).__name__}'
+    if exp == 'L2_vanilla_cfm_s0s1':
         assert model.train_tau_0_only, f'{exp}: expected train_tau_0_only=True'
         print(f'  OK  {exp}  ->  {type(model).__name__} (tau=0 mode)')
     else:
-        assert isinstance(model, expected), f'{exp}: expected {expected.__name__}, got {type(model).__name__}'
         print(f'  OK  {exp}  ->  {type(model).__name__}')
 
 # Also verify the base config loads and produces TweedieSolver
@@ -60,7 +59,7 @@ model = model_factory(base_cfg, torch.device('cpu'))
 assert isinstance(model, TweedieSolver), f'base: expected TweedieSolver, got {type(model).__name__}'
 print(f'  OK  lorenz63_default  ->  TweedieSolver')
 print()
-print('All 10 configs validated successfully.')
+print('All 8 experiment configs validated successfully.')
 "
 
 echo ""

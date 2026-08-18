@@ -135,12 +135,15 @@ def model_factory(cfg: DictConfig, device: torch.device):
     return model.to(device)
 
 
-def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1")):
+def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
+                     param_dim=4):
     from data.dataloader import FlowMatchingBatch
     states = w["true_state"].unsqueeze(0).to(device)
     obs = w["obs"].unsqueeze(0).to(device)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
+    if param_dim == 0:
+        return FlowMatchingBatch(states, obs, mask, forcing)
     params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
                           dtype=torch.float32, device=device)
     true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
@@ -149,13 +152,13 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1")):
 
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
-                   param_names=("sigma", "rho", "beta", "c1")):
+                   param_names=("sigma", "rho", "beta", "c1"), param_dim=4):
     rmse_list = []
     param_list = []
     true_param_list = []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -181,11 +184,11 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
 
 
 def save_trajectories(model, dataset, device, model_type, save_path,
-                      param_names=("sigma", "rho", "beta", "c1")):
+                      param_names=("sigma", "rho", "beta", "c1"), param_dim=4):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -234,14 +237,40 @@ def main(cfg: DictConfig):
     system = dc.get("system", "lorenz63")
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
     if system == "lorenz96":
-        from data.lorenz96 import make_l96_s0_s1_datasets, make_datasets as make_l96_datasets
-        base_cfg = dc.to_lorenz96_config()
-        datasets = make_l96_datasets(base_cfg)
+        from data.lorenz96 import (Lorenz96Config, make_l96_s0_s1_trainval,
+                                   make_datasets as make_l96_datasets)
+        base_cfg = Lorenz96Config(
+            case=dc.get("case", 1), dt=dc.dt, T_max=dc.T_max,
+            obs_interval=dc.obs_interval, R_var=dc.R_var, B_var=dc.B_var,
+            param_bias=dc.get("param_bias", 0.0),
+            num_windows=dc.num_windows, window_spacing=dc.window_spacing,
+            spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
+            NO=dc.get("NO", 8), J=dc.get("J", 4),
+            h=dc.get("h", 1.0), hx=dc.get("hx", 1.0), eps=dc.get("eps", 0.1),
+            F_true=dc.get("F_true", 8.0), F_da=dc.get("F_da", 8.0),
+            gamma=dc.get("gamma", 0.05), W_L_bar=dc.get("W_L_bar", 0.0),
+            c1=dc.get("c1", 1.0), c2=dc.get("c2", 0.1),
+            sigma_0=dc.get("sigma_0", 0.08), sigma_L=dc.get("sigma_L", 0.20),
+            tau_eta=dc.get("tau_eta", 5.0),
+            sigma_eta=dc.get("sigma_eta", np.sqrt(0.5)),
+            forcing_state_bias=dc.get("forcing_state_bias", 0.0),
+            forcing_coupling=dc.get("forcing_coupling", "linear"),
+            coupling_exponent_truth=dc.get("coupling_exponent_truth", 1.6),
+            coupling_exponent_da=dc.get("coupling_exponent_da", 1.0),
+            fast_weights=list(dc.get("fast_weights", [1.0, 1.0, 0.1, 0.1])),
+        )
         if data_setup == "s0_s1":
-            datasets.update(make_l96_s0_s1_datasets(
-                base_cfg, num_test_windows=dc.get("num_test_windows", 200)))
+            datasets = make_l96_s0_s1_trainval(
+                base_cfg,
+                num_train_windows=dc.get("num_train_windows", 1000),
+                num_val_windows=dc.get("num_val_windows", 100),
+                num_test_windows=dc.get("num_test_windows", 200),
+                param_noise=dc.get("test_param_noise", 0.2),
+                bias_range=(0.0, dc.get("bias_max", 0.2)),
+            )
             test_keys = ["test_s0", "test_s1"]
         else:
+            datasets = make_l96_datasets(base_cfg)
             test_keys = ["test_cs1", "test_cs2"]
     else:
         base_cfg = Lorenz63Config(
@@ -301,6 +330,7 @@ def main(cfg: DictConfig):
     # Model
     print(f"  Creating model (type={model_type})...")
     model = model_factory(cfg, device)
+    param_dim = cfg.model.get("param_dim", 4)
 
     # Train
     total_t0 = time.time()
@@ -349,12 +379,13 @@ def main(cfg: DictConfig):
             continue
         if is_joint:
             m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
-                                         return_params=True, param_names=param_names)
+                                         return_params=True, param_names=param_names,
+                                         param_dim=param_dim)
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
             m, s = evaluate_model(model, datasets[key], device, model_type,
-                                  param_names=param_names)
+                                  param_names=param_names, param_dim=param_dim)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -364,7 +395,7 @@ def main(cfg: DictConfig):
             case = key.replace("test_", "")
             save_trajectories(model, datasets[key], device, model_type,
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
-                              param_names=param_names)
+                              param_names=param_names, param_dim=param_dim)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 
