@@ -2,6 +2,7 @@
 
 Branch: `feat/l96-neural-training`
 Base: `master` @ `0687e07`
+Commits: `3a1c8d5` (implementation), `c68ea9d` (docs)
 Last updated: 2026-08-19
 
 ## Overview
@@ -22,19 +23,19 @@ Key design decisions:
 
 | WP | Description | Status | Commit | Notes |
 |---|---|---|---|---|
-| WP1 | `models/lorenz96_dynamics.py` — all-5-param `step()` | ✅ | — | kwargs `c1,h,hx,eps` + `F`; verified scalar/batch/traj |
-| WP2 | `data/lorenz96.py` — extra helpers, RandomParam/RandBias all-5, `make_l96_s0_s1_trainval` | ✅ | — | windows store true + `*_da` params |
-| WP3 | `models/direct_unet.py`, `models/vanilla_cfm.py` — `param_dim=0` | ✅ | — | `obs_dim = state_dim + 1` |
-| WP4 | `config/lorenz96_default.yaml`, `L1_*.yaml`, `L2_*.yaml` | ✅ | — | 2 configs, both param_dim=0 |
-| WP5 | `data/dataloader.py` — verified working (no core change) | ✅ | — | `with_params=False` → params=None |
-| WP6 | `train.py` — L96 dispatch + eval batch `param_dim` | ✅ | — | fixed pre-existing `to_lorenz96_config` DictConfig bug |
-| Step 11a | `evaluation/baselines.py` — all-5 forwarding | ✅ | — | std DA methods forward `**kwargs` already; no change needed |
-| Step 11b | `evaluation/run_l96.py` — per-window all-5 params | ✅ | — | `_per_window_params` uses `*_da` when present |
-| WP7 | `tests/test_lorenz96_training.py` — expanded | ✅ | — | 11 tests pass |
-| — | `L96_NEURAL_TRAINING_PROGRESS.md` | ✅ | — | this file |
-| Step 11c | DA baseline consistency re-run | ⬜ pending | — | needs sbatch |
-| Step 12 | Neural training L1 + L2 (full) | ⬜ pending | — | needs sbatch |
-| WP8 | Results comparison + iteration | ⬜ pending | — | — |
+| WP1 | `models/lorenz96_dynamics.py` — all-5-param `step()` | ✅ | `3a1c8d5` | kwargs `c1,h,hx,eps` + `F`; verified scalar/batch/traj |
+| WP2 | `data/lorenz96.py` — extra helpers, RandomParam/RandBias all-5, `make_l96_s0_s1_trainval` | ✅ | `3a1c8d5` | windows store true + `*_da` params |
+| WP3 | `models/direct_unet.py`, `models/vanilla_cfm.py` — `param_dim=0` | ✅ | `3a1c8d5` | `obs_dim = state_dim + 1` |
+| WP4 | `config/lorenz96_default.yaml`, `L1_*.yaml`, `L2_*.yaml` | ✅ | `3a1c8d5` | 2 configs, both param_dim=0 |
+| WP5 | `data/dataloader.py` — verified working (no core change) | ✅ | `3a1c8d5` | `with_params=False` → params=None |
+| WP6 | `train.py` — L96 dispatch + eval batch `param_dim` | ✅ | `3a1c8d5` | fixed pre-existing `to_lorenz96_config` DictConfig bug |
+| Step 11a | `evaluation/baselines.py` — all-5 forwarding | ✅ | `3a1c8d5` | std DA methods forward `**kwargs` already; no change needed |
+| Step 11b | `evaluation/run_l96.py` — per-window all-5 params | ✅ | `3a1c8d5` | `_per_window_params` uses `*_da` when present |
+| WP7 | `tests/test_lorenz96_training.py` — expanded | ✅ | `3a1c8d5` | 11 tests pass |
+| — | `L96_NEURAL_TRAINING_PROGRESS.md` | ✅ | `3a1c8d5` | this file |
+| Step 11c | DA baseline consistency re-run | ⬜ pending | — | `batch/run_l96_da_consistency.sbatch` |
+| Step 12 | Neural training L1 + L2 (full) | ⬜ pending | — | `batch/run_l96_neural_training.sbatch` |
+| WP8 | Results comparison + iteration | ⬜ pending | — | `batch/run_l96_evaluate_all.sbatch` |
 
 ## File Change Log
 
