@@ -5,10 +5,11 @@ from models.unet import UNet1D
 
 
 class DirectUNet(nn.Module):
-    def __init__(self, state_dim=3, hidden_channels=None, dropout=0.1):
+    def __init__(self, state_dim=3, hidden_channels=None, dropout=0.1, param_dim=4):
         super().__init__()
         self.state_dim = state_dim
-        self.obs_dim = state_dim + 1 + 4
+        self.param_dim = param_dim
+        self.obs_dim = state_dim + 1 + param_dim
         if hidden_channels is None:
             hidden_channels = [64, 128, 256]
         self.unet = UNet1D(

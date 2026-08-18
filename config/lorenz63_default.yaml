@@ -1,5 +1,7 @@
 data:
   system: lorenz63
+  state_names: ["X", "Y", "Z"]
+  param_names: ["sigma", "rho", "beta", "c1"]
   dt: 0.01
   T_max: 3.0
   obs_interval: 20

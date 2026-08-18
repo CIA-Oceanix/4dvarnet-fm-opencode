@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **EV computation**: `evaluate_baseline` now computes explained variance using **pooled variance across all windows** (`1 − mean(MSE_i) / var(ref_all)`) instead of per-window metric (`mean(1 − MSE_i / var_i)`). Per-window EV was dominated by low-variance X windows (26% of windows have X variance < 0.1 in L96), producing artifactually negative mean EV even when DA is skillful. Pooled EV matches the correct climatological interpretation.
+
+### Added
+- Explained variance metric in `evaluation/run_l96_sweep2.py`: stores `mean_expvar_slow`, `mean_expvar_fast`, `per_var_expvar_mean`, `per_var_expvar_std` in JSON output; prints grouped EV summary in console.
+- 200-window L96 experiments: unbiased S1 (`ev_full_all200_kf`) and biased S1 (`ev_s1_biased_f15_c115_ce08`) with pooled EV.
+- Report update in `reports/outputs/l96_baseline_report.md`: Wave 4 section documenting pooled EV results.
+
+### Fixed
+- Pass **kwargs in single-window EnKF/ETKF step calls (was hardcoded for L63)
+- Added `window_steps` field to `DataConfig` (was missing, causing silent mapping error)
+
+
 ## 2026-06-30: Initialize opencode project guidelines
 
 **Summary:** Added AGENTS.md, opencode.json, and initial CHANGELOG.md to establish a consistent workflow for opencode sessions.

@@ -36,6 +36,9 @@ class DataConfig:
     test_randparam: bool = True
     test_param_noise: float = 0.2
 
+    # Device
+    device: str = "cpu"
+
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)
@@ -163,11 +166,14 @@ class Strong4DVarConfig:
 @dataclass
 class EnKFConfig:
     inflation: float = 1.0
+    loc_radius: float = -1.0
 
 
 @dataclass
 class ETKFConfig:
     inflation: float = 1.0
+    loc_radius: float = -1.0
+    loc_mode: str = "square_root"
 
 
 @dataclass

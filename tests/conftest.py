@@ -5,7 +5,6 @@ Provides reusable fixtures for configs, datasets, and devices.
 """
 import pytest
 import torch
-import numpy as np
 from data.lorenz63 import Lorenz63Config, Lorenz63Dataset
 
 

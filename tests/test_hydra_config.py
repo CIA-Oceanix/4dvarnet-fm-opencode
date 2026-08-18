@@ -61,6 +61,7 @@ def test_data_section_keys():
         "sigma_true", "rho_true", "beta_true", "gamma", "W_L_bar",
         "c1", "c2", "sigma_0", "sigma_L", "tau_eta", "sigma_eta",
         "forcing_state_bias", "forcing_coupling", "param_bias", "case",
+        "state_names", "param_names",
     }
     assert set(cfg.data.keys()) == data_keys, f"Missing: {data_keys - set(cfg.data.keys())}"
 

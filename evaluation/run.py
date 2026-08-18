@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz63 import Lorenz63Config
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
 from evaluation.metrics import rmse
+from models.lorenz63_dynamics import Lorenz63Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
@@ -35,6 +36,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
     sig, rho, bet = cfg.da_params
     rmse_list = []
     results_list = []
+    all_sq_err = []
+    all_ref = []
 
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
@@ -56,7 +59,11 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 sigma, rho, beta = sig, rho, bet
                 c1 = 1.0
             results = method.assimilate_batch(obs, mask, force, truth, sigma=sigma, rho=rho, beta=beta, c1=c1)
-            for result in results:
+            for result_idx, result in enumerate(results):
+                analysis = result.trajectory
+                ref = truth[result_idx].detach().cpu().numpy()
+                all_sq_err.append((analysis - ref) ** 2)
+                all_ref.append(ref)
                 rmse_list.append(result.rmse)
                 results_list.append(result)
     else:
@@ -71,14 +78,25 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             b = w.get("beta", bet)
             c1_val = w.get("c1", 1.0)
             result = method.assimilate(obs, mask, force, truth, sigma=s, rho=r, beta=b, c1=c1_val)
+            analysis = result.trajectory
+            ref = truth.numpy()
+            all_sq_err.append((analysis - ref) ** 2)
+            all_ref.append(ref)
             rmse_list.append(result.rmse)
             results_list.append(result)
 
     all_rmse = np.stack(rmse_list, axis=0)
-    stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
+    rmse_stats = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
+    all_sq_err = np.concatenate(all_sq_err, axis=0)
+    all_ref = np.concatenate(all_ref, axis=0)
+    pooled_mse = np.mean(all_sq_err, axis=0)
+    pooled_var = np.var(all_ref, axis=0)
+    pooled_var = np.maximum(pooled_var, 1e-12)
+    expvar = 1 - pooled_mse / pooled_var
+    expvar_stats = (expvar, np.zeros_like(expvar))
     if return_trajs:
-        return stats, results_list
-    return stats
+        return (rmse_stats, expvar_stats), results_list
+    return rmse_stats, expvar_stats
 
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
@@ -109,15 +127,19 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     enkf_cfg = enkf_config or {}
     etkf_cfg = etkf_config or {}
 
+    dynamics_pool = {}
+    for expo in {c[5] for c in _BASELINE_CASES}:
+        dynamics_pool[expo] = Lorenz63Dynamics(dt=0.01, coupling_exponent=expo)
     baseline_pool = {}
     for expo in {c[5] for c in _BASELINE_CASES}:
+        dynamics = dynamics_pool[expo]
         baseline_pool[expo] = {
             "Weak-4DVar": Weak4DVar(dt=0.01, da_window_steps=N, device=device,
-                                     coupling_exponent=expo, **weak_cfg),
+                                     coupling_exponent=expo, dynamics=dynamics, **weak_cfg),
             "Strong-4DVar": Strong4DVar(dt=0.01, da_window_steps=N, device=device,
-                                         coupling_exponent=expo, **strong_cfg),
-            "EnKF": EnKF(dt=0.01, device=device, coupling_exponent=expo, **enkf_cfg),
-            "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, **etkf_cfg),
+                                         coupling_exponent=expo, dynamics=dynamics, **strong_cfg),
+            "EnKF": EnKF(dt=0.01, device=device, coupling_exponent=expo, dynamics=dynamics, **enkf_cfg),
+            "ETKF": ETKF(dt=0.01, device=device, coupling_exponent=expo, dynamics=dynamics, **etkf_cfg),
         }
 
     cfg_s0 = Lorenz63Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
