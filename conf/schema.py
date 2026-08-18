@@ -36,12 +36,28 @@ class DataConfig:
     test_randparam: bool = True
     test_param_noise: float = 0.2
 
+    # Lorenz96 (two-scale) fields
+    NO: int = 8
+    J: int = 4
+    h: float = 1.0
+    hx: float = 1.0
+    eps: float = 0.1
+    F_true: float = 8.0
+    F_da: float = 8.0
+    coupling_exponent_truth: float = 1.6
+    coupling_exponent_da: float = 1.0
+    fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
+
     # Device
     device: str = "cpu"
 
     @property
     def num_steps(self) -> int:
         return int(self.T_max / self.dt)
+
+    @property
+    def use_corrupted_forcing(self) -> bool:
+        return self.case == 2
 
     @property
     def biased_params(self) -> Tuple[float, float, float]:
@@ -58,9 +74,26 @@ class DataConfig:
             return (self.sigma_true, self.rho_true, self.beta_true)
         return self.biased_params
 
-    @property
-    def use_corrupted_forcing(self) -> bool:
-        return self.case == 2
+    def to_lorenz96_config(self) -> Any:
+        """Convert to data.lorenz96.Lorenz96Config."""
+        from data.lorenz96 import Lorenz96Config as L96C
+        return L96C(
+            case=self.case, dt=self.dt, T_max=self.T_max,
+            obs_interval=self.obs_interval, R_var=self.R_var,
+            B_var=self.B_var, param_bias=self.param_bias,
+            num_windows=self.num_windows, window_spacing=self.window_spacing,
+            spinup_steps=self.spinup_steps, seed=self.seed,
+            NO=self.NO, J=self.J, h=self.h, hx=self.hx, eps=self.eps,
+            F_true=self.F_true, F_da=self.F_da,
+            gamma=self.gamma, W_L_bar=self.W_L_bar, c1=self.c1, c2=self.c2,
+            sigma_0=self.sigma_0, sigma_L=self.sigma_L,
+            tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
+            forcing_state_bias=self.forcing_state_bias,
+            forcing_coupling=self.forcing_coupling,
+            coupling_exponent_truth=self.coupling_exponent_truth,
+            coupling_exponent_da=self.coupling_exponent_da,
+            fast_weights=list(self.fast_weights),
+        )
 
     def to_lorenz63_config(self) -> Any:
         """Convert to data.lorenz63.Lorenz63Config."""

@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /case_study/lorenz96
+  - _self_
+
+model:
+  model_type: direct_unet
+  state_dim: 40
+  param_dim: 1
+  direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

@@ -67,6 +67,20 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
     }
 
 
+def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
+                         obs_interval=200, R_var=0.5, param_names=("F",)):
+    kw = dict(batch_size=batch_size, collate_fn=collate_fm,
+              num_workers=4, pin_memory=True)
+    fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
+                 with_params=with_params, param_names=list(param_names))
+    return {
+        "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
+                            shuffle=True, **kw),
+        "val": DataLoader(FlowMatchingDataset(datasets["val"], **fm_kw),
+                          shuffle=False, **kw),
+    }
+
+
 def model_factory(cfg: DictConfig, device: torch.device):
     model_type = cfg.model.get("model_type", "tweedie")
     if model_type == "tweedie":
@@ -121,28 +135,27 @@ def model_factory(cfg: DictConfig, device: torch.device):
     return model.to(device)
 
 
-def _make_eval_batch(w, device):
+def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1")):
     from data.dataloader import FlowMatchingBatch
     states = w["true_state"].unsqueeze(0).to(device)
     obs = w["obs"].unsqueeze(0).to(device)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
-    params = torch.tensor([[w.get("sigma", 0.0), w.get("rho", 0.0),
-                            w.get("beta", 0.0), w.get("c1", 1.0)]], dtype=torch.float32, device=device)
-    true_params = torch.tensor([[w.get("true_sigma", w.get("sigma", 0.0)),
-                                  w.get("true_rho", w.get("rho", 0.0)),
-                                  w.get("true_beta", w.get("beta", 0.0)),
-                                  w.get("true_c1", w.get("c1", 1.0))]], dtype=torch.float32, device=device)
+    params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
+                          dtype=torch.float32, device=device)
+    true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
+                               dtype=torch.float32, device=device)
     return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
 
 
-def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False):
+def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
+                   param_names=("sigma", "rho", "beta", "c1")):
     rmse_list = []
     param_list = []
     true_param_list = []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device)
+        batch = _make_eval_batch(w, device, param_names=param_names)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -153,10 +166,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get("true_sigma", w.get("sigma")),
-                  w.get("true_rho", w.get("rho")),
-                  w.get("true_beta", w.get("beta")),
-                  w.get("true_c1", w.get("c1", 1.0))]
+            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
             true_param_list.append(np.array(tp))
         truth = w["true_state"].numpy()
         rmse_list.append(rmse(pred, truth))
@@ -170,11 +180,12 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
     return out
 
 
-def save_trajectories(model, dataset, device, model_type, save_path):
+def save_trajectories(model, dataset, device, model_type, save_path,
+                      param_names=("sigma", "rho", "beta", "c1")):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device)
+        batch = _make_eval_batch(w, device, param_names=param_names)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -220,49 +231,70 @@ def main(cfg: DictConfig):
 
     # Data
     dc = cfg.data
-    base_cfg = Lorenz63Config(
-        dt=dc.dt, T_max=dc.T_max, obs_interval=dc.obs_interval,
-        R_var=dc.R_var, B_var=dc.B_var,
-        num_windows=dc.num_windows, window_spacing=dc.window_spacing,
-        spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
-        sigma_true=dc.sigma_true, rho_true=dc.rho_true, beta_true=dc.beta_true,
-        gamma=dc.gamma, W_L_bar=dc.W_L_bar, c1=dc.c1, c2=dc.c2,
-        sigma_0=dc.sigma_0, sigma_L=dc.sigma_L,
-        tau_eta=dc.tau_eta, sigma_eta=dc.sigma_eta,
-        param_bias=dc.get("param_bias", 0.0),
-        forcing_state_bias=dc.get("forcing_state_bias", 0.0),
-        forcing_coupling=dc.get("forcing_coupling", "linear"),
-    )
-    if data_setup == "s0_s1":
-        bias_max = dc.get("bias_max", 0.2)
-        datasets = make_s0_s1_trainval(
-            base_cfg,
-            num_train_windows=dc.get("num_train_windows", 1000),
-            num_val_windows=dc.get("num_val_windows", 100),
-            num_test_windows=dc.get("num_test_windows", 200),
-            param_noise=dc.get("test_param_noise", 0.2),
-            bias_range=(0.0, bias_max),
-        )
-        test_keys = ["test_s0", "test_s1"]
+    system = dc.get("system", "lorenz63")
+    param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
+    if system == "lorenz96":
+        from data.lorenz96 import make_l96_s0_s1_datasets, make_datasets as make_l96_datasets
+        base_cfg = dc.to_lorenz96_config()
+        datasets = make_l96_datasets(base_cfg)
+        if data_setup == "s0_s1":
+            datasets.update(make_l96_s0_s1_datasets(
+                base_cfg, num_test_windows=dc.get("num_test_windows", 200)))
+            test_keys = ["test_s0", "test_s1"]
+        else:
+            test_keys = ["test_cs1", "test_cs2"]
     else:
-        datasets = make_mixed_datasets(
-            base_cfg,
-            num_train_windows=dc.get("num_train_windows", 1000),
-            num_val_windows=dc.get("num_val_windows", 100),
-            num_test_windows=dc.get("num_test_windows", 200),
-            include_randparam_test=dc.get("test_randparam", True),
-            param_noise=dc.get("test_param_noise", 0.2),
+        base_cfg = Lorenz63Config(
+            dt=dc.dt, T_max=dc.T_max, obs_interval=dc.obs_interval,
+            R_var=dc.R_var, B_var=dc.B_var,
+            num_windows=dc.num_windows, window_spacing=dc.window_spacing,
+            spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
+            sigma_true=dc.sigma_true, rho_true=dc.rho_true, beta_true=dc.beta_true,
+            gamma=dc.gamma, W_L_bar=dc.W_L_bar, c1=dc.c1, c2=dc.c2,
+            sigma_0=dc.sigma_0, sigma_L=dc.sigma_L,
+            tau_eta=dc.tau_eta, sigma_eta=dc.sigma_eta,
+            param_bias=dc.get("param_bias", 0.0),
+            forcing_state_bias=dc.get("forcing_state_bias", 0.0),
+            forcing_coupling=dc.get("forcing_coupling", "linear"),
         )
-        test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
-    loaders = make_experiment_dataloaders(
-        datasets, batch_size=cfg.training.batch_size,
-        train_mix=train_mix, num_workers=4,
-        randomize_params=randomize_params, param_noise=param_noise,
-        base_cfg=base_cfg,
-        num_train_windows=dc.get("num_train_windows", 1000),
-        data_setup=data_setup,
-        with_params=(model_type == "joint_cfm"),
-    )
+        if data_setup == "s0_s1":
+            bias_max = dc.get("bias_max", 0.2)
+            datasets = make_s0_s1_trainval(
+                base_cfg,
+                num_train_windows=dc.get("num_train_windows", 1000),
+                num_val_windows=dc.get("num_val_windows", 100),
+                num_test_windows=dc.get("num_test_windows", 200),
+                param_noise=dc.get("test_param_noise", 0.2),
+                bias_range=(0.0, bias_max),
+            )
+            test_keys = ["test_s0", "test_s1"]
+        else:
+            datasets = make_mixed_datasets(
+                base_cfg,
+                num_train_windows=dc.get("num_train_windows", 1000),
+                num_val_windows=dc.get("num_val_windows", 100),
+                num_test_windows=dc.get("num_test_windows", 200),
+                include_randparam_test=dc.get("test_randparam", True),
+                param_noise=dc.get("test_param_noise", 0.2),
+            )
+            test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
+    if system == "lorenz96":
+        loaders = make_l96_dataloaders(
+            datasets, batch_size=cfg.training.batch_size,
+            obs_interval=dc.obs_interval, R_var=dc.R_var,
+            param_names=param_names,
+            with_params=(model_type == "joint_cfm"),
+        )
+    else:
+        loaders = make_experiment_dataloaders(
+            datasets, batch_size=cfg.training.batch_size,
+            train_mix=train_mix, num_workers=4,
+            randomize_params=randomize_params, param_noise=param_noise,
+            base_cfg=base_cfg,
+            num_train_windows=dc.get("num_train_windows", 1000),
+            data_setup=data_setup,
+            with_params=(model_type == "joint_cfm"),
+        )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
 
@@ -316,11 +348,13 @@ def main(cfg: DictConfig):
         if key not in datasets:
             continue
         if is_joint:
-            m, s, prmse = evaluate_model(model, datasets[key], device, model_type, return_params=True)
+            m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
+                                         return_params=True, param_names=param_names)
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
-            m, s = evaluate_model(model, datasets[key], device, model_type)
+            m, s = evaluate_model(model, datasets[key], device, model_type,
+                                  param_names=param_names)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -329,10 +363,10 @@ def main(cfg: DictConfig):
         if key in datasets:
             case = key.replace("test_", "")
             save_trajectories(model, datasets[key], device, model_type,
-                              os.path.join(exp_dir, f"trajectories_{case}.npz"))
+                              os.path.join(exp_dir, f"trajectories_{case}.npz"),
+                              param_names=param_names)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
-    param_names = cfg.data.get("param_names", ["sigma", "rho", "beta", "c1"])
 
     def _rmse_entry(m, s):
         d = {"mean": float(np.mean(m))}
