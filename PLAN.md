@@ -9,7 +9,20 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
 - **TweedieSolver**: Original two-stage solver — legacy, maintained
 - **RandomParamDataset**: Per-window randomized `σ,ρ,β` ±20% for robust training — implemented
 - **CS3/CS4**: Evaluation on unseen random parameter draws — implemented
-- **Exp G (τ=0 CFM)**: Ablate multi-τ training to isolate CFM's source of advantage — **to implement**
+- **Exp G (τ=0 CFM)**: Ablate multi-τ training to isolate CFM's source of advantage — implemented (superseded by S9/S10)
+
+## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
+
+- **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
+  - `models/lorenz96_dynamics.py`, `data/lorenz96.py` — two-scale L96 (NO=8, J=4, state_dim=40, weighted fast coupling)
+  - `evaluation/run_l96*.py` + `reports/outputs/l96_baseline_report.md` — Waves 1-4 DA sweeps + ETKF ablation, pooled-EV metric
+  - `models/dynamics.py` `get_dynamics()` supports only `lorenz63`/`lorenz96` (SW/MAOOAM deferred)
+- **Training infrastructure** (built, no runs launched):
+  - `conf/schema.py` → `DataConfig.to_lorenz96_config()`
+  - `train.py` → `data.system` dispatch (`lorenz96`), `param_names`-generalized eval
+  - configs: `config/experiment/L1_direct_unet_s0s1.yaml`, `L2_vanilla_cfm_s0s1.yaml`
+  - test: `tests/test_lorenz96_training.py`
+- **To do (next)**: launch L96 UNet/CFM training (L1/L2) and compare vs DA baselines.
 
 ## Experiments
 

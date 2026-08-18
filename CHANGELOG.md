@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-08-18: Merge L96 case study into master + L96 training infrastructure
+
+**Summary:** Merged the L96 case-study + dynamics-refactoring branch (`feat/weighted-fast-coupling`) into master, deliberately excluding the Shallow-Water and MAOOAM code (deferred to separate branches). Then added the L96 training infrastructure so `train.py` can dispatch to the two-scale Lorenz-96 system for UNet/VanillaCFM training, with configs and smoke tests.
+
+**Files modified:**
+- `models/dynamics.py` — DynamicsBase ABC + `get_dynamics()` factory (lorenz63/lorenz96 only; SW/MAOOAM branches removed since those systems are not yet merged)
+- `models/lorenz63_dynamics.py` — new: L63 dynamics refactored as `DynamicsBase` subclass
+- `models/lorenz96_dynamics.py` — new: two-scale Lorenz-96 dynamics (NO=8, J=4, state_dim=40, weighted fast coupling)
+- `data/lorenz96.py` — new: `Lorenz96Config`, `Lorenz96Dataset`, `RandomParamLorenz96Dataset`, `RandomBiasLorenz96Dataset`, `make_datasets`, `make_l96_s0_s1_datasets`
+- `data/lorenz63.py` — `generate_observations` generalized to full state dim; dynamics pooling in datasets
+- `evaluation/baselines.py`, `evaluation/run.py`, `evaluation/run_l96.py`, `evaluation/run_l96_sweep.py`, `evaluation/run_l96_sweep2.py`, `evaluation/tune_l96_weak4dvar.py` — DA baselines refactored over DynamicsBase + L96 sweeps
+- `evaluation/metrics.py` — pooled-EV explained-variance metric
+- `reports/outputs/l96_baseline_report.md`, `reports/outputs/l96_clim_var.json` — L96 baseline report (Waves 1-4 + ETKF ablation) + climatological variance
+- `reports/generate_l96_trajectory_figures.py`, `reports/compute_explained_var.py` — L96 diagnostics/report scripts
+- `batch/submit_l96_baselines.slurm`, `batch/run_l96_sweep.slurm`, `batch/run_l96_sweep2.slurm`, `batch/run_l96_validate.slurm`, `batch/tune_l96_weak4dvar.slurm`, `batch/run_baselines_s0s1_full.sbatch` — SLURM infrastructure
+- `tests/test_numerical_equivalence.py`, `tests/test_equiv_report.py` — numerical-equivalence tests (dynamics refactoring vs inline)
+- `conf/schema.py` — `DataConfig` gains L96 physics fields (`NO`,`J`,`h`,`hx`,`eps`,`F_true`,`F_da`,`coupling_exponent_*`,`fast_weights`) and `to_lorenz96_config()`
+- `train.py` — system dispatch (`lorenz63`/`lorenz96`); `_make_eval_batch`/`evaluate_model`/`save_trajectories` take `param_names`; `make_l96_dataloaders`
+- `config/experiment/L1_direct_unet_s0s1.yaml`, `L2_vanilla_cfm_s0s1.yaml` — new L96 experiment presets (state_dim=40, param_dim=1, data_setup=s0_s1)
+- `config/case_study/lorenz96.yaml` — `param_names=[F]` (L96 windows store only `F`)
+- `tests/test_lorenz96_training.py` — 5 smoke tests for L96 training path
+- `tests/test_hydra_config.py` — allow `state_names`/`param_names` config keys
+
+**Excluded from this merge (deferred):** `models/shallow_water_dynamics.py`, `data/shallow_water.py`, `evaluation/run_sw.py`, `evaluate_all_sw.py`, `tests/test_shallow_water.py`, SW SLURM scripts, SW Bickley-jet figures, `PLAN_case_study_refactoring` SW content. These remain on the SW/MAOOAM branches.
+
+**Rationale:** Bring the L96 DA baseline work and the dynamics-abstraction refactor (which L96 depends on) onto the main integration branch, while keeping the heavier SW/MAOOAM effort on separate branches as requested. The training infrastructure wires the L96 system into `train.py` so UNet/VanillaCFM can be trained on two-scale L96, but no L96 training runs were launched (infrastructure only).
+
+**Verification:** `pytest tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_hydra_config.py tests/test_baselines_hydra.py tests/test_metrics.py tests/test_interpolant.py tests/test_residual.py tests/test_solver.py tests/test_unet.py -m "not slow"` — 69 passed, no new failures vs master (3 pre-existing master test failures in `test_lorenz63.py`/`test_random_param_dataset.py` remain, unchanged by this merge). L1/L2 configs compose correctly (`system=lorenz96`, `state_dim=40`, `param_dim=1`). 12 affected modules import cleanly. `get_dynamics()` dispatches lorenz63/lorenz96 and rejects the excluded systems.
+
+
 ## [Unreleased]
 
 ### Fixed
