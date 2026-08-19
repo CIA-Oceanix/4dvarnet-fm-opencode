@@ -33,7 +33,7 @@ Key design decisions:
 | Step 11b | `evaluation/run_l96.py` — per-window all-5 params | ✅ | `3a1c8d5` | `_per_window_params` uses `*_da` when present |
 | WP7 | `tests/test_lorenz96_training.py` — expanded | ✅ | `3a1c8d5` | 11 tests pass |
 | — | `L96_NEURAL_TRAINING_PROGRESS.md` | ✅ | `3a1c8d5` | this file |
-| Step 11c | DA baseline consistency re-run | ⬜ pending | — | `batch/run_l96_da_consistency.sbatch` |
+| Step 11c | DA baseline consistency re-run | 🔄 in progress | — | `batch/run_l96_da_consistency.sbatch` submitted (48513) |
 | Step 12 | Neural training L1 + L2 (full) | ⬜ pending | — | `batch/run_l96_neural_training.sbatch` |
 | WP8 | Results comparison + iteration | ⬜ pending | — | `batch/run_l96_evaluate_all.sbatch` |
 

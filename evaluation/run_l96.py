@@ -106,7 +106,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
-                             etkf_config=None, suffix=""):
+                             etkf_config=None, suffix="", exclude_methods=None):
     if da_window_steps is None:
         N = int(3.0 / 0.001)
     else:
@@ -132,6 +132,9 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     enkf_cfg = enkf_config or {}
     etkf_cfg = etkf_config or {}
 
+    exclude = set(exclude_methods or [])
+    active_methods = [m for m in _BASELINE_METHODS if m not in exclude]
+
     dt_l96 = 0.001
     dynamics_pool = {}
     for expo in {c[5] for c in _BASELINE_CASES}:
@@ -139,14 +142,18 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     baseline_pool = {}
     for expo in {c[5] for c in _BASELINE_CASES}:
         dynamics = dynamics_pool[expo]
-        baseline_pool[expo] = {
-            "Weak-4DVar": Weak4DVar(dt=dt_l96, da_window_steps=N, device=device,
-                                     coupling_exponent=expo, dynamics=dynamics, **weak_cfg),
-            "Strong-4DVar": Strong4DVar(dt=dt_l96, da_window_steps=N, device=device,
-                                          coupling_exponent=expo, dynamics=dynamics, **strong_cfg),
-            "EnKF": EnKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **enkf_cfg),
-            "ETKF": ETKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **etkf_cfg),
-        }
+        pool = {}
+        if "Weak-4DVar" not in exclude:
+            pool["Weak-4DVar"] = Weak4DVar(dt=dt_l96, da_window_steps=N, device=device,
+                                             coupling_exponent=expo, dynamics=dynamics, **weak_cfg)
+        if "Strong-4DVar" not in exclude:
+            pool["Strong-4DVar"] = Strong4DVar(dt=dt_l96, da_window_steps=N, device=device,
+                                                 coupling_exponent=expo, dynamics=dynamics, **strong_cfg)
+        if "EnKF" not in exclude:
+            pool["EnKF"] = EnKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **enkf_cfg)
+        if "ETKF" not in exclude:
+            pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **etkf_cfg)
+        baseline_pool[expo] = pool
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
     cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131)
@@ -163,7 +170,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         ds = datasets[ds_key]
         cfg = cfg_map[case_name]
         method_map = baseline_pool[coupling_exponent]
-        for name in _BASELINE_METHODS:
+        for name in active_methods:
             if partial.get(case_name, {}).get(name) is not None:
                 print(f"    {label}/{name:<15} already done, skipping")
                 continue
@@ -196,14 +203,14 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     all_present = all(
         os.path.exists(_baseline_traj_path(case_name, name, dws_suffix, param_suffix))
         for case_name, _, _, _, _, _ in _BASELINE_CASES
-        for name in _BASELINE_METHODS
+        for name in active_methods
     )
 
     if all_present:
         print("  Combining trajectories...")
         traj_arrays = {}
         for case_name, _, _, _, _, _ in _BASELINE_CASES:
-            for name in _BASELINE_METHODS:
+            for name in active_methods:
                 src = _baseline_traj_path(case_name, name, dws_suffix, param_suffix)
                 data = np.load(src)
                 prefix = f"{case_name}_{name.replace('-', '_').replace(' ', '_')}"

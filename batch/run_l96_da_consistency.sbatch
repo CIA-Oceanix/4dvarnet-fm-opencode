@@ -37,7 +37,8 @@ python -u evaluate_all_l96.py \
   --t-max 3.0 \
   --enkf-inflation 2.0 \
   --etkf-inflation 2.0 \
-  --suffix _all5params
+  --suffix _all5params \
+  --skip-weak
 
 echo ""
 echo " Done at: $(date)"

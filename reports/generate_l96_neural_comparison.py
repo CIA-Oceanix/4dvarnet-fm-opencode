@@ -14,7 +14,6 @@ EXP_DIR = os.path.join(BASE, "experiments")
 
 NEURAL_CONFIGS = ["L1_direct_unet_s0s1", "L2_vanilla_cfm_s0s1"]
 DA_BASELINE_FILE = "evaluate_all_l96_dws500_all5params.json"
-DA_METHODS = ["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"]
 
 
 def load_neural(exp_id):
@@ -42,8 +41,12 @@ def load_da():
     bl = data.get("baselines", data)
     for case in ("s0", "s1"):
         out[case] = {}
-        for m in DA_METHODS:
-            entry = bl.get(case, {}).get(m)
+        if case not in bl:
+            continue
+        for m in bl[case]:
+            if m == "config":
+                continue
+            entry = bl[case][m]
             if entry and "mean" in entry:
                 out[case][m] = entry["mean"]
     return out
@@ -60,12 +63,13 @@ def main():
                  "S0 ±20%, S1 ±20% + 10% bias.\n")
 
     if da:
+        da_methods = sorted(da.get("s0", {}).keys())
         lines.append("## DA Baselines (mean RMSE)\n")
-        lines.append("| Case | " + " | ".join(DA_METHODS) + " |")
-        lines.append("|------|" + "------|" * len(DA_METHODS))
+        lines.append("| Case | " + " | ".join(da_methods) + " |")
+        lines.append("|------|" + "------|" * len(da_methods))
         for case in ("s0", "s1"):
             lines.append("| " + case + " | " +
-                         " | ".join(f"{da[case].get(m, float('nan')):.4f}" for m in DA_METHODS) + " |")
+                         " | ".join(f"{da[case].get(m, float('nan')):.4f}" for m in da_methods) + " |")
         lines.append("")
     else:
         lines.append(f"## DA Baselines\n(not found: {DA_BASELINE_FILE})\n")

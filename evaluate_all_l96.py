@@ -15,7 +15,7 @@ EXP_DIR = os.path.join(BASE, "experiments")
 
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
-                  weak_config=None, strong_config=None):
+                  weak_config=None, strong_config=None, exclude_methods=None):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -25,15 +25,16 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        etkf_config=etkf_config,
                                        suffix=suffix,
                                        weak_config=weak_config,
-                                       strong_config=strong_config)
+                                       strong_config=strong_config,
+                                       exclude_methods=exclude_methods)
     return results
 
 
-def build_table(baseline_results):
+def build_table(baseline_results, active_methods):
     rows = []
     for case_name, _, _, _, label, _ in _BASELINE_CASES:
         row = {"Case": label}
-        for method in _BASELINE_METHODS:
+        for method in active_methods:
             bl = baseline_results.get(case_name, {}).get(method, {})
             row[f"{method}"] = bl.get("mean", float("nan"))
         rows.append(row)
@@ -69,6 +70,8 @@ def main():
     parser.add_argument("--r-var", type=float, default=0.5)
     parser.add_argument("--obs-interval", type=int, default=200)
     parser.add_argument("--suffix", type=str, default="")
+    parser.add_argument("--skip-weak", action="store_true", default=False)
+    parser.add_argument("--skip-strong", action="store_true", default=False)
     args = parser.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -93,6 +96,15 @@ def main():
     print(f"  R_var={args.r_var} obs_interval={args.obs_interval} dws={args.da_window_steps}")
     print(f"  enkf_inflation={args.enkf_inflation} etkf_inflation={args.etkf_inflation}")
 
+    exclude = []
+    if args.skip_weak:
+        exclude.append("Weak-4DVar")
+    if args.skip_strong:
+        exclude.append("Strong-4DVar")
+    active_methods = [m for m in _BASELINE_METHODS if m not in exclude]
+    if exclude:
+        print(f"  Skipping: {', '.join(exclude)}")
+
     print("\n── Generating L96 S0/S1 datasets (all-5-param randomization) ──")
     t0 = time.time()
     datasets = make_l96_s0_s1_trainval(
@@ -110,15 +122,17 @@ def main():
                                       etkf_inflation=args.etkf_inflation,
                                       suffix=args.suffix,
                                       weak_config={"opt_steps": 50, "lr": 0.1},
-                                      strong_config={"max_iter": 10, "lr": 0.2})
+                                      strong_config={"max_iter": 10, "lr": 0.2},
+                                      exclude_methods=exclude)
 
     print("\n── L96 S0/S1 Comparison Table ──")
-    headers = ["Case"] + _BASELINE_METHODS
-    rows = build_table(baseline_results)
+    headers = ["Case"] + active_methods
+    rows = build_table(baseline_results, active_methods)
     print_table(rows, headers)
 
     combined = {"baselines": baseline_results}
-    out_path = os.path.join(EXP_DIR, "evaluate_all_l96.json")
+    suffix_tag = f"{args.da_window_steps}{args.suffix}" if args.suffix else str(args.da_window_steps)
+    out_path = os.path.join(EXP_DIR, f"evaluate_all_l96_{suffix_tag}.json")
     with open(out_path, "w") as f:
         json.dump(combined, f, indent=2)
     print(f"\nSaved to {out_path}")
