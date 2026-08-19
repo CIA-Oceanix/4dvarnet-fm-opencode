@@ -6,8 +6,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval
-from evaluation.run_l96 import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES
+from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval, _generate_observations
+from evaluation.run_l96 import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES, make_obs_j_indices
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")
@@ -15,7 +15,8 @@ EXP_DIR = os.path.join(BASE, "experiments")
 
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
-                  weak_config=None, strong_config=None, exclude_methods=None):
+                  weak_config=None, strong_config=None, exclude_methods=None,
+                  obs_j=2, obs_interval=200):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -26,7 +27,9 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        suffix=suffix,
                                        weak_config=weak_config,
                                        strong_config=strong_config,
-                                       exclude_methods=exclude_methods)
+                                       exclude_methods=exclude_methods,
+                                       obs_j=obs_j,
+                                       obs_interval=obs_interval)
     return results
 
 
@@ -37,6 +40,9 @@ def build_table(baseline_results, active_methods):
         for method in active_methods:
             bl = baseline_results.get(case_name, {}).get(method, {})
             row[f"{method}"] = bl.get("mean", float("nan"))
+            groups = bl.get("groups", {})
+            row[f"{method}_slow"] = groups.get("slow", float("nan"))
+            row[f"{method}_obs_fast"] = groups.get("obs_fast", float("nan"))
         rows.append(row)
     return rows
 
@@ -72,6 +78,13 @@ def main():
     parser.add_argument("--suffix", type=str, default="")
     parser.add_argument("--skip-weak", action="store_true", default=False)
     parser.add_argument("--skip-strong", action="store_true", default=False)
+    parser.add_argument("--randomize-params", type=str, default=None,
+                        help="Comma-separated list of params to randomize (e.g. 'F' or 'F,c1,h,hx,eps'). "
+                             "Default: all 5 params randomized.")
+    parser.add_argument("--obs-j", type=int, default=2,
+                        help="Number of fast vars observed per slow node (default: 2)")
+    parser.add_argument("--regenerate-data", action="store_true", default=False,
+                        help="Force dataset regeneration, ignoring cached .pt file")
     args = parser.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -91,10 +104,17 @@ def main():
         sigma_0=0.08, sigma_L=0.20,
         tau_eta=5.0, sigma_eta=np.sqrt(0.5),
         param_bias=0.0, forcing_state_bias=0.0,
+        fast_weights=[1.0, 1.0, 0.1, 0.1],
+        obs_var_indices=make_obs_j_indices(8, 4, args.obs_j),
     )
+    obs_var_indices = base_cfg.obs_var_indices
+    obs_dim = len(obs_var_indices) if obs_var_indices is not None else 40
     print(f"Config: NO={base_cfg.NO} J={base_cfg.J} F_true={base_cfg.F_true}")
+    print(f"  obs_j={args.obs_j} obs_dim={obs_dim}")
     print(f"  R_var={args.r_var} obs_interval={args.obs_interval} dws={args.da_window_steps}")
     print(f"  enkf_inflation={args.enkf_inflation} etkf_inflation={args.etkf_inflation}")
+    if obs_var_indices is not None:
+        print(f"  obs_var_indices={list(obs_var_indices)}")
 
     exclude = []
     if args.skip_weak:
@@ -105,16 +125,40 @@ def main():
     if exclude:
         print(f"  Skipping: {', '.join(exclude)}")
 
-    print("\n── Generating L96 S0/S1 datasets (all-5-param randomization) ──")
+    randomize_params = None
+    if args.randomize_params:
+        randomize_params = [p.strip() for p in args.randomize_params.split(",")]
+        print(f"  Randomizing only: {randomize_params}")
+    else:
+        print(f"  Randomizing all params: F, c1, h, hx, eps")
+
+    print("\n── Generating L96 S0/S1 datasets ──")
+    ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}.pt")
+    ref_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_nwin{args.num_test_windows}.pt")
     t0 = time.time()
-    datasets = make_l96_s0_s1_trainval(
-        base_cfg, num_train_windows=2, num_val_windows=2,
-        num_test_windows=args.num_test_windows,
-        param_noise=0.2, bias_range=(0.0, 0.2),
-    )
+    if os.path.exists(ds_cache) and not args.regenerate_data:
+        print(f"  Loading cached datasets ({ds_cache})...")
+        datasets = torch.load(ds_cache, weights_only=False)
+    elif os.path.exists(ref_cache) and not args.regenerate_data:
+        print(f"  Reusing trajectories from {ref_cache} and re-observing at obs_interval={args.obs_interval}...")
+        datasets = torch.load(ref_cache, weights_only=False)
+        for key in ("test_s0", "test_s1"):
+            for w in datasets[key]:
+                w["obs"], w["obs_mask"] = _generate_observations(
+                    w["true_state"], args.obs_interval, args.r_var, w["obs_seed"],
+                    obs_var_indices=obs_var_indices)
+        torch.save(datasets, ds_cache)
+    else:
+        datasets = make_l96_s0_s1_trainval(
+            base_cfg, num_train_windows=2, num_val_windows=2,
+            num_test_windows=args.num_test_windows,
+            param_noise=0.2, bias_range=(0.0, 0.2),
+            randomize_params=randomize_params,
+        )
+        torch.save(datasets, ds_cache)
     print(f"  test_s0: {len(datasets['test_s0'])} windows")
     print(f"  test_s1: {len(datasets['test_s1'])} windows")
-    print(f"  Dataset generation: {time.time() - t0:.1f}s")
+    print(f"  Dataset prep: {time.time() - t0:.1f}s")
 
     baseline_results = run_baselines(datasets, device,
                                       da_window_steps=args.da_window_steps,
@@ -123,10 +167,14 @@ def main():
                                       suffix=args.suffix,
                                       weak_config={"opt_steps": 50, "lr": 0.1},
                                       strong_config={"max_iter": 10, "lr": 0.2},
-                                      exclude_methods=exclude)
+                                      exclude_methods=exclude,
+                                      obs_j=args.obs_j,
+                                      obs_interval=args.obs_interval)
 
     print("\n── L96 S0/S1 Comparison Table ──")
-    headers = ["Case"] + active_methods
+    headers = ["Case"]
+    for m in active_methods:
+        headers.extend([m, f"{m}_slow", f"{m}_obs_fast"])
     rows = build_table(baseline_results, active_methods)
     print_table(rows, headers)
 

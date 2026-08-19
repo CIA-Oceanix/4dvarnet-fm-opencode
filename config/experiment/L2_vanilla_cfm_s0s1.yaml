@@ -5,6 +5,7 @@ defaults:
 
 model:
   model_type: vanilla_cfm
+  state_dim: 24
   param_dim: 0
   vanilla_cfm:
     hidden_channels: [64, 128, 256]

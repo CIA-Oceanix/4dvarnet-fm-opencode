@@ -221,25 +221,31 @@ def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):
     return W_L_true + cfg.forcing_state_bias * true_fluid[:, 0] + torch.tensor(eta, dtype=true_fluid.dtype, device=device)
 
 
-def _draw_l96_params(rng, cfg, param_noise: float = 0.2, bias: float = None) -> Dict:
+def _draw_l96_params(rng, cfg, param_noise: float = 0.2, bias: float = None,
+                      randomize_params: list = None) -> Dict:
     refs = _l96_param_refs(cfg)
     params = {}
     for k, ref in refs.items():
-        val = ref * rng.uniform(1.0 - param_noise, 1.0 + param_noise)
-        if bias is not None:
-            val *= rng.uniform(1.0 - bias, 1.0 + bias)
-        params[k] = val
+        if randomize_params is not None and k not in randomize_params:
+            params[k] = ref
+        else:
+            val = ref * rng.uniform(1.0 - param_noise, 1.0 + param_noise)
+            if bias is not None:
+                val *= rng.uniform(1.0 - bias, 1.0 + bias)
+            params[k] = val
     return params
 
 
 class RandomParamLorenz96Dataset:
     def __init__(self, cfg: Lorenz96Config, param_noise: float = 0.2,
                  dynamics=None, cached_windows: list = None,
-                 max_window_retries: int = 10):
+                 max_window_retries: int = 10,
+                 randomize_params: list = None):
         self.cfg = cfg
         self.param_noise = param_noise
         self.device = torch.device("cpu")
         self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
+        self.randomize_params = randomize_params
 
         if cached_windows is not None:
             self.windows = cached_windows
@@ -252,7 +258,8 @@ class RandomParamLorenz96Dataset:
                 traj_seed = base_seed + attempt
                 obs_seed = cfg.seed + i * 100 + 1 + attempt
                 rng_np = np.random.RandomState(traj_seed)
-                params = _draw_l96_params(rng_np, cfg, param_noise=param_noise)
+                params = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
+                                          randomize_params=self.randomize_params)
                 F = params["F"]
                 try:
                     true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
@@ -301,13 +308,15 @@ class RandomBiasLorenz96Dataset:
     def __init__(self, cfg: Lorenz96Config, param_noise: float = 0.2,
                  dynamics=None, cached_windows: list = None,
                  max_window_retries: int = 10,
-                 bias_mode: str = "fixed", bias_range=(0.0, 0.15)):
+                 bias_mode: str = "fixed", bias_range=(0.0, 0.15),
+                 randomize_params: list = None):
         self.cfg = cfg
         self.param_noise = param_noise
         self.device = torch.device("cpu")
         self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
         self.bias_mode = bias_mode
         self.bias_range = bias_range
+        self.randomize_params = randomize_params
 
         if cached_windows is not None:
             self.windows = cached_windows
@@ -324,8 +333,14 @@ class RandomBiasLorenz96Dataset:
                     b = rng_np.uniform(self.bias_range[0], self.bias_range[1])
                 else:
                     b = cfg.param_bias
-                params_true = _draw_l96_params(rng_np, cfg, param_noise=param_noise)
-                params_da = {k: v * (1.0 + b) for k, v in params_true.items()}
+                params_true = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
+                                               randomize_params=self.randomize_params)
+                params_da = {}
+                for k, v in params_true.items():
+                    if self.randomize_params is not None and k not in self.randomize_params:
+                        params_da[k] = v
+                    else:
+                        params_da[k] = v * (1.0 + b)
                 F = params_true["F"]
                 try:
                     true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
@@ -371,25 +386,29 @@ class RandomBiasLorenz96Dataset:
 
 
 def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
-                            num_test_windows: int = 200) -> Dict:
+                             num_test_windows: int = 200,
+                             randomize_params: list = None) -> Dict:
     dynamics = _make_lorenz96_dynamics(cfg)
     test_s0_cfg = Lorenz96Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.0,
         "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
     test_s1_cfg = Lorenz96Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.15,
         "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
     return {
-        "test_s0": RandomParamLorenz96Dataset(test_s0_cfg, param_noise=0.2, dynamics=dynamics),
-        "test_s1": RandomBiasLorenz96Dataset(test_s1_cfg, param_noise=0.2, dynamics=dynamics),
+        "test_s0": RandomParamLorenz96Dataset(test_s0_cfg, param_noise=0.2, dynamics=dynamics,
+                                               randomize_params=randomize_params),
+        "test_s1": RandomBiasLorenz96Dataset(test_s1_cfg, param_noise=0.2, dynamics=dynamics,
+                                              randomize_params=randomize_params),
     }
 
 
 def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
-                            num_train_windows: int = 1000,
-                            num_val_windows: int = 100,
-                            num_test_windows: int = 200,
-                            param_noise: float = 0.2,
-                            bias_range=(0.0, 0.2),
-                            cached_datasets: dict = None) -> Dict:
+                             num_train_windows: int = 1000,
+                             num_val_windows: int = 100,
+                             num_test_windows: int = 200,
+                             param_noise: float = 0.2,
+                             bias_range=(0.0, 0.2),
+                             cached_datasets: dict = None,
+                             randomize_params: list = None) -> Dict:
     dynamics = _make_lorenz96_dynamics(cfg)
 
     def _build(key, cls, cfg_kwargs, **cls_kwargs):
@@ -401,19 +420,23 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
     train = _build("train", RandomBiasLorenz96Dataset,
                    {"seed": 42, "num_windows": num_train_windows, "case": 1,
                     "param_bias": 0.0, "forcing_state_bias": 0.1},
-                   param_noise=param_noise, bias_mode="random", bias_range=bias_range)
+                   param_noise=param_noise, bias_mode="random", bias_range=bias_range,
+                   randomize_params=randomize_params)
     val = _build("val", RandomBiasLorenz96Dataset,
                  {"seed": 99, "num_windows": num_val_windows, "case": 1,
                   "param_bias": 0.0, "forcing_state_bias": 0.1},
-                 param_noise=param_noise, bias_mode="random", bias_range=bias_range)
+                 param_noise=param_noise, bias_mode="random", bias_range=bias_range,
+                 randomize_params=randomize_params)
     test_s0 = _build("test_s0", RandomParamLorenz96Dataset,
                      {"seed": 123, "num_windows": num_test_windows, "case": 1,
                       "param_bias": 0.0, "forcing_state_bias": 0.0},
-                     param_noise=param_noise)
+                     param_noise=param_noise,
+                     randomize_params=randomize_params)
     test_s1 = _build("test_s1", RandomBiasLorenz96Dataset,
                      {"seed": 131, "num_windows": num_test_windows, "case": 1,
                       "param_bias": 0.1, "forcing_state_bias": 0.1},
-                     param_noise=param_noise, bias_mode="fixed")
+                     param_noise=param_noise, bias_mode="fixed",
+                     randomize_params=randomize_params)
     return {
         "train": train,
         "val": val,

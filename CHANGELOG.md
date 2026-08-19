@@ -1,5 +1,88 @@
 # Changelog
 
+## 2026-08-19: Parametrizable obs_interval for L96 S0/S1 (S0-Obs100/S1-Obs100)
+
+**Summary:** Made the L96 S0/S1 DA-baseline observation density configurable by threading `obs_interval` through the dataset and baseline caches. Added `obs_interval` to `run_and_cache_baselines` (baseline cache key `..._obsj2_int{obs_interval}.json`, `config.obs_interval`), to the dataset cache key (`l96_datasets_obsj{obs_j}_int{obs_interval}_nwin{nwin}.pt`), and added a **trajectory-reuse** path in `evaluate_all_l96.py`: when the requested `obs_interval` differs and a same-seed dataset cache exists, it loads those trajectories and re-observes only `obs`/`obs_mask` via `_generate_observations` (reusing the per-window `obs_seed`), instead of regenerating dynamics (~73 min → ~2 s). The sbatch runner takes `OBS_INTERVAL` (default 200), so `OBS_INTERVAL=100` produces the 2×-denser **S0-Obs100/S1-Obs100** benchmark on the identical groundtruth.
+
+**Files modified:**
+- `evaluation/run_l96.py` — `run_and_cache_baselines` gains `obs_interval=200`; `_int{obs_interval}` appended to baseline cache key; `config.obs_interval` stored; console print includes it
+- `evaluate_all_l96.py` — dataset cache key includes `_int{obs_interval}`; trajectory-reuse path (load same-seed cache → regenerate obs/obs_mask → save `_int{n}` cache); `run_baselines`/`run_and_cache_baselines` pass `obs_interval`
+- `batch/run_l96_da_consistency.sbatch` — `OBS_INTERVAL` env (default 200), passed as `--obs-interval`; header prints it
+
+**Rationale:** The user wants to isolate the effect of observation temporal density on S0/S1 DA skill (S0-Obs100/S1-Obs100 vs S0/S1-Obs200). Trajectories are independent of `obs_interval` (determined by seed), so reusing the cached groundtruth and only re-observing is correct and ~2000× faster than regeneration.
+
+**Verification:** `pytest tests/test_lorenz96_training.py -m "not slow"` — 25 passed. Ruff: only pre-existing E401 (run_l96.py:1, evaluate_all_l96.py:3) and F541 (evaluate_all_l96.py:133) remain, none introduced by this change. Smoke: trajectory-reuse yields 30 obs/window (vs 15 at obs_interval=200) with identical true_state and preserved (3000,24) obs shape; sbatch job 48688 (OBS_INTERVAL=100) reused cached trajectories in 1.6 s then ran EnKF/ETKF/Strong-4DVar on GPU.
+
+## 2026-08-19: Add EV scores to L96 S0/S1 DA baseline cache
+
+**Summary:** `evaluate_baseline` (`evaluation/run_l96.py`) already computed pooled explained variance (EV) but `run_and_cache_baselines` discarded it (assigned to `_` on line 239), so EV never reached the baseline JSON cache. Captured `expvar_stats`, added `fmt_ev`/`_per_group_ev` helpers, and stored per-dimension + grouped EV (`slow`/`obs_fast`/`all_obs`) as an `ev` entry alongside each method's RMSE. Also added a one-off CPU script `backfill_l96_baselines_ev.py` that recomputes EV from the cached trajectory `.npz` + dataset and back-fills the existing cache for already-completed runs.
+
+**Files modified:**
+- `evaluation/run_l96.py` — capture `(ev_arr, _)` from `evaluate_baseline`; new `_per_group_ev`, `fmt_ev`; store `partial[case][name]["ev"] = fmt_ev(...)`; console print includes EV
+- `backfill_l96_baselines_ev.py` — new: back-compute pooled EV offline from trajectory `.npz` + cached dataset, write `ev` into the existing JSON cache
+- `tests/test_lorenz96_training.py` — 3 new tests: `test_per_group_ev`, `test_fmt_ev_structure`, `test_evaluate_baseline_returns_ev` (25 total)
+
+**Rationale:** EV is the shared metric (pooled across windows, as used elsewhere in the repo) that makes S0/S1 DA baselines directly comparable with the neural models. Without this fix, EV was silently dropped from cached results.
+
+**Verification:** `pytest tests/test_lorenz96_training.py -m "not slow"` — 25 passed. `ruff check backfill_l96_baselines_ev.py tests/test_lorenz96_training.py` — clean (only pre-existing E401 on `run_l96.py:1` remains). Backfill idempotent — rerun yields identical EV. Backfilled values: S0 EnKF all_obs EV +0.544, ETKF +0.538, Strong-4DVar +0.586; S1 EnKF +0.022, ETKF +0.036, Strong-4DVar +0.205.
+
+## 2026-08-19: Cache L96 S0/S1 dataset in evaluate_all_l96
+
+**Summary:** `evaluate_all_l96.py` regenerated the 200-window S0/S1 test dataset from scratch every invocation (~17 min), even though the DA baselines themselves were cached by `run_and_cache_baselines`. Added dataset caching: the generated dataset dict (`test_s0`/`test_s1`) is now saved to `experiments/l96_datasets_obsj{obs_j}_nwin{num_test_windows}.pt` and reloaded on subsequent runs. Added `--regenerate-data` flag to force re-generation.
+
+**Files modified:**
+- `evaluate_all_l96.py` — cache `make_l96_s0_s1_trainval` output (load if exists unless `--regenerate-data`); `torch.load(..., weights_only=False)` for custom dataset objects
+
+**Rationale:** Dataset generation (~17 min) is the single biggest non-DA cost and was repeated on every baseline run and every resubmission. Caching makes repeated runs nearly instant and matches the existing `run_experiments.py:datasets.pt` pattern.
+
+**Verification:** `torch.save`/`torch.load` round-trip verified for the S0/S1 dataset dict (2-window smoke). Syntax OK via `ast.parse`. Job 48674 resubmitted via sbatch (GPU) to generate + cache the full 200-window dataset and run EnKF/ETKF.
+
+## 2026-08-19: Fix S0 RMSE/EV to evaluate only 24D observed subspace
+
+**Summary:** Fixed a bug in `evaluate_baseline` (`evaluation/run_l96.py`) where, for S0 with partial observations (obs_j=2), the RMSE and explained variance were computed over the full 40D state instead of the 24D observed subspace. The DA methods (EnKF/ETKF/4DVar) run in the full 40D state space with a rectangular `ObsOperator`, so their analysis trajectories are 40D — matching the 40D `true_state` shape. The old subsampling guard `analysis.shape[-1] != truth.shape[-1]` was never triggered (40 == 40), so no `obs_var_indices` subsampling occurred, inflating both RMSE and EV with the 16 unobserved fast variables (Y3,Y4). Now, whenever `obs_var_indices` is provided, both the analysis and the reference truth are subsampled to the observed indices before computing per-dim RMSE/EV (and `result.rmse` is always overridden).
+
+**Files modified:**
+- `evaluation/run_l96.py` — `evaluate_baseline` batch + sequential paths: when `obs_var_indices` is not None, subsample both `analysis` and `ref` to `obs_var_indices` (if analysis dim > obs count); always override `result.rmse`; keep full-analysis `result.trajectory` for trajectory plots
+- `batch/run_l96_da_consistency.sbatch` — add `--obs-j 2` (dropped redundant `--suffix _obsj2`, since `obs_j<4` auto-appends the `_obsj2` cache tag); comment updated
+
+**Rationale:** Without the fix, S0 baseline numbers included 16 unobserved fast variables that have no observational constraint, making both DA RMSE (overstated) and EV (understated) not comparable with the neural models, which operate in 24D. S1 was already correct (analysis is 24D via J=2 dynamics).
+
+**Verification:** 3-window CPU smoke test — S0 now reports 24 per-dim entries; S0 EnKF all_obs RMSE dropped 1.452→1.264 and ETKF 1.398→1.297 (previous values included 16 unobserved dims). Corrected 3-window EV: S0 EnKF +0.512 (slow +0.895 / obs_fast +0.320), ETKF +0.487; S1 EnKF +0.101, ETKF +0.112. `pytest tests/test_lorenz96_training.py -m "not slow"` 22/22 pass. Full 200-window DA consistency re-run submitted (job 48673).
+
+
+## 2026-08-19: Partial observation L96 default (obs_j=2, 24D neural space)
+
+**Summary:** Switched the L96 S0/S1 benchmark from full-state 40D to partial observations: obs_j=2 → 24D observed subspace (8 slow X + 16 fast Y1,Y2 per node). Truth remains 40D (J=4) with `fast_weights=[1,1,0.1,0.1]`. Neural models now operate in 24D space (`state_dim=24`, no padding). DA baselines use `ObsOperator`: S0 with rectangular H (40D→24D), S1 with J=2 dynamics (24D) and identity H. Added per-group RMSE scoring (slow/obs_fast/all_obs) throughout training evaluation and DA evaluation.
+
+**Files modified:**
+- `conf/schema.py` — `obs_j: int = 2` field + `_compute_obs_var_indices()` in `to_lorenz96_config()`
+- `config/lorenz96_default.yaml` — `obs_j: 2`, `fast_weights: [1,1,0.1,0.1]`, `state_dim: 24`
+- `config/experiment/L1_direct_unet_s0s1.yaml` — `state_dim: 24`
+- `config/experiment/L2_vanilla_cfm_s0s1.yaml` — `state_dim: 24`
+- `data/dataloader.py` — `obs_var_indices` param on `FlowMatchingDataset`, `ConcatFMDataset`, `make_dataloaders`; subsamples `true_state[:, obs_var_indices]` → 24D target
+- `train.py` — computes `obs_var_indices` from `obs_j`; passes to config/dataset/evaluate_model/save_trajectories; `_per_group_rmse()` helper; per-group in results JSON
+- `evaluation/run_l96.py` — `make_obs_j_indices()` utility; `run_and_cache_baselines()` creates per-case `ObsOperator` (S0: rectangular, S1: identity) and S1 dynamics with `J=obs_j`; per-group in `fmt_rmse` and console output
+- `evaluate_all_l96.py` — `--obs-j` CLI arg (default=2); `obs_var_indices` in `Lorenz96Config`; per-group columns in comparison table
+- `tests/test_lorenz96_training.py` — 11 new tests (22 total): `make_obs_j_indices`, `DataConfig` obs_var_indices, dataset subsampling, `FlowMatchingDataset` subsampling, DirectUNet/VanillaCFM state_dim=24, `_per_group_rmse`, `ObsOperator` partial/identity
+
+**Rationale:** Observe only Y1,Y2 per node (24D) while Y3,Y4 remain hidden with reduced fast_weights, making the observed subspace smaller than the full dynamics. Neural models predict only the 24D observed state (no padding to 40D), matching what DA baselines reconstruct via rectangular observation operators. S1 DA uses reduced J=2 dynamics (24D, identity H) since unobserved fast vars have negligible weight.
+
+**Verification:** 22/22 tests pass (`pytest tests/test_lorenz96_training.py -m "not slow"`). Config composition verified: `DataConfig(NO=8,J=4,obs_j=2).to_lorenz96_config()` produces `obs_var_indices` with 24 entries matching `make_obs_j_indices(8,4,2)`.
+
+## 2026-08-19: F-only randomization ablation + evaluate_baseline unpacking fix
+
+**Summary:** Added `--randomize-params` CLI flag to `evaluate_all_l96.py` (comma-separated list, e.g. `F` or `F,c1,h,hx,eps`) so DA baselines can be tested with a subset of randomized parameters. Propagated `randomize_params` through `_draw_l96_params`, `RandomParamLorenz96Dataset`, `RandomBiasLorenz96Dataset`, `make_l96_s0_s1_datasets`, and `make_l96_s0_s1_trainval`. In `RandomBiasLorenz96Dataset`, bias is now only applied to randomized params (non-randomized params stay at reference for both true and DA). Also fixed `evaluate_baseline` return-value unpacking bug in `run_l96.py:181` and `run.py:168` where `(m, s), bl_results` misinterpreted the 3-tuple `((mean, std), (ev_mean, ev_std), results_list)` as `((mean, std), results_list)`.
+
+**Files modified:**
+- `data/lorenz96.py` — `randomize_params` kwarg on `_draw_l96_params`, both dataset classes, and both factory functions
+- `evaluate_all_l96.py` — `--randomize-params` CLI arg, wired to dataset generation
+- `evaluation/run_l96.py` — fixed unpacking `((m, s), _), bl_results = evaluate_baseline(...)` 
+- `evaluation/run.py` — same unpacking fix
+
+**Rationale:** Isolate the effect of F-only randomization vs all-5-param randomization on DA baseline RMSE, and fix a pre-existing unpacking bug that prevented DA consistency runs from completing.
+
+**Verification:** Quick 5-window CPU test: F-only gives EnKF≈1.11, ETKF≈1.11 (vs all-5 EnKF≈1.23, ETKF≈1.23 on same windows). Full 200-window GPU run in progress (job 48542).
+
 ## 2026-08-19: L96 all-5-param randomization + neural training infrastructure
 
 **Summary:** On new branch `feat/l96-neural-training` (from master @ `0687e07`), extended the two-scale Lorenz-96 system so all 5 model parameters (F, c₁, h, hx, ε) are randomized per window (±20% of reference), enabled neural models (DirectUNet, VanillaCFM-τ=0) with `param_dim=0` (observation + corrupted-forcing input only), wired `train.py` to the new S0/S1 train/val/test factory, passed per-window all-5 params to the DA baselines, and created the sbatch pipeline (one-epoch smoke, DA consistency, neural training, evaluate-all). S0 = each param U(0.8·ref, 1.2·ref); S1 = same ±20% plus a per-param bias of ±10% (the DA forward model uses the biased `*_da` params, matching the neural test config).

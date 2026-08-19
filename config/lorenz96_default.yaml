@@ -30,9 +30,11 @@ data:
   forcing_coupling: linear
   param_bias: 0.0
   case: 1
+  obs_j: 2
+  fast_weights: [1.0, 1.0, 0.1, 0.1]
 
 model:
-  state_dim: 40
+  state_dim: 24
   param_dim: 0
   hidden_channels: [64, 128, 256]
   time_emb_dim: 64

@@ -5,6 +5,7 @@ defaults:
 
 model:
   model_type: direct_unet
+  state_dim: 24
   param_dim: 0
   direct_unet:
     hidden_channels: [64, 128, 256]

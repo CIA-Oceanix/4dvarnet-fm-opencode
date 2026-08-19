@@ -4,6 +4,7 @@ import sys
 
 import pytest
 import torch
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -15,11 +16,13 @@ from data.lorenz96 import (
     make_l96_s0_s1_trainval,
     _make_lorenz96_dynamics,
 )
-from data.dataloader import FlowMatchingBatch
+from data.dataloader import FlowMatchingBatch, FlowMatchingDataset
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
+from evaluation.baselines import ObsOperator
 
-from train import _make_eval_batch
+from train import _make_eval_batch, _per_group_rmse
+from evaluation.run_l96 import make_obs_j_indices, fmt_ev, _per_group_ev, evaluate_baseline
 
 
 @pytest.fixture
@@ -175,3 +178,176 @@ def test_l96_vanilla_cfm_param_dim0(tiny_l96_dataset):
     with torch.no_grad():
         out = model.sample(batch)
     assert out.shape == (1, w["true_state"].shape[0], 40)
+
+
+def test_make_obs_j_indices():
+    idx = make_obs_j_indices(NO=8, J_truth=4, J_obs=2)
+    assert idx is not None
+    assert len(idx) == 24
+    assert list(idx[:8]) == list(range(8))
+    for k in range(8):
+        assert 8 + k * 4 in idx
+        assert 8 + k * 4 + 1 in idx
+        assert 8 + k * 4 + 2 not in idx
+        assert 8 + k * 4 + 3 not in idx
+
+
+def test_make_obs_j_indices_full():
+    idx = make_obs_j_indices(NO=8, J_truth=4, J_obs=4)
+    assert idx is None
+
+
+def test_dataconfig_obs_var_indices():
+    dc = DataConfig(system="lorenz96", NO=8, J=4, obs_j=2)
+    cfg = dc.to_lorenz96_config()
+    assert cfg.obs_var_indices is not None
+    assert len(cfg.obs_var_indices) == 24
+
+
+def test_dataconfig_obs_var_indices_full():
+    dc = DataConfig(system="lorenz96", NO=8, J=4, obs_j=4)
+    cfg = dc.to_lorenz96_config()
+    assert cfg.obs_var_indices is None
+
+
+def test_dataset_obs_var_indices_subsample(tiny_l96_cfg):
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(**{**tiny_l96_cfg.__dict__, "obs_var_indices": obs_var_indices})
+    dyn = _make_lorenz96_dynamics(cfg)
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0, dynamics=dyn)
+    w = ds[0]
+    assert w["true_state"].shape[-1] == 40
+    assert w["obs"].shape[-1] == 24
+
+
+def test_flowmatching_dataset_obs_subsample(tiny_l96_cfg):
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(**{**tiny_l96_cfg.__dict__, "obs_var_indices": obs_var_indices})
+    dyn = _make_lorenz96_dynamics(cfg)
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0, dynamics=dyn)
+    fm_ds = FlowMatchingDataset(ds, obs_interval=cfg.obs_interval,
+                                R_var=cfg.R_var, obs_var_indices=obs_var_indices)
+    true_state, obs, obs_mask, forcing = fm_ds[0]
+    assert true_state.shape[-1] == 24
+    assert obs.shape[-1] == 24
+
+
+def test_direct_unet_state_dim24(tiny_l96_cfg):
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(**{**tiny_l96_cfg.__dict__, "obs_var_indices": obs_var_indices})
+    dyn = _make_lorenz96_dynamics(cfg)
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0, dynamics=dyn)
+    fm_ds = FlowMatchingDataset(ds, obs_interval=cfg.obs_interval,
+                                R_var=cfg.R_var, obs_var_indices=obs_var_indices)
+    model = DirectUNet(state_dim=24, param_dim=0, hidden_channels=[8, 16])
+    model.eval()
+    true_state, obs, obs_mask, forcing = fm_ds[0]
+    batch = FlowMatchingBatch(true_state.unsqueeze(0), obs.unsqueeze(0),
+                              obs_mask.unsqueeze(0), forcing.unsqueeze(0))
+    with torch.no_grad():
+        out = model(batch)
+    assert out.shape == (1, 100, 24)
+
+
+def test_vanilla_cfm_state_dim24(tiny_l96_cfg):
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(**{**tiny_l96_cfg.__dict__, "obs_var_indices": obs_var_indices})
+    dyn = _make_lorenz96_dynamics(cfg)
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0, dynamics=dyn)
+    fm_ds = FlowMatchingDataset(ds, obs_interval=cfg.obs_interval,
+                                R_var=cfg.R_var, obs_var_indices=obs_var_indices)
+    model = VanillaCFM(state_dim=24, param_dim=0, hidden_channels=[8, 16],
+                       train_tau_0_only=True)
+    model.eval()
+    true_state, obs, obs_mask, forcing = fm_ds[0]
+    batch = FlowMatchingBatch(true_state.unsqueeze(0), obs.unsqueeze(0),
+                              obs_mask.unsqueeze(0), forcing.unsqueeze(0))
+    with torch.no_grad():
+        out = model.sample(batch)
+    assert out.shape == (1, 100, 24)
+
+
+def test_per_group_rmse():
+    mean_rmse = np.arange(24, dtype=np.float64)
+    groups = _per_group_rmse(mean_rmse, obs_var_indices=None, NO=8, J=4, obs_j=2)
+    assert "slow" in groups
+    assert "obs_fast" in groups
+    assert "all_obs" in groups
+    assert abs(groups["slow"] - np.mean(np.arange(8))) < 1e-6
+    assert abs(groups["obs_fast"] - np.mean(np.arange(8, 24))) < 1e-6
+    assert abs(groups["all_obs"] - np.mean(np.arange(24))) < 1e-6
+
+
+def test_per_group_ev():
+    ev = np.linspace(0.0, 1.0, 24, dtype=np.float64)
+    groups = _per_group_ev(ev, NO=8, obs_j=2)
+    assert "slow" in groups and "obs_fast" in groups and "all_obs" in groups
+    assert abs(groups["slow"] - np.mean(ev[:8])) < 1e-6
+    assert abs(groups["obs_fast"] - np.mean(ev[8:])) < 1e-6
+    assert abs(groups["all_obs"] - np.mean(ev)) < 1e-6
+
+
+def test_fmt_ev_structure():
+    ev = np.linspace(0.5, 0.9, 24, dtype=np.float64)
+    d = fmt_ev(ev, NO=8, obs_j=2)
+    assert "X1" in d and "X24" in d
+    assert abs(d["X1"] - ev[0]) < 1e-6
+    assert "groups" in d and "all_obs" in d["groups"]
+    assert abs(d["groups"]["all_obs"] - np.mean(ev)) < 1e-6
+
+
+def test_evaluate_baseline_returns_ev():
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(param_bias=0.0, obs_var_indices=obs_var_indices, T_max=1.0, dt=0.01)
+
+    class DummyAnalysis:
+        def __init__(self, trajectory):
+            self.trajectory = trajectory
+
+    class DummyMethod:
+        def __init__(self, T, obs_dim):
+            self.T = T
+            self.obs_dim = obs_dim
+
+        def assimilate(self, obs, mask, force, truth, **kw):
+            return DummyAnalysis(torch.zeros(self.T, self.obs_dim).numpy())
+
+    T = 100
+    method = DummyMethod(T, obs_dim=24)
+    pre = {}
+    for i in range(3):
+        pre[i] = {
+            "obs": torch.randn(T, 24),
+            "obs_mask": torch.ones(T),
+            "true_state": torch.randn(T, 40),
+            "forcing_corrupted": torch.randn(T),
+            "forcing_true": torch.randn(T),
+            "F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+        }
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0,
+                                    cached_windows=pre, randomize_params=None)
+
+    rmse_stats, ev_stats = evaluate_baseline(method, ds, cfg, "cpu", batch_size=1)
+    rmse_mean, _ = rmse_stats
+    ev_mean, ev_std = ev_stats
+    assert rmse_mean.shape == (24,)
+    assert ev_mean.shape == (24,)
+    assert np.all(ev_std == 0.0)
+    assert np.all(np.isfinite(ev_mean))
+
+
+def test_obs_operator_partial():
+    obs_var_indices = make_obs_j_indices(8, 4, 2)
+    op = ObsOperator(40, obs_var_indices)
+    assert op.obs_dim == 24
+    x = torch.randn(40)
+    y = op(x)
+    assert y.shape == (24,)
+
+
+def test_obs_operator_identity():
+    op = ObsOperator(24, None)
+    assert op.obs_dim == 24
+    x = torch.randn(24)
+    y = op(x)
+    assert y.shape == (24,)

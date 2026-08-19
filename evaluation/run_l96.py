@@ -3,7 +3,7 @@ import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz96 import Lorenz96Config
-from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
+from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF, ObsOperator
 from models.lorenz96_dynamics import Lorenz96Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +18,17 @@ _BASELINE_CASES = [
 ]
 
 
+def make_obs_j_indices(NO, J_truth, J_obs):
+    if J_obs is None or J_obs >= J_truth:
+        return None
+    X_idx = list(range(NO))
+    Y_idx = []
+    for k in range(NO):
+        for j in range(J_obs):
+            Y_idx.append(NO + k * J_truth + j)
+    return tuple(X_idx + Y_idx)
+
+
 def _per_window_params(w, cfg):
     params = {}
     for k in _L96_PARAMS:
@@ -30,9 +41,33 @@ def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
     return os.path.join(EXP_DIR, f"l96_baselines_trajs{dws_suffix}{param_suffix}_{key}.npz")
 
 
-def fmt_rmse(mean_arr, std_arr):
-    return {f"X{i+1}": {"mean": float(mean_arr[i]), "std": float(std_arr[i])}
-            for i in range(len(mean_arr))} | {"mean": float(np.mean(mean_arr))}
+def _per_group_rmse(mean_rmse, NO=8, obs_j=2):
+    groups = {}
+    groups["slow"] = float(np.mean(mean_rmse[:NO]))
+    groups["obs_fast"] = float(np.mean(mean_rmse[NO:]))
+    groups["all_obs"] = float(np.mean(mean_rmse))
+    return groups
+
+
+def fmt_rmse(mean_arr, std_arr, NO=8, obs_j=2):
+    d = {f"X{i+1}": {"mean": float(mean_arr[i]), "std": float(std_arr[i])}
+         for i in range(len(mean_arr))} | {"mean": float(np.mean(mean_arr))}
+    d["groups"] = _per_group_rmse(mean_arr, NO=NO, obs_j=obs_j)
+    return d
+
+
+def _per_group_ev(ev_arr, NO=8, obs_j=2):
+    groups = {}
+    groups["slow"] = float(np.mean(ev_arr[:NO]))
+    groups["obs_fast"] = float(np.mean(ev_arr[NO:]))
+    groups["all_obs"] = float(np.mean(ev_arr))
+    return groups
+
+
+def fmt_ev(ev_arr, NO=8, obs_j=2):
+    d = {f"X{i+1}": float(ev_arr[i]) for i in range(len(ev_arr))}
+    d["groups"] = _per_group_ev(ev_arr, NO=NO, obs_j=obs_j)
+    return d
 
 
 def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
@@ -56,14 +91,18 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             results = method.assimilate_batch(obs, mask, force, truth, **kw)
             for result_idx, result in enumerate(results):
                 analysis = result.trajectory
-                if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
+                if obs_var_indices is not None:
                     ref = truth[result_idx].detach().cpu().numpy()[..., obs_var_indices]
-                    result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+                    analysis_eval = analysis
+                    if analysis_eval.shape[-1] > len(obs_var_indices):
+                        analysis_eval = analysis_eval[..., obs_var_indices]
                 else:
                     ref = truth[result_idx].detach().cpu().numpy()
-                    if analysis.shape[-1] != ref.shape[-1]:
-                        ref = ref[..., :analysis.shape[-1]]
-                all_sq_err.append((analysis - ref) ** 2)
+                    analysis_eval = analysis
+                    if analysis_eval.shape[-1] != ref.shape[-1]:
+                        ref = ref[..., :analysis_eval.shape[-1]]
+                result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
+                all_sq_err.append((analysis_eval - ref) ** 2)
                 all_ref.append(ref)
                 rmse_list.append(result.rmse)
                 results_list.append(result)
@@ -77,15 +116,18 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             kw = _per_window_params(w, cfg)
             result = method.assimilate(obs, mask, force, truth, **kw)
             analysis = result.trajectory
-            if obs_var_indices is not None and analysis.shape[-1] != truth.shape[-1]:
+            if obs_var_indices is not None:
                 ref = truth.numpy()[..., obs_var_indices]
-                result.rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-                result.trajectory = analysis
+                analysis_eval = analysis
+                if analysis_eval.shape[-1] > len(obs_var_indices):
+                    analysis_eval = analysis_eval[..., obs_var_indices]
             else:
                 ref = truth.numpy()
-                if analysis.shape[-1] != ref.shape[-1]:
-                    ref = ref[..., :analysis.shape[-1]]
-            all_sq_err.append((analysis - ref) ** 2)
+                analysis_eval = analysis
+                if analysis_eval.shape[-1] != ref.shape[-1]:
+                    ref = ref[..., :analysis_eval.shape[-1]]
+            result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
+            all_sq_err.append((analysis_eval - ref) ** 2)
             all_ref.append(ref)
             rmse_list.append(result.rmse)
             results_list.append(result)
@@ -106,7 +148,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
-                             etkf_config=None, suffix="", exclude_methods=None):
+                             etkf_config=None, suffix="", exclude_methods=None,
+                             obs_j=2, obs_interval=200):
     if da_window_steps is None:
         N = int(3.0 / 0.001)
     else:
@@ -117,6 +160,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         param_suffix += f"_inf{enkf_config['inflation']}"
     if etkf_config and etkf_config.get("inflation", 1.0) != 1.0:
         param_suffix += f"_etkf_inf{etkf_config['inflation']}"
+    if obs_j is not None and obs_j < 4:
+        param_suffix += f"_obsj{obs_j}"
+    if obs_interval is not None:
+        param_suffix += f"_int{obs_interval}"
     cache_path = os.path.join(EXP_DIR, f"l96_baselines{dws_suffix}{param_suffix}.json")
 
     partial = {}
@@ -125,7 +172,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             partial = json.load(f)
         print(f"  Found partial results ({cache_path}), resuming...")
     else:
-        print(f"  Running L96 baselines (da_window_steps={N})...")
+        print(f"  Running L96 baselines (da_window_steps={N}, obs_j={obs_j}, obs_interval={obs_interval})...")
 
     weak_cfg = weak_config or {}
     strong_cfg = strong_config or {}
@@ -136,31 +183,59 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     active_methods = [m for m in _BASELINE_METHODS if m not in exclude]
 
     dt_l96 = 0.001
-    dynamics_pool = {}
-    for expo in {c[5] for c in _BASELINE_CASES}:
-        dynamics_pool[expo] = Lorenz96Dynamics(dt=dt_l96, coupling_exponent=expo)
+    NO = 8
+    J_truth = 4
+    obs_var_indices = make_obs_j_indices(NO, J_truth, obs_j)
+    obs_dim = len(obs_var_indices) if obs_var_indices is not None else NO * (1 + J_truth)
+
+    s0_obs_op = ObsOperator(NO + NO * J_truth, obs_var_indices)
+    s0_dynamics = Lorenz96Dynamics(dt=dt_l96, coupling_exponent=1.6)
+
+    s1_J = obs_j
+    s1_state_dim = NO + NO * s1_J
+    s1_obs_indices = list(range(s1_state_dim))
+    s1_obs_op = ObsOperator(s1_state_dim, s1_obs_indices)
+    if s1_J != J_truth:
+        s1_dynamics = Lorenz96Dynamics(dt=dt_l96, NO=NO, J=s1_J, h=1.0, hx=1.0, eps=0.1,
+                                       coupling_exponent=1.0)
+    else:
+        s1_dynamics = Lorenz96Dynamics(dt=dt_l96, coupling_exponent=1.0)
+
     baseline_pool = {}
-    for expo in {c[5] for c in _BASELINE_CASES}:
-        dynamics = dynamics_pool[expo]
+    for case_name, _, _, _, _, coupling_exponent in _BASELINE_CASES:
+        if case_name == "s0":
+            dyn, obs_op = s0_dynamics, s0_obs_op
+        else:
+            dyn, obs_op = s1_dynamics, s1_obs_op
         pool = {}
         if "Weak-4DVar" not in exclude:
             pool["Weak-4DVar"] = Weak4DVar(dt=dt_l96, da_window_steps=N, device=device,
-                                             coupling_exponent=expo, dynamics=dynamics, **weak_cfg)
+                                             coupling_exponent=coupling_exponent, dynamics=dyn,
+                                             obs_operator=obs_op, **weak_cfg)
         if "Strong-4DVar" not in exclude:
             pool["Strong-4DVar"] = Strong4DVar(dt=dt_l96, da_window_steps=N, device=device,
-                                                 coupling_exponent=expo, dynamics=dynamics, **strong_cfg)
+                                                  coupling_exponent=coupling_exponent, dynamics=dyn,
+                                                  obs_operator=obs_op, **strong_cfg)
         if "EnKF" not in exclude:
-            pool["EnKF"] = EnKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **enkf_cfg)
+            pool["EnKF"] = EnKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
+                                  dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
+                                  **enkf_cfg)
         if "ETKF" not in exclude:
-            pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=expo, dynamics=dynamics, **etkf_cfg)
-        baseline_pool[expo] = pool
+            pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
+                                  dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
+                                  **etkf_cfg)
+        baseline_pool[case_name] = pool
 
-    cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123)
-    cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131)
+    cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
+                             obs_var_indices=obs_var_indices)
+    cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
+                             obs_var_indices=obs_var_indices)
     cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:
-        partial["config"] = {"T_max": 3.0, "da_window_steps": N}
+        partial["config"] = {"T_max": 3.0, "da_window_steps": N, "obs_j": obs_j,
+                              "obs_interval": obs_interval, "obs_dim": obs_dim,
+                              "s1_J": s1_J, "s1_state_dim": s1_state_dim}
 
     total_t0 = time.time()
 
@@ -169,7 +244,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             continue
         ds = datasets[ds_key]
         cfg = cfg_map[case_name]
-        method_map = baseline_pool[coupling_exponent]
+        method_map = baseline_pool[case_name]
         for name in active_methods:
             if partial.get(case_name, {}).get(name) is not None:
                 print(f"    {label}/{name:<15} already done, skipping")
@@ -178,26 +253,30 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             method = method_map[name]
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
-            (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
+            ((m, s), (ev_arr, _)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
             elapsed = time.time() - t1
 
             if case_name not in partial:
                 partial[case_name] = {}
-            partial[case_name][name] = fmt_rmse(m, s)
+            partial[case_name][name] = fmt_rmse(m, s, NO=NO, obs_j=obs_j)
+            partial[case_name][name]["ev"] = fmt_ev(ev_arr, NO=NO, obs_j=obs_j)
             partial["total_time_seconds"] = time.time() - total_t0
             with open(cache_path, "w") as f:
                 json.dump(partial, f, indent=2)
 
             trajs = np.stack([r.trajectory for r in bl_results], axis=0)
-            truths = np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))], axis=0)
-            traj_data = {"trajectories": trajs, "truths": truths}
+            traj_data = {"trajectories": trajs}
             if bl_results[0].ensemble_variance is not None:
                 traj_data["ensemble_variance"] = np.stack(
                     [r.ensemble_variance for r in bl_results], axis=0)
             np.savez_compressed(_baseline_traj_path(case_name, name, dws_suffix, param_suffix), **traj_data)
 
             rmse_mean = np.mean(m)
-            print(f"  mean={rmse_mean:.4f} [{elapsed:.1f}s]")
+            groups = _per_group_rmse(m, NO=NO, obs_j=obs_j)
+            ev_groups = _per_group_ev(ev_arr, NO=NO, obs_j=obs_j)
+            print(f"  mean={rmse_mean:.4f} slow={groups['slow']:.4f} obs_fast={groups['obs_fast']:.4f} "
+                  f"ev={ev_groups['all_obs']:.4f} (slow={ev_groups['slow']:.4f} obs_fast={ev_groups['obs_fast']:.4f}) "
+                  f"[{elapsed:.1f}s]")
 
     traj_path = os.path.join(EXP_DIR, f"l96_baselines_trajectories{dws_suffix}{param_suffix}.npz")
     all_present = all(
