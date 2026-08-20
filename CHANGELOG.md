@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-08-20: Add git/PR multi-agent review workflow infra (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Added two execution paths for the implementer→reviewer→verifier code loop. Option A (GitHub PR): `.github/workflows/ci.yml` runs ruff (informational) + pytest fast (required gate) on PRs to `feat/l96-*`; agents create/review/merge PRs via `gh pr create/review/merge`. Option B (local): `scripts/agent_review_loop.sh <STEP> "<desc>" [--review]` provides the same loop with local git (branch → diff → reviewer y/n gate → verifier ruff+pytest → squash merge), working immediately. Documented both paths in `L96_FAST_WEIGHTS_PROGRESS.md` + `PLAN.md`, and extended the `opencode.json` agent descriptions with gh context. CI gate is **pytest fast only** — ruff lint is `continue-on-error` so it does not block the gate, because the codebase has 236 pre-existing ruff errors that are out of scope to fix now. `gh auth login` (W3) + branch protection on `feat/l96-*` (W4) remain user steps to unlock the PR path.
+
+**Files modified:**
+- `.github/workflows/ci.yml` — new: CI with lint job (ruff, `continue-on-error: true`) + test job (pytest `-m "not slow"`, required gate), triggers on `feat/l96-*` PRs/pushes
+- `scripts/agent_review_loop.sh` — new: local multi-agent review loop (branch → review gate → verify → squash merge)
+- `L96_FAST_WEIGHTS_PROGRESS.md` — added W1/W2 (infra done) + W3/W4 (user steps) tracker rows, "Execution paths" section (Option A/B), CI-gate decision
+- `PLAN.md` — added "Multi-agent review workflow (git/PR)" subsection + `gh auth login` REMINDER
+- `opencode.json` — extended implementer/reviewer/verifier descriptions with gh CLI workflow context
+
+**Rationale:** The reviewer-in-the-loop philosophy needs an enforcement mechanism, not just a documented diagram. The GitHub PR path gives enforced review + CI on a per-PR/subtask basis; the local script gives the same loop immediately without GitHub auth. Gate = pytest so it is green and enforceable now; ruff stays informational until the 236-error debt is cleared separately.
+
+**Verification:** `yaml` parses `.github/workflows/ci.yml`; `bash -n scripts/agent_review_loop.sh` passes; `opencode.json` parses as valid JSON.
+
+## 2026-08-20: Apply reviewer-loop fixes R1-R5 + document agent workflow (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Applied the 5 fixes identified during a reviewer pass over the fast_weights work: restored a missing CHANGELOG section header (R1), removed a dead `isinstance(w, torch.Tensor)` guard in `_derivative` (R2), documented the intentional tensor conversion in `_to_tensor_kw` (R3), added a safety `ValueError` when `fast_weights` randomization is active but `da_J=None` is passed (R4, footgun that would forward unsliced length-4 weights to reduced-J S1 dynamics), and added the missing `VanillaCFMConfig.train_tau_0_only` schema field (R5). Also documented the per-step iterative agent loop (implementer→reviewer→verifier) in `L96_FAST_WEIGHTS_PROGRESS.md` and added the R1-R5 rows to the step tracker.
+
+**Files modified:**
+- `CHANGELOG.md` — R1: restored `## 2026-08-19: Parametrizable obs_interval` header (was orphaned body) + added this entry
+- `models/lorenz96_dynamics.py` — R2: removed dead `if isinstance(w, torch.Tensor):` guard (always True after list→tensor conversion)
+- `evaluation/run_l96.py` — R3: docstring on `_to_tensor_kw`; R4: `_per_window_params` now raises `ValueError` when fast_weights active but `da_J=None`
+- `conf/schema.py` — R5: added `train_tau_0_only: bool = False` to `VanillaCFMConfig`
+- `tests/test_lorenz96_training.py` — new `test_per_window_params_active_raises_without_da_J` (33 total)
+- `L96_FAST_WEIGHTS_PROGRESS.md` — added agent-workflow section (iterative loop + per-group assignment) and R1-R5 step-tracker rows
+
+**Rationale:** R4 closes a footgun where a future caller could pass a fast_weights-randomized config without `da_J`, silently slicing nothing and forwarding full-length weights to J=2 dynamics (dim mismatch). R5 makes the schema document the `train_tau_0_only` field already read by `train.py`. Documenting the agent loop operationalizes the "reviewer-in-the-loop" philosophy for the remaining A5-A7, Phase B, and Phase C steps.
+
+**Verification:** `pytest tests/test_lorenz96_training.py -m "not slow"` — 33 passed (32 + 1 new). `ruff check` on the 4 touched files — only pre-existing errors remain (E401 run_l96.py:1, F841 `sd`/`rng` lorenz96_dynamics.py:199,201, F401 schema.py MISSING); none introduced by this change.
+
+## 2026-08-20: Fix fast_weights Dirac/gating bugs + list→tensor in L96 dynamics (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Fixed three bugs in the in-progress per-parameter `fast_weights` randomization work so legacy S0/S1 baselines can reproduce exactly before enabling the new S0b/S1b path. (1) `_draw_l96_params` legacy path accidentally randomized `fast_weights` ±20% (and consumed 4 RNG draws) when `randomize_params=None`; now it stays Dirac `[1,1,0.1,0.1]` unless `"fast_weights"` is explicitly opted in. (2) `_per_window_params` unconditionally forwarded `fast_weights` to the DA forward model, silently changing S0/S1 DA from unweighted `Y.sum` to weighted `Σw_j·Y_j`; now gated on `_fast_weights_active(cfg)` (per-param `randomize` dict with `randomized`/`biased`), and forwarded weights are sliced to the DA dynamics's `J` (obs_j for S1). (3) `Lorenz96Dynamics._derivative`/`generate_batch_trajectories` failed with `'list' object has no attribute 'to'` whenever `fast_weights` was passed as a list; now convert list→tensor.
+
+**Files modified:**
+- `data/lorenz96.py` — Bug 1: legacy `_draw_l96_params` fast_weights Dirac unless explicitly opted-in (no RNG draws); Bug: S1 `RandomBiasLorenz96Dataset` keeps fast_weights list unbias-able (was `v * (1+b)` → `TypeError`)
+- `evaluation/run_l96.py` — Bug 2: new `_fast_weights_active(cfg)` gate; `_per_window_params(..., da_J=None)` only includes fast_weights when active, sliced to `da_J`; `evaluate_baseline(..., da_J=None)`; `run_and_cache_baselines` passes per-case da_J (J_truth for s0, s1_J for s1)
+- `models/lorenz96_dynamics.py` — `_derivative` converts list/tuple fast_weights to tensor before `.to(device)`/`unsqueeze`; `generate_batch_trajectories` same for `fast_weights_values`
+- `tests/test_lorenz96_training.py` — 7 new tests: legacy-None Dirac, zero-RNG-consumed, explicit opt-in randomizes, `_per_window_params` legacy no-fw / active slicing to da_J / S1b biased-sliced, `_fast_weights_active`
+- `opencode.json` — added 5 subagents (implementer/reviewer/verifier/runner/analyst) with model routing (cortecs/deepseek-v4-flash + opencode/big-pickle)
+
+**Rationale:** Without Bug 1 + Bug 2 fixes, the legacy S0/S1 DA baselines could not be reproduced (fast_weights would be randomized/weighted unexpectedly), blocking the Phase B repro gate. The list→tensor fix was required for the per-call `fast_weights` path to work at all.
+
+**Verification:** `pytest tests/test_lorenz96_training.py -m "not slow"` — 32 passed (incl. 7 new). `ruff check tests/test_lorenz96_training.py` clean; only pre-existing E401 (run_l96.py:1) and F841 (`sd`/`rng` in `lorenz96_dynamics.py:199,201`) remain. `test_numerical_equivalence.py` collection error is pre-existing (untouched Lorenz63 file). gh CLI installed (v2.97.0) but not yet authenticated (`gh auth login` interactive required).
+
 ## 2026-08-19: Parametrizable obs_interval for L96 S0/S1 (S0-Obs100/S1-Obs100)
 
 **Summary:** Made the L96 S0/S1 DA-baseline observation density configurable by threading `obs_interval` through the dataset and baseline caches. Added `obs_interval` to `run_and_cache_baselines` (baseline cache key `..._obsj2_int{obs_interval}.json`, `config.obs_interval`), to the dataset cache key (`l96_datasets_obsj{obs_j}_int{obs_interval}_nwin{nwin}.pt`), and added a **trajectory-reuse** path in `evaluate_all_l96.py`: when the requested `obs_interval` differs and a same-seed dataset cache exists, it loads those trajectories and re-observes only `obs`/`obs_mask` via `_generate_observations` (reusing the per-window `obs_seed`), instead of regenerating dynamics (~73 min → ~2 s). The sbatch runner takes `OBS_INTERVAL` (default 200), so `OBS_INTERVAL=100` produces the 2×-denser **S0-Obs100/S1-Obs100** benchmark on the identical groundtruth.

@@ -39,6 +39,20 @@ See `L96_NEURAL_TRAINING_PROGRESS.md` for the per-WP tracker and handoff.
 - sbatch: `run_one_epoch_tests_l96`, `run_l96_da_consistency`,
   `run_l96_neural_training`, `run_l96_evaluate_all`.
 
+### Multi-agent review workflow (git/PR)
+
+Code changes on this branch go through an implementer → reviewer → verifier loop.
+Two execution paths:
+
+- **Option A — GitHub PR**: `.github/workflows/ci.yml` runs ruff + pytest on PRs
+  to `feat/l96-*`. Agents use `gh pr create` / `gh pr review` / `gh pr merge`.
+  Blocked until `gh auth login` is run interactively (W3).
+- **Option B — Local**: `scripts/agent_review_loop.sh <STEP> "<desc>" [--review]`
+  provides the same loop with local git (works immediately).
+
+**REMINDER:** run `gh auth login` and enable branch protection on `feat/l96-*`
+(require 1 PR approval + status checks) to unlock the GitHub PR path.
+
 **To do (next)**: run DA consistency re-run (Step 11c), train L1/L2 (Step 12), then
 compare DA vs neural on S0/S1 (WP8) — all via the L96 sbatch scripts.
 
