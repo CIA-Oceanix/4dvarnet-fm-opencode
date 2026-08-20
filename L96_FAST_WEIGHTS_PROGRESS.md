@@ -115,6 +115,9 @@ Two execution paths per code step, both following the implement→review→verif
 | C3 S0b/S1b DA run | ✅ | — | Job 48860 complete, `_fw` cache generated |
 | C4 Results analysis | ✅ | — | FW-randomization has <1% effect at dws=500 |
 | D1 docs + changelog + progress | ✅ | — | this entry |
+| D2 S0c sbatch + compare | ✅ | #18 | `batch/run_l96_da_s0c.sbatch`, `batch/run_l96_da_s0b_obs30.sbatch`, `reports/compare_s0b_s0c.py` |
+| D3 S0c/S0b runs | ✅ | — | Jobs 48893 (S0b Obs30), 48894 (S0c Obs15), 48895 (S0c Obs30) |
+| D4 S0c vs S0b analysis | ✅ | — | h randomization <2% effect at dws=500 |
 
 ## Repro gate (Phase B) — PASSED
 - Reference cache: `l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2.json` (pre-obs_interval naming)
@@ -131,6 +134,17 @@ At dws=500 (GPU 200-window): EnKF S0 RMSE changes <0.5% (1.0927→1.0873).
 Interpretation: With longer assimilation windows (dws=500), the DA has enough steps to
 track the slightly-varying dynamics regardless of fast_weights randomization. The effect
 is only significant for short windows where DA has limited time to adapt.
+
+## C5 Finding: h randomization has negligible effect at dws=500
+At dws=500, fixing h while randomizing all other params (S0c vs S0b) changes RMSE by <2% across all methods and both obs densities:
+
+| Method | Obs15 Δ | Obs30 Δ |
+|--------|---------|---------|
+| EnKF   | +0.4%   | -0.0%   |
+| ETKF   | -0.2%   | -0.5%   |
+| Strong-4DVar | -0.6% | +1.7% |
+
+Conclusion: neither h nor fast_weights randomization significantly affects DA skill at production window size (dws=500). The DA's 500 assimilation steps dominate over per-window parametric variability.
 
 ## Notes
 - Existing S1 uses ONE shared per-window bias `b` for all 5 params
