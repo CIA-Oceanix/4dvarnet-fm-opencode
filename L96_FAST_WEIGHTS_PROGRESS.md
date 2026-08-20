@@ -24,6 +24,7 @@ baselines reproduce exactly (repro gate) BEFORE enabling the new path.
 | 2026-08-20 | Repro gate: CPU 3-window smoke, then GPU 200-window | staged verification |
 | 2026-08-20 | Keep S0/S1 naming; fast_weights-randomized variant = S0b/S1b | user-confirmed |
 | 2026-08-20 | CI gate = pytest fast only; ruff lint informational | avoids blocking on 236 pre-existing ruff errors |
+| 2026-08-20 | CI pytest gate scoped to 6 relevant test files | full `tests/` has pre-existing failures (broken test_numerical_equivalence.py API call, hardcoded-GPU tests, master failures) that would keep the gate red |
 
 ## Agent workflow (per-step iterative loop)
 
@@ -77,11 +78,11 @@ Two execution paths per code step, both following the implement→review→verif
 ## Step tracker
 | Step | Status | Agent | Notes |
 |---|---|---|---|
-| W1 GitHub Actions CI | ✅ | implementer | `.github/workflows/ci.yml` (ruff + pytest on `feat/l96-*`) |
+| W1 GitHub Actions CI | ✅ | implementer | `.github/workflows/ci.yml` (ruff informational + pytest gate on `feat/l96-*`) |
 | W2 local review loop script | ✅ | implementer | `scripts/agent_review_loop.sh` |
 | W5 open_pr.sh helper | ✅ | implementer | `scripts/open_pr.sh` (create/review/verify gh wrapper for Option A) |
-| W3 gh auth login | ⬜ | user | run `gh auth login` interactively to enable Option A PRs |
-| W4 branch protection | ⬜ | user | GitHub → Settings → Branches → require PR review + status checks on `feat/l96-*` |
+| W3 gh auth login | ✅ | user | `gh auth login` done (rfablet, repo+workflow scopes) |
+| W4 branch protection | ✅ | user | ruleset `feat/l96-*: require PR review + CI` (1 approval + pytest check, active, no admin bypass) |
 | R1 CHANGELOG header fix | ✅ | reviewer | `CHANGELOG.md` |
 | R2 dead isinstance guard | ✅ | reviewer | `models/lorenz96_dynamics.py` |
 | R3 _to_tensor_kw docstring | ✅ | reviewer | `evaluation/run_l96.py` |

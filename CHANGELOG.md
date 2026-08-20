@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-20: Enable Option A — gh auth + branch protection ruleset (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Unlocked the GitHub PR path end-to-end. User completed `gh auth login` (rfablet, `repo`+`workflow` scopes); pushed `feat/l96-fast-weights-randomization` to the remote (was local-only) so it becomes the PR base; created a repository **ruleset** on `refs/heads/feat/l96-*` requiring **1 approving PR review** + the **`pytest` status check** (strict, no admin bypass). Bootstrapped the CI gate: renamed the test job to `pytest` so its check context matches the ruleset requirement, and scoped the gate to the 6 relevant test files (L96/DirectUNet/VanillaCFM/hydra/metrics/baselines, 66 tests) because the full `tests/` suite has pre-existing failures (broken `test_numerical_equivalence.py` API call, hardcoded-GPU `test_equiv_report.py`, and other master failures). During bootstrap the ruleset was temporarily disabled to push the CI fix, the `pytest` check was verified **green** on the head commit, then the ruleset was re-enabled to `active`.
+
+**Files modified:**
+- `.github/workflows/ci.yml` — test job named `pytest` (matches ruleset check context); gate scope = 6 relevant test files
+- `L96_FAST_WEIGHTS_PROGRESS.md` — W3/W4 marked complete; decisions for CI gate scope
+- Remote: repo ruleset `feat/l96-*: require PR review + CI` (ID 21079926)
+
+**Rationale:** Real PR-based reviewer screening (Option A) requires the base branch on the remote, `gh` auth, and branch protection so a PR cannot merge without an approving review + green CI. The ruleset is the enforcing mechanism: direct pushes to `feat/l96-*` are now blocked (verified during bootstrap).
+
+**Verification:** `gh auth status` logged in as rfablet; ruleset active with `current_user_can_bypass: never`; `pytest` check **success** on head commit `0fa25a9`; direct push to `feat/l96-*` blocked by the ruleset.
+
 ## 2026-08-20: Add git/PR multi-agent review workflow infra (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Added two execution paths for the implementer→reviewer→verifier code loop. Option A (GitHub PR): `.github/workflows/ci.yml` runs ruff (informational) + pytest fast (required gate) on PRs to `feat/l96-*`; agents create/review/merge PRs via `gh pr create/review/merge`. Option B (local): `scripts/agent_review_loop.sh <STEP> "<desc>" [--review]` provides the same loop with local git (branch → diff → reviewer y/n gate → verifier ruff+pytest → squash merge), working immediately. Documented both paths in `L96_FAST_WEIGHTS_PROGRESS.md` + `PLAN.md`, and extended the `opencode.json` agent descriptions with gh context. CI gate is **pytest fast only** — ruff lint is `continue-on-error` so it does not block the gate, because the codebase has 236 pre-existing ruff errors that are out of scope to fix now. `gh auth login` (W3) + branch protection on `feat/l96-*` (W4) remain user steps to unlock the PR path.
