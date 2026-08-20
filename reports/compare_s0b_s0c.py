@@ -19,8 +19,12 @@ def load(path):
         return json.load(f)
 
 
-def find_cache(dws, obs_interval, tag):
-    pattern = os.path.join(EXP_DIR, f"l96_baselines_dws{dws}_inf2.0_etkf_inf2.0_obsj2_int{obs_interval}*{tag}.json")
+def find_cache(dws, obs_interval, suffix=""):
+    core = f"l96_baselines_dws{dws}"
+    if suffix:
+        core += f"_{suffix}"
+    core += f"_inf2.0_etkf_inf2.0_obsj2_int{obs_interval}"
+    pattern = os.path.join(EXP_DIR, core + "*_fw.json")
     matches = sorted(glob.glob(pattern))
     return matches[-1] if matches else None
 
@@ -63,8 +67,8 @@ def main():
     methods = ["EnKF", "ETKF", "Strong-4DVar"]
     obs_label = "Obs15" if args.obs_interval == 200 else "Obs30"
 
-    s0b_path = find_cache(args.dws, args.obs_interval, "_fw")
-    s0c_path = find_cache(args.dws, args.obs_interval, "_fw_s0c")
+    s0b_path = find_cache(args.dws, args.obs_interval, suffix="")
+    s0c_path = find_cache(args.dws, args.obs_interval, suffix="s0c")
 
     compare_tables(s0b_path, s0c_path, methods, "S0b (all rand)", "S0c (no h)", f"S0b vs S0c ({obs_label})")
 

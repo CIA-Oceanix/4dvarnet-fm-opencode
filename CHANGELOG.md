@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-20: S0c/S1c h-randomization ablation — negligible effect at dws=500
+
+**Summary:** Ran S0c (h NOT randomized, all other params ±20%) and S0b Obs30 (obs_interval=100) DA baselines on GPU (200 windows each). S0c vs S0b comparison shows h randomization changes RMSE by <2% across all methods and both obs densities. Neither h nor fast_weights randomization significantly affects DA skill at production DWS=500.
+
+**Files modified:**
+- `batch/run_l96_da_s0c.sbatch` — new: GPU sbatch for S0c DA baselines (config-only: h not randomized, `--suffix _s0c`, `--randomize` JSON with `h: {randomized: false}`)
+- `batch/run_l96_da_s0b_obs30.sbatch` — new: GPU sbatch for S0b at obs_interval=100 (Obs30)
+- `reports/compare_s0b_s0c.py` — new: comparison script S0b vs S0c at configurable obs_interval
+- `L96_FAST_WEIGHTS_PROGRESS.md` — updated: D2-D4 steps, C5 finding
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Isolates the effect of h randomization from all other parametric variability. With 500 assimilation steps, the DA corrects for h variation regardless, making h randomization irrelevant at production DWS.
+
+**Verification:** Jobs 48893 (S0b Obs30), 48894 (S0c Obs15), 48895 (S0c Obs30) — all COMPLETED. Obs15: EnKF +0.4%, ETKF -0.2%, Strong-4DVar -0.6%. Obs30: EnKF -0.0%, ETKF -0.5%, Strong-4DVar +1.7%. PR #18 merged.
+
 ## 2026-08-20: B2 repro gate PASSED — legacy S0/S1 reproduce within 1% (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Re-ran legacy S0/S1 DA baselines (EnKF, ETKF, Strong-4DVar) on GPU with 200 windows (job 48872) and compared against the pre-existing cache. All 6 method/case combinations reproduce within 1% relative tolerance (max deviation: Strong-4DVar S0 at 0.55%). Phases A–D are now all complete.
