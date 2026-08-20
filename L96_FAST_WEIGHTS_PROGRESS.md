@@ -57,12 +57,15 @@ Agent assignment per step group:
 Two execution paths per code step, both following the implement→review→verify loop:
 
 **Option A — GitHub PR workflow** (requires `gh auth login` on the runner):
-- Implementer: creates a feature branch, commits, pushes, opens a PR
-  (`gh pr create --base feat/l96-*`)
-- Reviewer: reads `gh pr diff <PR#>`, accepts via `gh pr review --approve` or
-  requests changes (`gh pr review --request-changes`)
-- Verifier: `gh pr checks <PR#>` waits for CI, then `gh pr merge --squash`
-- Enforced by `.github/workflows/ci.yml` + branch protection on `feat/l96-*`
+- Use `scripts/open_pr.sh <create|review|verify> ...` as the single wrapper:
+  - `create R4 "desc"` → pushes the branch and opens a real PR
+  - `review <PR#>` → reviewer reads `gh pr diff`, then `--approve` or
+    `--request-changes`
+  - `verify <PR#>` → `gh pr checks --watch` waits for CI, then `gh pr merge --squash`
+- Underlying commands: `gh pr create --base feat/l96-*`, `gh pr review`,
+  `gh pr checks`, `gh pr merge`
+- Enforced by `.github/workflows/ci.yml` (pytest fast gate) + optional branch
+  protection on `feat/l96-*`
 
 **Option B — Local fallback** (works immediately, no GitHub):
 - Use `scripts/agent_review_loop.sh <STEP> "<desc>"` to create a branch, then
@@ -76,6 +79,7 @@ Two execution paths per code step, both following the implement→review→verif
 |---|---|---|---|
 | W1 GitHub Actions CI | ✅ | implementer | `.github/workflows/ci.yml` (ruff + pytest on `feat/l96-*`) |
 | W2 local review loop script | ✅ | implementer | `scripts/agent_review_loop.sh` |
+| W5 open_pr.sh helper | ✅ | implementer | `scripts/open_pr.sh` (create/review/verify gh wrapper for Option A) |
 | W3 gh auth login | ⬜ | user | run `gh auth login` interactively to enable Option A PRs |
 | W4 branch protection | ⬜ | user | GitHub → Settings → Branches → require PR review + status checks on `feat/l96-*` |
 | R1 CHANGELOG header fix | ✅ | reviewer | `CHANGELOG.md` |
