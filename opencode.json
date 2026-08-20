@@ -3,7 +3,7 @@
   "instructions": ["PLAN.md", "CHANGELOG.md"],
   "agent": {
     "implementer": {
-      "model": "cortecs/deepseek-v4-flash-0731-0731",
+      "model": "cortecs/deepseek-v4-flash-0731",
       "mode": "subagent",
       "description": "Makes code changes per the plan; in PR mode creates a branch, commits, pushes, and opens a PR via gh CLI"
     },
@@ -13,12 +13,12 @@
       "description": "Reviews code for correctness, style, and repro safety; reads the diff (gh pr diff or git diff) and approves/request-changes via gh pr review"
     },
     "verifier": {
-      "model": "cortecs/deepseek-v4-flash-0731-0731",
+      "model": "cortecs/deepseek-v4-flash-0731",
       "mode": "subagent",
       "description": "Runs lint, type checks, and tests to validate changes; in PR mode waits for CI (gh pr checks) and merges (gh pr merge --squash)"
     },
     "runner": {
-      "model": "cortecs/deepseek-v4-flash-0731-0731",
+      "model": "cortecs/deepseek-v4-flash-0731",
       "mode": "subagent",
       "description": "Submits and monitors sbatch jobs"
     },
