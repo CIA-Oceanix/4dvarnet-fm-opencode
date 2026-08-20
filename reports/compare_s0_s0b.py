@@ -4,7 +4,7 @@
 Usage:
     python reports/compare_s0_s0b.py [--dws 50] [--legacy PATH] [--fw PATH]
 """
-import argparse, glob, json, os, sys
+import argparse, glob, json, os, re, sys
 
 EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "experiments")
 
@@ -16,15 +16,28 @@ def load(path):
         return json.load(f)
 
 
-def find_cache(dws, fw=False):
+def find_fw_cache(dws):
+    pattern = os.path.join(EXP_DIR, f"l96_baselines_dws{dws}_inf2.0_etkf_inf2.0_obsj2*_fw.json")
+    matches = sorted(glob.glob(pattern))
+    return matches[-1] if matches else None
+
+
+def find_legacy_cache(dws, fw_path=None):
+    if fw_path is not None:
+        fw_name = os.path.basename(fw_path)
+        m = re.search(r'_int(\d+)_fw\.json$', fw_name)
+        if m:
+            obs_int = m.group(1)
+            candidate = os.path.join(EXP_DIR, fw_name.replace(f"_int{obs_int}_fw.json", f"_int{obs_int}.json"))
+            if os.path.exists(candidate):
+                return candidate
+            candidate = os.path.join(EXP_DIR, fw_name.replace(f"_int{obs_int}_fw.json", ".json"))
+            if os.path.exists(candidate):
+                return candidate
     pattern = os.path.join(EXP_DIR, f"l96_baselines_dws{dws}_inf2.0_etkf_inf2.0_obsj2*.json")
     matches = sorted(glob.glob(pattern))
-    if fw:
-        fw_matches = [m for m in matches if "_fw." in m or m.endswith("_fw.json")]
-        return fw_matches[-1] if fw_matches else None
-    else:
-        non_fw = [m for m in matches if "_fw." not in m and not m.endswith("_fw.json")]
-        return non_fw[-1] if non_fw else None
+    non_fw = [m for m in matches if not m.endswith("_fw.json")]
+    return non_fw[-1] if non_fw else None
 
 
 def compare_tables(s0_path, s0b_path, methods, label_pair):
@@ -68,20 +81,20 @@ def main():
 
     methods = ["EnKF", "ETKF", "Strong-4DVar"]
 
-    if args.legacy:
-        s0_path = args.legacy
-    else:
-        s0_path = find_cache(args.dws, fw=False)
-        if s0_path is None:
-            print(f"No legacy cache found for dws={args.dws}")
-            sys.exit(1)
-
     if args.fw:
         s0b_path = args.fw
     else:
-        s0b_path = find_cache(args.dws, fw=True)
+        s0b_path = find_fw_cache(args.dws)
         if s0b_path is None:
             print(f"No fw-rand cache found for dws={args.dws}")
+            sys.exit(1)
+
+    if args.legacy:
+        s0_path = args.legacy
+    else:
+        s0_path = find_legacy_cache(args.dws, fw_path=s0b_path)
+        if s0_path is None:
+            print(f"No legacy cache found for dws={args.dws}")
             sys.exit(1)
 
     compare_tables(s0_path, s0b_path, methods, "S0 (legacy) vs S0b (fw-randomized)")
