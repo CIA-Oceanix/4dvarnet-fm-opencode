@@ -41,6 +41,7 @@ class Lorenz96Config:
     coupling_exponent_da: float = 1.0
     obs_var_indices: Tuple[int, ...] = None
     fast_weights: list = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
+    randomize: Dict[str, Dict] = field(default_factory=dict)
 
     @property
     def obs_dim(self) -> int:
@@ -206,7 +207,13 @@ def _make_obs(cfg, true_fluid, obs_seed, device=None):
 
 
 def _l96_param_refs(cfg) -> Dict:
-    return {"F": cfg.F_true, "c1": cfg.c1, "h": cfg.h, "hx": cfg.hx, "eps": cfg.eps}
+    refs = {"F": cfg.F_true, "c1": cfg.c1, "h": cfg.h, "hx": cfg.hx, "eps": cfg.eps}
+    refs["fast_weights"] = list(cfg.fast_weights)
+    return refs
+
+
+def _uses_perparam_randomize(cfg) -> bool:
+    return bool(getattr(cfg, "randomize", None) or {})
 
 
 def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):
@@ -223,16 +230,43 @@ def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):
 
 def _draw_l96_params(rng, cfg, param_noise: float = 0.2, bias: float = None,
                       randomize_params: list = None) -> Dict:
+    use_perparam = _uses_perparam_randomize(cfg)
     refs = _l96_param_refs(cfg)
+
+    def _draw_scalar(k, ref, spec, rparams):
+        if use_perparam:
+            spec = spec if spec is not None else {"randomized": False}
+            if spec.get("randomized"):
+                noise = spec.get("noise", 0.2)
+                return ref * rng.uniform(1.0 - noise, 1.0 + noise)
+            return ref
+        if rparams is not None and k not in rparams:
+            return ref
+        val = ref * rng.uniform(1.0 - param_noise, 1.0 + param_noise)
+        if bias is not None:
+            val *= rng.uniform(1.0 - bias, 1.0 + bias)
+        return val
+
     params = {}
     for k, ref in refs.items():
-        if randomize_params is not None and k not in randomize_params:
-            params[k] = ref
+        if k == "fast_weights":
+            if use_perparam:
+                spec = cfg.randomize.get("fast_weights") or {"randomized": False}
+                if spec.get("randomized"):
+                    noise = spec.get("noise", 0.2)
+                    params[k] = [r * rng.uniform(1.0 - noise, 1.0 + noise) for r in ref]
+                else:
+                    params[k] = list(ref)
+            else:
+                if randomize_params is not None and "fast_weights" not in randomize_params:
+                    params[k] = list(ref)
+                elif randomize_params is not None and "fast_weights" in randomize_params:
+                    params[k] = [r * rng.uniform(1.0 - param_noise, 1.0 + param_noise) for r in ref]
+                else:
+                    params[k] = list(ref)
         else:
-            val = ref * rng.uniform(1.0 - param_noise, 1.0 + param_noise)
-            if bias is not None:
-                val *= rng.uniform(1.0 - bias, 1.0 + bias)
-            params[k] = val
+            spec = cfg.randomize.get(k) if use_perparam else None
+            params[k] = _draw_scalar(k, ref, spec, randomize_params)
     return params
 
 
@@ -265,6 +299,7 @@ class RandomParamLorenz96Dataset:
                     true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
                         num_steps=cfg.num_steps, seed=traj_seed, F=F,
                         c1=params["c1"], h=params["h"], hx=params["hx"], eps=params["eps"],
+                        fast_weights=params["fast_weights"],
                         spinup_steps=cfg.spinup_steps,
                         coupling_exponent=cfg.coupling_exponent_truth,
                     )
@@ -336,8 +371,21 @@ class RandomBiasLorenz96Dataset:
                 params_true = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
                                                randomize_params=self.randomize_params)
                 params_da = {}
+                use_perparam = _uses_perparam_randomize(cfg)
                 for k, v in params_true.items():
-                    if self.randomize_params is not None and k not in self.randomize_params:
+                    if use_perparam:
+                        spec = cfg.randomize.get(k) or {"biased": False}
+                        if spec.get("biased"):
+                            bias_val = spec.get("bias", b)
+                            if k == "fast_weights":
+                                params_da[k] = [x * (1.0 + bias_val) for x in v]
+                            else:
+                                params_da[k] = v * (1.0 + bias_val)
+                        else:
+                            params_da[k] = v
+                    elif self.randomize_params is not None and k not in self.randomize_params:
+                        params_da[k] = v
+                    elif k == "fast_weights":
                         params_da[k] = v
                     else:
                         params_da[k] = v * (1.0 + b)
@@ -346,6 +394,7 @@ class RandomBiasLorenz96Dataset:
                     true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
                         num_steps=cfg.num_steps, seed=traj_seed, F=F,
                         c1=params_true["c1"], h=params_true["h"], hx=params_true["hx"], eps=params_true["eps"],
+                        fast_weights=params_true["fast_weights"],
                         spinup_steps=cfg.spinup_steps,
                         coupling_exponent=cfg.coupling_exponent_truth,
                     )

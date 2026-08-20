@@ -15,6 +15,7 @@ from data.lorenz96 import (
     RandomBiasLorenz96Dataset,
     make_l96_s0_s1_trainval,
     _make_lorenz96_dynamics,
+    _draw_l96_params,
 )
 from data.dataloader import FlowMatchingBatch, FlowMatchingDataset
 from models.direct_unet import DirectUNet
@@ -22,7 +23,10 @@ from models.vanilla_cfm import VanillaCFM
 from evaluation.baselines import ObsOperator
 
 from train import _make_eval_batch, _per_group_rmse
-from evaluation.run_l96 import make_obs_j_indices, fmt_ev, _per_group_ev, evaluate_baseline
+from evaluation.run_l96 import (
+    make_obs_j_indices, fmt_ev, _per_group_ev, evaluate_baseline,
+    _per_window_params, _fast_weights_active,
+)
 
 
 @pytest.fixture
@@ -351,3 +355,73 @@ def test_obs_operator_identity():
     x = torch.randn(24)
     y = op(x)
     assert y.shape == (24,)
+
+
+def test_draw_l96_params_legacy_none_fast_weights_dirac():
+    rng = np.random.RandomState(42)
+    cfg = Lorenz96Config()
+    params = _draw_l96_params(rng, cfg, param_noise=0.2, randomize_params=None)
+    assert list(params["fast_weights"]) == [1.0, 1.0, 0.1, 0.1]
+
+
+def test_draw_l96_params_legacy_none_no_rng_consumed():
+    cfg = Lorenz96Config()
+    rng1 = np.random.RandomState(123)
+    rng1.uniform()
+    _draw_l96_params(rng1, cfg, param_noise=0.2, randomize_params=None)
+    probe = rng1.uniform()
+    exp = np.random.RandomState(123)
+    exp.uniform()
+    for _ in range(5):
+        exp.uniform()
+    assert abs(probe - exp.uniform()) < 1e-12
+
+
+def test_draw_l96_params_legacy_opt_in_randomizes_fast_weights():
+    rng = np.random.RandomState(7)
+    cfg = Lorenz96Config()
+    params = _draw_l96_params(rng, cfg, param_noise=0.2,
+                              randomize_params=["F", "fast_weights"])
+    assert list(params["fast_weights"]) != [1.0, 1.0, 0.1, 0.1]
+
+
+def test_per_window_params_legacy_no_fast_weights():
+    cfg = Lorenz96Config(randomize={})
+    w = {"F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+         "fast_weights": [1.0, 1.0, 0.1, 0.1]}
+    kw = _per_window_params(w, cfg, da_J=4)
+    assert "fast_weights" not in kw
+
+
+def test_per_window_params_active_slices_to_da_J():
+    cfg = Lorenz96Config(randomize={"fast_weights": {"randomized": True, "noise": 0.2}})
+    w = {"F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+         "fast_weights": [1.0, 1.0, 0.1, 0.1]}
+    kw = _per_window_params(w, cfg, da_J=2)
+    assert kw["fast_weights"] == [1.0, 1.0]
+
+
+def test_per_window_params_s1b_uses_biased_sliced():
+    cfg = Lorenz96Config(randomize={"fast_weights": {"randomized": True, "biased": True}})
+    w = {"F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+         "fast_weights": [1.0, 1.0, 0.1, 0.1],
+         "fast_weights_da": [1.1, 1.2, 0.15, 0.2]}
+    kw = _per_window_params(w, cfg, da_J=2)
+    assert kw["fast_weights"] == [1.1, 1.2]
+
+
+def test_per_window_params_active_raises_without_da_J():
+    cfg = Lorenz96Config(randomize={"fast_weights": {"randomized": True}})
+    w = {"F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+         "fast_weights": [1.0, 1.0, 0.1, 0.1]}
+    with pytest.raises(ValueError):
+        _per_window_params(w, cfg, da_J=None)
+
+
+def test_fast_weights_active():
+    assert _fast_weights_active(Lorenz96Config(randomize={})) is False
+    assert _fast_weights_active(Lorenz96Config()) is False
+    assert _fast_weights_active(
+        Lorenz96Config(randomize={"fast_weights": {"randomized": True}})) is True
+    assert _fast_weights_active(
+        Lorenz96Config(randomize={"F": {"randomized": True}})) is False

@@ -11,11 +11,20 @@ EXP_DIR = os.path.join(BASE, "experiments")
 os.makedirs(EXP_DIR, exist_ok=True)
 
 _BASELINE_METHODS = ["Weak-4DVar", "Strong-4DVar", "EnKF", "ETKF"]
-_L96_PARAMS = ["F", "c1", "h", "hx", "eps"]
+_L96_SCALAR_PARAMS = ["F", "c1", "h", "hx", "eps"]
+_L96_PARAMS = _L96_SCALAR_PARAMS + ["fast_weights"]
 _BASELINE_CASES = [
     ("s0", "test_s0", 1, 0.0, "S0", 1.6),
     ("s1", "test_s1", 1, 0.15, "S1", 1.0),
 ]
+
+
+def _fast_weights_active(cfg) -> bool:
+    r = getattr(cfg, "randomize", None) or {}
+    spec = r.get("fast_weights") if isinstance(r, dict) else None
+    if spec is None:
+        return False
+    return bool(spec.get("randomized") or spec.get("biased"))
 
 
 def make_obs_j_indices(NO, J_truth, J_obs):
@@ -29,11 +38,38 @@ def make_obs_j_indices(NO, J_truth, J_obs):
     return tuple(X_idx + Y_idx)
 
 
-def _per_window_params(w, cfg):
+def _per_window_params(w, cfg, da_J=None):
     params = {}
-    for k in _L96_PARAMS:
+    for k in _L96_SCALAR_PARAMS:
         params[k] = w.get(f"{k}_da", w.get(k, getattr(cfg, "F_da" if k == "F" else k, 1.0)))
+    if _fast_weights_active(cfg):
+        fw = w.get("fast_weights_da", w.get("fast_weights", list(cfg.fast_weights)))
+        if fw is None:
+            params["fast_weights"] = fw
+        elif da_J is not None:
+            params["fast_weights"] = list(fw)[:da_J]
+        else:
+            raise ValueError(
+                "fast_weights randomization active but da_J=None; weighting length is "
+                "ambiguous for reduced-J dynamics. Pass da_J explicitly."
+            )
     return params
+
+
+def _build_eval_kwargs(pw, device):
+    kw = {k: torch.tensor([p[k] for p in pw], device=device) for k in _L96_SCALAR_PARAMS}
+    if pw and "fast_weights" in pw[0]:
+        kw["fast_weights"] = torch.tensor([p["fast_weights"] for p in pw], device=device)
+    return kw
+
+
+def _to_tensor_kw(kw, device):
+    """Convert list/tuple kwarg values (e.g. fast_weights) to device tensors.
+    Scalar floats are left as-is; only sequences are converted."""
+    for k, v in kw.items():
+        if isinstance(v, (list, tuple)):
+            kw[k] = torch.tensor(v, device=device)
+    return kw
 
 
 def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
@@ -70,7 +106,7 @@ def fmt_ev(ev_arr, NO=8, obs_j=2):
     return d
 
 
-def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1):
+def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1, da_J=None):
     rmse_list = []
     results_list = []
     all_sq_err = []
@@ -86,8 +122,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = torch.stack([w["obs_mask"].to(device) for w in batch], dim=0)
             truth = torch.stack([w["true_state"] for w in batch], dim=0)
             force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
-            pw = [_per_window_params(w, cfg) for w in batch]
-            kw = {k: torch.tensor([p[k] for p in pw], device=device) for k in _L96_PARAMS}
+            pw = [_per_window_params(w, cfg, da_J=da_J) for w in batch]
+            kw = _build_eval_kwargs(pw, device)
             results = method.assimilate_batch(obs, mask, force, truth, **kw)
             for result_idx, result in enumerate(results):
                 analysis = result.trajectory
@@ -113,7 +149,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             mask = w["obs_mask"].to(device)
             truth = w["true_state"]
             force = w[force_key].to(device)
-            kw = _per_window_params(w, cfg)
+            kw = _per_window_params(w, cfg, da_J=da_J)
+            _to_tensor_kw(kw, device)
             result = method.assimilate(obs, mask, force, truth, **kw)
             analysis = result.trajectory
             if obs_var_indices is not None:
@@ -253,7 +290,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             method = method_map[name]
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
-            ((m, s), (ev_arr, _)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
+            da_J = J_truth if case_name == "s0" else s1_J
+            ((m, s), (ev_arr, _)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size, da_J=da_J)
             elapsed = time.time() - t1
 
             if case_name not in partial:

@@ -55,7 +55,8 @@ class Lorenz96Dynamics(DynamicsBase):
             return getattr(self, key)
         return value
 
-    def _derivative(self, state, forcing, F, c1=None, h=None, hx=None, eps=None):
+    def _derivative(self, state, forcing, F, c1=None, h=None, hx=None, eps=None,
+                    fast_weights=None):
         NO, J = self.NO, self.J
         h = self._resolve("h", h)
         hx = self._resolve("hx", hx)
@@ -70,8 +71,13 @@ class Lorenz96Dynamics(DynamicsBase):
         eps_fast = eps.view(-1, *([1] * (Y.dim() - 1))) if isinstance(eps, torch.Tensor) and eps.dim() == 1 else eps
         if isinstance(forcing, torch.Tensor) and forcing.dim() < X.dim():
             forcing = forcing.view(*forcing.shape, *([1] * (X.dim() - forcing.dim())))
-        if self.fast_weights is not None:
-            w = self.fast_weights.to(Y.device)
+        w = self._resolve("fast_weights", fast_weights)
+        if w is not None:
+            if isinstance(w, (list, tuple)):
+                w = torch.tensor(w, dtype=torch.float32)
+            w = w.to(Y.device)
+            while w.dim() < Y.dim():
+                w = w.unsqueeze(-2)
             Y_sum = (Y * w).sum(dim=-1)
         else:
             Y_sum = Y.sum(dim=-1)
@@ -108,7 +114,8 @@ class Lorenz96Dynamics(DynamicsBase):
                 F = F.unsqueeze(-1)
         return self._rk4_step(state, forcing, F, self.dt,
                               c1=kwargs.get("c1"), h=kwargs.get("h"),
-                              hx=kwargs.get("hx"), eps=kwargs.get("eps"))
+                              hx=kwargs.get("hx"), eps=kwargs.get("eps"),
+                              fast_weights=kwargs.get("fast_weights"))
 
     def _forecast_loop(self, s0, forcing_arr, steps, F, **kw):
         s = s0
@@ -138,6 +145,7 @@ class Lorenz96Dynamics(DynamicsBase):
                                   W_L_bar=None, gamma=None,
                                   sigma_0=None, sigma_L=None,
                                   h=None, hx=None, eps=None,
+                                  fast_weights=None,
                                   coupling_exponent: float = 1.6,
                                   spinup_steps: int = 10000) -> tuple:
         c1 = c1 if c1 is not None else self.c1
@@ -162,11 +170,13 @@ class Lorenz96Dynamics(DynamicsBase):
         W_t = torch.tensor(W_arr, dtype=torch.float32)
         s = s0
         for i in range(spinup_steps):
-            s = self._rk4_step(s, W_t[i], F, self.dt, c1=c1, h=h, hx=hx, eps=eps)
+            s = self._rk4_step(s, W_t[i], F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+                               fast_weights=fast_weights)
 
         traj_list = [s.clone()]
         for i in range(spinup_steps, total - 1):
-            s = self._rk4_step(s, W_t[i], F, self.dt, c1=c1, h=h, hx=hx, eps=eps)
+            s = self._rk4_step(s, W_t[i], F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+                               fast_weights=fast_weights)
             traj_list.append(s.clone())
         traj = torch.stack(traj_list)
         forcing_t = W_t[-num_steps:]
@@ -179,6 +189,7 @@ class Lorenz96Dynamics(DynamicsBase):
                                   h_values: torch.Tensor = None,
                                   hx_values: torch.Tensor = None,
                                   eps_values: torch.Tensor = None,
+                                  fast_weights_values: torch.Tensor = None,
                                   seed: int = 42,
                                   device=None) -> tuple:
         if device is None:
@@ -206,16 +217,22 @@ class Lorenz96Dynamics(DynamicsBase):
         h = torch.full((B,), self.h, device=device) if h_values is None else h_values
         hx = torch.full((B,), self.hx, device=device) if hx_values is None else hx_values
         eps = torch.full((B,), self.eps, device=device) if eps_values is None else eps_values
+        if fast_weights_values is None:
+            fw = self.fast_weights.to(device) if self.fast_weights is not None else None
+        else:
+            fw = torch.tensor(fast_weights_values, dtype=torch.float32).to(device)
 
         s = s0.unsqueeze(0).expand(B, -1).clone()
         F = F_values
 
         for i in range(spinup_steps):
-            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps)
+            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+                               fast_weights=fw)
 
         traj_list = [s.clone()]
         for i in range(spinup_steps, num_steps + spinup_steps):
-            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps)
+            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+                               fast_weights=fw)
             traj_list.append(s.clone())
 
         traj = torch.stack(traj_list, dim=1)
