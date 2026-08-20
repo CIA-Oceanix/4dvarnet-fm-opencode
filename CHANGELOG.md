@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-20: B2 repro gate PASSED — legacy S0/S1 reproduce within 1% (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Re-ran legacy S0/S1 DA baselines (EnKF, ETKF, Strong-4DVar) on GPU with 200 windows (job 48872) and compared against the pre-existing cache. All 6 method/case combinations reproduce within 1% relative tolerance (max deviation: Strong-4DVar S0 at 0.55%). Phases A–D are now all complete.
+
+**Files modified:**
+- `reports/repro_gate_b2.py` — new: configurable repro gate comparison script (1% default tolerance)
+- `L96_FAST_WEIGHTS_PROGRESS.md` — updated status (all phases done), B2 results
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The repro gate confirms that the refactored code (per-param `randomize` dict, `_fw` cache suffix, threading through train.py) does not alter the legacy S0/S1 DA baseline results beyond numerical noise.
+
+**Verification:** Job 48872: S0 EnKF Δ0.26%, ETKF Δ0.15%, Strong-4DVar Δ0.55%; S1 EnKF Δ0.06%, ETKF Δ0.01%, Strong-4DVar Δ0.00%. All PASS at 1% tolerance. 33 tests pass. PR #16 merged.
+
 ## 2026-08-20: S0b/S1b DA baselines + fast_weights randomization results (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Completed Phase C (S0b/S1b): committed GPU sbatch script for S0b/S1b DA baselines (200-window, all 6 params randomized ±20%), comparison report script, and ran the full 200-window GPU evaluation (job 48860). Key finding: at the production DA window size (dws=500), fast_weights randomization has **<1% effect** on DA skill across all methods (EnKF, ETKF, Strong-4DVar) — the DA tracks the slightly-varying dynamics regardless. This contrasts with the 3-window CPU smoke (dws=50) where -20% RMSE drops were observed.

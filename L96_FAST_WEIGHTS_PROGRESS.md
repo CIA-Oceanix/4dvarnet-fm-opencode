@@ -1,10 +1,10 @@
 # L96 fast_weights randomization — progress log
 
 ## Status
-- Phase A (refactor, legacy-compatible): [in progress — bugs fixed, tests green]
-- Phase B (repro gate, 1e-3 rel): [not started]
-- Phase C (S0b/S1b true fast_weights randomization): [not started]
-- Phase D (closeout): [not started]
+- Phase A (refactor, legacy-compatible): [done — A1–A9, PRs #6–#11]
+- Phase B (repro gate, 1% rel): [done — B1 CPU smoke, B2 GPU 200-window PASS]
+- Phase C (S0b/S1b true fast_weights randomization): [done — C1–C4, PRs #12–#15, job 48860]
+- Phase D (closeout): [done — D1, PR #15]
 
 ## Objective
 Generalize the L96 S0/S1 per-window parameter randomization to per-parameter
@@ -109,21 +109,21 @@ Two execution paths per code step, both following the implement→review→verif
 | A8 tests (33 pass) | ✅ | — | `tests/test_lorenz96_training.py` |
 | A9 ruff + pytest | ✅ | — | only pre-existing E401/F841 remain |
 | B1 CPU smoke repro | ✅ | — | 3-window: legacy S0/S1 reproduced, `_fw` suffix verified |
-| B2 GPU full repro gate | ⬜ | — | diff vs existing cache, pending |
+| B2 GPU full repro gate | ✅ | #16 | Job 48872: all 6 methods within 1% tolerance |
 | C1 S0b/S1b configs | ✅ | #11 | `config/experiment/L{1,2}b_*` + Hydra deep-merge fix |
 | C2 S0b/S1b DA sbatch + compare | ✅ | #12, #13, #14 | `batch/run_l96_da_s0b_s1b.sbatch`, `reports/compare_s0_s0b.py` |
 | C3 S0b/S1b DA run | ✅ | — | Job 48860 complete, `_fw` cache generated |
 | C4 Results analysis | ✅ | — | FW-randomization has <1% effect at dws=500 |
 | D1 docs + changelog + progress | ✅ | — | this entry |
 
-## Repro gate (Phase B)
-- Referenced cache: `experiments/l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2.json`
-- Tolerance: 1e-3 relative
-- Legacy S0 EnKF/ETKF/Strong: 1.0927 / 1.0973 / 0.9701 (dws500, 200-window GPU)
-- Legacy S1 EnKF/ETKF/Strong: 1.6503 / 1.6367 / 1.4751 (dws500, 200-window GPU)
-- FW-rand S0 EnKF/ETKF/Strong: 1.0873 / 1.0976 / 0.9704 (dws500, 200-window GPU)
-- FW-rand S1 EnKF/ETKF/Strong: 1.6514 / 1.6366 / 1.4751 (dws500, 200-window GPU)
-- Verdict: CPU smoke passed (distinct dynamics at dws=50). GPU 200-window: FW-randomization has **<1% effect** on DA skill at dws=500 (production). The DA tracks slightly-varying dynamics with 500 assimilation steps regardless of fast_weights ±20%.
+## Repro gate (Phase B) — PASSED
+- Reference cache: `l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2.json` (pre-obs_interval naming)
+- Re-run cache: `l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2_int200.json` (job 48872)
+- Tolerance: 1% relative
+- Results (all PASS):
+  - S0 EnKF: 1.0927→1.0898 (Δ0.26%), ETKF: 1.0973→1.0990 (Δ0.15%), Strong-4DVar: 0.9701→0.9648 (Δ0.55%)
+  - S1 EnKF: 1.6503→1.6513 (Δ0.06%), ETKF: 1.6367→1.6366 (Δ0.01%), Strong-4DVar: 1.4751→1.4751 (Δ0.00%)
+- Verdict: **PASS** — legacy S0/S1 baselines reproduce within 1% on GPU 200-window
 
 ## C4 Finding: fast_weights randomization effect depends on DA window size
 At dws=50 (CPU 3-window smoke): EnKF S0 RMSE drops 21% (1.2793→1.0091) with fw-randomization.
