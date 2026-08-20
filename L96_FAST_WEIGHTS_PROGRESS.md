@@ -31,7 +31,7 @@ baselines reproduce exactly (repro gate) BEFORE enabling the new path.
 Every code change follows this cycle:
 
 ```
-1. IMPLEMENTER (cortecs/deepseek-v4-flash)
+1. IMPLEMENTER (cortecs/deepseek-v4-flash-0731)
    → makes the change, returns modified files + rationale
 
 2. REVIEWER (opencode/big-pickle)
@@ -40,7 +40,7 @@ Every code change follows this cycle:
 
 3. IF ISSUES → back to step 1 with reviewer feedback (max 2 fix rounds)
 
-4. VERIFIER (cortecs/deepseek-v4-flash)
+4. VERIFIER (cortecs/deepseek-v4-flash-0731)
    → runs ruff check + pytest, returns PASS/FAIL
 ```
 
@@ -48,10 +48,10 @@ Agent assignment per step group:
 
 | Group | Implementer | Reviewer | Verifier |
 |-------|-------------|----------|----------|
-| R1-R5 (review fixes) | cortecs/deepseek-v4-flash | opencode/big-pickle | cortecs/deepseek-v4-flash |
-| A5-A7 (config threading) | cortecs/deepseek-v4-flash | opencode/big-pickle | cortecs/deepseek-v4-flash |
-| B1-B4 (repro gate) | cortecs/deepseek-v4-flash (runner) | opencode/big-pickle (analyst) | — |
-| C1-C4 (S0b/S1b) | cortecs/deepseek-v4-flash | opencode/big-pickle | cortecs/deepseek-v4-flash |
+| R1-R5 (review fixes) | cortecs/deepseek-v4-flash-0731 | opencode/big-pickle | cortecs/deepseek-v4-flash-0731 |
+| A5-A7 (config threading) | cortecs/deepseek-v4-flash-0731 | opencode/big-pickle | cortecs/deepseek-v4-flash-0731 |
+| B1-B4 (repro gate) | cortecs/deepseek-v4-flash-0731 (runner) | opencode/big-pickle (analyst) | — |
+| C1-C4 (S0b/S1b) | cortecs/deepseek-v4-flash-0731 | opencode/big-pickle | cortecs/deepseek-v4-flash-0731 |
 
 ### Execution paths
 

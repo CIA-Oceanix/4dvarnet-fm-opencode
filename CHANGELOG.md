@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-20: Fix agent model ids + implementer subagent blocker (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Fixed the subagent model-routing blocker: the `implementer`/`verifier`/`runner` agents referenced `cortecs/deepseek-v4-flash`, but the available model id is `cortecs/deepseek-v4-flash-0731` (missing `-0731` suffix), causing `Model not found: cortecs/deepseek-v4-flash. Did you mean: deepseek-v4-flash-0731?` and preventing the dev subagent from launching. Updated all 9 references across `opencode.json`, `L96_FAST_WEIGHTS_PROGRESS.md`, and `CHANGELOG.md`.
+
+**Files modified:**
+- `opencode.json` — implementer/verifier/runner model id corrected to `cortecs/deepseek-v4-flash-0731`
+- `L96_FAST_WEIGHTS_PROGRESS.md` — 5 model-id references corrected
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The reviewer-in-the-loop workflow needs distinct dev/review models. The implementer subagent couldn't run because the configured model id didn't match the available model, blocking the `dev → review → verify → PR` cycle.
+
+**Verification:** All `cortecs/deepseek-v4-flash` references now read `cortecs/deepseek-v4-flash-0731` (grep confirmed); `opencode.json` is valid JSON. Requires an opencode restart for the new model id to take effect.
+
 ## 2026-08-20: Automated Option A reviewer identity (`rfablet-review`) + merge flag fix (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Completed the fully-automated GitHub PR loop. `scripts/open_pr.sh` now reads the reviewer PAT from `~/.config/opencode/reviewer-token` (or `REVIEWER_TOKEN_FILE`) when `REVIEWER_GH_TOKEN` is unset, and the `review` command authenticates the reviewer via `GH_TOKEN` so PRs are approved by the second account `rfablet-review` (not the author). Confirmed the `review` step approves as `rfablet-review` (PR #2). Fixed two latent bugs the loop surfaced: (1) reviewer gh calls used `REVIEWER_GH_TOKEN` env var, which `gh` ignores — must be `GH_TOKEN`; (2) `verify` used `gh pr merge --yes`, which this `gh` version rejects (usage error) — removed it (`--squash --delete-branch` is already non-interactive). Also resolved the `L96_FAST_WEIGHTS_PROGRESS.md` conflict and added `.reviewer-token` to `.gitignore`.
@@ -67,7 +80,7 @@
 - `evaluation/run_l96.py` — Bug 2: new `_fast_weights_active(cfg)` gate; `_per_window_params(..., da_J=None)` only includes fast_weights when active, sliced to `da_J`; `evaluate_baseline(..., da_J=None)`; `run_and_cache_baselines` passes per-case da_J (J_truth for s0, s1_J for s1)
 - `models/lorenz96_dynamics.py` — `_derivative` converts list/tuple fast_weights to tensor before `.to(device)`/`unsqueeze`; `generate_batch_trajectories` same for `fast_weights_values`
 - `tests/test_lorenz96_training.py` — 7 new tests: legacy-None Dirac, zero-RNG-consumed, explicit opt-in randomizes, `_per_window_params` legacy no-fw / active slicing to da_J / S1b biased-sliced, `_fast_weights_active`
-- `opencode.json` — added 5 subagents (implementer/reviewer/verifier/runner/analyst) with model routing (cortecs/deepseek-v4-flash + opencode/big-pickle)
+- `opencode.json` — added 5 subagents (implementer/reviewer/verifier/runner/analyst) with model routing (cortecs/deepseek-v4-flash-0731 + opencode/big-pickle)
 
 **Rationale:** Without Bug 1 + Bug 2 fixes, the legacy S0/S1 DA baselines could not be reproduced (fast_weights would be randomized/weighted unexpectedly), blocking the Phase B repro gate. The list→tensor fix was required for the per-call `fast_weights` path to work at all.
 
