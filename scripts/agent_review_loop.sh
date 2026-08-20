@@ -25,6 +25,10 @@ MAIN_BRANCH="${MAIN_BRANCH:-feat/l96-fast-weights-randomization}"
 BRANCH="fix/$(printf '%s' "$STEP_ID" | tr '[:upper:]' '[:lower:]')-$(printf '%s' "$DESC" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')"
 BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_-' | cut -c1-80)"
 
+# Python env that has the project deps (torch, hydra, lightning). The base
+# miniforge env's pytest cannot import torch, so default to the fdv env.
+PYTHON_BIN="${PYTHON_BIN:-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python}"
+
 if [ "$MODE" != "--review" ]; then
     git switch "$MAIN_BRANCH"
     git switch -c "$BRANCH"
@@ -59,12 +63,12 @@ if command -v ruff >/dev/null 2>&1; then
 else
     echo "  ruff: SKIPPED (not installed)"
 fi
-if command -v pytest >/dev/null 2>&1; then
-    pytest tests/test_lorenz96_training.py -m "not slow" -q >/dev/null 2>&1 \
+if [ -x "$PYTHON_BIN" ]; then
+    "$PYTHON_BIN" -m pytest tests/test_lorenz96_training.py -m "not slow" -q >/dev/null 2>&1 \
         && echo "  pytest: PASS" \
         || { echo "  pytest: FAIL"; exit 1; }
 else
-    echo "  pytest: SKIPPED (not installed)"
+    echo "  pytest: SKIPPED (PYTHON_BIN not found: $PYTHON_BIN)"
 fi
 
 echo ""
