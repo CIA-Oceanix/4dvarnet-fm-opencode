@@ -13,11 +13,23 @@
 #
 # Requires: gh authenticated (gh auth login) + write access to the repo.
 #
+# Reviewer identity (distinct from the implementer, required so a PR is not
+# self-approved):
+#   On a single GitHub account, GitHub blocks self-approval. To run the
+#   reviewer automatically under a SECOND account, set REVIEWER_GH_TOKEN to
+#   a PAT of that account (write scope). The `review` command then runs as
+#   that account while create/verify run as the default (rfablet) account.
+#
 set -euo pipefail
 
 MAIN_BRANCH="${MAIN_BRANCH:-feat/l96-fast-weights-randomization}"
 REPO="CIA-Oceanix/4dvarnet-fm-opencode"
 REMOTE="origin"
+REVIEWER_GH_TOKEN="${REVIEWER_GH_TOKEN:-}"
+REVIEWER_TOKEN_FILE="${REVIEWER_TOKEN_FILE:-${HOME}/.config/opencode/reviewer-token}"
+if [ -z "$REVIEWER_GH_TOKEN" ] && [ -f "$REVIEWER_TOKEN_FILE" ]; then
+    REVIEWER_GH_TOKEN="$(cat "$REVIEWER_TOKEN_FILE" | tr -d '[:space:]')"
+fi
 
 CMD="${1:?usage: open_pr.sh <create|review|verify> ...}"
 shift
@@ -60,18 +72,32 @@ $DESC
         PR="${1:?review: <PR#> [approve|request] [message]}"
         DECISION="${2:-approve}"
         MESSAGE="${3:-}"
-        echo "=== REVIEWER: PR #$PR diff ==="
-        gh pr view "$PR" --repo "$REPO"
+        echo "=== REVIEWER: PR #$PR ==="
+        if [ -n "$REVIEWER_GH_TOKEN" ]; then
+            REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '"reviewing as: " + .login' >/dev/null 2>&1 \
+                && REVIEWER_ACCOUNT=$(REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '.login')
+            echo "  reviewer account: ${REVIEWER_ACCOUNT:-<set REVIEWER_GH_TOKEN>}"
+        else
+            echo "  reviewer account: <default gh account> (NOTE: self-approval is blocked on one account)"
+        fi
         echo ""
         gh pr diff "$PR" --repo "$REPO"
         echo ""
-        if [ "$DECISION" = "approve" ]; then
-            gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
-            echo "Approved."
+        # Reviewer identity: approve/request-changes run as the reviewer token.
+        if [ -n "$REVIEWER_GH_TOKEN" ]; then
+            if [ "$DECISION" = "approve" ]; then
+                REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
+            else
+                REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
+            fi
         else
-            gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
-            echo "Requested changes. Implementer must push fixes, then re-review."
+            if [ "$DECISION" = "approve" ]; then
+                gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
+            else
+                gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
+            fi
         fi
+        echo "Review submitted as ${REVIEWER_ACCOUNT:-default account}."
         ;;
 
     verify)
