@@ -186,7 +186,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
-                             obs_j=2, obs_interval=200):
+                             obs_j=2, obs_interval=200, fw_randomized=False):
     if da_window_steps is None:
         N = int(3.0 / 0.001)
     else:
@@ -201,6 +201,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         param_suffix += f"_obsj{obs_j}"
     if obs_interval is not None:
         param_suffix += f"_int{obs_interval}"
+    if fw_randomized:
+        param_suffix += "_fw"
     cache_path = os.path.join(EXP_DIR, f"l96_baselines{dws_suffix}{param_suffix}.json")
 
     partial = {}
