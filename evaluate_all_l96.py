@@ -16,7 +16,7 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
-                  obs_j=2, obs_interval=200):
+                  obs_j=2, obs_interval=200, fw_randomized=False):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -29,7 +29,8 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        strong_config=strong_config,
                                        exclude_methods=exclude_methods,
                                        obs_j=obs_j,
-                                       obs_interval=obs_interval)
+                                       obs_interval=obs_interval,
+                                       fw_randomized=fw_randomized)
     return results
 
 
@@ -85,8 +86,12 @@ def main():
                         help="Number of fast vars observed per slow node (default: 2)")
     parser.add_argument("--regenerate-data", action="store_true", default=False,
                         help="Force dataset regeneration, ignoring cached .pt file")
+    parser.add_argument("--randomize", type=str, default=None,
+                        help='JSON dict of per-param randomization, e.g. '
+                             '\'{"fast_weights": {"randomized": true, "noise": 0.2}}\'')
     args = parser.parse_args()
 
+    randomize = json.loads(args.randomize) if args.randomize else {}
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     if torch.cuda.is_available():
         print(f"Device: {device} ({torch.cuda.get_device_name(0)})")
@@ -105,6 +110,7 @@ def main():
         tau_eta=5.0, sigma_eta=np.sqrt(0.5),
         param_bias=0.0, forcing_state_bias=0.0,
         fast_weights=[1.0, 1.0, 0.1, 0.1],
+        randomize=randomize,
         obs_var_indices=make_obs_j_indices(8, 4, args.obs_j),
     )
     obs_var_indices = base_cfg.obs_var_indices
@@ -169,7 +175,8 @@ def main():
                                       strong_config={"max_iter": 10, "lr": 0.2},
                                       exclude_methods=exclude,
                                       obs_j=args.obs_j,
-                                      obs_interval=args.obs_interval)
+                                      obs_interval=args.obs_interval,
+                                      fw_randomized="fast_weights" in randomize)
 
     print("\n── L96 S0/S1 Comparison Table ──")
     headers = ["Case"]
