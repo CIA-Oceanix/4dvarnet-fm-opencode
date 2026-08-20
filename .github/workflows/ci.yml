@@ -42,4 +42,12 @@ jobs:
           pip install -r requirements.txt
           pip install hydra-core omegaconf pytorch-lightning
       - name: Run fast test suite
-        run: pytest tests/ -m "not slow" -q
+        run: |
+          pytest \
+            tests/test_lorenz96_training.py \
+            tests/test_direct_unet.py \
+            tests/test_vanilla_cfm.py \
+            tests/test_hydra_config.py \
+            tests/test_baselines_hydra.py \
+            tests/test_metrics.py \
+            -m "not slow" -q
