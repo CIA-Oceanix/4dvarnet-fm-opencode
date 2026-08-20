@@ -28,7 +28,7 @@ jobs:
         run: ruff check .
 
   test:
-    name: pytest (fast) — required gate
+    name: pytest
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: "3.10"
