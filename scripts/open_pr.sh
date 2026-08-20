@@ -119,7 +119,9 @@ $DESC
             exit 1
         fi
         echo "=== VERIFIER: merging PR #$PR ==="
-        gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --yes
+        # Note: this gh version rejects --yes; --squash --delete-branch already
+        # performs the merge non-interactively.
+        gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
         echo "Merged."
         ;;
 
