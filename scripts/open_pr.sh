@@ -13,11 +13,23 @@
 #
 # Requires: gh authenticated (gh auth login) + write access to the repo.
 #
+# Reviewer identity (distinct from the implementer, required so a PR is not
+# self-approved):
+#   On a single GitHub account, GitHub blocks self-approval. To run the
+#   reviewer automatically under a SECOND account, set REVIEWER_GH_TOKEN to
+#   a PAT of that account (write scope). The `review` command then runs as
+#   that account while create/verify run as the default (rfablet) account.
+#
 set -euo pipefail
 
 MAIN_BRANCH="${MAIN_BRANCH:-feat/l96-fast-weights-randomization}"
 REPO="CIA-Oceanix/4dvarnet-fm-opencode"
 REMOTE="origin"
+REVIEWER_GH_TOKEN="${REVIEWER_GH_TOKEN:-}"
+REVIEWER_TOKEN_FILE="${REVIEWER_TOKEN_FILE:-${HOME}/.config/opencode/reviewer-token}"
+if [ -z "$REVIEWER_GH_TOKEN" ] && [ -f "$REVIEWER_TOKEN_FILE" ]; then
+    REVIEWER_GH_TOKEN="$(cat "$REVIEWER_TOKEN_FILE" | tr -d '[:space:]')"
+fi
 
 CMD="${1:?usage: open_pr.sh <create|review|verify> ...}"
 shift
@@ -60,26 +72,52 @@ $DESC
         PR="${1:?review: <PR#> [approve|request] [message]}"
         DECISION="${2:-approve}"
         MESSAGE="${3:-}"
-        echo "=== REVIEWER: PR #$PR diff ==="
-        gh pr view "$PR" --repo "$REPO"
+        echo "=== REVIEWER: PR #$PR ==="
+        if [ -n "$REVIEWER_GH_TOKEN" ]; then
+            REVIEWER_ACCOUNT=$(GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '.login')
+            echo "  reviewer account: ${REVIEWER_ACCOUNT:-<invalid REVIEWER_GH_TOKEN>}"
+        else
+            echo "  reviewer account: <default gh account> (NOTE: self-approval is blocked on one account)"
+        fi
         echo ""
         gh pr diff "$PR" --repo "$REPO"
         echo ""
-        if [ "$DECISION" = "approve" ]; then
-            gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
-            echo "Approved."
+        # Reviewer identity: approve/request-changes run as the reviewer token.
+        # gh authenticates via GH_TOKEN (NOT REVIEWER_GH_TOKEN), so we must set
+        # GH_TOKEN when acting as the reviewer account.
+        if [ -n "$REVIEWER_GH_TOKEN" ]; then
+            if [ "$DECISION" = "approve" ]; then
+                GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
+            else
+                GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
+            fi
         else
-            gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
-            echo "Requested changes. Implementer must push fixes, then re-review."
+            if [ "$DECISION" = "approve" ]; then
+                gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
+            else
+                gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
+            fi
         fi
+        echo "Review submitted as ${REVIEWER_ACCOUNT:-default account}."
         ;;
 
     verify)
         require_gh
         PR="${1:?verify: <PR#>}"
         echo "=== VERIFIER: waiting for CI on PR #$PR ==="
-        gh pr checks "$PR" --repo "$REPO" --watch --interval 20
+        # The watcher exits non-zero if ANY check fails (incl. informational
+        # ruff, which is continue-on-error). That must not abort the merge.
+        gh pr checks "$PR" --repo "$REPO" --watch --interval 20 || true
         echo ""
+        # Confirm the ruleset gate (approval + required checks) is satisfied
+        # before merging. The ruleset itself enforces pytest + 1 review.
+        MERGEABLE=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq '.mergeable')
+        MSTATE=$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus')
+        echo "=== VERIFIER: mergeable=$MERGEABLE mergeState=$MSTATE ==="
+        if [ "$MERGEABLE" != "MERGEABLE" ] || [ "$MSTATE" = "BLOCKED" ] || [ "$MSTATE" = "DIRTY" ]; then
+            echo "ERROR: PR #$PR not cleanly mergeable (mergeable=$MERGEABLE, mergeState=$MSTATE). Aborting." >&2
+            exit 1
+        fi
         echo "=== VERIFIER: merging PR #$PR ==="
         gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --yes
         echo "Merged."

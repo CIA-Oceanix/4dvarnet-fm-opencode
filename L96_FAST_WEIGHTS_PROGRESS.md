@@ -61,12 +61,22 @@ Two execution paths per code step, both following the implement→review→verif
 - Use `scripts/open_pr.sh <create|review|verify> ...` as the single wrapper:
   - `create R4 "desc"` → pushes the branch and opens a real PR
   - `review <PR#>` → reviewer reads `gh pr diff`, then `--approve` or
-    `--request-changes`
+    `--request-changes` (runs as `REVIEWER_GH_TOKEN` account if set)
   - `verify <PR#>` → `gh pr checks --watch` waits for CI, then `gh pr merge --squash`
 - Underlying commands: `gh pr create --base feat/l96-*`, `gh pr review`,
   `gh pr checks`, `gh pr merge`
-- Enforced by `.github/workflows/ci.yml` (pytest fast gate) + optional branch
-  protection on `feat/l96-*`
+- Enforced by `.github/workflows/ci.yml` (pytest gate) + ruleset on `feat/l96-*`
+  (1 approving review + pytest check, strict, no admin bypass)
+
+**Reviewer identity (Option 2 — two accounts, key requirement):**
+- GitHub blocks an author from approving their own PR. With ONE `gh` account,
+  the reviewer agent cannot auto-approve — the human reviews in the UI.
+- To auto-review, use a SECOND GitHub account (write access). Run the reviewer
+  step with `REVIEWER_GH_TOKEN=<bot PAT>`; `open_pr.sh review` then approves/
+  requests changes as that bot. Implementer/verifier stay on the default
+  (`rfablet`) account. Human can always override by reviewing as `rfablet`.
+- This enables switching: automated bot review via `REVIEWER_GH_TOKEN`, or
+  manual review by omitting it.
 
 **Option B — Local fallback** (works immediately, no GitHub):
 - Use `scripts/agent_review_loop.sh <STEP> "<desc>"` to create a branch, then
@@ -80,9 +90,10 @@ Two execution paths per code step, both following the implement→review→verif
 |---|---|---|---|
 | W1 GitHub Actions CI | ✅ | implementer | `.github/workflows/ci.yml` (ruff informational + pytest gate on `feat/l96-*`) |
 | W2 local review loop script | ✅ | implementer | `scripts/agent_review_loop.sh` |
-| W5 open_pr.sh helper | ✅ | implementer | `scripts/open_pr.sh` (create/review/verify gh wrapper for Option A) |
+| W5 open_pr.sh helper | ✅ | implementer | `scripts/open_pr.sh` (create/review/verify gh wrapper; reviewer identity via `REVIEWER_GH_TOKEN`) |
 | W3 gh auth login | ✅ | user | `gh auth login` done (rfablet, repo+workflow scopes) |
 | W4 branch protection | ✅ | user | ruleset `feat/l96-*: require PR review + CI` (1 approval + pytest check, active, no admin bypass) |
+| W6 second-account reviewer | ✅ | user | `rfablet-review` created + added as write collaborator; PR #1 approved by it and merged. Auto-review via `REVIEWER_GH_TOKEN=<bot PAT>` ready when needed |
 | R1 CHANGELOG header fix | ✅ | reviewer | `CHANGELOG.md` |
 | R2 dead isinstance guard | ✅ | reviewer | `models/lorenz96_dynamics.py` |
 | R3 _to_tensor_kw docstring | ✅ | reviewer | `evaluation/run_l96.py` |
