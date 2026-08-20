@@ -289,6 +289,7 @@ def main(cfg: DictConfig):
             coupling_exponent_truth=dc.get("coupling_exponent_truth", 1.6),
             coupling_exponent_da=dc.get("coupling_exponent_da", 1.0),
             fast_weights=list(dc.get("fast_weights", [1.0, 1.0, 0.1, 0.1])),
+            randomize=dict(dc.get("randomize", {})),
             obs_var_indices=obs_var_indices,
         )
         if data_setup == "s0_s1":
