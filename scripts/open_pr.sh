@@ -74,9 +74,8 @@ $DESC
         MESSAGE="${3:-}"
         echo "=== REVIEWER: PR #$PR ==="
         if [ -n "$REVIEWER_GH_TOKEN" ]; then
-            REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '"reviewing as: " + .login' >/dev/null 2>&1 \
-                && REVIEWER_ACCOUNT=$(REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '.login')
-            echo "  reviewer account: ${REVIEWER_ACCOUNT:-<set REVIEWER_GH_TOKEN>}"
+            REVIEWER_ACCOUNT=$(GH_TOKEN="$REVIEWER_GH_TOKEN" gh api user --jq '.login')
+            echo "  reviewer account: ${REVIEWER_ACCOUNT:-<invalid REVIEWER_GH_TOKEN>}"
         else
             echo "  reviewer account: <default gh account> (NOTE: self-approval is blocked on one account)"
         fi
@@ -84,11 +83,13 @@ $DESC
         gh pr diff "$PR" --repo "$REPO"
         echo ""
         # Reviewer identity: approve/request-changes run as the reviewer token.
+        # gh authenticates via GH_TOKEN (NOT REVIEWER_GH_TOKEN), so we must set
+        # GH_TOKEN when acting as the reviewer account.
         if [ -n "$REVIEWER_GH_TOKEN" ]; then
             if [ "$DECISION" = "approve" ]; then
-                REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
+                GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --approve ${MESSAGE:+--body "$MESSAGE"}
             else
-                REVIEWER_GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
+                GH_TOKEN="$REVIEWER_GH_TOKEN" gh pr review "$PR" --repo "$REPO" --request-changes ${MESSAGE:+--body "$MESSAGE"}
             fi
         else
             if [ "$DECISION" = "approve" ]; then
