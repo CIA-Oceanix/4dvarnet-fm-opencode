@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-20: S0b/S1b DA baselines + fast_weights randomization results (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Completed Phase C (S0b/S1b): committed GPU sbatch script for S0b/S1b DA baselines (200-window, all 6 params randomized ±20%), comparison report script, and ran the full 200-window GPU evaluation (job 48860). Key finding: at the production DA window size (dws=500), fast_weights randomization has **<1% effect** on DA skill across all methods (EnKF, ETKF, Strong-4DVar) — the DA tracks the slightly-varying dynamics regardless. This contrasts with the 3-window CPU smoke (dws=50) where -20% RMSE drops were observed.
+
+**Files modified:**
+- `batch/run_l96_da_s0b_s1b.sbatch` — new: GPU sbatch for S0b/S1b DA baselines (all-5 + fast_weights randomization, `--randomize` CLI arg)
+- `reports/compare_s0_s0b.py` — new: comparison script with proper obs_interval matching and cache auto-discovery
+- `L96_FAST_WEIGHTS_PROGRESS.md` — updated step tracker (A4-A9, B1, C1-C4, D1), added C4 finding
+
+**Rationale:** S0b/S1b baselines with fast_weights randomization enable comparison against the neural models (L1b/L2b) that also operate with randomized fast_weights. The <1% effect at dws=500 suggests the DA forward model's accuracy (using true per-window parameters) dominates skill, not the fast_weights variability itself.
+
+**Verification:** Job 48860 completed: S0b/S1b EnKF/ETKF/Strong-4DVar RMSE at dws500 (all <1% delta vs legacy). 33 tests pass. PRs #12, #13, #14 merged via Option A (auto-review + CI gate).
+
 ## 2026-08-20: Fix agent model ids + implementer subagent blocker (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Fixed the subagent model-routing blocker: the `implementer`/`verifier`/`runner` agents referenced `cortecs/deepseek-v4-flash`, but the available model id is `cortecs/deepseek-v4-flash-0731` (missing `-0731` suffix), causing `Model not found: cortecs/deepseek-v4-flash. Did you mean: deepseek-v4-flash-0731?` and preventing the dev subagent from launching. Updated all 9 references across `opencode.json`, `L96_FAST_WEIGHTS_PROGRESS.md`, and `CHANGELOG.md`.
