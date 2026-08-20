@@ -105,8 +105,19 @@ $DESC
         require_gh
         PR="${1:?verify: <PR#>}"
         echo "=== VERIFIER: waiting for CI on PR #$PR ==="
-        gh pr checks "$PR" --repo "$REPO" --watch --interval 20
+        # The watcher exits non-zero if ANY check fails (incl. informational
+        # ruff, which is continue-on-error). That must not abort the merge.
+        gh pr checks "$PR" --repo "$REPO" --watch --interval 20 || true
         echo ""
+        # Confirm the ruleset gate (approval + required checks) is satisfied
+        # before merging. The ruleset itself enforces pytest + 1 review.
+        MERGEABLE=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq '.mergeable')
+        MSTATE=$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus')
+        echo "=== VERIFIER: mergeable=$MERGEABLE mergeState=$MSTATE ==="
+        if [ "$MERGEABLE" != "MERGEABLE" ] || [ "$MSTATE" = "BLOCKED" ] || [ "$MSTATE" = "DIRTY" ]; then
+            echo "ERROR: PR #$PR not cleanly mergeable (mergeable=$MERGEABLE, mergeState=$MSTATE). Aborting." >&2
+            exit 1
+        fi
         echo "=== VERIFIER: merging PR #$PR ==="
         gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --yes
         echo "Merged."
