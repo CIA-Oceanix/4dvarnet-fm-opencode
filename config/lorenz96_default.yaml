@@ -32,6 +32,37 @@ data:
   case: 1
   obs_j: 2
   fast_weights: [1.0, 1.0, 0.1, 0.1]
+  randomize:
+    fast_weights:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    F:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    c1:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    h:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    hx:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    eps:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
 
 model:
   state_dim: 24
