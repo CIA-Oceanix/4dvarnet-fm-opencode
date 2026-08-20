@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-20: Automated Option A reviewer identity (`rfablet-review`) + merge flag fix (branch `feat/l96-fast-weights-randomization`)
+
+**Summary:** Completed the fully-automated GitHub PR loop. `scripts/open_pr.sh` now reads the reviewer PAT from `~/.config/opencode/reviewer-token` (or `REVIEWER_TOKEN_FILE`) when `REVIEWER_GH_TOKEN` is unset, and the `review` command authenticates the reviewer via `GH_TOKEN` so PRs are approved by the second account `rfablet-review` (not the author). Confirmed the `review` step approves as `rfablet-review` (PR #2). Fixed two latent bugs the loop surfaced: (1) reviewer gh calls used `REVIEWER_GH_TOKEN` env var, which `gh` ignores — must be `GH_TOKEN`; (2) `verify` used `gh pr merge --yes`, which this `gh` version rejects (usage error) — removed it (`--squash --delete-branch` is already non-interactive). Also resolved the `L96_FAST_WEIGHTS_PROGRESS.md` conflict and added `.reviewer-token` to `.gitignore`.
+
+**Files modified:**
+- `scripts/open_pr.sh` — reader token from file; reviewer identity via `GH_TOKEN`; verify tolerates informational ruff + drops `--yes`
+- `L96_FAST_WEIGHTS_PROGRESS.md` — conflict resolved (W3/W4 + W6), W6 marked complete
+- `.gitignore` — reviewer-token safety net
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The reviewer-in-the-loop loop requires the reviewer to be a distinct GitHub identity (GitHub blocks self-approval). Storing the second account's PAT in a `600`-mode file outside the repo and injecting it via `GH_TOKEN` lets the reviewer agent approve automatically, completing Option A end-to-end (create → auto-review → CI-gated merge).
+
+**Verification:** `gh api user` with the stored token returns `rfablet-review`; PR #2 approved by `rfablet-review` and merged (squash `f7efc03`); `bash -n scripts/open_pr.sh` passes. Fyi: the prior automated `verify` was blocked by the `--yes` usage error, which this PR removes.
+
 ## 2026-08-20: Enable Option A — gh auth + branch protection ruleset (branch `feat/l96-fast-weights-randomization`)
 
 **Summary:** Unlocked the GitHub PR path end-to-end. User completed `gh auth login` (rfablet, `repo`+`workflow` scopes); pushed `feat/l96-fast-weights-randomization` to the remote (was local-only) so it becomes the PR base; created a repository **ruleset** on `refs/heads/feat/l96-*` requiring **1 approving PR review** + the **`pytest` status check** (strict, no admin bypass). Bootstrapped the CI gate: renamed the test job to `pytest` so its check context matches the ruleset requirement, and scoped the gate to the 6 relevant test files (L96/DirectUNet/VanillaCFM/hydra/metrics/baselines, 66 tests) because the full `tests/` suite has pre-existing failures (broken `test_numerical_equivalence.py` API call, hardcoded-GPU `test_equiv_report.py`, and other master failures). During bootstrap the ruleset was temporarily disabled to push the CI fix, the `pytest` check was verified **green** on the head commit, then the ruleset was re-enabled to `active`.
