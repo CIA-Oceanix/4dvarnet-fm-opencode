@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-21: S0c/S1c corrected runs + compare script fix
+
+**Summary:** Found and fixed a critical bug in the S0c `--randomize` dict: `biased:false` was set on ALL params, so S1 got zero parameter bias (only forcing corruption). Fixed to `biased:true, bias:0.1` on F,c1,hx,eps,fast_weights and `biased:false` on h. Also discovered that the trajectory-reuse path in `evaluate_all_l96.py` reused stale S1 `_da` params from the old reference cache — fixed by deleting all dataset caches and forcing full regeneration. Reran all 4 S0c/S1c jobs (48934/48935) from scratch. Updated `reports/compare_s0b_s0c.py` to fix JSON nesting bug and ruff-clean.
+
+**Files modified:**
+- `reports/compare_s0b_s0c.py` — fixed JSON nesting (`data[case][method]["mean"]`), split imports, ruff-clean
+- `L96_FAST_WEIGHTS_PROGRESS.md` — updated C5 finding with corrected results, added D5-D8 steps
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Without the bias fix, S1c results were identical to S1b (both had zero parameter bias), making the h-randomization ablation meaningless. The trajectory-reuse bug meant even resubmitted jobs silently served stale `_da` params.
+
+**Corrected results (Obs15, dws=500, 200 windows):**
+- S0b vs S0c (h randomization effect): Strong-4DVar S0 Δ-4.3%, EnKF Δ-1.0%, ETKF Δ-1.5%
+- S1b vs S1c (h bias effect): Strong-4DVar S1 Δ+0.5%, EnKF Δ+0.9%, ETKF Δ+0.6%
+
+**Verification:** 33 tests pass. Jobs 48934 (Obs15) and 48935 (Obs30) COMPLETED. h param confirmed unbiased (ratio=1.0000) in regenerated dataset.
+
 ## 2026-08-20: S0c/S1c h-randomization ablation — negligible effect at dws=500
 
 **Summary:** Ran S0c (h NOT randomized, all other params ±20%) and S0b Obs30 (obs_interval=100) DA baselines on GPU (200 windows each). S0c vs S0b comparison shows h randomization changes RMSE by <2% across all methods and both obs densities. Neither h nor fast_weights randomization significantly affects DA skill at production DWS=500.
