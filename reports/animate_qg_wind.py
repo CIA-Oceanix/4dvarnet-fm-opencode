@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument("--nx", type=int, default=64)
     parser.add_argument("--spinup-years", type=float, default=2.0)
     parser.add_argument("--days", type=float, default=120.0)
-    parser.add_argument("--sample-days", type=float, default=2.0)
+    parser.add_argument("--sample-days", type=float, default=1.0)
     parser.add_argument("--duration-ms", type=int, default=150)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--wind-amp", type=float, default=1e-11)

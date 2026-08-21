@@ -59,7 +59,7 @@ def main() -> None:
     parser.add_argument("--out-dir", default="reports/outputs/figs")
     parser.add_argument("--spinup-years", type=float, default=2.0)
     parser.add_argument("--wind-days", type=float, default=180.0)
-    parser.add_argument("--tau-days", type=float, default=5.0)
+    parser.add_argument("--tau-days", type=float, default=15.0)
     parser.add_argument("--mono-days", type=float, default=5.0)
     parser.add_argument("--amps", nargs="+", default=AMPS)
     parser.add_argument("--seed", type=int, default=42)

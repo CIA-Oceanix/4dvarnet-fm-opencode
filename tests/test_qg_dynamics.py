@@ -169,7 +169,7 @@ def test_wind_term_matches_hand_computation():
 @pytest.mark.slow
 def test_wind_state_ou_statistics():
     dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8,
-                     wind_tau_days=5.0, **NOMINAL)
+                     wind_tau_days=15.0, **NOMINAL)
     s1 = dyn.generate_wind_state(num_steps=2000, seed=7)
     s2 = dyn.generate_wind_state(num_steps=2000, seed=7)
     assert torch.equal(s1, s2)
@@ -178,6 +178,18 @@ def test_wind_state_ou_statistics():
     assert 0.5 * dyn.wind_amp < float(amp.std()) < 2.0 * dyn.wind_amp
     assert bool((s1[:, 1] >= 0).all()) and bool((s1[:, 1] < dyn.L).all())
     assert bool((s1[:, 2] >= 0).all()) and bool((s1[:, 2] < dyn.W).all())
+
+
+@pytest.mark.slow
+def test_wind_amplitude_coherent_on_passage_timescale():
+    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8,
+                     wind_tau_days=15.0, **NOMINAL)
+    s = dyn.generate_wind_state(num_steps=4320, seed=7)
+    amp = s[:, 0]
+    steps_per_day = round(86400.0 / dyn.dt)
+    rho = torch.corrcoef(
+        torch.stack([amp[:-steps_per_day], amp[steps_per_day:]]))[0, 1]
+    assert float(rho) > 0.8
 
 
 @pytest.mark.slow

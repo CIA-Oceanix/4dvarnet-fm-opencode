@@ -29,7 +29,7 @@ class QGConfig:
     obs_var_indices: tuple[int, ...] | None = None
 
     wind_amp: float = 1e-11
-    wind_tau_days: float = 5.0
+    wind_tau_days: float = 15.0
     wind_sigma: float = 250000.0
     wind_cx: float = 0.5
     wind_cy: float = 0.03
