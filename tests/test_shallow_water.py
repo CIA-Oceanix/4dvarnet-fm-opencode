@@ -247,3 +247,38 @@ def test_validate_ev_targets_fail():
     result = validate_ev_targets(metrics, targets, "S1")
     assert result["ocean"]["passed"] is False
     assert result["atmosphere"]["passed"] is True
+
+
+def test_dataconfig_to_shallow_water_config():
+    """DataConfig.to_shallow_water_config() round-trips and applies SW defaults."""
+    from conf.schema import DataConfig
+    from data.shallow_water import ShallowWaterConfig
+    dc = DataConfig(system="shallow_water", dt=0.1, num_windows=7, spinup_steps=10, seed=3)
+    cfg = dc.to_shallow_water_config()
+    assert isinstance(cfg, ShallowWaterConfig)
+    assert cfg.dt == 0.1
+    assert cfg.num_windows == 7
+    assert cfg.spinup_steps == 10
+    assert cfg.seed == 3
+    assert cfg.tau0 == 0.0
+    assert cfg.f_cor == 0.1
+    assert cfg.g1 == 0.5
+    assert cfg.g2 == 2.0
+    assert cfg.coupling == 0.01
+    assert cfg.Nx == 64
+    assert cfg.Ny == 64
+    assert cfg.obs_state_stds == (0.134, 0.069, 0.005, 0.036, 0.071, 0.001)
+    assert cfg.state_dim == 6 * 64 * 64
+
+
+def test_sw_yaml_composes():
+    """config/case_study/shallow_water.yaml composes over the base config."""
+    import hydra
+    import os
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+    with hydra.initialize_config_dir(config_dir=config_dir):
+        cfg = hydra.compose("lorenz63_default", overrides=["+case_study=shallow_water"])
+    assert cfg.data.system == "shallow_water"
+    assert cfg.data.dt == 0.1
+    assert cfg.data.tau0 == 0.0
+    assert cfg.data.g2 == 2.0

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-21: P3: SW schema + case-study config
+
+**Summary:** Added ShallowWater fields to `DataConfig` + `to_shallow_water_config()` converter, and created `config/case_study/shallow_water.yaml` preset (dt=0.1 override, retuned physics).
+**Files modified:** `conf/schema.py`, `config/case_study/shallow_water.yaml`, `tests/test_shallow_water.py`.
+**Rationale:** Wire the SW system into the shared Hydra config schema so train.py can dispatch on `system: shallow_water` later; mirrors the lorenz96.yaml precedent.
+**Verification:** 20 SW tests green locally (`pytest tests/test_shallow_water.py -m "not slow"`).
+
 ## 2026-08-21: P1: SW dynamics port
 
 **Summary:** Byte-identical port of `models/shallow_water_dynamics.py` from `exp/sw-params-baseline` + `get_dynamics("shallow_water")` dispatch with retuned fallbacks + 5 dynamics tests.
