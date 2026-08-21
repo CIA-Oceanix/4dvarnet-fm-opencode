@@ -22,9 +22,10 @@ mkdir -p "$MPLCONFIGDIR"
 OBS_INTERVAL="${OBS_INTERVAL:-200}"
 
 echo "============================================"
-echo " L96 S0c DA Baselines | $(date)"
+echo " L96 S0c/S1c DA Baselines | $(date)"
 echo "  System: all-param randomization EXCEPT h"
 echo "  S0c: F,c1,hx,eps,fast_weights +-20%, h FIXED"
+echo "  S1c: biased DA forward (non-h +10%), h unbiased"
 echo "  Partial obs: obs_j=2 (24D observed subspace)"
 echo "  obs_interval: ${OBS_INTERVAL}"
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
@@ -42,7 +43,7 @@ python -u evaluate_all_l96.py \
   --obs-j 2 \
   --obs-interval "${OBS_INTERVAL}" \
   --suffix _s0c \
-  --randomize '{"F": {"randomized": true, "noise": 0.2, "biased": false, "bias": 0.0}, "c1": {"randomized": true, "noise": 0.2, "biased": false, "bias": 0.0}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": false, "bias": 0.0}, "eps": {"randomized": true, "noise": 0.2, "biased": false, "bias": 0.0}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": false, "bias": 0.0}}' \
+  --randomize '{"F": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "c1": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "eps": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}}' \
   --skip-weak
 
 echo ""
