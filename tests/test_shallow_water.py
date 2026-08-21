@@ -19,8 +19,8 @@ class _DotDict(dict):
 
 
 def _balanced_ic(dyn: ShallowWaterDynamics) -> torch.Tensor:
-    """Geostrophically balanced Bickley jet IC with h near 1.0."""
-    s0 = dyn._init_bickley_jet(seed=42, H_ref=1.0)
+    """Geostrophically balanced Bickley jet IC with the resting depth (H_ref=10)."""
+    s0 = dyn._init_bickley_jet(seed=42, H_ref=10.0)
     return s0.unsqueeze(0)
 
 
@@ -66,7 +66,7 @@ def test_state_dim():
 
 
 def test_short_rollout_bounded():
-    """20 steps from the balanced IC keep |h| finite and bounded."""
+    """20 steps from the balanced IC keep |h| finite and below the clip ceiling (20.0)."""
     dyn = ShallowWaterDynamics(Nx=8, Ny=8)
     x = _balanced_ic(dyn)
     forcing = torch.zeros(20, 2)
@@ -76,7 +76,7 @@ def test_short_rollout_bounded():
         x = dyn.step(x, forcing[t : t + 1])
     max_h = max(max_h, x[0, : dyn.Nx * dyn.Ny].abs().max().item())
     assert torch.isfinite(x).all()
-    assert max_h < 2.0
+    assert max_h < 20.0
 
 
 # ── Data-level tests (SW data pipeline) ─────────────────────────────

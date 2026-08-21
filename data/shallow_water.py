@@ -23,8 +23,8 @@ class ShallowWaterConfig:
     g1: float = 0.5      # layer 1 (ocean) reduced gravity
     g2: float = 2.0      # layer 2 (atmosphere) reduced gravity
     coupling: float = 0.01
-    friction: float = 0.001
-    viscosity: float = 0.0001
+    friction: float = 1e-4
+    viscosity: float = 1e-3
 
     # Observation parameters
     obs_noise_std: float = 0.1

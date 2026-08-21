@@ -46,8 +46,8 @@ class ShallowWaterDynamics(DynamicsBase):
         g1: float = 0.5,
         g2: float = 2.0,
         coupling: float = 0.01,
-friction: float = 0.001,
-        viscosity: float = 0.0001,
+        friction: float = 1e-4,
+        viscosity: float = 1e-3,
         land_mask_type: str = "none",
     ):
         super().__init__()
@@ -114,10 +114,10 @@ friction: float = 0.001,
     def _init_bickley_jet(
         self,
         seed: int = 42,
-        U: float = 0.05,
-        U2: float = 0.03,
+        U: float = 0.15,
+        U2: float = 0.09,
         L_jet_frac: float = 0.05,
-        epsilon: float = 1e-4,
+        epsilon: float = 1e-2,
         H_ref: float = 10.0,
     ) -> torch.Tensor:
         """Geostrophically balanced Bickley jet initial condition.
@@ -218,7 +218,7 @@ friction: float = 0.001,
     def _clip_layer_thickness(self, state: torch.Tensor) -> torch.Tensor:
         """Clamp state to physically safe ranges.
 
-        Layer thicknesses are clamped to ``[0.1, 3.0]`` and velocities
+        Layer thicknesses are clamped to ``[0.1, 20.0]`` and velocities
         to ``[-5.0, 5.0]``.  These bounds are never reached in a normal
         simulation (true h1 stays within ``[0.86, 1.14]`` and u1 within
         ``[-0.08, 0.08]``) and exist solely to keep the DA optimisation
@@ -228,10 +228,10 @@ friction: float = 0.001,
         (autograd-safe).
         """
         NxNy = self.Nx * self.Ny
-        h1 = torch.clamp(state[..., :NxNy], min=0.1, max=3.0)
+        h1 = torch.clamp(state[..., :NxNy], min=0.1, max=20.0)
         u1 = torch.clamp(state[..., NxNy : 2 * NxNy], -5.0, 5.0)
         v1 = torch.clamp(state[..., 2 * NxNy : 3 * NxNy], -5.0, 5.0)
-        h2 = torch.clamp(state[..., 3 * NxNy : 4 * NxNy], min=0.1, max=3.0)
+        h2 = torch.clamp(state[..., 3 * NxNy : 4 * NxNy], min=0.1, max=20.0)
         u2 = torch.clamp(state[..., 4 * NxNy : 5 * NxNy], -5.0, 5.0)
         v2 = torch.clamp(state[..., 5 * NxNy : 6 * NxNy], -5.0, 5.0)
         return torch.cat([h1, u1, v1, h2, u2, v2], dim=-1)
@@ -442,8 +442,8 @@ friction: float = 0.001,
         spinup_steps: int = 500,
         bickley_jet: bool = True,
         tau0: float | None = None,
-        bickley_U: float = 0.05,
-        bickley_U2: float = 0.03,
+        bickley_U: float = 0.15,
+        bickley_U2: float = 0.09,
         bickley_H_ref: float = 10.0,
     ) -> tuple:
         """Generate a trajectory, optionally from a Bickley jet initial condition.

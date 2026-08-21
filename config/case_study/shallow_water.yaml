@@ -15,8 +15,8 @@ data:
   g1: 0.5
   g2: 2.0
   coupling: 0.01
-  friction: 0.001
-  viscosity: 0.0001
+  friction: 1e-4
+  viscosity: 1e-3
   obs_noise_std: 0.1
   obs_noise_pct: 0.05
   obs_stride_ocean: 5

@@ -63,8 +63,8 @@ def get_dynamics(cfg) -> DynamicsBase:
             tau0=dc.get("tau0", 0.0), f_cor=dc.get("f_cor", 0.1),
             g1=dc.get("g1", 0.5), g2=dc.get("g2", 2.0),
             coupling=dc.get("coupling", 0.01),
-            friction=dc.get("friction", 0.001),
-            viscosity=dc.get("viscosity", 0.0001),
+            friction=dc.get("friction", 1e-4),
+            viscosity=dc.get("viscosity", 1e-3),
             land_mask_type=dc.get("land_mask_type", "none"),
         )
     raise ValueError(f"Unknown dynamical system: {system}")

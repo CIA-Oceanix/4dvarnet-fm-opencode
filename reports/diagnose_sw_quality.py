@@ -41,18 +41,16 @@ STATE_NAMES = ["h1", "u1", "v1", "h2", "u2", "v2"]
 BAROTROPIC = {"h1": 0, "u1": 1, "v1": 2, "h2": 3, "u2": 4, "v2": 5}
 
 # Bickley-jet reference depth passed to generate_full_trajectory, set to the
-# model's actual resting layer depth (~1.0). The dynamics' thickness clip is
-# [0.1, 3.0] and _derivative documents true h1 staying within [0.86, 1.14], so
-# an initial depth of 10.0 would be instantly crushed to the 3.0 clip bound,
-# freezing the jet and stalling instability. H=1.0 gives the intended
-# scale separation: Rd1~7 dx, Rd2~14 dx.
-H_REF = 1.0
+# model's actual resting layer depth (10.0). The dynamics' thickness clip is
+# [0.1, 20.0], so H=10 sits safely inside and is not crushed to the clip bound.
+# This gives the intended scale separation: Rd1~22 dx, Rd2~45 dx (Rd2/Rd1=2.0).
+H_REF = 10.0
 
 
 def build_dynamics(Nx, Ny, device):
     return ShallowWaterDynamics(
         Nx=Nx, Ny=Ny, dt=0.1, tau0=0.0, f_cor=0.1,
-        g1=0.5, g2=2.0, coupling=0.01, friction=0.001, viscosity=1e-4,
+        g1=0.5, g2=2.0, coupling=0.01, friction=1e-4, viscosity=1e-3,
     ).to(device)
 
 
