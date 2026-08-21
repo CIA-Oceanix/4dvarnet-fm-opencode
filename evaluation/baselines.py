@@ -419,6 +419,12 @@ class Strong4DVar:
         current_bg = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device)
         H = self.obs_operator
 
+        # ES accumulator for deterministic methods (N=1 -> ES = MAE)
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
+        es_acc = _ESAccumulator(num_steps, self.state_dim, 1) if ref_full is not None else None
+
         for w in range(num_windows):
             start = w * self.da_window_steps
             end = start + self.da_window_steps
@@ -452,11 +458,18 @@ class Strong4DVar:
             )
             analysis[start:end] = final_traj.detach().cpu().numpy()
             current_bg = final_traj[-1].detach()
+            
+            # ES step for deterministic method
+            if es_acc is not None:
+                for t in range(self.da_window_steps):
+                    analysis_t = analysis[start + t, :].reshape(1, -1)
+                    es_acc.step(analysis_t, ref_full[start + t])
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse)
+        es = es_acc.es() if es_acc is not None else None
+        return BaselineResult(trajectory=analysis, rmse=rmse, es=es)
 
     def _forward_strong(self, x0, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
