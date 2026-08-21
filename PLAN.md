@@ -44,13 +44,13 @@ Parallel-session isolation via worktrees (`../4dvarnet-fm-qg`); shared clone sta
   - Window keys: `true_state`, `obs`, `obs_mask`, `forcing_true/corrupted`, `wind_curl` (randomization/S0–S1 deferred).
 - **Tests** `tests/test_qg_dynamics.py` (18), `tests/test_qg_data.py` (13, 1 slow).
 
-### QG Phase A.2 — time-varying wind forcing (PRs #30/#32/#34, merged)
+### QG Phase A.2 — moving-storm wind forcing (PRs #30/#32/#34/#37/#38 + moving-storm PRs)
 
-Adds an atmosphere-like **wind-stress curl** as an upper-layer PV source (Ekman pumping, Vallis §9.2):
-- `models/qg_dynamics.py`: `dq1/dt += curl_τ`, with `curl_τ = A(t)·sin(2πk_x x/L)·sin(2πk_y y/W)`; amplitude `A(t)` is an Ornstein-Uhlenbeck process (`wind_amp` = OU σ, `wind_tau_days`, `wind_kx`, `wind_ky`, `wind_seed`). `wind_amp=0` reproduces the unforced trajectory **bitwise** (regression test). `generate_full_trajectory`/`generate_batch_trajectories` now return `(traj, wind_series)`; spinup stays unforced; held constant within each RK4 step.
-- **Calibration** `reports/calibrate_qg_wind.py`: nx=64 sweep → **`wind_amp=1e-11`** default (KE +32% vs unforced 3.51e-3, stable, wind comparable to internal instability; 2e-11 → +110%, 3e-11 → +250%).
-- **Data** `data/qg.py`: `QGConfig` wind params; `QGDataset` stores per-window `wind_curl` `(T,ny,nx)` = `A(t)·pattern` and `forcing_true/corrupted` = the per-step wind amplitude series `A(t)`.
-- **Animation** `reports/animate_qg_wind.py` → `reports/outputs/figs/qg_wind_animation.gif`.
+Adds an atmosphere-like **wind-stress curl** as an upper-layer PV source (Ekman pumping, Vallis §9.2), shaped as a **localized Gaussian storm on a moving storm track**:
+- `models/qg_dynamics.py`: `dq1/dt += curl_τ` where `curl_τ(x,y,t) = A(t)·(1 − r²/2σ²)·exp(−r²/2σ²)` is a Witch-of-Agnesi profile centered at a moving storm center `(xc, yc)`. Amplitude `A(t)` is an Ornstein–Uhlenbeck process (`wind_amp` = OU σ, `wind_tau_days`) and the center follows a storm track `xc(t) = (L/2 + wind_cx·t + wx(t)) mod L`, `yc(t) = (W/2 + wind_cy·t + wy(t)) mod W`, with OU position jitter `wx, wy` (`wind_drift_tau_days`, `wind_drift_sigma`). Mean drift `(wind_cx, wind_cy) = (0.5, 0.03) m/s` gives a ~23-day zonal crossing with a slow NE track; `wind_sigma = 250 km` storm width. `generate_wind_state(num_steps)` returns a `(T,3)` array `[A, xc, yc]`; `wind_curl_field(wind_state)` builds the per-step field; `generate_full_trajectory`/`generate_batch_trajectories` return `(traj, wind_state)`. `wind_amp=0` reproduces the unforced trajectory **bitwise** (regression test); spinup stays unforced; held constant within each RK4 step.
+- **Calibration** `reports/calibrate_qg_wind.py`: nx=64 sweep over `wind_amp ∈ {0, 3e-12, 1e-11, 2e-11, 3e-11}` → picks the amplitude matching the +32% KE target vs unforced (3.51e-3); 2e-11 → +110%, 3e-11 → +250%.
+- **Data** `data/qg.py`: `QGConfig` wind params (`wind_amp`, `wind_tau_days`, `wind_sigma`, `wind_cx`, `wind_cy`, `wind_drift_tau_days`, `wind_drift_sigma`, `wind_seed`); `QGDataset` stores per-window `wind_curl` `(T,ny,nx) = wind_curl_field(wind_state_slice)` and `forcing_true/corrupted` = the per-step wind amplitude column `wind_state[:,0]`.
+- **Animation** `reports/animate_qg_wind.py` → `reports/outputs/figs/qg_wind_animation.gif` (now shows the moving storm).
 - **PR workflow** active: `feat/qg-*` ruleset (1 review + pytest, `do_not_enforce_on_create` on), reviewer/analyst → `cortecs/glm-5.2`.
 - **To do (next)**: QG DA baselines (EnKF/ETKF/4DVar on ψ/q), then train.py dispatch + neural training, then parameter randomization (S0/S1 analog) as the final step.
 
