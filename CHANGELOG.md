@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-21: Energy Score metric + L96 joint state-parameter estimation
+
+**Summary:** Two new independent developments merged to master. (1) Added per-dimension **Energy Score (ES)** — a proper scoring rule for DA ensemble quality — computed on-the-fly inside EnKF/ETKF (zero extra memory), wired into `run_l96.py` cache/display as ES-all/ES-slow/ES-fast. (2) Added **L96 joint state-parameter estimation** (EnKF/ETKF/Strong-4DVar variants) estimating 8 params (F, c1, hx, eps + fast_weights; h fixed) mirroring the L63 joint extension, with `eval_joint_comparison_l96.py` evaluating on the same cached S0/S1 test datasets used by the DA baselines and neural models.
+
+**Files modified:**
+- `evaluation/metrics.py` — new `energy_score()` (PR #31)
+- `evaluation/baselines.py` — `_ESAccumulator` + `es` field on `BaselineResult`; ES in EnKF/ETKF assimilate/assimilate_batch; new `JointEnKFL96`, `JointETKFL96`, `JointStrong4DVarL96` (PR #36)
+- `evaluation/run_l96.py` — `evaluate_baseline` returns 3-tuple `(rmse, ev, es)`; `_per_group_es`/`fmt_es`; callers updated (sweep, sweep2, tune, test)
+- `eval_joint_comparison_l96.py` — new: vanilla vs joint L96 S0/S1 comparison (state RMSE/EV/ES + param RMSE)
+- `tests/test_energy_score.py` — new (6 tests)
+- `tests/test_joint_estimation_l96.py` — new (4 tests)
+
+**Rationale:** ES rewards both accuracy and sharpness of an ensemble, complementing RMSE/EV; joint state-param DA extends the 3 L96 baselines to simultaneous state estimation + model parameter calibration (an important scenario since the S1 test config has biased `*_da` params).
+
+**Verification:** 48 tests pass (`test_lorenz96_training`, `test_energy_score`, `test_joint_estimation_l96`, `test_vanilla_cfm`). PRs #31, #36 merged via Option A (review by rfablet-review). Note: `feat/l96-joint-state-param` branch renamed to `feature/...` because the `feat/l96-*` ruleset blocks direct pushes of new branches.
+
 ## 2026-08-21: Auto-fix ruff lint debt (F401/F541/E401/E703)
 
 **Summary:** Ran `ruff check . --fix` to clear 156 auto-fixable lint errors across 58 .py files + 6 notebooks (unused imports F401, f-strings without placeholders F541, multi-imports-on-one-line E401, useless semicolons E703). Deleted 3 untracked `_tmp_test_*.py` scratch files. Purely structural, no behavior change. Lint count reduced 240 → 76 (remaining E402/F841/E702/E701/F811 require manual review and are deferred).

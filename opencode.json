@@ -8,7 +8,7 @@
       "description": "Makes code changes per the plan; in PR mode creates a branch, commits, pushes, and opens a PR via gh CLI"
     },
     "reviewer": {
-      "model": "opencode/big-pickle",
+      "model": "cortecs/glm-5.2",
       "mode": "subagent",
       "description": "Reviews code for correctness, style, and repro safety; reads the diff (gh pr diff or git diff) and approves/request-changes via gh pr review"
     },
@@ -23,7 +23,7 @@
       "description": "Submits and monitors sbatch jobs"
     },
     "analyst": {
-      "model": "opencode/big-pickle",
+      "model": "cortecs/glm-5.2",
       "mode": "subagent",
       "description": "Interprets results and produces comparison tables"
     }
