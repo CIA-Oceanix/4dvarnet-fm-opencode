@@ -33,8 +33,11 @@ class QGDynamics(DynamicsBase):
     `wind_amp`, `wind_tau_days`) and OU position jitter `wx, wy` (params
     `wind_drift_tau_days`, `wind_drift_sigma`). Mean drift `(wind_cx,
     wind_cy)` advects the storm across the basin; defaults (0.5, 0.03) m/s
-    give a ~23-day zonal crossing with a slow NE track. `wind_amp=0`
-    disables wind and reproduces the unforced trajectory bitwise.
+    give a ~23-day zonal crossing with a slow NE track. The amplitude OU
+    decorrelates on `wind_tau_days` (default 15 d, ~ the storm-passage
+    timescale) so the storm is a coherent entity that waxes/wanes as it
+    travels rather than flickering. `wind_amp=0` disables wind and
+    reproduces the unforced trajectory bitwise.
     """
 
     param_dim = 5
@@ -45,7 +48,7 @@ class QGDynamics(DynamicsBase):
                  beta: float = 1.5e-11, rd: float = 15000.0, delta: float = 0.25,
                  U1: float = 0.025, U2: float = 0.0, rek: float = 5.787e-7,
                  filterfac: float = 23.6, clip_range: float | None = None,
-                 wind_amp: float = 0.0, wind_tau_days: float = 5.0,
+                 wind_amp: float = 0.0, wind_tau_days: float = 15.0,
                  wind_sigma: float = 250000.0, wind_cx: float = 0.5,
                  wind_cy: float = 0.03,
                  wind_drift_tau_days: float = 10.0,

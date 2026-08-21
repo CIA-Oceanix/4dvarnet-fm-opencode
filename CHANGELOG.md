@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-21: QG — coherent-storm wind amplitude (wind_tau_days 5→15 d) + 1-day animation
+
+**Summary:** The wind-stress-curl amplitude OU `wind_tau_days` was raised `5 → 15` days so the storm's amplitude decorrelates on the storm-passage timescale (~23-day transit) rather than flickering on a 5-day timescale. This makes the wind storm a coherent entity that waxes as it enters and wanes as it exits the basin, eliminating the frame-to-frame amplitude "blinking" in the animations. Animation sampling reduced from 2-day to 1-day stride (`--sample-days 1.0`) to make the smooth amplitude evolution visible. Amplitude recalibrated under the new timescale: `wind_amp=1e-11` → KE +30% vs unforced (3.51e-3), essentially on the +32% comparable-contribution target, so the default is **unchanged**. Added a coherence regression test (lag-1-day amplitude autocorrelation > 0.8).
+
+**Files modified:**
+- `models/qg_dynamics.py` — `wind_tau_days` default `5.0 → 15.0`; docstring notes the 15-day decorrelation ≈ storm-passage timescale.
+- `data/qg.py` — `QGConfig.wind_tau_days` default `5.0 → 15.0`.
+- `tests/test_qg_dynamics.py` — `test_wind_state_ou_statistics` updated to `τ=15`; new slow `test_wind_amplitude_coherent_on_passage_timescale` (lag-1-day autocorr > 0.8).
+- `tests/test_qg_data.py` — `test_wind_amplitude_std_matches_config` updated to `τ=15`.
+- `reports/calibrate_qg_wind.py` — `--tau-days` default `5.0 → 15.0`.
+- `reports/animate_qg_wind.py` — `--sample-days` default `2.0 → 1.0`.
+- `reports/outputs/figs/qg_wind_calibration.json`, `qg_wind_ke.png` — regenerated at `τ=15` (1e-11 → +30%).
+- `reports/outputs/figs/qg_wind_impact.png` — regenerated (KE +37%/+384%).
+- `reports/outputs/figs/qg_wind_animation.gif`, `qg_wind_animation_strong.gif` — regenerated at 1-day stride (120 frames), no longer blinking.
+- `PLAN.md`/`CHANGELOG.md` — documented.
+
+**Rationale:** The previous 5-day OU decorrelated the storm amplitude ~4–5× faster than its 23-day transit, so the wind-curl field visibly flickered between frames — physically a sequence of gusts rather than a coherent cyclone. Tying `wind_tau_days` to the passage timescale restores the intended low-frequency storm with a lifespan commensurate with its travel.
+
+**Verification:** `pytest tests/test_qg_dynamics.py tests/test_qg_data.py -v` — 33 passed (incl. new coherence test; lag-1-day autocorr ~0.94 at τ=15 vs 0.82 at τ=5). `ruff check` clean on all 6 touched code files; `mypy models/qg_dynamics.py data/qg.py` clean. Calibration at τ=15: unforced 3.51e-3; 1e-11 → +30% (on target), 2e-11 → +158%, 3e-11 → +350%. Both animations 120-frame/1-day stride, valid.
+
 ## 2026-08-21: QG — wind-impact diagnostics + strong-amplitude animation
 
 **Summary:** Added `reports/diagnose_qg_wind_impact.py`, which produces a combined 4-panel figure (`qg_wind_impact.png`) quantifying the impact of the wind-stress-curl forcing by comparing the unforced baseline (`wind_amp=0`) against the default (`1e-11`) and strong (`3e-11`) amplitudes. Panels: (a) KE time series, (b) isotropized KE spectrum (log-log), (c) upper-layer PV anomaly `q1_forced − q1_unforced` at 3 matched times (strong case, showing the moving storm imprint after internal variability is subtracted), (d) domain-mean wind work `⟨τ_curl · ψ₁⟩` time series. Also regenerated the default `qg_wind_animation.gif` under the new moving-storm physics and added a strong-amplitude `qg_wind_animation_strong.gif`.

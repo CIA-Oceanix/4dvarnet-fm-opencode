@@ -115,12 +115,12 @@ def test_wind_curl_is_field_at_center():
 
 
 def test_wind_amplitude_std_matches_config():
-    cfg = _tiny_cfg(wind_amp=3e-12, wind_tau_days=5.0)
+    cfg = _tiny_cfg(wind_amp=3e-12, wind_tau_days=15.0)
     from data.qg import _make_qg_dynamics
     dynamics = _make_qg_dynamics(cfg)
     state = dynamics.generate_wind_state(num_steps=2000, seed=cfg.seed)
     assert 0.5 * cfg.wind_amp < float(state[:, 0].std()) < 2.0 * cfg.wind_amp
-    assert cfg.wind_tau_days == 5.0
+    assert cfg.wind_tau_days == 15.0
 
 
 def test_make_qg_datasets_structure():
