@@ -144,6 +144,7 @@ class DataConfig:
 class DirectUNetConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     dropout: float = 0.1
+    cond_extra_dim: int = 0
 
 
 @dataclass
@@ -154,6 +155,7 @@ class VanillaCFMConfig:
     sigma_prior: float = 0.5
     dropout: float = 0.1
     train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
 
 
 @dataclass

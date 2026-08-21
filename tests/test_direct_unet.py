@@ -51,3 +51,18 @@ class TestDirectUNet:
         with torch.no_grad():
             out = model(batch)
         assert torch.isfinite(out).all(), "NaN in obs should be zeroed"
+
+    def test_cond_extra_dim_0_proj_shape(self):
+        model = DirectUNet(state_dim=3, hidden_channels=[4, 8], cond_extra_dim=0)
+        proj = model.unet.cond_encoder.proj
+        assert proj.weight.shape == (4, 2 * 3 + 0), f"proj shape {proj.weight.shape}"
+
+    def test_cond_extra_dim_gt0_proj_shape(self):
+        model = DirectUNet(state_dim=3, hidden_channels=[4, 8], param_dim=4,
+                           cond_extra_dim=5)
+        proj = model.unet.cond_encoder.proj
+        assert proj.weight.shape == (4, 2 * 3 + 5), f"proj shape {proj.weight.shape}"
+        B, T, D = 2, 50, 3
+        batch = _MockBatch(B=B, T=T, D=D)
+        out = model(batch)
+        assert out.shape == (B, T, D)

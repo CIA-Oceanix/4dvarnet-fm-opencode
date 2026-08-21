@@ -14,6 +14,7 @@ model:
     sigma_prior: 0.5
     dropout: 0.1
     train_tau_0_only: true
+    cond_extra_dim: 0
 
 training:
   stage1:

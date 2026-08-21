@@ -157,12 +157,13 @@ def test_make_l96_s0_s1_trainval(tiny_l96_cfg):
 
 def test_l96_direct_unet_param_dim0(tiny_l96_dataset):
     w = tiny_l96_dataset[0]
-    model = DirectUNet(state_dim=40, param_dim=0, hidden_channels=[8, 16])
+    model = DirectUNet(state_dim=40, param_dim=0, hidden_channels=[8, 16],
+                       cond_extra_dim=0)
     model.eval()
     obs = w["obs"].unsqueeze(0)
     mask = w["obs_mask"].unsqueeze(0)
     forcing = w["forcing_corrupted"].unsqueeze(0)
-    assert model.obs_dim == 41
+    assert model.cond_extra_dim == 0
     batch = FlowMatchingBatch(w["true_state"].unsqueeze(0), obs, mask, forcing)
     with torch.no_grad():
         out = model(batch)
@@ -172,12 +173,12 @@ def test_l96_direct_unet_param_dim0(tiny_l96_dataset):
 def test_l96_vanilla_cfm_param_dim0(tiny_l96_dataset):
     w = tiny_l96_dataset[0]
     model = VanillaCFM(state_dim=40, param_dim=0, hidden_channels=[8, 16],
-                       train_tau_0_only=True)
+                       train_tau_0_only=True, cond_extra_dim=0)
     model.eval()
     obs = w["obs"].unsqueeze(0)
     mask = w["obs_mask"].unsqueeze(0)
     forcing = w["forcing_corrupted"].unsqueeze(0)
-    assert model.obs_dim == 41
+    assert model.cond_extra_dim == 0
     batch = FlowMatchingBatch(w["true_state"].unsqueeze(0), obs, mask, forcing)
     with torch.no_grad():
         out = model.sample(batch)

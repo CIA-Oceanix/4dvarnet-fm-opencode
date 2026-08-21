@@ -485,3 +485,41 @@
 **Verification:** `pytest tests/test_joint_estimation.py -v -m "not slow"` — 12 passed (0.94s). `pytest tests/test_joint_estimation.py -v -m "slow"` — 4 passed (6.72s). Comparison script runs end-to-end on GPU with batch_size=200, da_window_steps=50.
 
 
+
+## 2026-08-21: Standalone neural model evaluation framework
+
+**Summary:** Added a standalone neural model evaluation framework (`evaluation/neural_inference.py`, `eval_neural_l96.py`, `reports/benchmark_table_l96.py`) that evaluates trained models on the **same cached test dataset** used by DA baselines, computing RMSE/EV/ES metrics with per-group breakdowns (slow/obs_fast/all_obs) for direct comparison.
+
+**Files modified:**
+- `evaluation/neural_inference.py` — new: core library for model loading, config resolution, evaluation
+- `eval_neural_l96.py` — new: CLI script to evaluate models on cached test dataset
+- `reports/benchmark_table_l96.py` — new: combined DA baseline + neural model comparison tables
+- `tests/test_neural_inference.py` — new: unit tests (6 tests)
+- `evaluation/baselines.py` — wire `_ESAccumulator` into Strong4DVar for ES coverage
+- `CHANGELOG.md` — this entry
+- `opencode.json` — updated agent descriptions
+
+**Rationale:** The user needs to evaluate existing L1 DirectUNet checkpoint on the **same** test dataset (randomized params) that DA baselines use, not a different one with fixed params. The framework provides a standalone evaluation pipeline independent of training infrastructure.
+
+**Verification:** `pytest tests/test_neural_inference.py -v` — 6 passed. All imports work. Strong4DVar ES wiring verified. PR #41 created and pushed to `feature/l96-neural-eval` branch.
+
+
+## 2026-08-22: Clean conditioning separation (cond_extra_dim) for L1/L2 + neural-eval loader fixes
+
+**Summary:** Refactored `DirectUNet`/`VanillaCFM` so the backbone UNet's conditioning dimension is no longer implicitly `state_dim + 1 + param_dim`. Added an explicit `cond_extra_dim` parameter to `UNet1D`/`ConditionEncoder` (default `0`); `proj_in = state_dim + obs_dim + cond_extra_dim` with `obs_dim = state_dim`. The models now receive **24-dim obs** at the interface and build the conditioning (forcing/params) internally only when `cond_extra_dim > 0`. L1 (DirectUNet) and L2 (VanillaCFM-τ=0) set `cond_extra_dim: 0` (obs-only, no forcing/params). Also fixed the standalone neural-eval loader (`evaluation/neural_inference.py`) which previously hardcoded `obs_dim=24` and post-hoc patched `model.unet.obs_dim`; it now infers state_dim from `enc_out` and derives `cond_extra_dim` from the `proj` weight shape, and `create_model` passes `cond_extra_dim` directly. **Requires retraining L1/L2** because the `proj` layer input width changes (48 vs 49).
+
+**Files modified:**
+- `models/unet.py` — `cond_extra_dim` param on `ConditionEncoder` + `UNet1D`; `proj_in += cond_extra_dim`
+- `models/direct_unet.py` — `__init__` takes `cond_extra_dim`; `forward` builds `cond=obs` when 0 else `[obs,forcing,params]`; removed `self.obs_dim`
+- `models/vanilla_cfm.py` — same for `VanillaCFM`; `JointCFM` uses `cond_extra_dim=1+param_dim`, keeps `output_dim=state_dim+param_dim`
+- `conf/schema.py` — `cond_extra_dim: int = 0` on `DirectUNetConfig`, `VanillaCFMConfig`
+- `train.py` — `model_factory` passes `cond_extra_dim` from sub-config (default `1+param_dim` to preserve L63 behavior)
+- `config/experiment/L1_direct_unet_s0s1.yaml`, `L2_vanilla_cfm_s0s1.yaml`, `L1b_...`, `L2b_...` — `cond_extra_dim: 0`
+- `evaluation/neural_inference.py` — infer state_dim/cond_extra_dim from checkpoint weights; `create_model` passes `cond_extra_dim`; removed obs_dim hardcode
+- `tests/test_direct_unet.py`, `tests/test_vanilla_cfm.py` — added `cond_extra_dim=0`/`>0` proj-shape + forward tests
+- `tests/test_lorenz96_training.py` — updated `model.obs_dim` asserts → `model.cond_extra_dim`
+- `docs/cond_extra_dim_plan.md` — new: persisted plan for this refactor
+
+**Rationale:** The old `obs_dim = state_dim + 1 + param_dim` leaked an internal architecture detail (forcing `+1`) into the model interface. The clean design makes the 24-dim observation the external input; forcing/params conditioning is optional and internal. L1/L2 τ=0 models operate on obs only, enabling inference to feed a plain 24-dim obs vector as requested.
+
+**Verification:** `pytest tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_neural_inference.py -m "not slow"` — 62 passed. Manual: L1 proj_in=48, L2 proj_in=48, L63 default proj_in=11, JointCFM proj_in=11/output_dim=7. Ruff/mypy on changed files — no new errors (only pre-existing lint/mypy debt).

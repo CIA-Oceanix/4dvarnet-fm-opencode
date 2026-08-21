@@ -5,24 +5,28 @@ from models.unet import UNet1D
 from models.interpolant import LinearInterpolant
 
 
-def _make_cond(obs, forcing, params, param_dim=0):
+def _make_cond(obs, forcing, params, param_dim=0, cond_extra_dim=0):
     obs_clean = torch.nan_to_num(obs, nan=0.0)
-    B, T, D = obs.shape
-    cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
-    if param_dim > 0:
-        params_t = params.unsqueeze(1).expand(B, T, -1)
-        cond = torch.cat([cond, params_t], dim=-1)
+    if cond_extra_dim > 0:
+        B, T, D = obs.shape
+        cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
+        if param_dim > 0:
+            params_t = params.unsqueeze(1).expand(B, T, -1)
+            cond = torch.cat([cond, params_t], dim=-1)
+    else:
+        cond = obs_clean
     return cond
 
 
 class VanillaCFM(nn.Module):
-    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4):
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4, cond_extra_dim=0):
         super().__init__()
-        self.obs_dim = state_dim + 1 + param_dim
+        self.cond_extra_dim = cond_extra_dim
         self.param_dim = param_dim
         self.unet = UNet1D(
             state_dim=state_dim,
-            obs_dim=self.obs_dim,
+            obs_dim=state_dim,
+            cond_extra_dim=cond_extra_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
@@ -36,7 +40,7 @@ class VanillaCFM(nn.Module):
         self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim)
+        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim, self.cond_extra_dim)
         v = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return v.transpose(1, 2)
 
@@ -75,10 +79,12 @@ class JointCFM(VanillaCFM):
         super().__init__(state_dim=state_dim, param_dim=param_dim,
                          hidden_channels=hidden_channels,
                          time_emb_dim=time_emb_dim, N_outer=N_outer,
-                         sigma_prior=sigma_prior, dropout=dropout)
+                         sigma_prior=sigma_prior, dropout=dropout,
+                         cond_extra_dim=1 + param_dim)
         self.unet = UNet1D(
             state_dim=state_dim,
-            obs_dim=self.obs_dim,
+            obs_dim=state_dim,
+            cond_extra_dim=1 + param_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
@@ -91,7 +97,7 @@ class JointCFM(VanillaCFM):
         self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim)
+        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim, 1 + self.param_dim)
         v = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         v = v.transpose(1, 2)
         v_state = v[..., :self.state_dim]

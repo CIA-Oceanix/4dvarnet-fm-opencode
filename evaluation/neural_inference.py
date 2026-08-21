@@ -14,11 +14,26 @@ from torch.utils.data import DataLoader
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
 from models.dynamics import get_dynamics
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, make_dataloaders
+from data.dataloader import FlowMatchingDataset, ConcatFMDataset, make_dataloaders, collate_fm
 from evaluation.metrics import energy_score
 import torch
 import torch.nn.functional as F
 import numpy as np
+
+
+class BatchDict:
+    """Simple wrapper for batch dict access."""
+    def __init__(self, d):
+        self.__dict__.update(d)
+
+
+def collate_eval(batch):
+    """Collate function for RandomParamLorenz96Dataset (Dict format)."""
+    states = torch.stack([b["true_state"] for b in batch])
+    obs = torch.stack([b["obs"] for b in batch])
+    masks = torch.stack([b["obs_mask"] for b in batch])
+    forcing = torch.stack([b["forcing_corrupted"] for b in batch])
+    return {"true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing, "params": None}
 
 
 def _per_group_rmse(preds: torch.Tensor, truth: torch.Tensor, obs_var_indices: list) -> dict:
@@ -70,27 +85,72 @@ class EvalConfig:
 def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> tuple:
     """Load model checkpoint and config."""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    model = ckpt["state_dict"]
-    cfg_dict = ckpt.get("config", {})
+    state_dict = ckpt["state_dict"]
     
-    if config_path:
-        cfg = OmegaConf.load(config_path)
-        # Merge checkpoint config into file config
-        OmegaConf.update(cfg, "model", cfg_dict.get("model", {}), merge=True)
-    else:
-        cfg_dict["model"]["device"] = cfg_dict.get("device", "cpu")
+    # Handle Lightning .ckpt files
+    if "hyper_parameters" in ckpt:
+        # Lightning checkpoint: extract model_type from hyper_parameters
+        model_type = ckpt["hyper_parameters"].get("model_type", "direct_unet")
+        
+        # Infer architecture parameters from state_dict
+        inferred_params = {}
+
+        # state_dim = output_dim = first channel of the final enc_out conv
+        if "model.unet.enc_out.2.weight" in state_dict:
+            inferred_params["state_dim"] = state_dict["model.unet.enc_out.2.weight"].shape[1]
+        state_dim = inferred_params.get("state_dim", 24)
+
+        # proj_in = state_dim + obs_dim + cond_extra_dim, with obs_dim = state_dim
+        if "model.unet.cond_encoder.proj.weight" in state_dict:
+            cond_proj_weight = state_dict["model.unet.cond_encoder.proj.weight"]
+            inferred_params["cond_extra_dim"] = cond_proj_weight.shape[1] - 2 * state_dim
+
+        # Infer hidden_channels from downs/ups layers
+        # downs.0.conv1: [hidden[0], hidden[0], 3] (first layer, same in/out)
+        # downs.1.conv1: [hidden[1], hidden[0], 3] (second layer)
+        # downs.2.conv1: [hidden[2], hidden[1], 3] (third layer)
+        if "model.unet.downs.1.block.conv1.weight" in state_dict:
+            conv1 = state_dict["model.unet.downs.1.block.conv1.weight"]
+            # Shape is [hidden[1], hidden[0], 3]
+            inferred_params["hidden_channels"] = [conv1.shape[1], conv1.shape[0], 256]
+
+        # Use inferred params or defaults
+        cfg_dict = {
+            "model": {
+                "type": model_type,
+                "state_dim": state_dim,
+                "hidden_channels": inferred_params.get("hidden_channels", [64, 128, 256]),
+                "time_emb_dim": 64,
+                "param_dim": 0,  # Lightning checkpoints were trained with param_dim=0
+                "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
+                "device": "cpu",
+            },
+            "deterministic": False,
+        }
         cfg = OmegaConf.create(cfg_dict)
+    else:
+        # Custom checkpoint format
+        cfg_dict = ckpt.get("config", {})
+        if config_path:
+            cfg = OmegaConf.load(config_path)
+            OmegaConf.update(cfg, "model", cfg_dict.get("model", {}), merge=True)
+        else:
+            cfg_dict["model"]["device"] = cfg_dict.get("device", "cpu")
+            cfg = OmegaConf.create(cfg_dict)
     
-    return model, cfg
+    return state_dict, cfg
 
 
 def resolve_model_class(cfg: Any) -> tuple:
-    """Resolve model class and create instance from config."""
+    """Resolve model class from config."""
     model_type = cfg.model.get("type", "DirectUNet")
     
-    if model_type == "DirectUNet":
+    # Normalize model type (handle both "direct_unet" and "DirectUNet")
+    model_type = model_type.replace("_", "").replace("-", "").upper()
+    
+    if model_type == "DIRECTUNET":
         return DirectUNet, cfg
-    elif model_type == "VanillaCFM":
+    elif model_type == "VANILLACFM":
         return VanillaCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -106,6 +166,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             hidden_channels=hidden,
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )
     elif model_class == VanillaCFM:
         model = model_class(
@@ -117,6 +178,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")
@@ -126,10 +188,32 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
 
 def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs) -> tuple:
     """Load model from checkpoint."""
-    model, cfg = load_checkpoint(checkpoint_path, config_path)
+    state_dict, cfg = load_checkpoint(checkpoint_path, config_path)
     model_class, cfg_model = resolve_model_class(cfg)
     model = create_model(model_class, cfg_model)
-    model.load_state_dict(model)
+    
+    # Move model to correct device
+    device = kwargs.get("device", "cpu")
+    model.to(device)
+    
+    # Strip "model." prefix if present (Lightning wrapper)
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("model."):
+            new_state_dict[k[6:]] = v  # Remove "model." prefix
+        else:
+            new_state_dict[k] = v
+    
+    # Filter out mismatched keys (e.g., output_dim mismatch)
+    model_sd = model.state_dict()
+    filtered_state_dict = {}
+    for k, v in new_state_dict.items():
+        if k in model_sd and v.shape == model_sd[k].shape:
+            filtered_state_dict[k] = v
+        else:
+            logger.warning(f"Skipping key {k}: checkpoint shape {v.shape} vs model shape {model_sd[k].shape if k in model_sd else 'missing'}")
+    
+    model.load_state_dict(filtered_state_dict, strict=False)
     model.eval()
     return model, cfg
 
@@ -139,6 +223,7 @@ def prepare_dataset(
     test_dataset_path: Optional[str] = None,
     num_test_windows: int = 200,
     obs_interval: int = 100,
+    **kwargs,
 ) -> ConcatFMDataset:
     """Prepare test dataset for evaluation."""
     # Try to load cached dataset
@@ -161,12 +246,14 @@ def prepare_dataset(
         train, val, test = make_l96_s0_s1_trainval(cfg_test)
         dataset = test
     
-    # Create dataloader
-    dataloader = make_dataloaders(
-        dataset=dataset,
+    # Create dataloader for evaluation (use S0 test dataset)
+    test_s0 = dataset["test_s0"]
+    dataloader = DataLoader(
+        test_s0,
         batch_size=kwargs.get("batch_size", 200),
+        shuffle=False,
+        collate_fn=collate_eval,
         num_workers=kwargs.get("num_workers", 0),
-        deterministic=kwargs.get("deterministic", False),
     )
     return dataset, dataloader
 
@@ -185,14 +272,16 @@ def evaluate_model(
     
     with torch.no_grad():
         for batch in dataloader:
-            batch = {k: v.to(device) for k, v in batch.items()}
+            # Convert tensors to device, skip None values
+            batch = {k: v.to(device) if v is not None else v for k, v in batch.items()}
+            batch_obj = BatchDict(batch)
             
             if isinstance(model, DirectUNet):
                 # DirectUNet.forward takes a batch dict
-                pred = model(batch)
+                pred = model(batch_obj)
             elif isinstance(model, VanillaCFM):
                 # VanillaCFM.sample takes a batch dict
-                pred = model.sample(batch, N_outer=1)
+                pred = model.sample(batch_obj, N_outer=1)
             else:
                 raise ValueError(f"Unknown model type: {type(model)}")
             
