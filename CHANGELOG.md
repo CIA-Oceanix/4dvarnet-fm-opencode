@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21: Auto-fix ruff lint debt (F401/F541/E401/E703)
+
+**Summary:** Ran `ruff check . --fix` to clear 156 auto-fixable lint errors across 58 .py files + 6 notebooks (unused imports F401, f-strings without placeholders F541, multi-imports-on-one-line E401, useless semicolons E703). Deleted 3 untracked `_tmp_test_*.py` scratch files. Purely structural, no behavior change. Lint count reduced 240 → 76 (remaining E402/F841/E702/E701/F811 require manual review and are deferred).
+
+**Files modified:** 58 `.py` files + 6 notebooks across `models/`, `data/`, `evaluation/`, `training/`, `reports/`, `tests/`, `batch/`, `demos/` — auto-fixed by ruff
+**Rationale:** Reduces lint noise so future PRs (like the L96 neural training comparison) show only new errors. CI ruff is informational (`continue-on-error: true`), so this is maintainability, not a gate fix.
+**Verification:** 66-test gate passes (`pytest ... -m "not slow"`: 66 passed); all core modules import cleanly; `ruff check . --select F401,F541,E401,E703` → 0 remaining. PR #28 merged via Option A (review by rfablet-review).
+
 ## 2026-08-21: Set Obs30 (obs_interval=100) as default L96 config + config-driven eval scripts
 
 **Summary:** Merged `feat/l96-fast-weights-randomization` (32 commits, all S0b/S1c work) to master. Set Obs30 (obs_interval=100) as the new default L96 observation density, with S0c-like randomize block (h NOT randomized, others ±20%). Updated all eval scripts to read obs_interval from config/CLI instead of hardcoding 200. Added S0c/S1c Obs30 results summary.
