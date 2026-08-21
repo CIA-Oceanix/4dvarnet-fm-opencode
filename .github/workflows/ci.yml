@@ -50,4 +50,5 @@ jobs:
             tests/test_hydra_config.py \
             tests/test_baselines_hydra.py \
             tests/test_metrics.py \
+            tests/test_shallow_water.py \
             -m "not slow" -q
