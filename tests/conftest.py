@@ -88,3 +88,34 @@ def tiny_config():
         obs_interval=5,
         spinup_steps=500,
     )
+
+# ── Shallow Water fixtures ──────────────────────────────────────────
+
+@pytest.fixture
+def sw_config():
+    """Small SW config for fast unit tests (8x8 grid)."""
+    from data.shallow_water import ShallowWaterConfig
+    return ShallowWaterConfig(Nx=8, Ny=8, K=3, window_steps=3, num_windows=2, seed=42)
+
+@pytest.fixture
+def sw_dynamics(sw_config):
+    """SW dynamics instance (uses new Bickley-jet defaults)."""
+    from models.shallow_water_dynamics import ShallowWaterDynamics
+    return ShallowWaterDynamics(
+        Nx=sw_config.Nx, Ny=sw_config.Ny, dt=sw_config.dt,
+        K=sw_config.K, tau0=sw_config.tau0, f_cor=sw_config.f_cor,
+        g1=sw_config.g1, g2=sw_config.g2, coupling=sw_config.coupling,
+        friction=sw_config.friction, viscosity=sw_config.viscosity,
+    )
+
+@pytest.fixture
+def sw_s0_dataset(sw_config):
+    """S0 SW dataset."""
+    from data.shallow_water import ShallowWaterDataset
+    return ShallowWaterDataset(sw_config, scenario="S0")
+
+@pytest.fixture
+def sw_s1_dataset(sw_config):
+    """S1 SW dataset (perturbed forcing)."""
+    from data.shallow_water import ShallowWaterDataset
+    return ShallowWaterDataset(sw_config, scenario="S1")

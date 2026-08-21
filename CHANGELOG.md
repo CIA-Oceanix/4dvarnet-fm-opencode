@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-21: P1: SW dynamics port
+
+**Summary:** Byte-identical port of `models/shallow_water_dynamics.py` from `exp/sw-params-baseline` + `get_dynamics("shallow_water")` dispatch with retuned fallbacks + 5 dynamics tests.
+**Files modified:** `models/shallow_water_dynamics.py`, `models/dynamics.py`, `tests/test_shallow_water.py`.
+**Rationale:** Re-establish SW case study on master line.
+**Verification:** 5 SW tests + L96 regression green locally; PR #23 CI pytest gate green.
+
+## 2026-08-21: P2: SW data pipeline port
+
+**Summary:** Byte-identical port of `data/shallow_water.py` (ShallowWaterConfig, `make_sw_obs_indices`/`make_sw_obs_noise_std`/`make_sw_obs_mask`, `ShallowWaterDataset`, `make_sw_s0_s1_datasets`, `sw_collate_fn`) from `exp/sw-params-baseline`; appended the four SW fixtures (`sw_config`/`sw_dynamics`/`sw_s0_dataset`/`sw_s1_dataset`) to `tests/conftest.py`; added data-level fast tests in `tests/test_shallow_water.py` (dataset window shapes/keys, obs-indices count + uniqueness round-trip, obs-noise-std structure, S0 reproducible with same seed, S1 differs from S0, config defaults) plus SW/EV metrics tests (`explained_variance`, `compute_sw_component_metrics`, `validate_ev_targets`) since `tests/test_metrics.py` does not cover them; added `tests/test_shallow_water.py` to the CI pytest gate.
+**Files modified:** `data/shallow_water.py`, `tests/conftest.py`, `tests/test_shallow_water.py`, `.github/workflows/ci.yml`.
+**Rationale:** Port the SW observation/data pipeline so the SW case study has a complete data path on this branch; data-level tests guard dataset shapes, obs-index mapping, noise-std structure, and S0/S1 reproducibility. Known quirks (hardcoded `obs_state_stds`, S1 = IC jet-amplitude perturbation, no caching) are ported as-is per task.
+**Verification:** `pytest tests/test_shallow_water.py -v --no-header -q` — 18 passed; `pytest tests/test_lorenz96_training.py tests/test_metrics.py -m "not slow" -q` — 11 passed; exact CI gate command (7 files, `-m "not slow"`) — 56 passed. CI pending on PR.
+
 ## 2026-08-21: SW case-study bootstrap — worktree + PR workflow infra
 
 **Summary:** Created feat/sw-case-study integration branch + worktree, feat/sw-* ruleset (PR review + pytest gate), and ported the multi-agent PR workflow infra (ci.yml, open_pr.sh, agent_review_loop.sh) from the L96 branch, adapted to feat/sw-* refs.
