@@ -10,7 +10,7 @@
     "reviewer": {
       "description": "Reviews code for correctness, style, and repro safety; reads the diff (gh pr diff or git diff) and approves/request-changes via gh pr review",
       "mode": "subagent",
-      "model": "opencode/big-pickle"
+      "model": "cortecs/glm-5.2"
     },
     "verifier": {
       "description": "Runs lint, type checks, and tests to validate changes; in PR mode waits for CI (gh pr checks) and merges (gh pr merge --squash)",
@@ -25,7 +25,7 @@
     "analyst": {
       "description": "Interprets results and produces comparison tables",
       "mode": "subagent",
-      "model": "opencode/big-pickle"
+      "model": "cortecs/glm-5.2"
     }
   }
 }
