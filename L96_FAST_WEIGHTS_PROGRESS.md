@@ -118,6 +118,10 @@ Two execution paths per code step, both following the implement→review→verif
 | D2 S0c sbatch + compare | ✅ | #18 | `batch/run_l96_da_s0c.sbatch`, `batch/run_l96_da_s0b_obs30.sbatch`, `reports/compare_s0b_s0c.py` |
 | D3 S0c/S0b runs | ✅ | — | Jobs 48893 (S0b Obs30), 48894 (S0c Obs15), 48895 (S0c Obs30) |
 | D4 S0c vs S0b analysis | ✅ | — | h randomization <2% effect at dws=500 |
+| D5 S0c bias fix | ✅ | #20 | `--randomize` dict: `biased:true, bias:0.1` on non-h params; `biased:false` on h |
+| D6 S0c resubmission | ✅ | — | Jobs 48932/48933 resubmitted (used stale dataset cache) |
+| D7 full regeneration | ✅ | — | Deleted all caches incl. reference; Jobs 48934/48935 from scratch |
+| D8 compare script fix | ✅ | #21 | `reports/compare_s0b_s0c.py` — fixed JSON nesting, split imports, ruff clean |
 
 ## Repro gate (Phase B) — PASSED
 - Reference cache: `l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2.json` (pre-obs_interval naming)
@@ -136,15 +140,31 @@ track the slightly-varying dynamics regardless of fast_weights randomization. Th
 is only significant for short windows where DA has limited time to adapt.
 
 ## C5 Finding: h randomization has negligible effect at dws=500
-At dws=500, fixing h while randomizing all other params (S0c vs S0b) changes RMSE by <2% across all methods and both obs densities:
+At dws=500, fixing h while randomizing all other params (S0c vs S0b) changes RMSE by <5% across all methods and both obs densities. Results from corrected runs (jobs 48934/48935, with `biased:true` on non-h params):
 
-| Method | Obs15 Δ | Obs30 Δ |
-|--------|---------|---------|
-| EnKF   | +0.4%   | -0.0%   |
-| ETKF   | -0.2%   | -0.5%   |
-| Strong-4DVar | -0.6% | +1.7% |
+### Obs15 (obs_interval=200)
+| Method | Case | S0b | S0c | Delta | Rel% |
+|--------|------|-----|-----|-------|------|
+| EnKF | S0 | 1.0873 | 1.0769 | -0.0104 | -1.0% |
+| ETKF | S0 | 1.0976 | 1.0810 | -0.0166 | -1.5% |
+| Strong-4DVar | S0 | 0.9704 | 0.9283 | -0.0421 | -4.3% |
+| EnKF | S1 | 1.6514 | 1.6655 | +0.0141 | +0.9% |
+| ETKF | S1 | 1.6366 | 1.6468 | +0.0102 | +0.6% |
+| Strong-4DVar | S1 | 1.4751 | 1.4826 | +0.0075 | +0.5% |
+
+### Obs30 (obs_interval=100)
+| Method | Case | S0b | S0c | Delta | Rel% |
+|--------|------|-----|-----|-------|------|
+| EnKF | S0 | 0.9053 | 0.8916 | -0.0137 | -1.5% |
+| ETKF | S0 | 0.8844 | 0.8641 | -0.0203 | -2.3% |
+| Strong-4DVar | S0 | 0.7759 | 0.7418 | -0.0341 | -4.4% |
+| EnKF | S1 | 1.5025 | 1.5059 | +0.0034 | +0.2% |
+| ETKF | S1 | 1.4686 | 1.4715 | +0.0030 | +0.2% |
+| Strong-4DVar | S1 | 1.4276 | 1.4319 | +0.0043 | +0.3% |
 
 Conclusion: neither h nor fast_weights randomization significantly affects DA skill at production window size (dws=500). The DA's 500 assimilation steps dominate over per-window parametric variability.
+
+**Bug fix (D5-D8):** The original S0c runs (jobs 48894/48895) had `biased:false` on ALL params in the `--randomize` dict, so S1 got zero parameter bias (only forcing corruption). Jobs 48934/48935 corrected this to `biased:true, bias:0.1` on F,c1,hx,eps,fast_weights and `biased:false` on h. The trajectory-reuse path also reused stale S1 `_da` params from the old reference cache; this was fixed by deleting `l96_datasets_obsj2_nwin200.pt` and forcing full regeneration.
 
 ## Notes
 - Existing S1 uses ONE shared per-window bias `b` for all 5 params
