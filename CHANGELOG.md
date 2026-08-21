@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-21: QG — recalibrate wind amplitude under moving-storm drift
+
+**Summary:** Re-ran `reports/calibrate_qg_wind.py` (nx=64, 180-d forced window, `wind_amp ∈ {0,3e-12,1e-11,2e-11,3e-11}`) under the new moving-storm defaults (`wind_cx=0.5`, `wind_cy=0.03`, `wind_sigma=250 km`). Results: unforced KE 3.51e-3; +7% (3e-12), **+37% (1e-11)**, +136% (2e-11), +290% (3e-11). The existing `QGConfig.wind_amp = 1e-11` default still best matches the +32% comparable-contribution target, so the default is unchanged; only the regenerated calibration artifacts (`qg_wind_calibration.json`, `qg_wind_ke.png`) and docs are updated.
+
+**Files modified:**
+- `reports/outputs/figs/qg_wind_ke.png`, `reports/outputs/figs/qg_wind_calibration.json` — regenerated under moving-storm physics.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** A moving, localized storm deposits KE differently than a fixed `sin·sin` pattern of the same amplitude; the calibration was re-run to verify the design target still holds (it does: 1e-11 → +37% ≈ +32% target). No default change required.
+
+**Verification:** Calibration run on GPU (Quadro RTX 8000, nx=64, spinup 8760 steps) — all 5 amplitudes finite/stable; KE response monotonic in amplitude; baseline KE 3.51e-3 reproduced. `test_wind_amplitude_std_matches_config` still green.
+
 ## 2026-08-21: QG — moving-storm wind forcing (localized Gaussian on NE storm track)
 
 **Summary:** Replaced the static `sin·sin` wind-pattern forcing with a **localized Gaussian storm** whose center follows a moving storm track (`wind_cx=0.5`, `wind_cy=0.03` m/s), finishing the partially-migrated storm refactor: `QGDynamics` now exposes `generate_wind_state` → `(T,3)` `[A, xc, yc]` and `wind_curl_field`, the data layer builds time/space-varying `wind_curl` from the wind state, and the animation/snapshot reports draw the actual moving storm. `wind_amp=0` still reproduces the unforced trajectory bitwise.
