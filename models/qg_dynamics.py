@@ -35,6 +35,8 @@ class QGDynamics(DynamicsBase):
                  beta: float = 1.5e-11, rd: float = 15000.0, delta: float = 0.25,
                  U1: float = 0.025, U2: float = 0.0, rek: float = 5.787e-7,
                  filterfac: float = 23.6, clip_range: float | None = None,
+                 wind_amp: float = 0.0, wind_tau_days: float = 5.0,
+                 wind_kx: int = 1, wind_ky: int = 1, wind_seed: int = 7,
                  dtype: torch.dtype = torch.float32):
         super().__init__()
         self.param_names: list[str] = ["beta", "rd", "rek", "U1", "U2"]
@@ -55,6 +57,11 @@ class QGDynamics(DynamicsBase):
         self.rek = float(rek)
         self.filterfac = float(filterfac)
         self.clip_range = clip_range
+        self.wind_amp = float(wind_amp)
+        self.wind_tau_days = float(wind_tau_days)
+        self.wind_kx = int(wind_kx)
+        self.wind_ky = int(wind_ky)
+        self.wind_seed = int(wind_seed)
         self.state_dim = 2 * self.ny * self.nx
         self.dtype = dtype
 
@@ -95,6 +102,13 @@ class QGDynamics(DynamicsBase):
         self.register_buffer("ik", (1j * k2d).to(cdtype))
         self.register_buffer("il", (1j * l2d).to(cdtype))
 
+        x = torch.arange(self.nx, dtype=torch.float64) * (self.L / self.nx)
+        y = torch.arange(self.ny, dtype=torch.float64) * (self.W / self.ny)
+        sx = torch.sin(2.0 * math.pi * self.wind_kx * x / self.L)
+        sy = torch.sin(2.0 * math.pi * self.wind_ky * y / self.W)
+        chi = sy[:, None] * sx[None, :]
+        self.register_buffer("wind_pattern", chi.to(dtype))
+
     @property
     def device(self) -> torch.device:
         return self.K2.device
@@ -121,13 +135,29 @@ class QGDynamics(DynamicsBase):
         q = q - q.mean(dim=(-2, -1), keepdim=True)
         return q.to(device=device, dtype=self.dtype)
 
+    def generate_wind_series(self, num_steps: int,
+                             seed: int | None = None) -> torch.Tensor:
+        if self.wind_amp == 0.0:
+            return torch.zeros(num_steps, device=self.device, dtype=self.dtype)
+        gen = torch.Generator(device="cpu").manual_seed(seed or self.wind_seed)
+        tau = self.wind_tau_days * 86400.0
+        dt = self.dt
+        coeff = (self.wind_amp * math.sqrt(2.0 / tau * dt))
+        amp = torch.zeros(num_steps, dtype=torch.float64)
+        a = 0.0
+        for k in range(num_steps):
+            a = a - (1.0 / tau) * a * dt + coeff * torch.randn((), generator=gen)
+            amp[k] = a
+        return amp.to(self.dtype).to(self.device)
+
     def _invert(self, qh: torch.Tensor) -> torch.Tensor:
         ph = self.a11 * qh[..., 0, :, :] + self.a12 * qh[..., 1, :, :]
         ph2 = self.a21 * qh[..., 0, :, :] + self.a22 * qh[..., 1, :, :]
         return torch.stack([ph, ph2], dim=-3)
 
     def _tendency(self, qh: torch.Tensor, U1: float, U2: float,
-                  beta: float, rek: float) -> torch.Tensor:
+                  beta: float, rek: float,
+                  wind_amp_t: float = 0.0) -> torch.Tensor:
         q = torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))
         ph = self._invert(qh)
         u = torch.fft.irfft2(-self.il * ph, s=(self.ny, self.nx), dim=(-2, -1))
@@ -142,17 +172,23 @@ class QGDynamics(DynamicsBase):
                  + self.il * torch.fft.rfft2(vq, dim=(-2, -1))
                  + ikQy * ph)
         tend = torch.cat([
-            tend[..., :1, :, :],
+            tend[..., :1, :, :] + self._wind_curl_spectral(qh, wind_amp_t),
             tend[..., 1:, :, :] + rek * self.K2.to(self.ik.dtype) * ph[..., 1:, :, :],
         ], dim=-3)
         return tend
 
+    def _wind_curl_spectral(self, qh: torch.Tensor,
+                            wind_amp_t: float = 0.0) -> torch.Tensor:
+        curl = wind_amp_t * self.wind_pattern
+        curlh = torch.fft.rfft2(curl.to(self.dtype), dim=(-2, -1))
+        return curlh.expand(*qh.shape[:-3], 1, self.ny, curlh.shape[-1])
+
     def _rk4_step(self, qh: torch.Tensor, dt: float, U1: float, U2: float,
-                  beta: float, rek: float) -> torch.Tensor:
-        k1 = self._tendency(qh, U1, U2, beta, rek)
-        k2 = self._tendency(qh + 0.5 * dt * k1, U1, U2, beta, rek)
-        k3 = self._tendency(qh + 0.5 * dt * k2, U1, U2, beta, rek)
-        k4 = self._tendency(qh + dt * k3, U1, U2, beta, rek)
+                  beta: float, rek: float, wind_amp_t: float = 0.0) -> torch.Tensor:
+        k1 = self._tendency(qh, U1, U2, beta, rek, wind_amp_t)
+        k2 = self._tendency(qh + 0.5 * dt * k1, U1, U2, beta, rek, wind_amp_t)
+        k3 = self._tendency(qh + 0.5 * dt * k2, U1, U2, beta, rek, wind_amp_t)
+        k4 = self._tendency(qh + dt * k3, U1, U2, beta, rek, wind_amp_t)
         qh_new = self.filtr.to(qh.real.dtype).to(qh.dtype) * (
             qh + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4))
         if self.clip_range is not None:
@@ -162,7 +198,7 @@ class QGDynamics(DynamicsBase):
         return qh_new
 
     def step(self, state: torch.Tensor, forcing: torch.Tensor | None = None,
-             **kwargs) -> torch.Tensor:
+             wind_amp_t: float = 0.0, **kwargs) -> torch.Tensor:
         U1 = kwargs.get("U1", self.U1)
         U2 = kwargs.get("U2", self.U2)
         beta = kwargs.get("beta", self.beta)
@@ -171,7 +207,7 @@ class QGDynamics(DynamicsBase):
         state_b = state.unsqueeze(0) if single else state
         q = self._grid(state_b)
         qh = torch.fft.rfft2(q, dim=(-2, -1))
-        qh_next = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
+        qh_next = self._rk4_step(qh, self.dt, U1, U2, beta, rek, wind_amp_t)
         q_next = torch.fft.irfft2(qh_next, s=(self.ny, self.nx), dim=(-2, -1))
         out = self._flatten(q_next)
         if single:
@@ -179,6 +215,7 @@ class QGDynamics(DynamicsBase):
         return out
 
     def rollout_steps(self, state: torch.Tensor, steps: int,
+                      wind_series: torch.Tensor | None = None,
                       **kwargs) -> torch.Tensor:
         single = state.dim() == 1
         state_b = state.unsqueeze(0) if single else state
@@ -188,8 +225,10 @@ class QGDynamics(DynamicsBase):
         U2 = kwargs.get("U2", self.U2)
         beta = kwargs.get("beta", self.beta)
         rek = kwargs.get("rek", self.rek)
-        for _ in range(steps):
-            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
+        amp = wind_series if wind_series is not None else [0.0] * steps
+        for k in range(steps):
+            a_t = float(amp[k])
+            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek, a_t)
         q_final = torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))
         out = self._flatten(q_final)
         return out.squeeze(0) if single else out
@@ -197,6 +236,7 @@ class QGDynamics(DynamicsBase):
     def generate_full_trajectory(self, num_steps: int, seed: int = 42,
                                  device: torch.device | None = None,
                                  spinup_steps: int = 4380,
+                                 wind_series: torch.Tensor | None = None,
                                  **kwargs) -> tuple:
         device = device if device is not None else self.device
         q0 = self._initial_q(1, seed, device)
@@ -205,21 +245,23 @@ class QGDynamics(DynamicsBase):
         U2 = kwargs.get("U2", self.U2)
         beta = kwargs.get("beta", self.beta)
         rek = kwargs.get("rek", self.rek)
+        amp = wind_series if wind_series is not None else self.generate_wind_series(
+            num_steps, seed)
         for _ in range(spinup_steps):
             qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
         traj = [torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))]
-        for _ in range(num_steps - 1):
-            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
+        for k in range(num_steps - 1):
+            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek,
+                                float(amp[k]))
             traj.append(torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1)))
         traj_t = self._flatten(torch.cat(traj, dim=0).unsqueeze(1)).squeeze(1)
-        forcing_t = torch.zeros(num_steps, device=traj_t.device,
-                                dtype=traj_t.dtype)
-        return traj_t, forcing_t
+        return traj_t, amp
 
     def generate_batch_trajectories(self, num_windows: int, num_steps: int,
                                     spinup_steps: int = 4380,
                                     seed: int = 42,
                                     device: torch.device | None = None,
+                                    wind_series: torch.Tensor | None = None,
                                     **kwargs) -> tuple:
         device = device if device is not None else self.device
         q0 = self._initial_q(num_windows, seed, device)
@@ -228,16 +270,22 @@ class QGDynamics(DynamicsBase):
         U2 = kwargs.get("U2", self.U2)
         beta = kwargs.get("beta", self.beta)
         rek = kwargs.get("rek", self.rek)
+        if wind_series is None:
+            wind_series = torch.stack([
+                self.generate_wind_series(num_steps, seed + i)
+                for i in range(num_windows)
+            ])
+        step_amps = (wind_series[0] if wind_series.dim() == 2
+                     else wind_series)
         for _ in range(spinup_steps):
             qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
         traj = [torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))]
-        for _ in range(num_steps - 1):
-            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek)
+        for k in range(num_steps - 1):
+            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek,
+                                float(step_amps[k]))
             traj.append(torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1)))
         traj_t = self._flatten(torch.stack(traj, dim=1))
-        forcing_t = torch.zeros(num_windows, num_steps, device=traj_t.device,
-                                dtype=traj_t.dtype)
-        return traj_t, forcing_t
+        return traj_t, wind_series
 
     def streamfunctions(self, state: torch.Tensor) -> torch.Tensor:
         single = state.dim() == 1
