@@ -76,4 +76,4 @@ def test_short_rollout_bounded():
         x = dyn.step(x, forcing[t : t + 1])
     max_h = max(max_h, x[0, : dyn.Nx * dyn.Ny].abs().max().item())
     assert torch.isfinite(x).all()
-    assert max_h < 10.0
+    assert max_h < 2.0
