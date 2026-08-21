@@ -32,6 +32,46 @@ def crps(ensemble: np.ndarray, truth: np.ndarray) -> float:
     return scores
 
 
+def energy_score(ensemble: np.ndarray, truth: np.ndarray) -> np.ndarray:
+    """Per-dimension Energy Score (ES).
+
+    ES accepts an ensemble of forecast states and a reference truth and
+    returns a positive score per state dimension (lower is better, 0 for a
+    perfect deterministic forecast that exactly equals the truth).  It is a
+    proper scoring rule jointly rewarding accuracy (closeness to the truth)
+    and sharpness (low ensemble spread)::
+
+        ES_d = mean_t [ (1/N) * sum_i |x_i,d(t) - y_d(t)|
+                         - (1/(2 N^2)) * sum_i sum_j |x_i,d(t) - x_j,d(t)| ]
+
+    Parameters
+    ----------
+    ensemble : np.ndarray, shape (N, T, D)
+        Ensemble member trajectories (N members, T timesteps, D dims).
+    truth : np.ndarray, shape (T, D)
+        Reference (truth) time series.
+
+    Returns
+    -------
+    np.ndarray, shape (D,)
+        Energy Score for each state dimension.
+    """
+    N, T, D = ensemble.shape
+    if truth.shape != (T, D):
+        raise ValueError(
+            f"truth shape {truth.shape} != expected {(T, D)} for ensemble {ensemble.shape}"
+        )
+    abs_err = np.mean(np.abs(ensemble - truth[np.newaxis, :, :]), axis=(0, 1))  # (D,)
+    es = np.zeros(D)
+    for d in range(D):
+        e = ensemble[:, :, d]  # (N, T)
+        pairwise = np.mean(
+            [np.mean(np.abs(e[i] - e[j])) for i in range(N) for j in range(N)]
+        )
+        es[d] = abs_err[d] - 0.5 * pairwise
+    return es
+
+
 # ---------------------------------------------------------------------------
 # Explained Variance (EV)
 # ---------------------------------------------------------------------------

@@ -248,9 +248,9 @@ def run():
             method = method_map[name]
             print(f"  {case_label}/{name} ...", end=" ", flush=True)
             t1 = time.time()
-            (m, s), (ev_m, ev_s) = evaluate_baseline(method, ds, cfg=eval_cfg, device=device,
-                                                       return_trajs=False,
-                                                       batch_size=min(20, args.num_windows))
+            (m, s), (ev_m, ev_s), _ = evaluate_baseline(method, ds, cfg=eval_cfg, device=device,
+                                                        return_trajs=False,
+                                                        batch_size=min(20, args.num_windows))
             m_common = m[:s1_state_dim] if case_key == "s0" else m
             s_common = s[:s1_state_dim] if case_key == "s0" else s
             ev_m_common = ev_m[:s1_state_dim] if case_key == "s0" else ev_m
