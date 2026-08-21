@@ -16,7 +16,7 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
-                  obs_j=2, obs_interval=200, fw_randomized=False):
+                  obs_j=2, obs_interval=100, fw_randomized=False):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -75,7 +75,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--t-max", type=float, default=3.0, help="Trajectory length in time units")
     parser.add_argument("--r-var", type=float, default=0.5)
-    parser.add_argument("--obs-interval", type=int, default=200)
+    parser.add_argument("--obs-interval", type=int, default=100)
     parser.add_argument("--suffix", type=str, default="")
     parser.add_argument("--skip-weak", action="store_true", default=False)
     parser.add_argument("--skip-strong", action="store_true", default=False)

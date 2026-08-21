@@ -19,7 +19,7 @@ export PYTHONUNBUFFERED=1
 export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 mkdir -p "$MPLCONFIGDIR"
 
-OBS_INTERVAL="${OBS_INTERVAL:-200}"
+OBS_INTERVAL="${OBS_INTERVAL:-100}"
 
 echo "============================================"
 echo " L96 S0c/S1c DA Baselines | $(date)"

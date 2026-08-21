@@ -45,7 +45,7 @@ def tiny_l96_dataset(tiny_l96_cfg):
 
 
 def test_to_lorenz96_config():
-    dc = DataConfig(system="lorenz96", dt=0.001, T_max=3.0, obs_interval=200,
+    dc = DataConfig(system="lorenz96", dt=0.001, T_max=3.0, obs_interval=100,
                     NO=8, J=4, F_true=8.0, coupling_exponent_truth=1.6)
     cfg = dc.to_lorenz96_config()
     assert cfg.dt == 0.001

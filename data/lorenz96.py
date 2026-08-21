@@ -9,7 +9,7 @@ class Lorenz96Config:
     case: int = 1
     dt: float = 0.001
     T_max: float = 3.0
-    obs_interval: int = 200
+    obs_interval: int = 100
     R_var: float = 0.5
     B_var: float = 2.0
     param_bias: float = 0.0

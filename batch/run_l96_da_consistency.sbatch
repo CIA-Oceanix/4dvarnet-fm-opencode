@@ -19,8 +19,8 @@ export PYTHONUNBUFFERED=1
 export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 mkdir -p "$MPLCONFIGDIR"
 
-# Observation interval in steps (default 200 = ~15 obs/window; 100 = 2x denser).
-OBS_INTERVAL="${OBS_INTERVAL:-200}"
+# Observation interval in steps (default 100 = 30 obs/window; 200 = ~15 obs/window).
+OBS_INTERVAL="${OBS_INTERVAL:-100}"
 
 echo "============================================"
 echo " L96 DA Baseline Consistency Check | $(date)"

@@ -68,7 +68,7 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 
 
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
-                         obs_interval=200, R_var=0.5, param_names=("F",),
+                         obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=4, pin_memory=True)

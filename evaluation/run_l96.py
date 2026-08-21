@@ -186,7 +186,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
-                             obs_j=2, obs_interval=200, fw_randomized=False):
+                             obs_j=2, obs_interval=100, fw_randomized=False):
     if da_window_steps is None:
         N = int(3.0 / 0.001)
     else:
@@ -266,9 +266,9 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         baseline_pool[case_name] = pool
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
-                             obs_var_indices=obs_var_indices)
+                             obs_interval=obs_interval, obs_var_indices=obs_var_indices)
     cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
-                             obs_var_indices=obs_var_indices)
+                             obs_interval=obs_interval, obs_var_indices=obs_var_indices)
     cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:

@@ -4,7 +4,7 @@ data:
   param_names: ["F"]
   dt: 0.001
   T_max: 3.0
-  obs_interval: 200
+  obs_interval: 100
   R_var: 0.5
   B_var: 2.0
   num_windows: 2000
@@ -49,7 +49,7 @@ data:
       biased: false
       bias: 0.0
     h:
-      randomized: true
+      randomized: false
       noise: 0.2
       biased: false
       bias: 0.0

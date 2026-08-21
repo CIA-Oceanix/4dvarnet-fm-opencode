@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tune Weak-4DVar opt_steps/lr/da_window_steps on L96 S0+S1 (b2 config)."""
-import os, sys, json, time, itertools
+import os, sys, json, time, itertools, argparse
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -13,6 +13,11 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--obs-interval", type=int, default=100)
+    parser.add_argument("--num-windows", type=int, default=3)
+    args = parser.parse_args()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         print(f"Device: {device} ({torch.cuda.get_device_name(0)})")
@@ -21,8 +26,8 @@ def main():
 
     dt = 0.001
     T_max = 3.0
-    obs_interval = 200
-    num_windows = 3
+    obs_interval = args.obs_interval
+    num_windows = args.num_windows
 
     base_cfg = Lorenz96Config(
         dt=dt, T_max=T_max, obs_interval=obs_interval,
@@ -106,7 +111,7 @@ def main():
 
     out_path = os.path.join(EXP_DIR, "l96_weak4dvar_tune.json")
     with open(out_path, "w") as f:
-        json.dump({"results": results, "best_s0": best_s0, "best_s1": best_s1}, f, indent=2)
+        json.dump({"obs_interval": obs_interval, "results": results, "best_s0": best_s0, "best_s1": best_s1}, f, indent=2)
     print(f"\nSaved: {out_path}")
 
 if __name__ == "__main__":

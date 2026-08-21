@@ -33,6 +33,15 @@ def find_cache(dws, obs_interval, suffix=""):
     return matches[-1] if matches else None
 
 
+def derive_obs_label(path):
+    data = load(path)
+    if data and "config" in data and "obs_interval" in data["config"]:
+        interval = data["config"]["obs_interval"]
+        n_obs = round(3000 / interval)
+        return f"Obs{n_obs}"
+    return "Obs?"
+
+
 def fmt_row(method, case, rmse_a, rmse_b):
     delta = rmse_b - rmse_a
     rel = (delta / rmse_a * 100) if rmse_a else float("nan")
@@ -67,17 +76,19 @@ def print_section(label_a, label_b, a, b, obs_label):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dws", type=int, default=500)
-    parser.add_argument("--obs-interval", type=int, default=200, help="200=Obs15, 100=Obs30")
+    parser.add_argument("--obs-interval", type=int, default=100)
     args = parser.parse_args()
 
-    obs_label = "Obs15" if args.obs_interval == 200 else "Obs30"
-    s0b = load(find_cache(args.dws, args.obs_interval, suffix=""))
-    s0c = load(find_cache(args.dws, args.obs_interval, suffix="s0c"))
+    s0b_path = find_cache(args.dws, args.obs_interval, suffix="")
+    s0c_path = find_cache(args.dws, args.obs_interval, suffix="s0c")
+    s0b = load(s0b_path)
+    s0c = load(s0c_path)
+    obs_label = derive_obs_label(s0b_path) if s0b_path else f"Obs{round(3000 / args.obs_interval)}"
 
     print(f"\n{'='*80}")
     print(f"  S0b vs S0c ({obs_label}) — h randomization effect")
-    print(f"  S0b: {os.path.basename(find_cache(args.dws, args.obs_interval, suffix='')) or 'MISSING'}")
-    print(f"  S0c: {os.path.basename(find_cache(args.dws, args.obs_interval, suffix='s0c')) or 'MISSING'}")
+    print(f"  S0b: {os.path.basename(s0b_path) or 'MISSING'}")
+    print(f"  S0c: {os.path.basename(s0c_path) or 'MISSING'}")
     print(f"{'='*80}")
     print_section("S0b", "S0c", s0b, s0c, obs_label)
 

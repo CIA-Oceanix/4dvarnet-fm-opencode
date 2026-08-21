@@ -4,7 +4,8 @@
 - Phase A (refactor, legacy-compatible): [done — A1–A9, PRs #6–#11]
 - Phase B (repro gate, 1% rel): [done — B1 CPU smoke, B2 GPU 200-window PASS]
 - Phase C (S0b/S1b true fast_weights randomization): [done — C1–C4, PRs #12–#15, job 48860]
-- Phase D (closeout): [done — D1, PR #15]
+- Phase D (closeout): [done — D1–D8, PRs #15–#22]
+- **Obs30 default + master merge:** [done — merged to master, obs_interval=100 default, config-driven eval]
 
 ## Objective
 Generalize the L96 S0/S1 per-window parameter randomization to per-parameter
@@ -122,6 +123,7 @@ Two execution paths per code step, both following the implement→review→verif
 | D6 S0c resubmission | ✅ | — | Jobs 48932/48933 resubmitted (used stale dataset cache) |
 | D7 full regeneration | ✅ | — | Deleted all caches incl. reference; Jobs 48934/48935 from scratch |
 | D8 compare script fix | ✅ | #21 | `reports/compare_s0b_s0c.py` — fixed JSON nesting, split imports, ruff clean |
+| D9 Obs30 default + master merge | ✅ | — | obs_interval=100 default, h fixed, config-driven eval scripts, S0c/S1c results |
 
 ## Repro gate (Phase B) — PASSED
 - Reference cache: `l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2.json` (pre-obs_interval naming)

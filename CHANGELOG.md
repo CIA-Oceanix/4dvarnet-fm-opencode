@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-21: Set Obs30 (obs_interval=100) as default L96 config + config-driven eval scripts
+
+**Summary:** Merged `feat/l96-fast-weights-randomization` (32 commits, all S0b/S1c work) to master. Set Obs30 (obs_interval=100) as the new default L96 observation density, with S0c-like randomize block (h NOT randomized, others ±20%). Updated all eval scripts to read obs_interval from config/CLI instead of hardcoding 200. Added S0c/S1c Obs30 results summary.
+
+**Files modified:**
+- `config/lorenz96_default.yaml` — obs_interval: 200→100, h: randomized:false
+- `config/case_study/lorenz96.yaml` — obs_interval: 200→100
+- `data/lorenz96.py` — Lorenz96Config default obs_interval=200→100
+- `train.py` — make_l96_dataloaders default obs_interval=200→100
+- `evaluate_all_l96.py` — run_baselines default + argparse → 100
+- `evaluation/run_l96.py` — run_and_cache_baselines default → 100, threaded obs_interval into cfg_s0/cfg_s1
+- `evaluation/run_l96_sweep.py` — added --obs-interval CLI arg (default=100), removed hardcoded 200, added to output JSON
+- `evaluation/run_l96_sweep2.py` — argparse default 200→100
+- `evaluation/tune_l96_weak4dvar.py` — added argparse with --obs-interval (default=100), removed hardcoded 200
+- `reports/compare_s0b_s0c.py` — derives Obs label from cache metadata instead of hardcoded mapping
+- `tests/test_lorenz96_training.py` — test assertion obs_interval=200→100
+- `batch/run_l96_da_consistency.sbatch` — default OBS_INTERVAL 200→100
+- `batch/run_l96_da_s0c.sbatch` — default OBS_INTERVAL 200→100
+- `reports/outputs/s0c_s1c_obs30_results.md` — new: S0c/S1c Obs30 results summary
+
+**Rationale:** Obs30 is the production observation density; making it the default eliminates the need for `OBS_INTERVAL=100` overrides in all sbatch scripts. Config-driven eval scripts ensure obs_interval is consistently read from a single source of truth (YAML config or CLI arg) rather than scattered hardcoded values.
+
+**Verification:** 33 tests pass. All eval scripts read obs_interval from config/CLI with default=100. S0c/S1c Obs30 results: Strong-4DVar S0 RMSE=0.74 EV=0.75, S1 RMSE=1.43 EV=0.24.
+
 ## 2026-08-21: S0c/S1c corrected runs + compare script fix
 
 **Summary:** Found and fixed a critical bug in the S0c `--randomize` dict: `biased:false` was set on ALL params, so S1 got zero parameter bias (only forcing corruption). Fixed to `biased:true, bias:0.1` on F,c1,hx,eps,fast_weights and `biased:false` on h. Also discovered that the trajectory-reuse path in `evaluate_all_l96.py` reused stale S1 `_da` params from the old reference cache — fixed by deleting all dataset caches and forcing full regeneration. Reran all 4 S0c/S1c jobs (48934/48935) from scratch. Updated `reports/compare_s0b_s0c.py` to fix JSON nesting bug and ruff-clean.
