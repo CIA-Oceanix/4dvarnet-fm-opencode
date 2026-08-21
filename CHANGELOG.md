@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-21: SW case-study bootstrap — worktree + PR workflow infra
+
+**Summary:** Created feat/sw-case-study integration branch + worktree, feat/sw-* ruleset (PR review + pytest gate), and ported the multi-agent PR workflow infra (ci.yml, open_pr.sh, agent_review_loop.sh) from the L96 branch, adapted to feat/sw-* refs.
+**Files modified:** `.github/workflows/ci.yml` — CI triggers feat/sw-*, pytest gate (6 master test files); `scripts/open_pr.sh` — MAIN_BRANCH=feat/sw-case-study; `scripts/agent_review_loop.sh` — MAIN_BRANCH default + PYTEST_FILES override; `PLAN.md` — SW case-study section
+**Rationale:** Run the SW case study safely in parallel with L96/QG work via per-case-study worktrees and ruleset-gated PRs into feat/sw-case-study.
+**Verification:** bash -n on both scripts; yaml parse of ci.yml; pending CI on PR.
+
 ## 2026-08-18: Merge L96 case study into master + L96 training infrastructure
 
 **Summary:** Merged the L96 case-study + dynamics-refactoring branch (`feat/weighted-fast-coupling`) into master, deliberately excluding the Shallow-Water and MAOOAM code (deferred to separate branches). Then added the L96 training infrastructure so `train.py` can dispatch to the two-scale Lorenz-96 system for UNet/VanillaCFM training, with configs and smoke tests.
