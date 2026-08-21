@@ -52,27 +52,27 @@ def main() -> None:
     q1 = q[::stride, 0].numpy()
     q2 = q[::stride, 1].numpy()
     days = np.arange(len(q1)) * args.sample_days
+    pattern = dyn.wind_pattern.cpu().numpy()
+    amps = amp[::stride].numpy()
+    windfields = amps[:, None, None] * pattern[None, :, :]
     print(f"{len(q1)} frames, q1 scale (±{np.abs(q1).max():.2e}), "
-          f"q2 scale (±{np.abs(q2).max():.2e})")
+          f"q2 scale (±{np.abs(q2).max():.2e}), "
+          f"wind-curl field scale (±{np.abs(windfields).max():.2e})")
 
     vmax = max(np.abs(q1).max(), np.abs(q2).max()) * 0.9
-    amax = max(float(amp.abs().max()), 1e-15)
+    wmax = max(float(np.abs(windfields).max()), 1e-15)
     frames = []
     for i in range(len(q1)):
         fig, axes = plt.subplots(1, 3, figsize=(12, 4.2))
-        for ax, field, title in ((axes[0], q1[i], "upper layer q1"),
-                                 (axes[1], q2[i], "lower layer q2")):
-            im = ax.imshow(field, cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+        for ax, field, title, vm in (
+                (axes[0], q1[i], "upper layer q1", vmax),
+                (axes[1], q2[i], "lower layer q2", vmax),
+                (axes[2], windfields[i], "wind curl field", wmax)):
+            im = ax.imshow(field, cmap="RdBu_r", vmin=-vm, vmax=vm)
             ax.set_title(f"{title} — day {days[i]:.0f}")
             ax.set_xticks([])
             ax.set_yticks([])
-        a = amp[i * stride]
-        axes[2].bar(["wind\namp"], [a], color="tab:red",
-                    width=0.6, edgecolor="k")
-        axes[2].axhline(0, color="k", lw=0.5)
-        axes[2].set_ylim(-amax, amax)
-        axes[2].set_title(f"wind curl amp ({a:.1e})")
-        fig.colorbar(im, ax=axes[:2], fraction=0.03, pad=0.02)
+        fig.colorbar(im, ax=axes, fraction=0.03, pad=0.02)
         fig.tight_layout()
         fig.canvas.draw()
         buf = np.asarray(fig.canvas.buffer_rgba())
