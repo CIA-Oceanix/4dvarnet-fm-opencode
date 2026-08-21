@@ -41,7 +41,7 @@ Key design decisions:
 | Step 11c | DA baseline consistency re-run (partial obs) | ✅ | — | sbatch 48683; 200-window obs_j=2 EnKF/ETKF/Strong-4DVar + EV backfill. S0 EnKF EV +0.544, ETKF +0.538, Strong +0.586; S1 EnKF +0.022, ETKF +0.036, Strong +0.205 |
 | Step 11d | Obs-density variation (S0-Obs100/S1-Obs100) | 🔄 in progress | — | sbatch 48688 (OBS_INTERVAL=100); trajectory-reuse cache, 2× denser obs (~30/window), EV captured |
 | Step 11e | Fast-weights randomization experiment (S0b/S1b: F + fast_weights) | ⬜ planned | — | requires threading per-window fast_weights through dynamics + randomization |
-| Step 12 | Neural training L1 + L2 (full) | ⬜ pending | — | `batch/run_l96_neural_training.sbatch` |
+| Step 12 | Neural training L1 + L2 (full) | 🔄 in progress | — | `batch/run_l96_neural_training.sbatch`, job 49013 (L1 running, L2 pending) |
 | WP8 | Results comparison + iteration | ⬜ pending | — | `batch/run_l96_evaluate_all.sbatch` |
 
 ## File Change Log
