@@ -41,8 +41,17 @@ Parallel-session isolation via worktrees (`../4dvarnet-fm-qg`); shared clone sta
 - **Data** `data/qg.py` (`QGConfig`, `QGDataset`, `make_qg_datasets`):
   - Windows sliced from a single post-spinup trajectory; default spinup_years=2.0, window_days=60, obs_interval=6.
   - Obs: `_generate_observations` on flattened state (all grid points), `R_var=1e-12` (~4% of equilibrated q₁ std≈2.6e-5).
-  - Window keys: `true_state`, `obs`, `obs_mask`, `forcing_true/corrupted` (=U₁ constant; randomization/S0–S1 deferred).
-- **Tests** `tests/test_qg_dynamics.py` (12), `tests/test_qg_data.py` (9, 1 slow).
+  - Window keys: `true_state`, `obs`, `obs_mask`, `forcing_true/corrupted`, `wind_curl` (randomization/S0–S1 deferred).
+- **Tests** `tests/test_qg_dynamics.py` (18), `tests/test_qg_data.py` (13, 1 slow).
+
+### QG Phase A.2 — time-varying wind forcing (PRs #30/#32/#34, merged)
+
+Adds an atmosphere-like **wind-stress curl** as an upper-layer PV source (Ekman pumping, Vallis §9.2):
+- `models/qg_dynamics.py`: `dq1/dt += curl_τ`, with `curl_τ = A(t)·sin(2πk_x x/L)·sin(2πk_y y/W)`; amplitude `A(t)` is an Ornstein-Uhlenbeck process (`wind_amp` = OU σ, `wind_tau_days`, `wind_kx`, `wind_ky`, `wind_seed`). `wind_amp=0` reproduces the unforced trajectory **bitwise** (regression test). `generate_full_trajectory`/`generate_batch_trajectories` now return `(traj, wind_series)`; spinup stays unforced; held constant within each RK4 step.
+- **Calibration** `reports/calibrate_qg_wind.py`: nx=64 sweep → **`wind_amp=1e-11`** default (KE +32% vs unforced 3.51e-3, stable, wind comparable to internal instability; 2e-11 → +110%, 3e-11 → +250%).
+- **Data** `data/qg.py`: `QGConfig` wind params; `QGDataset` stores per-window `wind_curl` `(T,ny,nx)` = `A(t)·pattern` and `forcing_true/corrupted` = the per-step wind amplitude series `A(t)`.
+- **Animation** `reports/animate_qg_wind.py` → `reports/outputs/figs/qg_wind_animation.gif`.
+- **PR workflow** active: `feat/qg-*` ruleset (1 review + pytest, `do_not_enforce_on_create` on), reviewer/analyst → `cortecs/glm-5.2`.
 - **To do (next)**: QG DA baselines (EnKF/ETKF/4DVar on ψ/q), then train.py dispatch + neural training, then parameter randomization (S0/S1 analog) as the final step.
 
 ## Experiments
