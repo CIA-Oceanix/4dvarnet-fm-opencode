@@ -24,6 +24,17 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
   - test: `tests/test_lorenz96_training.py`
 - **To do (next)**: launch L96 UNet/CFM training (L1/L2) and compare vs DA baselines.
 
+## SW case study (feat/sw-case-study)
+
+- **Goal**: take over the SW case study from `exp/sw-params-baseline`.
+- **Phase table**:
+  - `W` — workflow bootstrap (worktree + PR workflow infra + ruleset) — W1/W2 done
+  - `P1-P3` — minimal port of SW dynamics (`models/shallow_water_dynamics.py`), data (`data/shallow_water.py`), and schema wiring
+  - `T1-T3` — trajectory quality assessment (success criteria: **two-layer scale separation + Bickley jet meandering/ring shedding, judged visually via figures+animations pushed to remote**)
+  - `S` — S1 alignment with L96 param-bias semantics (deferred next)
+- **Out of scope until trajectories convince**: DA baselines/caching and neural training.
+- Workflow status: W1/W2 `[x]`; P1-P3, T1-T3, S `[ ]`.
+
 ## Experiments
 
 | ID | Model | Hidden | Epochs | Train mix | Status |
