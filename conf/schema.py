@@ -48,6 +48,24 @@ class DataConfig:
     coupling_exponent_da: float = 1.0
     fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
 
+    # Shallow Water (rotating SW) fields
+    Nx: int = 64
+    Ny: int = 64
+    tau0: float = 0.0
+    f_cor: float = 0.1
+    g1: float = 0.5
+    g2: float = 2.0
+    coupling: float = 0.01
+    friction: float = 0.001
+    viscosity: float = 0.0001
+    obs_stride_ocean: int = 5
+    obs_stride_atmos: int = 3
+    land_mask_type: str = "none"
+    K: int = 5
+    window_steps: int = 500
+    obs_noise_std: float = 0.1
+    obs_noise_pct: float = 0.05
+
     # Device
     device: str = "cpu"
 
@@ -111,6 +129,19 @@ class DataConfig:
             tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
+        )
+
+    def to_shallow_water_config(self) -> Any:
+        """Convert to data.shallow_water.ShallowWaterConfig."""
+        from data.shallow_water import ShallowWaterConfig as SWC
+        return SWC(
+            Nx=self.Nx, Ny=self.Ny, dt=self.dt, K=self.K,
+            tau0=self.tau0, f_cor=self.f_cor, g1=self.g1, g2=self.g2,
+            coupling=self.coupling, friction=self.friction, viscosity=self.viscosity,
+            obs_noise_std=self.obs_noise_std, obs_noise_pct=self.obs_noise_pct,
+            obs_stride_ocean=self.obs_stride_ocean, obs_stride_atmos=self.obs_stride_atmos,
+            spinup_steps=self.spinup_steps, num_windows=self.num_windows, seed=self.seed,
+            land_mask_type=self.land_mask_type, window_steps=self.window_steps,
         )
 
 

@@ -247,3 +247,40 @@ def test_validate_ev_targets_fail():
     result = validate_ev_targets(metrics, targets, "S1")
     assert result["ocean"]["passed"] is False
     assert result["atmosphere"]["passed"] is True
+
+
+# ── P3: DataConfig → ShallowWaterConfig + case-study yaml ─────────────
+
+def test_dataconfig_to_shallow_water_config():
+    """DataConfig.to_shallow_water_config() maps defaults and overrides."""
+    from conf.schema import DataConfig
+    swc = DataConfig(system="shallow_water").to_shallow_water_config()
+    assert swc.g1 == 0.5
+    assert swc.g2 == 2.0
+    assert swc.coupling == 0.01
+    assert swc.friction == 0.001
+    assert swc.viscosity == 0.0001
+    assert swc.tau0 == 0.0
+    assert swc.dt == 0.01
+    assert swc.Nx == 64
+    assert swc.Ny == 64
+    assert swc.K == 5
+    assert swc.obs_stride_ocean == 5
+    assert swc.obs_stride_atmos == 3
+    assert swc.land_mask_type == "none"
+
+    swc2 = DataConfig(system="shallow_water", g1=0.6, dt=0.1).to_shallow_water_config()
+    assert swc2.g1 == 0.6
+    assert swc2.dt == 0.1
+
+
+def test_sw_case_study_yaml_composes():
+    """config/case_study/shallow_water.yaml composes with the SW data block only."""
+    import hydra
+    with hydra.initialize(config_path="../config"):
+        cfg = hydra.compose("case_study/shallow_water")
+    assert cfg.data.system == "shallow_water"
+    assert cfg.data.dt == 0.1
+    assert cfg.data.g1 == 0.5
+    assert "state_dim" not in cfg.data
+

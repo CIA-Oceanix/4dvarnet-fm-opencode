@@ -1,6 +1,17 @@
 # Changelog
 
-## 2026-08-21: P1: SW dynamics port
+## 2026-08-21: P3: SW schema + case-study config
+
+**Summary:** Wired the rotating shallow-water system into the Hydra `DataConfig` schema by adding an "Shallow Water (rotating SW) fields" block and a `to_shallow_water_config()` converter, and added the `config/case_study/shallow_water.yaml` case-study preset (data block only — no model/training sections, since that infra does not exist for SW yet). Followed the L96 precedent of overriding the shared `data.dt` (dt: 0.1) rather than adding a separate sw_dt field.
+**Files modified:**
+- `conf/schema.py` — added SW fields block (Nx, Ny, tau0, f_cor, g1, g2, coupling, friction, viscosity, obs_stride_ocean/atmos, land_mask_type, K, window_steps, obs_noise_std/pct) + `to_shallow_water_config()` lazy-import converter
+- `config/case_study/shallow_water.yaml` — new: `# @package _global_` case-study preset, single `data:` block (dt: 0.1, T_max: 3.0, num_windows: 200, Nx/Ny: 64, K: 5, ...)
+- `tests/test_shallow_water.py` — 2 new tests: `test_dataconfig_to_shallow_water_config`, `test_sw_case_study_yaml_composes`
+- `CHANGELOG.md` — this entry
+**Rationale:** The SW data pipeline (P2) needs a schema-level entry point and a composable case-study config so downstream SW experiments can reference `case_study/shallow_water` and build `ShallowWaterConfig` from `DataConfig`, mirroring the L96/L63 pattern.
+**Verification:** `pytest tests/test_shallow_water.py -q` — 20 passed; `pytest tests/test_hydra_config.py -q` — 9 passed; CI gate (`test_shallow_water, test_lorenz96_training, test_direct_unet, test_vanilla_cfm, test_hydra_config, test_baselines_hydra, test_metrics`, `-m "not slow"`) — 58 passed.
+
+## 2026-08-17: W1: port multi-agent PR workflow infra for SW case study (#21)## 2026-08-21: P1: SW dynamics port
 
 **Summary:** Byte-identical port of `models/shallow_water_dynamics.py` from `exp/sw-params-baseline` + `get_dynamics("shallow_water")` dispatch with retuned fallbacks + 5 dynamics tests.
 **Files modified:** `models/shallow_water_dynamics.py`, `models/dynamics.py`, `tests/test_shallow_water.py`.
