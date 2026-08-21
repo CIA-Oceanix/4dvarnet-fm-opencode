@@ -23,6 +23,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--wind-amp", type=float, default=1e-11)
     parser.add_argument("--wind-tau-days", type=float, default=5.0)
+    parser.add_argument("--wind-cx", type=float, default=0.5)
+    parser.add_argument("--wind-cy", type=float, default=0.03)
     parser.add_argument("--out", type=str,
                         default="reports/outputs/figs/qg_wind_animation.gif")
     args = parser.parse_args()
@@ -31,30 +33,30 @@ def main() -> None:
                      beta=1.5e-11, rd=15000.0, delta=0.25,
                      U1=0.05, U2=0.0, rek=5.787e-7,
                      wind_amp=args.wind_amp,
-                     wind_tau_days=args.wind_tau_days).to("cuda")
+                     wind_tau_days=args.wind_tau_days,
+                     wind_cx=args.wind_cx, wind_cy=args.wind_cy).to("cuda")
 
     steps_per_day = round(86400.0 / dyn.dt)
     spinup_steps = int(args.spinup_years * 365.0 * steps_per_day)
     num_steps = int(args.days * steps_per_day)
 
     t0 = time.time()
-    traj, amp = dyn.generate_full_trajectory(num_steps=num_steps,
-                                             seed=args.seed,
-                                             spinup_steps=spinup_steps)
+    traj, wind_state = dyn.generate_full_trajectory(num_steps=num_steps,
+                                                    seed=args.seed,
+                                                    spinup_steps=spinup_steps)
     traj = traj.cpu()
-    amp = amp.cpu()
+    wind_state = wind_state.cpu()
     q = dyn._grid(traj)                      # (T, 2, ny, nx)
     print(f"spinup {args.spinup_years}y + {args.days}d ({num_steps} steps) in "
           f"{time.time()-t0:.1f}s; wind_amp={args.wind_amp:.1e} "
-          f"(amp std {amp.std().item():.1e})")
+          f"(amp std {wind_state[:, 0].std().item():.1e})")
 
     stride = int(args.sample_days * steps_per_day)
     q1 = q[::stride, 0].numpy()
     q2 = q[::stride, 1].numpy()
     days = np.arange(len(q1)) * args.sample_days
-    pattern = dyn.wind_pattern.cpu().numpy()
-    amps = amp[::stride].numpy()
-    windfields = amps[:, None, None] * pattern[None, :, :]
+    windfields = dyn.wind_curl_field(
+        wind_state[::stride].to(dyn.device)).cpu().numpy()
     print(f"{len(q1)} frames, q1 scale (±{np.abs(q1).max():.2e}), "
           f"q2 scale (±{np.abs(q2).max():.2e}), "
           f"wind-curl field scale (±{np.abs(windfields).max():.2e})")

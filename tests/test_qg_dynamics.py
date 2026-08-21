@@ -144,35 +144,40 @@ def test_pyqg_tendency_equivalence():
                                atol=1e-9 * max(scale, 1e-30))
 
 
-def test_wind_zero_returns_zero_series():
+def test_wind_zero_returns_zero_state():
     dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=0.0, **NOMINAL)
-    series = dyn.generate_wind_series(num_steps=10)
-    assert series.shape == (10,)
-    assert torch.all(series == 0.0)
+    state = dyn.generate_wind_state(num_steps=10)
+    assert state.shape == (10, 3)
+    assert torch.all(state == 0.0)
 
 
 def test_wind_term_matches_hand_computation():
-    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, dtype=torch.float64, **NOMINAL)
+    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, dtype=torch.float64,
+                     wind_amp=1e-8, **NOMINAL)
     state = dyn._flatten(dyn._initial_q(1, seed=5, device=dyn.device))
     qh = torch.fft.rfft2(dyn._grid(state), dim=(-2, -1))
+    ws = torch.tensor([1.5, 0.4 * dyn.L, 0.6 * dyn.W], dtype=torch.float64)
     t0 = dyn._tendency(qh, dyn.U1, dyn.U2, dyn.beta, dyn.rek)
-    t1 = dyn._tendency(qh, dyn.U1, dyn.U2, dyn.beta, dyn.rek, wind_amp_t=1.5)
+    t1 = dyn._tendency(qh, dyn.U1, dyn.U2, dyn.beta, dyn.rek, wind_state_t=ws)
     diff = t1 - t0
-    expected = torch.fft.rfft2(1.5 * dyn.wind_pattern, dim=(-2, -1))
+    expected = torch.fft.rfft2(dyn.wind_curl_field(ws), dim=(-2, -1)).to(t0.dtype)
     assert torch.allclose(diff[..., 0, :, :], expected, rtol=1e-8, atol=1e-12)
     assert torch.allclose(diff[..., 1, :, :], torch.zeros_like(diff[..., 1, :, :]),
                           rtol=1e-8, atol=1e-12)
 
 
 @pytest.mark.slow
-def test_wind_series_ou_statistics():
+def test_wind_state_ou_statistics():
     dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8,
                      wind_tau_days=5.0, **NOMINAL)
-    s1 = dyn.generate_wind_series(num_steps=2000, seed=7)
-    s2 = dyn.generate_wind_series(num_steps=2000, seed=7)
+    s1 = dyn.generate_wind_state(num_steps=2000, seed=7)
+    s2 = dyn.generate_wind_state(num_steps=2000, seed=7)
     assert torch.equal(s1, s2)
     assert torch.isfinite(s1).all()
-    assert 0.5 * dyn.wind_amp < float(s1.std()) < 2.0 * dyn.wind_amp
+    amp = s1[:, 0]
+    assert 0.5 * dyn.wind_amp < float(amp.std()) < 2.0 * dyn.wind_amp
+    assert bool((s1[:, 1] >= 0).all()) and bool((s1[:, 1] < dyn.L).all())
+    assert bool((s1[:, 2] >= 0).all()) and bool((s1[:, 2] < dyn.W).all())
 
 
 @pytest.mark.slow
@@ -181,8 +186,7 @@ def test_wind_zero_matches_unforced_bitwise():
     traj1, _ = dyn.generate_full_trajectory(num_steps=20, spinup_steps=10,
                                             seed=3)
     traj2, _ = dyn.generate_full_trajectory(num_steps=20, spinup_steps=10,
-                                            seed=3,
-                                            wind_series=torch.zeros(20))
+                                            seed=3)
     assert torch.equal(traj1, traj2)
 
 
@@ -197,11 +201,22 @@ def test_wind_positive_changes_trajectory():
     assert not torch.equal(traj0, traj1)
 
 
-def test_generate_full_trajectory_returns_wind_series():
+def test_generate_full_trajectory_returns_wind_state():
     dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8, **NOMINAL)
-    _, series = dyn.generate_full_trajectory(num_steps=10, spinup_steps=5,
-                                             seed=3)
-    assert series.shape == (10,)
-    assert series.dim() == 1
-    assert torch.isfinite(series).all()
-    assert not torch.all(series == 0.0)
+    _, state = dyn.generate_full_trajectory(num_steps=10, spinup_steps=5,
+                                            seed=3)
+    assert state.shape == (10, 3)
+    assert torch.isfinite(state).all()
+    assert not torch.all(state == 0.0)
+
+
+def test_storm_track_drift_direction():
+    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8,
+                     wind_cx=0.5, wind_cy=0.03, **NOMINAL)
+    ws = dyn.generate_wind_state(num_steps=50, seed=7)
+    x0, y0 = float(ws[0, 1]), float(ws[0, 2])
+    x1, y1 = float(ws[-1, 1]), float(ws[-1, 2])
+    dx = ((x1 - x0) % dyn.L)
+    dy = ((y1 - y0) % dyn.W)
+    assert dx > 0
+    assert dy > 0

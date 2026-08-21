@@ -100,15 +100,16 @@ def test_dataset_deterministic_wind():
         assert torch.equal(wa["forcing_true"], wb["forcing_true"])
 
 
-def test_wind_curl_is_pattern_times_amplitude():
-    cfg = _tiny_cfg(wind_amp=1e-11, wind_kx=1, wind_ky=1)
+def test_wind_curl_is_field_at_center():
+    cfg = _tiny_cfg(wind_amp=1e-11)
     ds = QGDataset(cfg)
     w = ds[0]
     from data.qg import _make_qg_dynamics
     dynamics = _make_qg_dynamics(cfg)
-    pattern = dynamics.wind_pattern
-    for t in range(cfg.num_steps):
-        expected = w["forcing_true"][t] * pattern
+    _traj, wind_state = dynamics.generate_full_trajectory(
+        num_steps=cfg.num_steps, seed=cfg.seed, spinup_steps=cfg.spinup_steps)
+    for t in (0, 1, cfg.num_steps - 1):
+        expected = dynamics.wind_curl_field(wind_state[t:t + 1]).squeeze(0)
         assert torch.allclose(w["wind_curl"][t], expected,
                               rtol=1e-6, atol=1e-15)
 
@@ -117,8 +118,8 @@ def test_wind_amplitude_std_matches_config():
     cfg = _tiny_cfg(wind_amp=3e-12, wind_tau_days=5.0)
     from data.qg import _make_qg_dynamics
     dynamics = _make_qg_dynamics(cfg)
-    series = dynamics.generate_wind_series(num_steps=2000, seed=cfg.seed)
-    assert 0.5 * cfg.wind_amp < float(series.std()) < 2.0 * cfg.wind_amp
+    state = dynamics.generate_wind_state(num_steps=2000, seed=cfg.seed)
+    assert 0.5 * cfg.wind_amp < float(state[:, 0].std()) < 2.0 * cfg.wind_amp
     assert cfg.wind_tau_days == 5.0
 
 

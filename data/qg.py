@@ -30,8 +30,11 @@ class QGConfig:
 
     wind_amp: float = 1e-11
     wind_tau_days: float = 5.0
-    wind_kx: int = 1
-    wind_ky: int = 1
+    wind_sigma: float = 250000.0
+    wind_cx: float = 0.5
+    wind_cy: float = 0.03
+    wind_drift_tau_days: float = 10.0
+    wind_drift_sigma: float = 50000.0
     wind_seed: int = 7
 
     @property
@@ -64,8 +67,10 @@ def _make_qg_dynamics(cfg: QGConfig):
         nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=cfg.beta, rd=cfg.rd,
         delta=cfg.delta, U1=cfg.U1, U2=cfg.U2, rek=cfg.rek,
         filterfac=cfg.filterfac, wind_amp=cfg.wind_amp,
-        wind_tau_days=cfg.wind_tau_days, wind_kx=cfg.wind_kx,
-        wind_ky=cfg.wind_ky, wind_seed=cfg.wind_seed,
+        wind_tau_days=cfg.wind_tau_days, wind_sigma=cfg.wind_sigma,
+        wind_cx=cfg.wind_cx, wind_cy=cfg.wind_cy,
+        wind_drift_tau_days=cfg.wind_drift_tau_days,
+        wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=cfg.wind_seed,
     )
 
 
@@ -76,10 +81,9 @@ class QGDataset:
         dynamics = _make_qg_dynamics(cfg)
 
         full_len = (cfg.num_windows - 1) * cfg.window_spacing + cfg.num_steps
-        traj, amp = dynamics.generate_full_trajectory(
+        traj, wind_state = dynamics.generate_full_trajectory(
             num_steps=full_len, seed=cfg.seed, spinup_steps=cfg.spinup_steps,
         )
-        pattern = dynamics.wind_pattern.view(1, 1, cfg.ny, cfg.nx)
 
         self.windows = []
         start_indices = (
@@ -94,9 +98,9 @@ class QGDataset:
                 obs_var_indices=(np.asarray(cfg.obs_var_indices, dtype=np.int64)
                                  if cfg.obs_var_indices is not None else None),
             )
-            forcing_true = amp[idx: idx + cfg.num_steps].clone()
-            wind_curl = (amp[idx: idx + cfg.num_steps].view(-1, 1, 1)
-                         * pattern).view(cfg.num_steps, cfg.ny, cfg.nx)
+            ws_slice = wind_state[idx: idx + cfg.num_steps]
+            forcing_true = ws_slice[:, 0].clone()
+            wind_curl = dynamics.wind_curl_field(ws_slice)
             self.windows.append({
                 "true_state": true_state,
                 "obs": noisy_obs,

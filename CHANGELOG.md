@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-21: QG — moving-storm wind forcing (localized Gaussian on NE storm track)
+
+**Summary:** Replaced the static `sin·sin` wind-pattern forcing with a **localized Gaussian storm** whose center follows a moving storm track (`wind_cx=0.5`, `wind_cy=0.03` m/s), finishing the partially-migrated storm refactor: `QGDynamics` now exposes `generate_wind_state` → `(T,3)` `[A, xc, yc]` and `wind_curl_field`, the data layer builds time/space-varying `wind_curl` from the wind state, and the animation/snapshot reports draw the actual moving storm. `wind_amp=0` still reproduces the unforced trajectory bitwise.
+
+**Files modified:**
+- `models/qg_dynamics.py` — `curl_τ = A(t)·(1 − r²/2σ²)·exp(−r²/2σ²)` centered at `(xc,yc)`; OU amplitude (`wind_amp`, `wind_tau_days`) + OU position jitter (`wind_drift_tau_days`, `wind_drift_sigma`); storm-track drift `xc=(L/2+cx·t+wx) mod L`, `yc=(W/2+cy·t+wy) mod W` (`wind_cx=0.5`, `wind_cy=0.03` → ~23 d zonal crossing, slow NE track); removed `wind_pattern`/`generate_wind_series`/`wind_amp_t`; added `x_grid`/`y_grid` buffers; all RK4 steppers consume `wind_state_t`. `wind_amp=0` bitwise-unforced preserved.
+- `data/qg.py` — `QGConfig` drops `wind_kx`/`wind_ky`, adds `wind_sigma`/`wind_cx`/`wind_cy`/`wind_drift_tau_days`/`wind_drift_sigma`; `QGDataset` builds `wind_curl = wind_curl_field(wind_state_slice)` and `forcing_true/corrupted = wind_state[:,0]` (amplitude series, 1-D contract unchanged).
+- `tests/test_qg_dynamics.py` + `tests/test_qg_data.py` — migrated wind tests to the `(T,3)` state / `wind_curl_field` interface (hand-computed curl, OU stats, storm-track drift direction, `wind_curl[t]==wind_curl_field(ws[t])`, zero-wind shrinks); bitwise unforced-guard + OU-stat slow tests retained.
+- `reports/animate_qg_wind.py`, `reports/snapshots_qg_wind.py` — use `wind_curl_field(wind_state)` for the wind panel (shows the moving storm); `--wind-cx`/`--wind-cy` CLI args.
+- `PLAN.md`/`CHANGELOG.md` — QG Phase A.2 description updated to the moving-storm formulation.
+
+**Rationale:** Time-varying forcing should be spatially dynamic (a storm passing through the basin) rather than a fixed-shape pattern with only amplitude varying. A moving Witch-of-Agnesi storm advecting at synoptic scale (0.5 m/s, NE track 0.03 m/s) is the physically-correct mid-latitude analog and gives the network a genuinely travelling forcing to reconstruct.
+
+**Verification:** `pytest tests/test_qg_dynamics.py tests/test_qg_data.py -v` — 32 passed (fast + slow, incl. bitwise zero-wind guard + OU-stat). `ruff check` clean on all 6 touched files. `mypy models/qg_dynamics.py data/qg.py` clean (only pre-existing `data/lorenz96.py`/`data/random_*.py` debt). Storm-path hand-check on nx=32: `xc` advances ~8.6 km/day (crosses 1000 km in ~23 d), `yc` drifts northward at ~0.03 m/s, coordinates wrap within `[0,L)×[0,W)`, amplitude OU std ≈ 0.54×`wind_amp`.
+
 ## 2026-08-21: QG Phase A.2 — time-varying wind forcing (upper-layer PV source)
 
 **Summary:** Added an atmosphere-like time-varying wind-stress curl to the 2-layer Phillips QG model as an upper-layer PV source (Ekman pumping), calibrated its amplitude, wired it into the dataset, and produced an animation. Delivered through the PR-based multi-agent workflow (PRs #30 dynamics+tests, #32 calibration, #34 subagent model routing), with a `feat/qg-*` review ruleset now active.
