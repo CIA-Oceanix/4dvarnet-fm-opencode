@@ -73,14 +73,14 @@ class Up(nn.Module):
 
 class ConditionEncoder(nn.Module):
     def __init__(self, state_dim: int, hidden_dim: int, use_obs: bool, use_energy: bool,
-                 obs_dim: int = None):
+                 obs_dim: int = None, cond_extra_dim: int = 0):
         super().__init__()
         self.use_obs = use_obs
         self.use_energy = use_energy
         self.obs_dim = obs_dim if obs_dim is not None else state_dim
         proj_in = state_dim
         if use_obs:
-            proj_in += self.obs_dim
+            proj_in += self.obs_dim + cond_extra_dim
         if use_energy:
             proj_in += state_dim * 3
         self.proj = nn.Linear(proj_in, hidden_dim) if proj_in != hidden_dim else nn.Identity()
@@ -110,6 +110,7 @@ class UNet1D(nn.Module):
         dropout: float = 0.1,
         output_dim: int = None,
         obs_dim: int = None,
+        cond_extra_dim: int = 0,
     ):
         super().__init__()
         if hidden_channels is None:
@@ -124,7 +125,7 @@ class UNet1D(nn.Module):
         self.time_embed = SinusoidalEmbedding(time_emb_dim)
 
         self.cond_encoder = ConditionEncoder(state_dim, hidden_channels[0], use_obs, use_energy,
-                                             obs_dim=self.obs_dim)
+                                             obs_dim=self.obs_dim, cond_extra_dim=cond_extra_dim)
 
         self.enc_in = nn.Conv1d(hidden_channels[0], hidden_channels[0], 3, padding=1)
 

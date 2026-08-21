@@ -102,14 +102,17 @@ def model_factory(cfg: DictConfig, device: torch.device):
         )
     elif model_type == "direct_unet":
         dc = cfg.model.direct_unet
+        param_dim = cfg.model.get("param_dim", 4)
         model = DirectUNet(
             state_dim=cfg.model.state_dim,
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
-            param_dim=cfg.model.get("param_dim", 4),
+            param_dim=param_dim,
+            cond_extra_dim=dc.get("cond_extra_dim", 1 + param_dim),
         )
     elif model_type == "vanilla_cfm":
         vc = cfg.model.vanilla_cfm
+        param_dim = cfg.model.get("param_dim", 4)
         model = VanillaCFM(
             state_dim=cfg.model.state_dim,
             hidden_channels=vc.hidden_channels,
@@ -118,7 +121,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             sigma_prior=vc.sigma_prior,
             dropout=vc.dropout,
             train_tau_0_only=vc.get("train_tau_0_only", False),
-            param_dim=cfg.model.get("param_dim", 4),
+            param_dim=param_dim,
+            cond_extra_dim=vc.get("cond_extra_dim", 1 + param_dim),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM

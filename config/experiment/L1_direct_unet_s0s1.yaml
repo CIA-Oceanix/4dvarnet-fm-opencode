@@ -10,6 +10,7 @@ model:
   direct_unet:
     hidden_channels: [64, 128, 256]
     dropout: 0.1
+    cond_extra_dim: 0
 
 training:
   stage1:
