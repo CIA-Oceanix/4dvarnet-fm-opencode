@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-21: QG — wind-impact diagnostics + strong-amplitude animation
+
+**Summary:** Added `reports/diagnose_qg_wind_impact.py`, which produces a combined 4-panel figure (`qg_wind_impact.png`) quantifying the impact of the wind-stress-curl forcing by comparing the unforced baseline (`wind_amp=0`) against the default (`1e-11`) and strong (`3e-11`) amplitudes. Panels: (a) KE time series, (b) isotropized KE spectrum (log-log), (c) upper-layer PV anomaly `q1_forced − q1_unforced` at 3 matched times (strong case, showing the moving storm imprint after internal variability is subtracted), (d) domain-mean wind work `⟨τ_curl · ψ₁⟩` time series. Also regenerated the default `qg_wind_animation.gif` under the new moving-storm physics and added a strong-amplitude `qg_wind_animation_strong.gif`.
+
+**Files modified:**
+- `reports/diagnose_qg_wind_impact.py` — new: combined diagnostics figure (uses existing `QGDynamics.kinetic_energy`/`streamfunctions`/`wind_curl_field`/`generate_full_trajectory`; read-only w.r.t. the solver).
+- `reports/outputs/figs/qg_wind_impact.png` — new: the combined figure.
+- `reports/outputs/figs/qg_wind_animation_strong.gif` — new: animation at `wind_amp=3e-11`.
+- `reports/outputs/figs/qg_wind_animation.gif` — regenerated default animation under the moving-storm physics (from PR #39).
+- `PLAN.md`/`CHANGELOG.md` — QG A.2 diagnostics documented.
+
+**Rationale:** The wind forcing is calibrated to be *comparable* to internal baroclinic variability (+32% KE target), so its impact is hard to read from single flow-field frames. Both a KE/spectrum/wind-work quantitative comparison and a strong-amplitude anomaly/animation are needed to make the forcing's physical imprint (a ~23-day-transit moving storm) visually and diagnostically obvious, and to cross-check the energy budget (`⟨W⟩ ≈ rek·KE`).
+
+**Verification:** GPU run (Quadro RTX 8000, nx=64, 2-yr spinup + 120-d window): KE response monotonic in amplitude (unforced 3.62e-3; 1e-11 → 4.81e-3, +33%; 3e-11 → 1.39e-2, +283%); figure + both GIFs rendered (valid PNG with full pixel variance, 60-frame GIFs). `ruff check` clean on the new script. No source code path under test modified.
+
 ## 2026-08-21: QG — recalibrate wind amplitude under moving-storm drift
 
 **Summary:** Re-ran `reports/calibrate_qg_wind.py` (nx=64, 180-d forced window, `wind_amp ∈ {0,3e-12,1e-11,2e-11,3e-11}`) under the new moving-storm defaults (`wind_cx=0.5`, `wind_cy=0.03`, `wind_sigma=250 km`). Results: unforced KE 3.51e-3; +7% (3e-12), **+37% (1e-11)**, +136% (2e-11), +290% (3e-11). The existing `QGConfig.wind_amp = 1e-11` default still best matches the +32% comparable-contribution target, so the default is unchanged; only the regenerated calibration artifacts (`qg_wind_calibration.json`, `qg_wind_ke.png`) and docs are updated.
