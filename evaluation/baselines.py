@@ -1857,3 +1857,398 @@ class JointETKF(ETKF):
                 ensemble_variance=ens_var[b],
             ))
         return results
+
+
+# ===========================================================================
+# L96 joint state-parameter estimation
+# Estimates 8 params: F, c1, hx, eps + fast_weights (w1..w4). h is fixed.
+# Augmented state layout: [state(sd), F, c1, hx, eps, w1, w2, w3, w4]
+# ===========================================================================
+
+_L96_JOINT_PARAM_DIM = 8
+
+
+def _l96_h_fixed(N, device):
+    return torch.full((N,), 1.0, dtype=torch.float32, device=device)
+
+
+def _l96_joint_split(ensemble, sd, J):
+    F_e = ensemble[:, sd + 0].clamp(min=1e-6)
+    c1_e = ensemble[:, sd + 1].clamp(min=1e-6)
+    hx_e = ensemble[:, sd + 2].clamp(min=1e-6)
+    eps_e = ensemble[:, sd + 3].clamp(min=1e-6)
+    fw = ensemble[:, sd + 4:sd + 4 + J].clamp(min=1e-6)
+    return F_e, c1_e, hx_e, eps_e, fw
+
+
+def _l96_joint_obs_op(obs_operator, sd):
+    """Augmented observation operator: identity on state block, zero on params."""
+    if obs_operator.indices is None:
+        n_obs = sd
+        idx = list(range(sd))
+    else:
+        n_obs = obs_operator.indices.shape[0]
+        idx = obs_operator.indices.tolist()
+    return idx, n_obs
+
+
+class JointEnKFL96(EnKF):
+    """Joint EnKF for L96 estimating F, c1, hx, eps and fast_weights (h fixed)."""
+
+    def __init__(self, N_ensemble=30, R_var=0.5, inflation=1.0, dt=0.001,
+                 device=torch.device("cpu"), coupling_exponent=1.0,
+                 dynamics=None, obs_operator=None, NO=8, J=4,
+                 noise_init_std=1.5, param_noise=0.1,
+                 h=None, fast_weights=None):
+        super().__init__(N_ensemble=N_ensemble, R_var=R_var, inflation=inflation,
+                         dt=dt, device=device, coupling_exponent=coupling_exponent,
+                         dynamics=dynamics, obs_operator=obs_operator,
+                         NO=NO, J=J, noise_init_std=noise_init_std)
+        self.J = J
+        self.param_noise = param_noise
+        self._fixed_h = 1.0 if h is None else h
+        self._init_fw = [1.0, 1.0, 0.1, 0.1] if fast_weights is None else list(fast_weights)
+        self._sd = self.state_dim
+        self.param_dim = _L96_JOINT_PARAM_DIM
+
+    def _init_ensemble(self, obs0, params):
+        N = self.N_ensemble
+        sd = self._sd
+        rn = torch.randn
+        state = obs0.clone().unsqueeze(0).repeat(N, 1)
+        state = state + torch.randn((N, sd), device=self.device) * self.noise_init_std
+        p = params
+        Fs = torch.full((N, 1), p["F"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        c1s = torch.full((N, 1), p["c1"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        hxs = torch.full((N, 1), p["hx"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        epss = torch.full((N, 1), p["eps"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        fw0 = torch.tensor(p["fast_weights"], dtype=torch.float32, device=self.device)
+        fws = fw0.unsqueeze(0).repeat(N, 1) * (1 + rn(N, fw0.shape[0], device=self.device) * self.param_noise)
+        return torch.cat([state, Fs, c1s, hxs, epss, fws], dim=1)
+
+    def _obs_gain_len(self):
+        if self.obs_operator.indices is None:
+            return self._sd
+        return self.obs_operator.indices.shape[0]
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None, F=8.0,
+                   c1=1.0, h=1.0, hx=1.0, eps=0.1, fast_weights=None, **kwargs):
+        if fast_weights is None:
+            fast_weights = self._init_fw
+        params = {"F": F, "c1": c1, "hx": hx, "eps": eps, "fast_weights": fast_weights}
+        num_steps = observations.shape[0]
+        N = self.N_ensemble
+        sd = self._sd
+        J = self.J
+        od = self._obs_gain_len()
+        N1 = N - 1
+        r_sqrt = np.sqrt(self.R_var)
+
+        interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
+        grid = self.obs_operator.indices.cpu().numpy() if self.obs_operator.indices is not None else None
+        if grid is not None:
+            full0 = self.obs_operator.expand_to_state(interp_obs[0], sd)
+            ensemble = self._init_ensemble(full0, params)
+        else:
+            ensemble = self._init_ensemble(interp_obs[0], params)
+
+        analysis = np.zeros((num_steps, sd))
+        ens_var = np.zeros((num_steps, sd))
+        param_arr = np.zeros((num_steps, self.param_dim))
+        analysis[0] = torch.mean(ensemble[:, :sd], dim=0).cpu().numpy()
+        ens_var[0] = torch.var(ensemble[:, :sd], dim=0).cpu().numpy()
+        param_arr[0] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
+
+        idx, _ = _l96_joint_obs_op(self.obs_operator, sd)
+
+        for t in range(1, num_steps):
+            W = forcing[t - 1]
+            F_e, c1_e, hx_e, eps_e, fw = _l96_joint_split(ensemble, sd, J)
+            h_e = _l96_h_fixed(N, self.device)
+            ensemble[:, :sd] = self.dynamics.step(
+                ensemble[:, :sd], W.expand(N), F=F_e, c1=c1_e, h=h_e, hx=hx_e, eps=eps_e,
+                fast_weights=fw)
+
+            if obs_mask[t]:
+                y_t = observations[t]
+                mu = torch.mean(ensemble, dim=0)
+                A = ensemble - mu
+                dy = y_t - mu[idx]
+                HA = A[:, idx]
+                HA_w = torch.nan_to_num(HA / r_sqrt)
+                try:
+                    U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
+                except RuntimeError:
+                    U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
+                    U, s, Vt = U.to(HA_w.device), s.to(HA_w.device), Vt.to(HA_w.device)
+                s2 = s ** 2
+                d = s2 + N1 + getattr(self, "etkf_ridge", 0.0) * s2.max()
+                Pw = U @ torch.diag(1.0 / d) @ U.T
+                Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                w = (dy * (1.0 / self.R_var)) @ HA.T @ Pw
+                ensemble = mu + w @ A + Tmat @ A
+                nan_mask = torch.isnan(ensemble).any(dim=-1)
+                if nan_mask.any():
+                    ensemble = torch.nan_to_num(ensemble)
+                    mu_fix = torch.mean(ensemble, dim=0)
+                    ensemble[nan_mask] = mu_fix
+                mu = torch.mean(ensemble, dim=0)
+                ensemble = mu + self.inflation * (ensemble - mu)
+                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
+
+            analysis[t] = torch.mean(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            param_arr[t] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
+
+        ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref = _safe_ref(ref, analysis, getattr(self, "obs_operator", None))
+        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
+                              ensemble=np.zeros((N, num_steps, sd)),
+                              ensemble_variance=ens_var)
+
+
+class JointETKFL96(ETKF):
+    """Joint ETKF for L96 estimating F, c1, hx, eps and fast_weights (h fixed)."""
+
+    def __init__(self, N_ensemble=30, R_var=0.5, inflation=1.0, dt=0.001,
+                 device=torch.device("cpu"), coupling_exponent=1.0,
+                 dynamics=None, obs_operator=None, NO=8, J=4,
+                 noise_init_std=1.5, param_noise=0.1,
+                 h=None, fast_weights=None):
+        super().__init__(N_ensemble=N_ensemble, R_var=R_var, inflation=inflation,
+                         dt=dt, device=device, coupling_exponent=coupling_exponent,
+                         dynamics=dynamics, obs_operator=obs_operator,
+                         NO=NO, J=J, noise_init_std=noise_init_std)
+        self.J = J
+        self.param_noise = param_noise
+        self._fixed_h = 1.0 if h is None else h
+        self._init_fw = [1.0, 1.0, 0.1, 0.1] if fast_weights is None else list(fast_weights)
+        self._sd = self.state_dim
+        self.param_dim = _L96_JOINT_PARAM_DIM
+
+    def _init_ensemble(self, obs0, params):
+        N = self.N_ensemble
+        sd = self._sd
+        rn = torch.randn
+        state = obs0.clone().unsqueeze(0).repeat(N, 1)
+        state = state + torch.randn((N, sd), device=self.device) * self.noise_init_std
+        p = params
+        Fs = torch.full((N, 1), p["F"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        c1s = torch.full((N, 1), p["c1"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        hxs = torch.full((N, 1), p["hx"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        epss = torch.full((N, 1), p["eps"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
+        fw0 = torch.tensor(p["fast_weights"], dtype=torch.float32, device=self.device)
+        fws = fw0.unsqueeze(0).repeat(N, 1) * (1 + rn(N, fw0.shape[0], device=self.device) * self.param_noise)
+        return torch.cat([state, Fs, c1s, hxs, epss, fws], dim=1)
+
+    def _obs_idx(self):
+        if self.obs_operator.indices is None:
+            return list(range(self._sd))
+        return self.obs_operator.indices.tolist()
+
+    def _mk_Hstate(self, idx, sd, N_dim):
+        H = torch.zeros(len(idx), N_dim, device=self.device)
+        for i, j in enumerate(idx):
+            H[i, j] = 1.0
+        return H
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None, F=8.0,
+                   c1=1.0, h=1.0, hx=1.0, eps=0.1, fast_weights=None, **kwargs):
+        if fast_weights is None:
+            fast_weights = self._init_fw
+        params = {"F": F, "c1": c1, "hx": hx, "eps": eps, "fast_weights": fast_weights}
+        num_steps = observations.shape[0]
+        N = self.N_ensemble
+        sd = self._sd
+        J = self.J
+        N_dim = sd + self.param_dim
+        N1 = N - 1
+        R_inv = 1.0 / self.R_var
+
+        interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
+        if self.obs_operator.indices is not None:
+            full0 = self.obs_operator.expand_to_state(interp_obs[0], sd)
+        else:
+            full0 = interp_obs[0]
+        ensemble = self._init_ensemble(full0, params)
+
+        analysis = np.zeros((num_steps, sd))
+        ens_var = np.zeros((num_steps, sd))
+        param_arr = np.zeros((num_steps, self.param_dim))
+        analysis[0] = torch.mean(ensemble[:, :sd], dim=0).cpu().numpy()
+        ens_var[0] = torch.var(ensemble[:, :sd], dim=0).cpu().numpy()
+        param_arr[0] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
+
+        idx = self._obs_idx()
+        H = self._mk_Hstate(idx, sd, N_dim)
+
+        for t in range(1, num_steps):
+            W = forcing[t - 1]
+            F_e, c1_e, hx_e, eps_e, fw = _l96_joint_split(ensemble, sd, J)
+            h_e = _l96_h_fixed(N, self.device)
+            ensemble[:, :sd] = self.dynamics.step(
+                ensemble[:, :sd], W.expand(N), F=F_e, c1=c1_e, h=h_e, hx=hx_e, eps=eps_e,
+                fast_weights=fw)
+
+            if obs_mask[t]:
+                y_t = observations[t]
+                mu = torch.mean(ensemble, dim=0)
+                A = ensemble - mu
+                HA = (A @ H.T)  # (N, n_obs)
+                dy = y_t - mu[idx]
+                HA_w = HA
+                Y = HA_w * np.sqrt(R_inv)
+                U, s, Vt = torch.linalg.svd(Y, full_matrices=False)
+                s2 = s ** 2
+                d = s2 + N1
+                Pw = U @ torch.diag(1.0 / d) @ U.T
+                T = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                w = (dy * R_inv) @ HA.T @ Pw
+                ensemble = mu + w @ A + T @ A
+                mu = torch.mean(ensemble, dim=0)
+                ensemble = mu + self.inflation * (ensemble - mu)
+                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
+
+            analysis[t] = torch.mean(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble[:, :sd], dim=0).detach().cpu().numpy()
+            param_arr[t] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
+
+        ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref = _safe_ref(ref, analysis, getattr(self, "obs_operator", None))
+        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
+                              ensemble=np.zeros((N, num_steps, sd)),
+                              ensemble_variance=ens_var)
+
+
+class JointStrong4DVarL96(Strong4DVar):
+    """Joint Strong-4DVar for L96 estimating F, c1, hx, eps and fast_weights (h fixed).
+
+    Optimizes per window the initial state x0 and log-params (F, c1, hx, eps,
+    w1..w4). h is held fixed at its user-provided value.
+    """
+
+    def __init__(self, da_window_steps=300, B_var=2.0, R_var=0.5, P_var=1.0,
+                 max_iter=40, lr=0.1, dt=0.001, device=torch.device("cpu"),
+                 coupling_exponent=1.0, dynamics=None, obs_operator=None,
+                 h=None, J=4, fast_weights=None, param_prior_scale=0.1):
+        super().__init__(da_window_steps=da_window_steps, B_var=B_var, R_var=R_var,
+                         max_iter=max_iter, lr=lr, dt=dt, device=device,
+                         coupling_exponent=coupling_exponent, dynamics=dynamics,
+                         obs_operator=obs_operator)
+        self.P_var = P_var
+        self.J = J
+        self.param_prior_scale = param_prior_scale
+        self._fixed_h = 1.0 if h is None else h
+        self._init_fw = [1.0, 1.0, 0.1, 0.1] if fast_weights is None else list(fast_weights)
+        self._sd = self.state_dim
+        self.param_dim = _L96_JOINT_PARAM_DIM
+
+    def _forward_l96(self, x0, steps, win_force, F_v, c1_v, hx_v, eps_v, fw_v):
+        traj = [x0]
+        h_fixed = self._fixed_h
+        for t in range(1, steps):
+            s = traj[-1]
+            W = win_force[t - 1]
+            next_s = self.dynamics.step(s, W, F=F_v, c1=c1_v, h=h_fixed, hx=hx_v,
+                                        eps=eps_v, fast_weights=fw_v)
+            next_s = torch.clamp(next_s, -50.0, 50.0)
+            traj.append(next_s)
+        return torch.stack(traj)
+
+    def _prior_terms(self, logp, ref):
+        return torch.sum((logp - ref) ** 2) / self.P_var
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None, F=8.0,
+                   c1=1.0, h=1.0, hx=1.0, eps=0.1, fast_weights=None, **kwargs):
+        if fast_weights is None:
+            fast_weights = self._init_fw
+        self._fixed_h = h
+        num_steps = observations.shape[0]
+        sd = self._sd
+        nw = num_steps // self.da_window_steps
+        analysis = np.zeros((num_steps, sd))
+        param_arr = np.zeros((num_steps, self.param_dim))
+
+        interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
+        if self.obs_operator.indices is not None:
+            current_bg = self.obs_operator.expand_to_state(interp_obs[0], sd)
+        else:
+            current_bg = interp_obs[0]
+        current_bg = current_bg + torch.randn(sd, device=self.device) * 1.5
+
+        def L(x):
+            return torch.log(torch.clamp(x, min=1e-6))
+
+        log_F = L(torch.tensor(F, device=self.device)).detach().requires_grad_(True)
+        log_c1 = L(torch.tensor(c1, device=self.device)).detach().requires_grad_(True)
+        log_hx = L(torch.tensor(hx, device=self.device)).detach().requires_grad_(True)
+        log_eps = L(torch.tensor(eps, device=self.device)).detach().requires_grad_(True)
+        fw_t = torch.tensor(list(fast_weights), dtype=torch.float32, device=self.device,
+                            requires_grad=True)
+        ref_logF, ref_logc1, ref_loghx, ref_logeps = log_F.detach(), log_c1.detach(), log_hx.detach(), log_eps.detach()
+        ref_fw = fw_t.detach().clone()
+
+        for w in range(nw):
+            start = w * self.da_window_steps
+            end = start + self.da_window_steps
+            win_obs = observations[start:end]
+            win_mask = obs_mask[start:end]
+            win_force = forcing[start:end]
+
+            x_ctrl = current_bg.clone().detach().requires_grad_(True)
+            x_bg_ref = current_bg.clone().detach()
+
+            lF = log_F.clone().detach().requires_grad_(True)
+            lc1 = log_c1.clone().detach().requires_grad_(True)
+            lhx = log_hx.clone().detach().requires_grad_(True)
+            leps = log_eps.clone().detach().requires_grad_(True)
+            lfw = fw_t.clone().detach().requires_grad_(True)
+
+            opt = optim.LBFGS([x_ctrl, lF, lc1, lhx, leps, lfw], max_iter=self.max_iter, lr=self.lr)
+
+            def closure():
+                opt.zero_grad()
+                F_v = torch.exp(lF)
+                c1_v = torch.exp(lc1)
+                hx_v = torch.exp(lhx)
+                eps_v = torch.exp(leps)
+                fw_v = torch.clamp(lfw, min=1e-6)
+                traj = self._forward_l96(x_ctrl, self.da_window_steps, win_force,
+                                         F_v, c1_v, hx_v, eps_v, fw_v)
+                J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
+                J_p = (self._prior_terms(lF, ref_logF) + self._prior_terms(lc1, ref_logc1)
+                       + self._prior_terms(lhx, ref_loghx) + self._prior_terms(leps, ref_logeps)
+                       + torch.sum((lfw - ref_fw) ** 2) / self.P_var)
+                J_o = torch.tensor(0.0, device=self.device)
+                for t in range(self.da_window_steps):
+                    if win_mask[t]:
+                        proj = self.obs_operator(traj[t])
+                        diff = (proj - win_obs[t])
+                        J_o += torch.sum(diff ** 2) / self.R_var
+                J_total = 0.5 * J_b + 0.5 * J_o + self.param_prior_scale * J_p
+                J_total.backward()
+                return J_total
+
+            for _ in range(4):
+                opt.step(closure)
+
+            F_v = torch.exp(lF.detach())
+            c1_v = torch.exp(lc1.detach())
+            hx_v = torch.exp(lhx.detach())
+            eps_v = torch.exp(leps.detach())
+            fw_v = torch.clamp(lfw.detach(), min=1e-6)
+            final_traj = self._forward_l96(x_ctrl.detach(), self.da_window_steps, win_force,
+                                           F_v, c1_v, hx_v, eps_v, fw_v)
+            analysis[start:end] = final_traj.detach().cpu().numpy()
+            est = torch.cat([F_v.reshape(1), c1_v.reshape(1), hx_v.reshape(1), eps_v.reshape(1), fw_v.reshape(-1)]).detach().cpu().numpy()
+            param_arr[start:end] = np.tile(est, (self.da_window_steps, 1))
+            current_bg = final_traj[-1].detach()
+            log_F, log_c1, log_hx, log_eps = lF.detach(), lc1.detach(), lhx.detach(), leps.detach()
+            fw_t = lfw.detach()
+
+        ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref = _safe_ref(ref, analysis, getattr(self, "obs_operator", None))
+        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr)
