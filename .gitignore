@@ -62,3 +62,7 @@ all_figures.pdf
 
 # SLURM logs
 sbatch_logs/
+
+# Reviewer PAT (never commit)
+.reviewer-token
+reviewer-token

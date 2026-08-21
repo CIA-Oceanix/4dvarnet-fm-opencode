@@ -39,6 +39,7 @@ def run():
     parser.add_argument("--obs-frac", type=float, default=1.0)
     parser.add_argument("--num-windows", type=int, default=20)
     parser.add_argument("--da-window-steps", type=int, default=500)
+    parser.add_argument("--obs-interval", type=int, default=100)
     parser.add_argument("--skip-weak", action="store_true", default=False)
     parser.add_argument("--weak-opt-steps", type=int, default=50)
     parser.add_argument("--weak-lr", type=float, default=0.1)
@@ -54,9 +55,7 @@ def run():
     dt = 0.001
     T_max = 3.0
     num_steps = int(T_max / dt)
-    obs_interval = 200
-    # If obs_frac < 1, we subsample the observation dimensions
-    # We handle this by modifying the observation tensor after creation
+    obs_interval = args.obs_interval
 
     base_cfg = Lorenz96Config(
         dt=dt, T_max=T_max, obs_interval=obs_interval,
@@ -127,6 +126,7 @@ def run():
         "config": {
             "param_bias": args.param_bias,
             "forcing_state_bias": args.forcing_state_bias,
+            "obs_interval": args.obs_interval,
             "obs_frac": args.obs_frac,
             "num_windows": args.num_windows,
             "da_window_steps": args.da_window_steps,

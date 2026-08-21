@@ -27,7 +27,8 @@ class FlowMatchingBatch:
 
 class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
-                 obs_interval: int = 20, R_var: float = 0.5, param_names=None):
+                 obs_interval: int = 20, R_var: float = 0.5, param_names=None,
+                 obs_var_indices=None):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -35,6 +36,7 @@ class FlowMatchingDataset(Dataset):
         self.R_var = R_var
         self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
         self.param_dim = len(self.param_names)
+        self.obs_var_indices = obs_var_indices
 
     def __len__(self):
         return len(self.source)
@@ -54,7 +56,10 @@ class FlowMatchingDataset(Dataset):
                 w["true_state"], self.obs_interval, self.R_var, obs_seed)
             w["obs"] = obs
             w["obs_mask"] = obs_mask
-        result = (w["true_state"], w["obs"], w["obs_mask"], w["forcing_corrupted"])
+        true_state = w["true_state"]
+        if self.obs_var_indices is not None:
+            true_state = true_state[:, self.obs_var_indices]
+        result = (true_state, w["obs"], w["obs_mask"], w["forcing_corrupted"])
         if self.with_params and self.param_names[0] in w:
             result = result + self._extract_params(w)
             result = result + self._extract_true_params(w)
@@ -63,13 +68,15 @@ class FlowMatchingDataset(Dataset):
 
 class ConcatFMDataset(Dataset):
     def __init__(self, datasets, with_params: bool = False,
-                 obs_interval: int = 20, R_var: float = 0.5, param_names=None):
+                 obs_interval: int = 20, R_var: float = 0.5, param_names=None,
+                 obs_var_indices=None):
         self.datasets = datasets
         self.with_params = with_params
         self.obs_interval = obs_interval
         self.R_var = R_var
         self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
         self.param_dim = len(self.param_names)
+        self.obs_var_indices = obs_var_indices
         self.cumlen = [0]
         for d in datasets:
             self.cumlen.append(self.cumlen[-1] + len(d))
@@ -94,7 +101,10 @@ class ConcatFMDataset(Dataset):
                         w["true_state"], self.obs_interval, self.R_var, obs_seed)
                     w["obs"] = obs
                     w["obs_mask"] = obs_mask
-                result = (w["true_state"], w["obs"], w["obs_mask"], w["forcing_corrupted"])
+                true_state = w["true_state"]
+                if self.obs_var_indices is not None:
+                    true_state = true_state[:, self.obs_var_indices]
+                result = (true_state, w["obs"], w["obs_mask"], w["forcing_corrupted"])
                 if self.with_params and self.param_names[0] in w:
                     result = result + self._extract_params(w)
                     result = result + self._extract_true_params(w)
@@ -117,26 +127,31 @@ def collate_fm(batch):
 
 
 def make_dataloaders(datasets: Dict[str, Dataset], batch_size: int = 32,
-                     obs_interval: int = 20, R_var: float = 0.5):
+                     obs_interval: int = 20, R_var: float = 0.5,
+                     obs_var_indices=None):
     return {
         "train": DataLoader(
             ConcatFMDataset([datasets["train_cs1"], datasets["train_cs2"]],
-                            obs_interval=obs_interval, R_var=R_var),
+                            obs_interval=obs_interval, R_var=R_var,
+                            obs_var_indices=obs_var_indices),
             batch_size=batch_size, shuffle=True, collate_fn=collate_fm,
         ),
         "val": DataLoader(
             ConcatFMDataset([datasets["val_cs1"], datasets["val_cs2"]],
-                            obs_interval=obs_interval, R_var=R_var),
+                            obs_interval=obs_interval, R_var=R_var,
+                            obs_var_indices=obs_var_indices),
             batch_size=batch_size, shuffle=False, collate_fn=collate_fm,
         ),
         "test_cs1": DataLoader(
             FlowMatchingDataset(datasets["test_cs1"],
-                                obs_interval=obs_interval, R_var=R_var),
+                                obs_interval=obs_interval, R_var=R_var,
+                                obs_var_indices=obs_var_indices),
             batch_size=batch_size, shuffle=False, collate_fn=collate_fm,
         ),
         "test_cs2": DataLoader(
             FlowMatchingDataset(datasets["test_cs2"],
-                                obs_interval=obs_interval, R_var=R_var),
+                                obs_interval=obs_interval, R_var=R_var,
+                                obs_var_indices=obs_var_indices),
             batch_size=batch_size, shuffle=False, collate_fn=collate_fm,
         ),
     }

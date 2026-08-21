@@ -22,7 +22,39 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
   - `train.py` → `data.system` dispatch (`lorenz96`), `param_names`-generalized eval
   - configs: `config/experiment/L1_direct_unet_s0s1.yaml`, `L2_vanilla_cfm_s0s1.yaml`
   - test: `tests/test_lorenz96_training.py`
-- **To do (next)**: launch L96 UNet/CFM training (L1/L2) and compare vs DA baselines.
+
+## L96 Neural Training (`feat/l96-neural-training`, from master @ 0687e07)
+
+Implements all-5-param randomization + neural S0/S1 training (commit `3a1c8d5`).
+See `L96_NEURAL_TRAINING_PROGRESS.md` for the per-WP tracker and handoff.
+
+- **All 5 params randomized ±20%**: `models/lorenz96_dynamics.py` accepts `c1,h,hx,eps`
+  + `F` kwargs; `data/lorenz96.py` `RandomParam`/`RandomBias` + `make_l96_s0_s1_trainval`.
+- **Neural `param_dim=0`** (DirectUNet, VanillaCFM-τ=0): obs + corrupted forcing only.
+- **DA parity**: `evaluation/run_l96.py` + `evaluate_all_l96.py` pass per-window all-5
+  params to DA; S1 uses biased `*_da` params.
+- Configs: `config/lorenz96_default.yaml`, `L1_direct_unet_s0s1.yaml`,
+  `L2_vanilla_cfm_s0s1.yaml` (both `param_dim=0`; L2 is τ=0).
+- Tests: `tests/test_lorenz96_training.py` (11 tests).
+- sbatch: `run_one_epoch_tests_l96`, `run_l96_da_consistency`,
+  `run_l96_neural_training`, `run_l96_evaluate_all`.
+
+### Multi-agent review workflow (git/PR)
+
+Code changes on this branch go through an implementer → reviewer → verifier loop.
+Two execution paths:
+
+- **Option A — GitHub PR**: `.github/workflows/ci.yml` runs ruff + pytest on PRs
+  to `feat/l96-*`. Agents use `gh pr create` / `gh pr review` / `gh pr merge`.
+  Blocked until `gh auth login` is run interactively (W3).
+- **Option B — Local**: `scripts/agent_review_loop.sh <STEP> "<desc>" [--review]`
+  provides the same loop with local git (works immediately).
+
+**REMINDER:** run `gh auth login` and enable branch protection on `feat/l96-*`
+(require 1 PR approval + status checks) to unlock the GitHub PR path.
+
+**To do (next)**: run DA consistency re-run (Step 11c), train L1/L2 (Step 12), then
+compare DA vs neural on S0/S1 (WP8) — all via the L96 sbatch scripts.
 
 ## Experiments
 

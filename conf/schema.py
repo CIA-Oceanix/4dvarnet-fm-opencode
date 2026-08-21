@@ -1,6 +1,14 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Dict
 from omegaconf import MISSING
+
+
+@dataclass
+class ParamRandomization:
+    randomized: bool = True
+    noise: float = 0.2
+    biased: bool = False
+    bias: float = 0.0
 
 
 @dataclass
@@ -47,6 +55,8 @@ class DataConfig:
     coupling_exponent_truth: float = 1.6
     coupling_exponent_da: float = 1.0
     fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
+    obs_j: int = 2
+    randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
 
     # Device
     device: str = "cpu"
@@ -93,7 +103,24 @@ class DataConfig:
             coupling_exponent_truth=self.coupling_exponent_truth,
             coupling_exponent_da=self.coupling_exponent_da,
             fast_weights=list(self.fast_weights),
+            randomize={k: {"randomized": v.randomized, "noise": v.noise,
+                           "biased": v.biased, "bias": v.bias}
+                       for k, v in self.randomize.items()},
+            obs_var_indices=self._compute_obs_var_indices(),
         )
+
+    def _compute_obs_var_indices(self):
+        obs_j = self.obs_j
+        if obs_j is None or obs_j >= self.J:
+            return None
+        NO = self.NO
+        J = self.J
+        X_idx = list(range(NO))
+        Y_idx = []
+        for k in range(NO):
+            for j in range(obs_j):
+                Y_idx.append(NO + k * J + j)
+        return tuple(X_idx + Y_idx)
 
     def to_lorenz63_config(self) -> Any:
         """Convert to data.lorenz63.Lorenz63Config."""
@@ -127,6 +154,7 @@ class VanillaCFMConfig:
     N_outer: int = 10
     sigma_prior: float = 0.5
     dropout: float = 0.1
+    train_tau_0_only: bool = False
 
 
 @dataclass

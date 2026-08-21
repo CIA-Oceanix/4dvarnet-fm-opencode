@@ -28,8 +28,10 @@ class DirectUNet(nn.Module):
         params = batch.params
         B, T, D = obs.shape
         obs_clean = torch.nan_to_num(obs, nan=0.0)
-        params_t = params.unsqueeze(1).expand(B, T, -1)
-        cond = torch.cat([obs_clean, forcing.unsqueeze(-1), params_t], dim=-1)
+        cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
+        if self.param_dim > 0:
+            params_t = params.unsqueeze(1).expand(B, T, -1)
+            cond = torch.cat([cond, params_t], dim=-1)
         x = torch.zeros(B, D, T, device=obs.device)
         tau = torch.zeros(B, device=obs.device)
         out = self.unet(x, cond.transpose(1, 2), tau=tau)

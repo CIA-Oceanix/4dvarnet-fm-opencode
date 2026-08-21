@@ -68,11 +68,13 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 
 
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
-                         obs_interval=200, R_var=0.5, param_names=("F",)):
+                         obs_interval=100, R_var=0.5, param_names=("F",),
+                         obs_var_indices=None):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
-                 with_params=with_params, param_names=list(param_names))
+                 with_params=with_params, param_names=list(param_names),
+                 obs_var_indices=obs_var_indices)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
                             shuffle=True, **kw),
@@ -135,12 +137,15 @@ def model_factory(cfg: DictConfig, device: torch.device):
     return model.to(device)
 
 
-def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1")):
+def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
+                     param_dim=4):
     from data.dataloader import FlowMatchingBatch
     states = w["true_state"].unsqueeze(0).to(device)
     obs = w["obs"].unsqueeze(0).to(device)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
+    if param_dim == 0:
+        return FlowMatchingBatch(states, obs, mask, forcing)
     params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
                           dtype=torch.float32, device=device)
     true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
@@ -149,13 +154,14 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1")):
 
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
-                   param_names=("sigma", "rho", "beta", "c1")):
+                   param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
+                   obs_var_indices=None):
     rmse_list = []
     param_list = []
     true_param_list = []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -169,6 +175,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
             true_param_list.append(np.array(tp))
         truth = w["true_state"].numpy()
+        if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
+            truth = truth[..., obs_var_indices]
         rmse_list.append(rmse(pred, truth))
     all_rmse = np.stack(rmse_list, axis=0)
     out = (np.mean(all_rmse, axis=0), np.std(all_rmse, axis=0))
@@ -180,12 +188,24 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
     return out
 
 
+def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
+    groups = {}
+    groups["all_obs"] = float(np.mean(mean_rmse))
+    groups["slow"] = float(np.mean(mean_rmse[:NO]))
+    if obs_j < J:
+        groups["obs_fast"] = float(np.mean(mean_rmse[NO:]))
+    else:
+        groups["obs_fast"] = float(np.mean(mean_rmse[NO:]))
+    return groups
+
+
 def save_trajectories(model, dataset, device, model_type, save_path,
-                      param_names=("sigma", "rho", "beta", "c1")):
+                      param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
+                      obs_var_indices=None):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -194,8 +214,11 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        truth = w["true_state"].numpy()
+        if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
+            truth = truth[..., obs_var_indices]
         trajs.append(pred)
-        truths.append(w["true_state"].numpy())
+        truths.append(truth)
     np.savez_compressed(save_path,
                         trajectories=np.stack(trajs, axis=0),
                         truths=np.stack(truths, axis=0))
@@ -234,14 +257,53 @@ def main(cfg: DictConfig):
     system = dc.get("system", "lorenz63")
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
     if system == "lorenz96":
-        from data.lorenz96 import make_l96_s0_s1_datasets, make_datasets as make_l96_datasets
-        base_cfg = dc.to_lorenz96_config()
-        datasets = make_l96_datasets(base_cfg)
+        from data.lorenz96 import (Lorenz96Config, make_l96_s0_s1_trainval,
+                                   make_datasets as make_l96_datasets)
+        NO = dc.get("NO", 8)
+        J = dc.get("J", 4)
+        obs_j = dc.get("obs_j", 2)
+        obs_var_indices = None
+        if obs_j < J:
+            X_idx = list(range(NO))
+            Y_idx = []
+            for k in range(NO):
+                for j in range(obs_j):
+                    Y_idx.append(NO + k * J + j)
+            obs_var_indices = tuple(X_idx + Y_idx)
+        base_cfg = Lorenz96Config(
+            case=dc.get("case", 1), dt=dc.dt, T_max=dc.T_max,
+            obs_interval=dc.obs_interval, R_var=dc.R_var, B_var=dc.B_var,
+            param_bias=dc.get("param_bias", 0.0),
+            num_windows=dc.num_windows, window_spacing=dc.window_spacing,
+            spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
+            NO=dc.get("NO", 8), J=dc.get("J", 4),
+            h=dc.get("h", 1.0), hx=dc.get("hx", 1.0), eps=dc.get("eps", 0.1),
+            F_true=dc.get("F_true", 8.0), F_da=dc.get("F_da", 8.0),
+            gamma=dc.get("gamma", 0.05), W_L_bar=dc.get("W_L_bar", 0.0),
+            c1=dc.get("c1", 1.0), c2=dc.get("c2", 0.1),
+            sigma_0=dc.get("sigma_0", 0.08), sigma_L=dc.get("sigma_L", 0.20),
+            tau_eta=dc.get("tau_eta", 5.0),
+            sigma_eta=dc.get("sigma_eta", np.sqrt(0.5)),
+            forcing_state_bias=dc.get("forcing_state_bias", 0.0),
+            forcing_coupling=dc.get("forcing_coupling", "linear"),
+            coupling_exponent_truth=dc.get("coupling_exponent_truth", 1.6),
+            coupling_exponent_da=dc.get("coupling_exponent_da", 1.0),
+            fast_weights=list(dc.get("fast_weights", [1.0, 1.0, 0.1, 0.1])),
+            randomize=dict(dc.get("randomize", {})),
+            obs_var_indices=obs_var_indices,
+        )
         if data_setup == "s0_s1":
-            datasets.update(make_l96_s0_s1_datasets(
-                base_cfg, num_test_windows=dc.get("num_test_windows", 200)))
+            datasets = make_l96_s0_s1_trainval(
+                base_cfg,
+                num_train_windows=dc.get("num_train_windows", 1000),
+                num_val_windows=dc.get("num_val_windows", 100),
+                num_test_windows=dc.get("num_test_windows", 200),
+                param_noise=dc.get("test_param_noise", 0.2),
+                bias_range=(0.0, dc.get("bias_max", 0.2)),
+            )
             test_keys = ["test_s0", "test_s1"]
         else:
+            datasets = make_l96_datasets(base_cfg)
             test_keys = ["test_cs1", "test_cs2"]
     else:
         base_cfg = Lorenz63Config(
@@ -284,6 +346,7 @@ def main(cfg: DictConfig):
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
             with_params=(model_type == "joint_cfm"),
+            obs_var_indices=obs_var_indices,
         )
     else:
         loaders = make_experiment_dataloaders(
@@ -301,6 +364,7 @@ def main(cfg: DictConfig):
     # Model
     print(f"  Creating model (type={model_type})...")
     model = model_factory(cfg, device)
+    param_dim = cfg.model.get("param_dim", 4)
 
     # Train
     total_t0 = time.time()
@@ -344,17 +408,22 @@ def main(cfg: DictConfig):
     results_metrics = {}
     param_metrics = {}
     is_joint = model_type == "joint_cfm"
+    NO = dc.get("NO", 8)
+    J = dc.get("J", 4)
+    obs_j_local = dc.get("obs_j", 2)
     for key in test_keys:
         if key not in datasets:
             continue
         if is_joint:
             m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
-                                         return_params=True, param_names=param_names)
+                                         return_params=True, param_names=param_names,
+                                         param_dim=param_dim, obs_var_indices=obs_var_indices)
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
             m, s = evaluate_model(model, datasets[key], device, model_type,
-                                  param_names=param_names)
+                                  param_names=param_names, param_dim=param_dim,
+                                  obs_var_indices=obs_var_indices)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -364,7 +433,8 @@ def main(cfg: DictConfig):
             case = key.replace("test_", "")
             save_trajectories(model, datasets[key], device, model_type,
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
-                              param_names=param_names)
+                              param_names=param_names, param_dim=param_dim,
+                              obs_var_indices=obs_var_indices)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 
@@ -372,6 +442,8 @@ def main(cfg: DictConfig):
         d = {"mean": float(np.mean(m))}
         for i, nm in enumerate(state_names):
             d[nm] = {"mean": float(m[i]), "std": float(s[i])}
+        if obs_var_indices is not None:
+            d["groups"] = _per_group_rmse(m, obs_var_indices, NO=NO, J=J, obs_j=obs_j_local)
         return d
 
     def _param_entry(p):
@@ -435,10 +507,16 @@ def main(cfg: DictConfig):
     print(f"\n  ── Results ─────────────────────────────────")
     if s0:
         m0, _ = s0
+        groups0 = _per_group_rmse(m0, obs_var_indices, NO=NO, J=J, obs_j=obs_j_local) if obs_var_indices else {}
         print(f"  S0: {_fmt_rmse(m0)}")
+        if groups0:
+            print(f"       slow={groups0['slow']:.4f}  obs_fast={groups0['obs_fast']:.4f}  all_obs={groups0['all_obs']:.4f}")
     if s1:
         m1, _ = s1
+        groups1 = _per_group_rmse(m1, obs_var_indices, NO=NO, J=J, obs_j=obs_j_local) if obs_var_indices else {}
         print(f"  S1: {_fmt_rmse(m1)}")
+        if groups1:
+            print(f"       slow={groups1['slow']:.4f}  obs_fast={groups1['obs_fast']:.4f}  all_obs={groups1['all_obs']:.4f}")
     if cs1:
         m1, s1 = cs1
         print(f"  CS1: {_fmt_rmse(m1)}")

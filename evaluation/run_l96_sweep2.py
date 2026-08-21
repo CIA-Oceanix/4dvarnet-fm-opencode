@@ -63,7 +63,7 @@ def run():
                         help="Number of fast vars to observe per slow node (default: all J_truth)")
     parser.add_argument("--s1-j", type=int, default=None,
                         help="Number of fast vars in S1 DA model (default: same as truth J)")
-    parser.add_argument("--obs-interval", type=int, default=200,
+    parser.add_argument("--obs-interval", type=int, default=100,
                         help="Observation interval in steps (default: 200)")
     parser.add_argument("--ensemble-size", type=int, default=30,
                         help="Ensemble size for EnKF/ETKF (default: 30)")

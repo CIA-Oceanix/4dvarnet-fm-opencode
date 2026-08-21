@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - 'feat/l96-*'
+  push:
+    branches:
+      - 'feat/l96-*'
+
+jobs:
+  lint:
+    name: ruff lint (informational)
+    runs-on: ubuntu-latest
+    # Non-blocking: the codebase has pre-existing ruff debt; reports issues
+    # without failing the PR gate. Fix lint progressively; gate = pytest.
+    continue-on-error: true
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check .
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: "3.10"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install hydra-core omegaconf pytorch-lightning
+      - name: Run fast test suite
+        run: |
+          pytest \
+            tests/test_lorenz96_training.py \
+            tests/test_direct_unet.py \
+            tests/test_vanilla_cfm.py \
+            tests/test_hydra_config.py \
+            tests/test_baselines_hydra.py \
+            tests/test_metrics.py \
+            -m "not slow" -q

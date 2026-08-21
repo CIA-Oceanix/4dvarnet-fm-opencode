@@ -165,7 +165,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             method = method_map[name]
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
-            (m, s), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
+            ((m, s), _), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size)
             elapsed = time.time() - t1
 
             if case_name not in partial:
