@@ -49,10 +49,6 @@ BAROTROPIC = {"h1": 0, "u1": 1, "v1": 2, "h2": 3, "u2": 4, "v2": 5}
 H_REF = 1.0
 
 
-def _device_tensor(t, device):
-    return t.to(device) if device is not None else t
-
-
 def build_dynamics(Nx, Ny, device):
     return ShallowWaterDynamics(
         Nx=Nx, Ny=Ny, dt=0.1, tau0=0.0, f_cor=0.1,
@@ -119,7 +115,7 @@ def pick_times(n, k=4):
 # Figures
 # ----------------------------------------------------------------------
 
-def plot_snapshots(flds, times, outdir, Nx, Ny):
+def plot_snapshots(flds, times, outdir):
     rows = ["h1", "u1", "v1", "h2", "u2", "v2"]
     names = [r"$h_1$", r"$u_1$", r"$v_1$", r"$h_2$", r"$u_2$", r"$v_2$"]
     fig, axes = plt.subplots(len(times), 6, figsize=(18, 4 * len(times)))
@@ -143,9 +139,10 @@ def plot_snapshots(flds, times, outdir, Nx, Ny):
     plt.close(fig)
 
 
-def plot_vorticity(flds, times, outdir, Nx, Ny):
+def plot_vorticity(flds, times, outdir):
     fig, axes = plt.subplots(len(times), 2, figsize=(10, 4 * len(times)))
     axes = np.atleast_2d(axes)
+    Nx, Ny = flds["u1"][times[0]].shape
     for r, t in enumerate(times):
         z1 = vorticity(flds["u1"][t], flds["v1"][t], Nx, Ny)
         z2 = vorticity(flds["u2"][t], flds["v2"][t], Nx, Ny)
@@ -180,11 +177,14 @@ def plot_spectra(flds, Nx, Ny, outdir, scales):
             _, pv = azimuthal_spectrum_2d(flds[v][t])
             eke.append(0.5 * (pu + pv))
         eke_mean = np.mean(eke, axis=0)
+        keep = k_arr > 0
+        k_arr = k_arr[keep]
+        eke_mean = eke_mean[keep]
         k_phys = k_arr / Nx
         ax.loglog(k_phys, eke_mean, "-", label=f"KE {L}")
-        ax.axvline(1.0 / scales["Rd1"] / Nx, color="C1", ls="--", lw=1.0,
+        ax.axvline(1.0 / scales["Rd1"], color="C1", ls="--", lw=1.0,
                    label=r"$1/Rd_1$")
-        ax.axvline(1.0 / scales["Rd2"] / Nx, color="C2", ls="--", lw=1.0,
+        ax.axvline(1.0 / scales["Rd2"], color="C2", ls="--", lw=1.0,
                    label=r"$1/Rd_2$")
         ax.axvline(0.5, color="k", ls=":", lw=1.0, label="dx Nyquist")
         ax.legend(fontsize=7)
@@ -218,24 +218,24 @@ def plot_hovmoeller(flds, Nx, Ny, outdir):
 
 
 def plot_stability(traj, Nx, Ny, outdir):
-    np.seterr(all="ignore")
-    a = traj.reshape(-1, 6 * Nx * Ny)
-    Nxy = Nx * Ny
-    h1 = a[:, 0:Nxy]
-    h2 = a[:, 3 * Nxy:4 * Nxy]
-    u1 = a[:, Nxy:2 * Nxy]
-    v1 = a[:, 2 * Nxy:3 * Nxy]
-    u2 = a[:, 4 * Nxy:5 * Nxy]
-    v2 = a[:, 5 * Nxy:6 * Nxy]
-    ke1 = 0.5 * (u1 ** 2 + v1 ** 2).mean(axis=1)
-    ke2 = 0.5 * (u2 ** 2 + v2 ** 2).mean(axis=1)
-    mass1 = h1.mean(axis=1)
-    mass2 = h2.mean(axis=1)
-    total = mass1 + mass2
-    t = np.arange(a.shape[0])
+    with np.errstate(all="ignore"):
+        a = traj.reshape(-1, 6 * Nx * Ny)
+        Nxy = Nx * Ny
+        h1 = a[:, 0:Nxy]
+        h2 = a[:, 3 * Nxy:4 * Nxy]
+        u1 = a[:, Nxy:2 * Nxy]
+        v1 = a[:, 2 * Nxy:3 * Nxy]
+        u2 = a[:, 4 * Nxy:5 * Nxy]
+        v2 = a[:, 5 * Nxy:6 * Nxy]
+        ke1 = 0.5 * (u1 ** 2 + v1 ** 2).mean(axis=1)
+        ke2 = 0.5 * (u2 ** 2 + v2 ** 2).mean(axis=1)
+        mass1 = h1.mean(axis=1)
+        mass2 = h2.mean(axis=1)
+        total = mass1 + mass2
+        t = np.arange(a.shape[0])
 
-    finite = np.isfinite(ke1).all() and np.isfinite(ke2).all() and \
-        np.isfinite(h1).all() and np.isfinite(h2).all()
+        finite = np.isfinite(ke1).all() and np.isfinite(ke2).all() and \
+            np.isfinite(h1).all() and np.isfinite(h2).all()
 
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
     axes[0].plot(t, h1.min(axis=1), label="min h1")
@@ -269,21 +269,20 @@ def plot_stability(traj, Nx, Ny, outdir):
 def animate_field(flds, field, Nx, Ny, outdir, frames, fname):
     T = flds[field].shape[0]
     idx = np.unique(np.linspace(0, T - 1, frames).astype(int))
+    frames_data = [flds[field][i] for i in idx]
+    vmin = min(f.min() for f in frames_data)
+    vmax = max(f.max() for f in frames_data)
+    vabs = max(abs(vmin), abs(vmax))
+    norm = TwoSlopeNorm(vcenter=0, vmin=-vabs, vmax=vabs)
     fig, ax = plt.subplots(figsize=(5, 5))
-    first = flds[field][idx[0]]
-    vmax = max(abs(first.min()), abs(first.max()))
-    norm = TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax)
-    im = ax.imshow(first, cmap=CMAP, norm=norm, origin="lower")
-    ax.set_title(f"{field}  t=0")
+    im = ax.imshow(frames_data[0], cmap=CMAP, norm=norm, origin="lower")
+    ax.set_title(f"{field}  t={idx[0]}")
     ax.set_xticks([])
     ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
 
     def update(i):
-        fi = flds[field][idx[i]]
-        vmax = max(abs(fi.min()), abs(fi.max()))
-        im.set_norm(TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax))
-        im.set_data(fi)
+        im.set_data(frames_data[i])
         ax.set_title(f"{field}  t={idx[i]}")
         return im,
 
@@ -374,8 +373,8 @@ def main(argv=None):
     scales = characteristic_scales(f_cor=dyn.f_cor, g1=dyn.g1, g2=dyn.g2, H=H_REF)
 
     times = pick_times(flds["u1"].shape[0], 4)
-    plot_snapshots(flds, times, args.outdir, Nx, Ny)
-    plot_vorticity(flds, times, args.outdir, Nx, Ny)
+    plot_snapshots(flds, times, args.outdir)
+    plot_vorticity(flds, times, args.outdir)
     plot_spectra(flds, Nx, Ny, args.outdir, scales)
     plot_hovmoeller(flds, Nx, Ny, args.outdir)
     stability = plot_stability(traj, Nx, Ny, args.outdir)
