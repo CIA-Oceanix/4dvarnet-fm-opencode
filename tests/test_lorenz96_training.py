@@ -331,7 +331,7 @@ def test_evaluate_baseline_returns_ev():
     ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0,
                                     cached_windows=pre, randomize_params=None)
 
-    rmse_stats, ev_stats = evaluate_baseline(method, ds, cfg, "cpu", batch_size=1)
+    rmse_stats, ev_stats, es_stats = evaluate_baseline(method, ds, cfg, "cpu", batch_size=1)
     rmse_mean, _ = rmse_stats
     ev_mean, ev_std = ev_stats
     assert rmse_mean.shape == (24,)

@@ -121,6 +121,42 @@ def _safe_ref(ref, analysis, obs_operator):
     return ref
 
 
+class _ESAccumulator:
+    """Accumulates per-step Energy Score contributions without storing the ensemble.
+
+    ES_d = mean_t[ (1/N) sum_i |x_i,d(t) - y_d(t)|
+                    - (1/(2 N^2)) sum_i sum_j |x_i,d(t) - x_j,d(t)| ]
+    """
+
+    def __init__(self, num_steps: int, sd: int, N: int):
+        self.num_steps = num_steps
+        self.N = N
+        self.abs_err = np.zeros(sd)
+        self.pairwise = np.zeros(sd)
+        self.t = 0
+
+    def step(self, ensemble_t: torch.Tensor, ref_t) -> None:
+        ens = ensemble_t.detach().cpu().numpy()  # (N, sd)
+        if isinstance(ref_t, torch.Tensor):
+            ref = ref_t.detach().cpu().numpy()
+        else:
+            ref = np.asarray(ref_t)
+        ref = ref.astype(ens.dtype, copy=False)
+        self.abs_err += np.mean(np.abs(ens - ref[np.newaxis, :]), axis=0)
+        N = self.N
+        for i in range(N):
+            for j in range(N):
+                self.pairwise += np.abs(ens[i] - ens[j])
+        self.t += 1
+
+    def es(self) -> np.ndarray:
+        t = max(self.t, 1)
+        return (
+            self.abs_err / (t * self.N)
+            - 0.5 * self.pairwise / (t * self.N * self.N)
+        )
+
+
 def _interp_observations(observations, obs_mask):
     B, T, D = observations.shape
     obs_np = observations.cpu().numpy()
@@ -150,6 +186,7 @@ class BaselineResult:
     ensemble: np.ndarray = None
     ensemble_variance: np.ndarray = None
     params: np.ndarray = None
+    es: np.ndarray = None
 
 
 class Weak4DVar:
@@ -585,6 +622,11 @@ class ETKF:
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+        es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
+
         for t in range(1, num_steps):
             W = forcing[t - 1]
             ensemble = self.dynamics.step(ensemble, W, **params)
@@ -593,6 +635,8 @@ class ETKF:
             if nan_mask.any():
                 mu_nan = torch.nanmean(ensemble, dim=0)
                 ensemble[nan_mask] = mu_nan.masked_fill(mu_nan.isnan(), 0.0)
+            if es_acc is not None:
+                es_acc.step(ensemble, ref_full[t])
 
 
             if obs_mask[t]:
@@ -653,7 +697,7 @@ class ETKF:
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, self.state_dim)), ensemble_variance=ens_var)
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
     def assimilate_batch(
         self,
         observations: torch.Tensor,
@@ -694,6 +738,14 @@ class ETKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
+        es_accs = (
+            [None] * B if ref_full is None
+            else [_ESAccumulator(num_steps, self.state_dim, N) for _ in range(B)]
+        )
+
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
@@ -711,6 +763,9 @@ class ETKF:
                 for b in range(B):
                     if nan_mask[b].any():
                         ensemble[b, nan_mask[b]] = mu_nan[b]
+            if es_accs is not None:
+                for b in range(B):
+                    es_accs[b].step(ensemble[b], ref_full[b, t])
 
             if obs_mask[:, t].any():
                 for b in range(B):
@@ -772,6 +827,7 @@ class ETKF:
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((N, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
+                es=(es_accs[b].es() if es_accs is not None else None),
             ))
         return results
 
@@ -847,6 +903,11 @@ class EnKF:
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
+        es_acc = _ESAccumulator(num_steps, self.state_dim, self.N_ensemble) if ref_full is not None else None
+
         for t in range(1, num_steps):
             W = forcing[t - 1]
             ensemble = self.dynamics.step(ensemble, W, **params)
@@ -855,6 +916,8 @@ class EnKF:
                 ensemble = torch.nan_to_num(ensemble)
                 mu_nan = torch.mean(ensemble, dim=0)
                 ensemble[nan_mask] = mu_nan
+            if es_acc is not None:
+                es_acc.step(ensemble, ref_full[t])
 
             if obs_mask[t]:
                 y_t = observations[t]
@@ -891,7 +954,7 @@ class EnKF:
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)), ensemble_variance=ens_var)
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
 
     def assimilate_batch(
         self,
@@ -931,6 +994,14 @@ class EnKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
+        es_accs = (
+            [None] * B if ref_full is None
+            else [_ESAccumulator(num_steps, self.state_dim, self.N_ensemble) for _ in range(B)]
+        )
+
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
@@ -947,6 +1018,9 @@ class EnKF:
                 for b in range(B):
                     if nan_mask_step[b].any():
                         ensemble[b, nan_mask_step[b]] = mean_e_pre[b]
+            if es_accs is not None:
+                for b in range(B):
+                    es_accs[b].step(ensemble[b], ref_full[b, t])
 
             if obs_mask[:, t].any():
                 y_t = observations[:, t]
@@ -989,6 +1063,7 @@ class EnKF:
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
+                es=(es_accs[b].es() if es_accs is not None else None),
             ))
         return results
 

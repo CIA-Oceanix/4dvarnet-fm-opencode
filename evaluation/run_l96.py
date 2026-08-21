@@ -109,14 +109,37 @@ def fmt_ev(ev_arr, NO=8, obs_j=2):
     return d
 
 
+def _per_group_es(es_arr, NO=8, obs_j=2):
+    groups = {}
+    groups["slow"] = float(np.mean(es_arr[:NO]))
+    groups["obs_fast"] = float(np.mean(es_arr[NO:]))
+    groups["all_obs"] = float(np.mean(es_arr))
+    return groups
+
+
+def fmt_es(es_arr, NO=8, obs_j=2):
+    d = {f"X{i+1}": float(es_arr[i]) for i in range(len(es_arr))}
+    d["groups"] = _per_group_es(es_arr, NO=NO, obs_j=obs_j)
+    return d
+
+
 def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1, da_J=None):
     rmse_list = []
     results_list = []
     all_sq_err = []
     all_ref = []
+    es_list = []
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
     obs_var_indices = cfg.obs_var_indices
+
+    def _subsample_es(es, analysis_eval):
+        if es is None:
+            return None
+        es = np.asarray(es)
+        if obs_var_indices is not None and es.shape[-1] > len(obs_var_indices):
+            return es[..., obs_var_indices]
+        return es[..., :analysis_eval.shape[-1]]
 
     if batch_size > 1 and hasattr(method, 'assimilate_batch'):
         for i in range(0, len(dataset), batch_size):
@@ -141,6 +164,9 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                     if analysis_eval.shape[-1] != ref.shape[-1]:
                         ref = ref[..., :analysis_eval.shape[-1]]
                 result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
+                es_s = _subsample_es(getattr(result, "es", None), analysis_eval)
+                if es_s is not None:
+                    es_list.append(es_s)
                 all_sq_err.append((analysis_eval - ref) ** 2)
                 all_ref.append(ref)
                 rmse_list.append(result.rmse)
@@ -167,6 +193,9 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 if analysis_eval.shape[-1] != ref.shape[-1]:
                     ref = ref[..., :analysis_eval.shape[-1]]
             result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
+            es_s = _subsample_es(getattr(result, "es", None), analysis_eval)
+            if es_s is not None:
+                es_list.append(es_s)
             all_sq_err.append((analysis_eval - ref) ** 2)
             all_ref.append(ref)
             rmse_list.append(result.rmse)
@@ -181,9 +210,14 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
     pooled_var = np.maximum(pooled_var, 1e-12)
     expvar = 1 - pooled_mse / pooled_var
     expvar_stats = (expvar, np.zeros_like(expvar))
+    if es_list:
+        all_es = np.stack(es_list, axis=0)
+        es_stats = (np.mean(all_es, axis=0), np.std(all_es, axis=0))
+    else:
+        es_stats = (np.zeros(expvar.shape), np.zeros(expvar.shape))
     if return_trajs:
-        return (rmse_stats, expvar_stats), results_list
-    return rmse_stats, expvar_stats
+        return (rmse_stats, expvar_stats, es_stats), results_list
+    return rmse_stats, expvar_stats, es_stats
 
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
@@ -296,13 +330,14 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
             da_J = J_truth if case_name == "s0" else s1_J
-            ((m, s), (ev_arr, _)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size, da_J=da_J)
+            ((m, s), (ev_arr, _), (es_arr, es_std)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size, da_J=da_J)
             elapsed = time.time() - t1
 
             if case_name not in partial:
                 partial[case_name] = {}
             partial[case_name][name] = fmt_rmse(m, s, NO=NO, obs_j=obs_j)
             partial[case_name][name]["ev"] = fmt_ev(ev_arr, NO=NO, obs_j=obs_j)
+            partial[case_name][name]["es"] = fmt_es(es_arr, NO=NO, obs_j=obs_j)
             partial["total_time_seconds"] = time.time() - total_t0
             with open(cache_path, "w") as f:
                 json.dump(partial, f, indent=2)
@@ -317,8 +352,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             rmse_mean = np.mean(m)
             groups = _per_group_rmse(m, NO=NO, obs_j=obs_j)
             ev_groups = _per_group_ev(ev_arr, NO=NO, obs_j=obs_j)
+            es_groups = _per_group_es(es_arr, NO=NO, obs_j=obs_j)
             print(f"  mean={rmse_mean:.4f} slow={groups['slow']:.4f} obs_fast={groups['obs_fast']:.4f} "
                   f"ev={ev_groups['all_obs']:.4f} (slow={ev_groups['slow']:.4f} obs_fast={ev_groups['obs_fast']:.4f}) "
+                  f"es={es_groups['all_obs']:.4f} (slow={es_groups['slow']:.4f} obs_fast={es_groups['obs_fast']:.4f}) "
                   f"[{elapsed:.1f}s]")
 
     traj_path = os.path.join(EXP_DIR, f"l96_baselines_trajectories{dws_suffix}{param_suffix}.npz")
