@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-21: QG case study — Phase A (torch dynamics + nominal calibration + data)
+
+**Summary:** Added a two-layer quasi-geostrophic (Phillips channel, double-periodic β-plane) case study on branch `feat/qg-case-study` (worktree `../4dvarnet-fm-qg`, isolated from other parallel-session worktrees). pyqg 0.4.0 is used strictly as reference/validation; the engine is a native torch port (`QGDynamics`), delivering autograd/batching that pyqg's compiled pyx cannot. Calibrated a physically-valid nominal parameter set (preset B) and added a dataset module mirroring the L96 interface.
+
+**Files modified:**
+- `models/qg_dynamics.py` — new: `QGDynamics(DynamicsBase)` torch port of pyqg v0.4.0 (RK4 vs pyqg AB3, flux-form advection with total u=u′+U_k, pyqg exponential filter filterfac=23.6, masked zero-mode PV inversion, zero-mean PV anomalies). `param_names=["beta","rd","rek","U1","U2"]`; state `[...,2·ny·nx]` layer-major; `forcing` accepted but ignored (autonomous).
+- `data/qg.py` — new: `QGConfig`, `QGDataset`, `make_qg_datasets`. Windows sliced from one post-spinup trajectory; obs via reused `_generate_observations` on the flattened state; `R_var=1e-12` set against measured equilibrated q₁ variance (std≈2.6e-5). Forcing channel = constant U₁ (randomization/S0–S1 deferred to final step per user).
+- `reports/calibrate_qg_nominal.py` — new: PRESETS A/B/C sweep + `--with-pyqg` overlay; writes spectrum/snapshot/KE figures + `qg_calibration_summary.json` to `reports/outputs/figs/`.
+- `data/lorenz96.py` — `_generate_observations` signature `obs_var_indices: np.ndarray | None` (was implicit-optional; needed for mypy on the QG data path).
+- `tests/test_qg_dynamics.py` — new: 12 tests (state roundtrip, batched==single, determinism, inviscid conservation, masked inversion residual, pyqg tendency equivalence via `pytest.importorskip`).
+- `tests/test_qg_data.py` — new: 9 tests (config step-counts, window shapes, determinism, obs NaN pattern, noise level, disjoint windows, forcing constant, structure).
+- `PLAN.md` — added "QG — Phase A" section documenting design decisions.
+
+**Rationale:** Extend the 4DVarNet benchmark to a spatially-extended, physically-realistic geophysical flow (jets/eddies) beyond the low-dimensional L63 and the 40D two-scale L96. The torch-native engine is required for differentiable/batched neural training that the plan will wire in later phases. pyqg compatibility (growth rate, tendency, spectra) verifies the port is physically correct.
+
+**Verification:** `pytest tests/test_qg_dynamics.py tests/test_qg_data.py` — 21 passed (1 slow). Nominal run reproduces pyqg: discrete max growth 0.0145/day vs 0.0147/day continuous; spectral corr 0.984 with pyqg at 2y; spinup 31.5 s GPU (nx=64). `ruff check` clean on all 5 new/touched QG files; `mypy models/qg_dynamics.py data/qg.py` clean (remaining errors are pre-existing `data/lorenz63.py`/`data/lorenz96.py` debt).
+
 ## 2026-08-18: Merge L96 case study into master + L96 training infrastructure
 
 **Summary:** Merged the L96 case-study + dynamics-refactoring branch (`feat/weighted-fast-coupling`) into master, deliberately excluding the Shallow-Water and MAOOAM code (deferred to separate branches). Then added the L96 training infrastructure so `train.py` can dispatch to the two-scale Lorenz-96 system for UNet/VanillaCFM training, with configs and smoke tests.

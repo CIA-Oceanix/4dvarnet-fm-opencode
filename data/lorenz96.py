@@ -79,7 +79,7 @@ class Lorenz96Config:
 def _generate_observations(
     true_fluid: torch.Tensor, obs_interval: int, R_var: float, seed: int,
     device: torch.device = torch.device("cpu"),
-    obs_var_indices: np.ndarray = None,
+    obs_var_indices: np.ndarray | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     true_fluid = true_fluid.to(device=device)
     num_steps, sd = true_fluid.shape[0], true_fluid.shape[-1]

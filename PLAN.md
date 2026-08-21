@@ -24,6 +24,27 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
   - test: `tests/test_lorenz96_training.py`
 - **To do (next)**: launch L96 UNet/CFM training (L1/L2) and compare vs DA baselines.
 
+## QG (two-layer quasi-geostrophic) — branch `feat/qg-case-study` (Phase A)
+
+Two-layer Phillips channel (double-periodic β-plane), pyqg-compatible dimensional units.
+pyqg used as **reference + validation only**; the engine is a native torch port for autograd/batching.
+Parallel-session isolation via worktrees (`../4dvarnet-fm-qg`); shared clone stays on master.
+
+- **Dynamics** `models/qg_dynamics.py` (`QGDynamics(DynamicsBase)`):
+  - torch port of pyqg v0.4.0 formulation: RK4 (vs pyqg AB3, documented deviation), flux-form advection with total u=u′+U_k, pyqg exponential filter (filterfac=23.6), masked PV inversion (K2==0 → ψ̂=0, PV anomalies zero-mean by construction).
+  - state flattened `[..., 2·ny·nx]` layer-major; `forcing` accepted for DynamicsBase compat, ignored (autonomous).
+  - `param_names=["beta","rd","rek","U1","U2"]`; runtime overrides beta/rek/U1/U2 only (rd/delta fixed at construction).
+- **Calibration** `reports/calibrate_qg_nominal.py` (PRESETS A/B/C + `--with-pyqg`):
+  - Nominal config = **preset B**: U₁=0.05, U₂=0, rd=15km, β=1.5e-11, δ=0.25, rek=5.787e-7, dt=7200s, nx=64. Near equilibrium (−16% KE drift @2y), KE 3.6e-3, spectral peak 0.44·k_d; torch≈pyqg (spectral corr 0.984).
+  - Validation: discrete max growth 0.0145/day vs continuous 0.0147/day; tendency equivalence vs pyqg at rtol=1e-5.
+  - Figures/JSON in `reports/outputs/figs/qg_*`.
+- **Data** `data/qg.py` (`QGConfig`, `QGDataset`, `make_qg_datasets`):
+  - Windows sliced from a single post-spinup trajectory; default spinup_years=2.0, window_days=60, obs_interval=6.
+  - Obs: `_generate_observations` on flattened state (all grid points), `R_var=1e-12` (~4% of equilibrated q₁ std≈2.6e-5).
+  - Window keys: `true_state`, `obs`, `obs_mask`, `forcing_true/corrupted` (=U₁ constant; randomization/S0–S1 deferred).
+- **Tests** `tests/test_qg_dynamics.py` (12), `tests/test_qg_data.py` (9, 1 slow).
+- **To do (next)**: QG DA baselines (EnKF/ETKF/4DVar on ψ/q), then train.py dispatch + neural training, then parameter randomization (S0/S1 analog) as the final step.
+
 ## Experiments
 
 | ID | Model | Hidden | Epochs | Train mix | Status |
