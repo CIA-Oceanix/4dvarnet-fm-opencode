@@ -187,11 +187,11 @@ class ShallowWaterDataset:
         self.obs_mask = make_sw_obs_mask(config)
 
         # S1 scenario: perturb the Bickley jet amplitude
-        self.bickley_U = 0.05
-        self.bickley_U2 = 0.03
+        self.bickley_U = 0.15
+        self.bickley_U2 = 0.09
         if scenario == "S1":
-            self.bickley_U = 0.05 * 1.15    # 15% stronger jet
-            self.bickley_U2 = 0.03 * 0.85   # 15% weaker layer-2 jet
+            self.bickley_U = 0.15 * 1.15    # 15% stronger jet
+            self.bickley_U2 = 0.09 * 0.85   # 15% weaker layer-2 jet
 
         self.dynamics = ShallowWaterDynamics(
             Nx=config.Nx, Ny=config.Ny, dt=config.dt,

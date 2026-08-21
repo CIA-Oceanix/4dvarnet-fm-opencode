@@ -2,7 +2,7 @@
 
 ## 2026-08-21: T1b: fix SW dynamics calibration (clip ceiling + jet/dissipation retune)
 
-**Summary:** Fixed the SW trajectory-quality bug: `_clip_layer_thickness` ceiling 3.0 combined with Bickley-jet H_ref=10 saturated the whole field at the clip bound (dead jet, KE~1e-4). Raised ceiling to 20.0, retuned jet U=0.15/U2=0.09/epsilon=1e-2 and dissipation friction=1e-4/viscosity=1e-3; updated ShallowWaterConfig + case-study yaml + diagnostics H_REF=10.0 + P1 rollout guard to the new scale.
+**Summary:** Fixed the SW trajectory-quality bug: `_clip_layer_thickness` ceiling 3.0 combined with Bickley-jet H_ref=10 saturated the whole field at the clip bound (dead jet, KE~1e-4). Raised ceiling to 20.0, retuned jet U=0.15/U2=0.09/epsilon=1e-2 and dissipation friction=1e-4/viscosity=1e-3; updated ShallowWaterConfig + case-study yaml + `ShallowWaterDataset` jet amplitudes + diagnostics H_REF=10.0 + P1 rollout guard to the new scale.
 **Files modified:** `models/shallow_water_dynamics.py`, `data/shallow_water.py`, `config/case_study/shallow_water.yaml`, `reports/diagnose_sw_quality.py`, `tests/test_shallow_water.py`, `models/dynamics.py`, `reports/outputs/sw_quality/*`.
 **Rationale:** The ported defaults produced physically meaningless clip-saturated trajectories (likely why prior SW attempts looked unconvincing). Verified stable/mass-conserving over 30000 steps at 64x64.
 **Verification:** 30000-step CPU rollout stable (h1~10, no NaN); full test suite green; quick quality pack regenerated.
