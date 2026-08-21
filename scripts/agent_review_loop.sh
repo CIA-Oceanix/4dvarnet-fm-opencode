@@ -23,7 +23,7 @@ MODE="${3:-}"
 
 MAIN_BRANCH="${MAIN_BRANCH:-feat/sw-case-study}"
 BRANCH="fix/$(printf '%s' "$STEP_ID" | tr '[:upper:]' '[:lower:]')-$(printf '%s' "$DESC" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')"
-BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_-' | cut -c1-80)"
+BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_/-' | cut -c1-80)"
 
 # Python env that has the project deps (torch, hydra, lightning). The base
 # miniforge env's pytest cannot import torch, so default to the fdv env.

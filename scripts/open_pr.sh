@@ -46,7 +46,7 @@ case "$CMD" in
         STEP_ID="${1:?create: <STEP_ID> <description>}"
         DESC="${2:?create: <STEP_ID> <description>}"
         BRANCH="fix/$(printf '%s' "$STEP_ID" | tr '[:upper:]' '[:lower:]')-$(printf '%s' "$DESC" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')"
-        BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_-' | cut -c1-80)"
+        BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_/-' | cut -c1-80)"
 
         echo "=== IMPLEMENTER: pushing $BRANCH ==="
         git switch "$BRANCH" 2>/dev/null || { echo "No branch '$BRANCH'. Run agent_review_loop.sh $STEP_ID first."; exit 1; }
