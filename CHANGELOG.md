@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-21: T1: SW trajectory-quality diagnostic suite
+
+**Summary:** Added reports/diagnose_sw_quality.py producing snapshots, vorticity, KE spectra with Rd markers, Hovmöller diagrams, 5000-step stability diagnostics, GIF animations, and an auto-generated quality report.
+**Files modified:** `reports/diagnose_sw_quality.py`, `tests/test_sw_quality_diagnostics.py`.
+**Rationale:** Judge whether retuned SW physics produces convincing two-layer scale separation and Bickley-jet meandering/ring shedding before investing in DA baselines.
+**Verification:** Fast-suite test green locally (`pytest tests/test_sw_quality_diagnostics.py -q`).
+
 ## 2026-08-21: P3: SW schema + case-study config
 
 **Summary:** Added ShallowWater fields to `DataConfig` + `to_shallow_water_config()` converter, and created `config/case_study/shallow_water.yaml` preset (dt=0.1 override, retuned physics).
