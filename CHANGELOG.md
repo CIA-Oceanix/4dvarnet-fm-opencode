@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-21: QG Phase A.2 — time-varying wind forcing (upper-layer PV source)
+
+**Summary:** Added an atmosphere-like time-varying wind-stress curl to the 2-layer Phillips QG model as an upper-layer PV source (Ekman pumping), calibrated its amplitude, wired it into the dataset, and produced an animation. Delivered through the PR-based multi-agent workflow (PRs #30 dynamics+tests, #32 calibration, #34 subagent model routing), with a `feat/qg-*` review ruleset now active.
+
+**Files modified:**
+- `models/qg_dynamics.py` — `dq1/dt += curl_τ`, `curl_τ=A(t)·sin·sin` pattern; OU amplitude (`wind_amp`, `wind_tau_days`, `wind_kx`, `wind_ky`, `wind_seed`); `wind_amp=0` reproduces unforced trajectory bitwise; `generate_full_trajectory`/`generate_batch_trajectories` now return `(traj, wind_series)`; spinup unforced; amplitude constant within each RK4 step. (PR #30)
+- `tests/test_qg_dynamics.py` — 6 new wind tests incl. bitwise regression, hand-computed curl, OU stats. (PR #30)
+- `reports/calibrate_qg_wind.py` (new) + `reports/outputs/figs/qg_wind_calibration.json`/`qg_wind_ke.png` — sweep: default **`wind_amp=1e-11`** (KE +32% vs unforced 3.51e-3, comparable-contribution regime; 2e-11 → +110%). (PR #32)
+- `data/qg.py` — `QGConfig` wind params; `QGDataset` stores per-window `wind_curl` `(T,ny,nx)` = `A(t)·pattern` and `forcing_true/corrupted` = wind amplitude series. (this PR)
+- `tests/test_qg_data.py` — updated + 6 wind tests (wind_curl shape, pattern×amplitude, OU std, determinism, zero-wind). (this PR)
+- `reports/animate_qg_wind.py` (new) → `reports/outputs/figs/qg_wind_animation.gif` — 60-frame wind-forced animation. (this PR)
+- `opencode.json` — reviewer/analyst → `cortecs/glm-5.2` (PR #34).
+- `PLAN.md`/`CHANGELOG.md` — QG Phase A.2 documentation.
+
+**Rationale:** The user wanted an atmosphere-like forcing in the QG ocean (rather than a 3-layer or coupled MAOOAM model). Wind-stress curl as an upper-layer Ekman-pumping PV source is the physically correct minimal addition, giving a forced-dissipative ocean the network can reconstruct under variable wind — a more realistic ocean-DA setting. Calibration picks the amplitude where wind and internal baroclinic instability contribute comparably.
+
+**Verification:** `pytest tests/test_qg_dynamics.py tests/test_qg_data.py` — 31 passed (18 dynamics + 13 data, incl. wind bitwise-guard + OU-stat tests). `ruff check` clean on all QG files; `mypy data/qg.py` clean. CI `pytest` green on every merged PR. Wind-curl field verified: `wind_curl[t] == A(t)·pattern`, OU amplitude std matches `wind_amp`.
+
 ## 2026-08-21: QG case study — Phase A (torch dynamics + nominal calibration + data)
 
 **Summary:** Added a two-layer quasi-geostrophic (Phillips channel, double-periodic β-plane) case study on branch `feat/qg-case-study` (worktree `../4dvarnet-fm-qg`, isolated from other parallel-session worktrees). pyqg 0.4.0 is used strictly as reference/validation; the engine is a native torch port (`QGDynamics`), delivering autograd/batching that pyqg's compiled pyx cannot. Calibrated a physically-valid nominal parameter set (preset B) and added a dataset module mirroring the L96 interface.

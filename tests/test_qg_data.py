@@ -29,6 +29,7 @@ def test_dataset_window_shapes():
     assert w["obs"].shape == (T, D)
     assert w["obs_mask"].shape == (T,)
     assert w["forcing_true"].shape == (T,)
+    assert w["wind_curl"].shape == (T, cfg.ny, cfg.nx)
     assert len(ds) == cfg.num_windows
 
 
@@ -71,13 +72,54 @@ def test_windows_disjoint():
     assert not torch.equal(wa[-1], wb[0])
 
 
-def test_forcing_constant_u1():
-    cfg = _tiny_cfg(U1=0.05)
+def test_forcing_no_wind_is_zero():
+    cfg = _tiny_cfg(wind_amp=0.0)
     ds = QGDataset(cfg)
     w = ds[0]
-    assert torch.allclose(w["forcing_true"],
-                          torch.full_like(w["forcing_true"], 0.05))
+    assert torch.all(w["forcing_true"] == 0.0)
+    assert torch.all(w["wind_curl"] == 0.0)
     assert torch.equal(w["forcing_corrupted"], w["forcing_true"])
+
+
+def test_dataset_window_shapes_wind():
+    cfg = _tiny_cfg(wind_amp=1e-11)
+    ds = QGDataset(cfg)
+    w = ds[0]
+    T = cfg.num_steps
+    assert w["wind_curl"].shape == (T, cfg.ny, cfg.nx)
+    assert w["forcing_true"].shape == (T,)
+    assert torch.isfinite(w["wind_curl"]).all()
+
+
+def test_dataset_deterministic_wind():
+    cfg = _tiny_cfg(wind_amp=1e-11)
+    ds_a = QGDataset(cfg)
+    ds_b = QGDataset(cfg)
+    for wa, wb in zip(ds_a, ds_b):
+        assert torch.equal(wa["wind_curl"], wb["wind_curl"])
+        assert torch.equal(wa["forcing_true"], wb["forcing_true"])
+
+
+def test_wind_curl_is_pattern_times_amplitude():
+    cfg = _tiny_cfg(wind_amp=1e-11, wind_kx=1, wind_ky=1)
+    ds = QGDataset(cfg)
+    w = ds[0]
+    from data.qg import _make_qg_dynamics
+    dynamics = _make_qg_dynamics(cfg)
+    pattern = dynamics.wind_pattern
+    for t in range(cfg.num_steps):
+        expected = w["forcing_true"][t] * pattern
+        assert torch.allclose(w["wind_curl"][t], expected,
+                              rtol=1e-6, atol=1e-15)
+
+
+def test_wind_amplitude_std_matches_config():
+    cfg = _tiny_cfg(wind_amp=3e-12, wind_tau_days=5.0)
+    from data.qg import _make_qg_dynamics
+    dynamics = _make_qg_dynamics(cfg)
+    series = dynamics.generate_wind_series(num_steps=2000, seed=cfg.seed)
+    assert 0.5 * cfg.wind_amp < float(series.std()) < 2.0 * cfg.wind_amp
+    assert cfg.wind_tau_days == 5.0
 
 
 def test_make_qg_datasets_structure():
