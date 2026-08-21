@@ -1,4 +1,31 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["PLAN.md", "CHANGELOG.md"]
+  "instructions": ["PLAN.md", "CHANGELOG.md"],
+  "agent": {
+    "implementer": {
+      "description": "Makes code changes per the plan; in PR mode creates a branch, commits, pushes, and opens a PR via gh CLI",
+      "mode": "subagent",
+      "model": "cortecs/deepseek-v4-flash-0731"
+    },
+    "reviewer": {
+      "description": "Reviews code for correctness, style, and repro safety; reads the diff (gh pr diff or git diff) and approves/request-changes via gh pr review",
+      "mode": "subagent",
+      "model": "opencode/big-pickle"
+    },
+    "verifier": {
+      "description": "Runs lint, type checks, and tests to validate changes; in PR mode waits for CI (gh pr checks) and merges (gh pr merge --squash)",
+      "mode": "subagent",
+      "model": "cortecs/deepseek-v4-flash-0731"
+    },
+    "runner": {
+      "description": "Submits and monitors sbatch jobs",
+      "mode": "subagent",
+      "model": "cortecs/deepseek-v4-flash-0731"
+    },
+    "analyst": {
+      "description": "Interprets results and produces comparison tables",
+      "mode": "subagent",
+      "model": "opencode/big-pickle"
+    }
+  }
 }
