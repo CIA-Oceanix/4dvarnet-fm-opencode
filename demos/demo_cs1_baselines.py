@@ -76,7 +76,7 @@ def run_baselines(window, cfg):
     )
     
     print(f"   - Parameters: σ={sigma:.2f}, ρ={rho:.2f}, β={beta:.4f}")
-    print(f"   - Forcing: True (noise-free)")
+    print("   - Forcing: True (noise-free)")
     
     # Run Weak-4DVar
     print("   - Running Weak-4DVar...")
@@ -231,12 +231,12 @@ def main():
     dataset = Lorenz63Dataset(cfg)
     window = dataset[0]
     
-    print(f"   - Case: 1 (noise-free forcing, correct parameters)")
+    print("   - Case: 1 (noise-free forcing, correct parameters)")
     print(f"   - Window size: {cfg.num_steps} steps ({args.duration}s)")
     print(f"   - Observations: {window['obs_mask'].sum().item()} sparse samples")
     
     # Run baseline methods
-    print(f"\n[2/3] Running baseline DA methods...")
+    print("\n[2/3] Running baseline DA methods...")
     results = run_baselines(window, cfg)
     
     # Print RMSE table
@@ -246,7 +246,7 @@ def main():
     save_results_table(results, 'outputs/results/cs1_rmse_table.txt')
     
     # Plot reconstruction
-    print(f"\n[3/3] Creating reconstruction visualization...")
+    print("\n[3/3] Creating reconstruction visualization...")
     plot_reconstruction(
         window,
         results,

@@ -3,7 +3,9 @@
 Generate synthesis PDF report from experiment results.
 Usage: python generate_report.py [--output path/to/report.pdf]
 """
-import os, sys, json, datetime
+import os
+import json
+import datetime
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

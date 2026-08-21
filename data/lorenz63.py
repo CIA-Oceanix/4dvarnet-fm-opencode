@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Tuple
 
 
@@ -305,7 +305,7 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                         num_test_windows: int = 200,
                         param_noise: float = 0.2,
                         bias_range: Tuple[float, float] = (0.0, 0.2)) -> Dict[str, "Lorenz63Dataset"]:
-    import hashlib, os
+    import os
     from data.random_param_dataset import RandomParamLorenz63Dataset
     from data.random_bias_dataset import RandomBiasLorenz63Dataset
     base = cfg.__dict__.copy()

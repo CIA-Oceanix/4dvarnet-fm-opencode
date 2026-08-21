@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Tune Weak-4DVar opt_steps/lr/da_window_steps on L96 S0+S1 (b2 config)."""
-import os, sys, json, time, itertools, argparse
+import os
+import sys
+import json
+import time
+import itertools
+import argparse
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -62,7 +67,7 @@ def main():
     results = []
 
     # Test S0 first (multi-scale dynamics)
-    print(f"\n--- S0 (multi-scale dynamics) ---")
+    print("\n--- S0 (multi-scale dynamics) ---")
     for opt_steps, lr, dws in grid:
         print(f"  opt_steps={opt_steps}, lr={lr}, dws={dws} ...", end=" ", flush=True)
         method = Weak4DVar(dt=dt, da_window_steps=dws, device=device,
@@ -80,7 +85,7 @@ def main():
         })
 
     # Test S1 (single-scale dynamics)
-    print(f"\n--- S1 (single-scale dynamics) ---")
+    print("\n--- S1 (single-scale dynamics) ---")
     for opt_steps, lr, dws in grid:
         print(f"  opt_steps={opt_steps}, lr={lr}, dws={dws} ...", end=" ", flush=True)
         method = Weak4DVar(dt=dt, da_window_steps=dws, device=device,

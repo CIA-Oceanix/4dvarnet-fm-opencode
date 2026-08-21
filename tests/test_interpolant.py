@@ -1,5 +1,4 @@
 """Tests for LinearInterpolant."""
-import pytest
 import torch
 from models.interpolant import LinearInterpolant
 

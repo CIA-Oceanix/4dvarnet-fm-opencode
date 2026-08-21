@@ -5,14 +5,14 @@ Uses the exact config from reports/outputs/s0_s1_synthesis.md:
   EnKF/ETKF inflation=2.0, Weak opt_steps=150 lr=0.02,
   Strong max_iter=40 lr=0.1
 """
-import sys, os, json
+import sys
+import os
 os.environ['TRITON_CACHE_DIR'] = '/tmp/triton_cache'
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import torch
-import numpy as np
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets
-from evaluation.run import run_and_cache_baselines, EXP_DIR
+from evaluation.run import run_and_cache_baselines
 
 device = torch.device("cuda")
 print(f"Device: {device}")

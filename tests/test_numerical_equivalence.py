@@ -3,7 +3,8 @@ Numerical equivalence test: compare refactored baselines (with dynamics)
 against the old inline L63 code.
 Runs a single trajectory through both code paths and checks bit-level match.
 """
-import os, sys
+import os
+import sys
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

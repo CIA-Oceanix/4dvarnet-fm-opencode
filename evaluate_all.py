@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Unified evaluation: run baselines on S0/S1 benchmark, produce RMSE table."""
-import os, sys, json, argparse
+import os
+import sys
+import json
+import argparse
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets
-from evaluation.run import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES, fmt_rmse
+from evaluation.run import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")

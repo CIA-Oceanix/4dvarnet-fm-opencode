@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate PDF: perturbation breakdown (EnKF, 4 levels) + coupling comparison (3 methods)."""
-import sys, os, numpy as np
+import sys
+import os
+import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -180,7 +182,7 @@ with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
     plt.tight_layout(); pdf.savefig(fig); plt.close()
 
 print("✓ reports/outputs/coupling_comparison.pdf (4 pages)")
-print(f"  Page 1: Perturbation table (EnKF)")
-print(f"  Page 2: Perturbation bar chart (EnKF)")
-print(f"  Page 3: Coupling comparison (3 methods)")
-print(f"  Page 4: Trajectory comparison (EnKF)")
+print("  Page 1: Perturbation table (EnKF)")
+print("  Page 2: Perturbation bar chart (EnKF)")
+print("  Page 3: Coupling comparison (3 methods)")
+print("  Page 4: Trajectory comparison (EnKF)")

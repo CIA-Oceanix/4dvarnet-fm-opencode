@@ -4,7 +4,10 @@
 Usage:
     python batch/report_cs3cs4_sweep.py
 """
-import os, sys, json, glob
+import os
+import sys
+import json
+import glob
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")

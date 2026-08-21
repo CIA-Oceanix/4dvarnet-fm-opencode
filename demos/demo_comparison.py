@@ -278,11 +278,11 @@ def save_degradation_summary(results_cs1, results_cs2, save_path, coupling_type=
             f.write(f"{method_name:<18} {mean_cs1:>6.4f}±{std_cs1:<6.4f} {mean_cs2:>6.4f}±{std_cs2:<6.4f} {mean_deg:>13.2f}x {status:>10}\n")
         
         f.write("=" * 80 + "\n\n")
-        f.write(f"KEY FINDING: All classical DA methods degrade under model mismatch\n")
+        f.write("KEY FINDING: All classical DA methods degrade under model mismatch\n")
         f.write(f"(coupling={cpl}, param_bias, corrupted forcing).\n\n")
         f.write("Details:\n")
         f.write("- CS1: Noise-free forcings, correct parameters (σ=10, ρ=28, β=8/3)\n")
-        f.write(f"- CS2: OU-corrupted forcings, biased parameters, state-dependent bias\n")
+        f.write("- CS2: OU-corrupted forcings, biased parameters, state-dependent bias\n")
         f.write(f"- DA coupling function: {cpl}\n")
         f.write("- Degradation measured as: CS2_RMSE / CS1_RMSE\n")
         f.write("- Target degradation range: 3-6x\n")
@@ -328,7 +328,7 @@ def main():
         seed=args.seed
     )
     dataset_cs1 = Lorenz63Dataset(cfg_cs1)
-    print(f"   - Case: 1 (noise-free forcing, correct parameters)")
+    print("   - Case: 1 (noise-free forcing, correct parameters)")
     
     # Generate CS2 dataset
     print(f"\n[2/5] Generating CS2 dataset (N={args.num_windows} windows, seed={args.seed})...")
@@ -341,7 +341,7 @@ def main():
         seed=args.seed
     )
     dataset_cs2 = Lorenz63Dataset(cfg_cs2)
-    print(f"   - Case: 2 (corrupted forcing, biased params, state-dependent bias)")
+    print("   - Case: 2 (corrupted forcing, biased params, state-dependent bias)")
     
     # Run baselines on all CS1 windows
     print(f"\n[3/5] Running baselines on CS1 ({args.num_windows} windows)...")
@@ -361,7 +361,7 @@ def main():
                               'outputs/results/degradation_summary.txt', coupling_type=args.coupling)
     
     # Create visualizations
-    print(f"\n[5/5] Creating comparison visualizations...")
+    print("\n[5/5] Creating comparison visualizations...")
     
     # Side-by-side comparison
     plot_side_by_side(

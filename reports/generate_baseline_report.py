@@ -8,7 +8,9 @@ Usage:
         --trajs experiments/baselines_trajectories_dws50_inf1.2.npz \\
         --output reports/outputs/synthesis_dws50_inf12.pdf
 """
-import os, sys, json, argparse
+import os
+import json
+import argparse
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -184,10 +186,10 @@ def main():
             "",
             "DA Baseline parameters:",
             f"  DA window steps (DWS) = {dws_val}",
-            f"  Weak-4DVar : opt_steps=150, lr=0.02",
-            f"  Strong-4DVar: max_iter=40, lr=0.1",
+            "  Weak-4DVar : opt_steps=150, lr=0.02",
+            "  Strong-4DVar: max_iter=40, lr=0.1",
             f"  EnKF       : N_ensemble=30, inflation={inf_val}",
-            f"  ETKF       : N_ensemble=30, inflation=1.0 (deterministic transform)",
+            "  ETKF       : N_ensemble=30, inflation=1.0 (deterministic transform)",
             "",
             "Case studies:",
             "-" * 100,
@@ -257,7 +259,7 @@ def main():
 
         lines += [
             "",
-            f"Degradation = CS2 μ / CS1 μ.   Lower = more robust.",
+            "Degradation = CS2 μ / CS1 μ.   Lower = more robust.",
             "",
             "Config file: " + args.json,
         ]

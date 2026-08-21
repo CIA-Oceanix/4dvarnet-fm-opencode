@@ -1,5 +1,4 @@
 import torch
-import pytest
 from models.vanilla_cfm import VanillaCFM
 
 

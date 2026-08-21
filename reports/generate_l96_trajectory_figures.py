@@ -5,9 +5,9 @@ Generate L96 trajectory + observation figures as PNGs for the report annex.
 Usage:
     conda run -n fdv python reports/generate_l96_trajectory_figures.py
 """
-import os, sys
+import os
+import sys
 import numpy as np
-import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

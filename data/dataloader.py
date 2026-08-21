@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
-from typing import Dict, Iterator, Tuple
+from typing import Dict
 
 
 class FlowMatchingBatch:

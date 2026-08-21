@@ -6,7 +6,8 @@ Uses ETKF (N=30, inf=1.1, no loc) on the default weighted coupling config.
 Usage:
     conda run -n fdv python reports/generate_l96_reconstruction_figures.py
 """
-import os, sys, json
+import os
+import sys
 import numpy as np
 import torch
 import matplotlib

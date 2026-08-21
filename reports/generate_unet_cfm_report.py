@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate synthesis PDF for DirectUNet and VanillaCFM models."""
-import os, sys, json, argparse
+import os
+import json
+import argparse
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -448,7 +450,7 @@ def main():
         ]
         if best:
             conclusion += [
-                f"Best Overall Model: F3 (VanillaCFM rand)",
+                "Best Overall Model: F3 (VanillaCFM rand)",
                 f"  CS1 mean RMSE: {best['fm_cs1']['mean']:.4f}",
                 f"  CS2 mean RMSE: {best['fm_cs2']['mean']:.4f}",
                 f"  Degradation:   {best['fm_degradation']:.2f}x",
@@ -498,8 +500,8 @@ def main():
         print("  Final page: Conclusion")
 
     print(f"\n✓ Report saved: {args.output}")
-    print(f"  Pages: config, architecture, metrics, bar charts, component breakdown, "
-          f"trajectories × experiments, conclusion")
+    print("  Pages: config, architecture, metrics, bar charts, component breakdown, "
+          "trajectories × experiments, conclusion")
 
 if __name__ == "__main__":
     main()

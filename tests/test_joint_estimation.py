@@ -1,5 +1,4 @@
 import torch
-import pytest
 from models.vanilla_cfm import JointCFM
 
 
@@ -128,4 +127,3 @@ class TestJointCFM:
         assert torch.isfinite(loss), "NaN in obs should be zeroed in conditioning"
 
 
-import numpy as np

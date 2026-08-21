@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Any, Dict
-from omegaconf import MISSING
 
 
 @dataclass

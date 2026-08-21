@@ -7,7 +7,8 @@ Reads:
 
 Prints and saves a markdown comparison table to reports/outputs/l96_neural_comparison.md
 """
-import os, json, sys
+import os
+import json
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")
