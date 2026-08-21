@@ -108,7 +108,7 @@ def main():
             epochs=200, lr=1e-3, device=device,
         )
         torch.save(model.state_dict(), "checkpoint_stage1.pt")
-        print(f"  Saved checkpoint_stage1.pt")
+        print("  Saved checkpoint_stage1.pt")
 
         print("\n" + "=" * 60)
         print("STEP 4: Training 4DVarNet-FM (Stage 2: Full Solver)")
@@ -118,7 +118,7 @@ def main():
             epochs=400, lr=1e-3, device=device,
         )
         torch.save(model.state_dict(), "checkpoint_stage2.pt")
-        print(f"  Saved checkpoint_stage2.pt")
+        print("  Saved checkpoint_stage2.pt")
 
     print("\n" + "=" * 60)
     print("STEP 5: Evaluating 4DVarNet-FM")

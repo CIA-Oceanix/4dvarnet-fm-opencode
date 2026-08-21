@@ -3,7 +3,11 @@
 Run a single L96 S1 config sweep with support for mismatched dynamics and rectangular observation operator.
 Outputs JSON results to experiments/l96_sweep_{label}.json
 """
-import os, sys, json, argparse, time
+import os
+import sys
+import json
+import argparse
+import time
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -313,7 +317,7 @@ def run():
         pct = (s1_m / s0_m - 1) * 100
         print(f"{name:<20} {s0_m:<10.4f} {s1_m:<10.4f} {pct:<+10.1f}%")
 
-    print(f"\n── Explained Variance (per group) ──")
+    print("\n── Explained Variance (per group) ──")
     print(f"{'Method':<20} {'S0 slow':<10} {'S0 fast':<10} {'S1 slow':<10} {'S1 fast':<10}")
     print("-" * 60)
     for name in methods_to_run:

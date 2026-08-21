@@ -5,7 +5,10 @@ Usage:
     python reports/generate_experiment_report.py
     python reports/generate_experiment_report.py --output my_report.pdf
 """
-import os, sys, json, argparse
+import os
+import sys
+import json
+import argparse
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -13,7 +16,6 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from evaluation.metrics import rmse
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXP_DIR = os.path.join(BASE, "experiments")

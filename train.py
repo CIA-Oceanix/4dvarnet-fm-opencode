@@ -7,7 +7,10 @@ Usage:
     python train.py                                               # defaults (TweedieSolver)
     python train.py --config-name experiment/E1_direct_unet_default  # experiment preset
 """
-import os, sys, json, time
+import os
+import sys
+import json
+import time
 import torch
 import numpy as np
 import hydra
@@ -16,14 +19,14 @@ from omegaconf import DictConfig, OmegaConf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 torch.set_float32_matmul_precision('medium')
 
-from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval, Lorenz63Dataset
+from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
 from data.random_param_dataset import RandomParamLorenz63Dataset
 from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm
 from torch.utils.data import DataLoader
 from models.solver import TweedieSolver
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
-from training.pipeline import run_2stage_pipeline, create_trainer, train_stage
+from training.pipeline import create_trainer, train_stage
 from training.lightning_module import LitModel
 from evaluation.metrics import rmse, param_rmse
 
@@ -504,7 +507,7 @@ def main(cfg: DictConfig):
         parts = [f"{nm}={m[i]:.4f}" for i, nm in enumerate(state_names)]
         return " ".join(parts) + f"  mean={np.mean(m):.4f}"
 
-    print(f"\n  ── Results ─────────────────────────────────")
+    print("\n  ── Results ─────────────────────────────────")
     if s0:
         m0, _ = s0
         groups0 = _per_group_rmse(m0, obs_var_indices, NO=NO, J=J, obs_j=obs_j_local) if obs_var_indices else {}

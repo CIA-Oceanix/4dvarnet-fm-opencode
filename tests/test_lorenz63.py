@@ -8,15 +8,11 @@ Tests cover:
 - Observation sparsity and noise
 - Dataset structure
 """
-import pytest
 import torch
 import numpy as np
 from data.lorenz63 import (
-    Lorenz63Config,
-    Lorenz63Dataset,
     generate_long_trajectory,
     generate_corrupted_forcing,
-    generate_observations,
 )
 
 

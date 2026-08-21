@@ -1,7 +1,5 @@
 """Refactoring equivalence tests: verify old and new pipelines produce same results."""
-import pytest
 import torch
-import numpy as np
 from conf.schema import DataConfig
 from models.solver import TweedieSolver
 from training.losses import StateMSELoss

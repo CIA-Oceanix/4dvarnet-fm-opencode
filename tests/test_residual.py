@@ -1,5 +1,4 @@
 """Tests for MeanEstimatorCell and IterativeUpdateCell."""
-import pytest
 import torch
 from models.residual import MeanEstimatorCell, IterativeUpdateCell
 

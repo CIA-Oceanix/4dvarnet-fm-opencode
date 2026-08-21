@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compute explained variance from DA sweep JSON results + climatological variance."""
-import json, os, sys
+import json
+import os
 import numpy as np
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

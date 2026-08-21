@@ -1,10 +1,13 @@
-import os, sys, json, time, subprocess
+import os
+import sys
+import json
+import time
+import subprocess
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz63 import Lorenz63Config
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
-from evaluation.metrics import rmse
 from models.lorenz63_dynamics import Lorenz63Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

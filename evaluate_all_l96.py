@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Lorenz96 S0/S1 baseline evaluation — data generation + DA baselines + RMSE table."""
-import os, sys, json, argparse, time
+import os
+import sys
+import json
+import argparse
+import time
 import torch
 import numpy as np
 
@@ -136,7 +140,7 @@ def main():
         randomize_params = [p.strip() for p in args.randomize_params.split(",")]
         print(f"  Randomizing only: {randomize_params}")
     else:
-        print(f"  Randomizing all params: F, c1, h, hx, eps")
+        print("  Randomizing all params: F, c1, h, hx, eps")
 
     print("\n── Generating L96 S0/S1 datasets ──")
     ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}.pt")

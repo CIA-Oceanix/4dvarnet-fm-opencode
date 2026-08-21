@@ -6,11 +6,15 @@ Outputs JSON results to experiments/l96_sweep_{label}.json
 Usage:
     conda run -n fdv python evaluation/run_l96_sweep.py --label a1 --param-bias 0.30 --forcing-state-bias 0.3 --obs-frac 1.0
 """
-import os, sys, json, argparse, time
+import os
+import sys
+import json
+import argparse
+import time
 import torch
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from data.lorenz96 import Lorenz96Config, RandomParamLorenz96Dataset, RandomBiasLorenz96Dataset, _make_lorenz96_dynamics
+from data.lorenz96 import Lorenz96Config, RandomParamLorenz96Dataset, RandomBiasLorenz96Dataset
 from models.lorenz96_dynamics import Lorenz96Dynamics
 from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF
 from evaluation.run_l96 import evaluate_baseline

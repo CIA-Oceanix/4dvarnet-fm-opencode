@@ -1,5 +1,4 @@
 import torch
-import pytest
 from models.direct_unet import DirectUNet
 
 

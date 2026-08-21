@@ -4,7 +4,12 @@
 Usage:
     python reports/compare_s0_s0b.py [--dws 50] [--legacy PATH] [--fw PATH]
 """
-import argparse, glob, json, os, re, sys
+import argparse
+import glob
+import json
+import os
+import re
+import sys
 
 EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "experiments")
 

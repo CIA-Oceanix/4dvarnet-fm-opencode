@@ -1,5 +1,4 @@
 """Tests for TweedieSolver."""
-import pytest
 import torch
 from models.solver import TweedieSolver
 

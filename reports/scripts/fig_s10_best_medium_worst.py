@@ -93,7 +93,7 @@ for ext in FMTS:
     print(f"Saved {path}")
 plt.close(fig)
 
-print(f"\nBest/Medium/Worst indices per scenario:")
+print("\nBest/Medium/Worst indices per scenario:")
 for scenario, data in names.items():
     rmse = np.sqrt(np.mean((data["trajectories"] - data["truths"])**2, axis=(1, 2)))
     b, m, w = pick_indices(rmse)

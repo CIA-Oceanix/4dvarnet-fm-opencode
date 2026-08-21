@@ -1,5 +1,4 @@
 """Tests for UNet1D and components."""
-import pytest
 import torch
 from models.unet import SinusoidalEmbedding, ConvBlock, Down, Up, ConditionEncoder, UNet1D
 

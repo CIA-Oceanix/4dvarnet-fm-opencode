@@ -4,7 +4,10 @@
 Usage:
     python reports/repro_gate_b2.py [--ref PATH] [--new PATH] [--tolerance 0.01]
 """
-import argparse, json, os, sys
+import argparse
+import json
+import os
+import sys
 
 EXP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "experiments")
 

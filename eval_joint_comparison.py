@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Joint state-parameter estimation: S0/S1 benchmark with vanilla vs joint DA."""
-import os, sys, json, argparse
+import os
+import sys
+import json
+import argparse
 import torch
 import numpy as np
 
@@ -11,7 +14,7 @@ from evaluation.baselines import (
     Weak4DVar, Strong4DVar, EnKF, ETKF,
     JointWeak4DVar, JointStrong4DVar, JointEnKF, JointETKF,
 )
-from evaluation.metrics import rmse, param_rmse
+from evaluation.metrics import param_rmse
 from evaluation.run import evaluate_baseline
 
 BASE = os.path.dirname(os.path.abspath(__file__))

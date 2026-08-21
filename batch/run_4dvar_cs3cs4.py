@@ -4,7 +4,10 @@
 Usage:
     python batch/run_4dvar_cs3cs4.py
 """
-import os, sys, time, json
+import os
+import sys
+import time
+import json
 import torch
 import numpy as np
 
@@ -14,7 +17,6 @@ from data.lorenz63 import Lorenz63Config, make_mixed_datasets
 from data.lorenz63 import Lorenz63Config as L63Config
 from evaluation.baselines import Weak4DVar, Strong4DVar
 from evaluation.run import evaluate_baseline, fmt_rmse, EXP_DIR
-from evaluation.metrics import rmse
 
 DWS = 50
 SUFFIX = "_cs3cs4_4dvar"

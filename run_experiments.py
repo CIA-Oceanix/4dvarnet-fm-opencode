@@ -6,21 +6,26 @@ Usage:
     python run_experiments.py --experiment A1          # Run specific
     python run_experiments.py --baselines-only         # Cache baselines only
 """
-import os, sys, json, time, argparse, traceback, subprocess, warnings
+import os
+import sys
+import json
+import time
+import argparse
+import traceback
+import subprocess
 import torch
 import numpy as np
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm
+from data.dataloader import ConcatFMDataset, collate_fm
 from torch.utils.data import DataLoader
 from models.solver import TweedieSolver
 from training.stage1 import train_stage1
 from training.stage2 import train_stage2
 from evaluation.metrics import rmse
 from evaluation.run import (
-    evaluate_baseline, fmt_rmse, run_and_cache_baselines,
-    _BASELINE_METHODS, _BASELINE_CASES, _baseline_traj_path,
+    fmt_rmse, run_and_cache_baselines,
     EXP_DIR,
 )
 
@@ -195,10 +200,10 @@ def run_single_experiment(exp, datasets, device, batch_size=256, num_workers=4):
         stage2_t = time.time() - t0
         print(f"    Done in {stage2_t:.1f}s")
     else:
-        print(f"  [4/5] Skipped")
+        print("  [4/5] Skipped")
 
     # Evaluate
-    print(f"  [5/5] Evaluating on test sets...")
+    print("  [5/5] Evaluating on test sets...")
     t0 = time.time()
     use_mean = cfg.get("skip_stage2", False)
     m1, s1 = evaluate_model(model, datasets["test_cs1"], device, use_mean_estimator=use_mean)
@@ -222,7 +227,7 @@ def run_single_experiment(exp, datasets, device, batch_size=256, num_workers=4):
     with open(results_path, "w") as f:
         json.dump(result, f, indent=2)
 
-    print(f"\n  ── Results ─────────────────────────────────")
+    print("\n  ── Results ─────────────────────────────────")
     print(f"  CS1: X={m1[0]:.4f} Y={m1[1]:.4f} Z={m1[2]:.4f}  mean={np.mean(m1):.4f}")
     print(f"  CS2: X={m2[0]:.4f} Y={m2[1]:.4f} Z={m2[2]:.4f}  mean={np.mean(m2):.4f}")
     print(f"  Degradation: {deg:.2f}x  |  Total: {total_t:.0f}s")
@@ -358,7 +363,7 @@ def main():
     print(f"  DONE: {len(succeeded)}/{len(experiments)} successful")
     if failed:
         print(f"  Failed: {failed}")
-    print(f"\n  Run: python reports/generate_report.py")
+    print("\n  Run: python reports/generate_report.py")
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,6 @@
 """Tests for Hydra-based baseline config and eval_baselines.py."""
 import os
 import sys
-import json
-import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

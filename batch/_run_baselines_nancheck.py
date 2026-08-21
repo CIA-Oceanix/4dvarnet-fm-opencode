@@ -3,8 +3,10 @@
 Run DA baselines with the NaN-fixed code and save results with '_nancheck' suffix.
 Compares against the old baselines_dws300.json and generates a PDF report.
 """
-import os, sys, json, time
-import numpy as np
+import os
+import sys
+import json
+import time
 import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

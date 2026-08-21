@@ -5,7 +5,10 @@ Usage:
     python batch/inflation_sweep_cs3cs4.py --method enkf --inflation 1.2
     python batch/inflation_sweep_cs3cs4.py --method etkf --inflation 1.6
 """
-import os, sys, argparse, time
+import os
+import sys
+import argparse
+import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
