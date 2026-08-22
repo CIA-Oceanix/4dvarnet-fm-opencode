@@ -523,3 +523,19 @@
 **Rationale:** The old `obs_dim = state_dim + 1 + param_dim` leaked an internal architecture detail (forcing `+1`) into the model interface. The clean design makes the 24-dim observation the external input; forcing/params conditioning is optional and internal. L1/L2 τ=0 models operate on obs only, enabling inference to feed a plain 24-dim obs vector as requested.
 
 **Verification:** `pytest tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_neural_inference.py -m "not slow"` — 62 passed. Manual: L1 proj_in=48, L2 proj_in=48, L63 default proj_in=11, JointCFM proj_in=11/output_dim=7. Ruff/mypy on changed files — no new errors (only pre-existing lint/mypy debt).
+
+## 2026-08-22: Standalone neural eval on both S0/S1 (DA-parity) + two-step inference/evaluation
+
+**Summary:** Reworked the standalone neural evaluation into a **two-step, scheme-agnostic** pipeline. Step 1 (`eval_neural_l96.py` + `evaluation/neural_inference.py`) runs a trained model on the **same cached DA-baseline dataset** (`experiments/l96_datasets_obsj2_int100_nwin200.pt`) for both `test_s0` and `test_s1` and stores the state estimates to per-case `.npz` files (matching the DA trajectory-cache convention). Step 2 (`evaluation/estimate_metrics.py`, new generic evaluator) loads any stored `trajectories`/`truth` arrays and computes pooled RMSE/EV/ES grouped by component — applied identically to neural schemes and DA baselines. Also fixed the broken Energy Score (deterministic N=1 → per-dim MAE) and fixed the schema/path mismatches in `reports/benchmark_table_l96.py` so the DA-vs-neural table finally populates.
+
+**Files modified:**
+- `evaluation/neural_inference.py` — `prepare_dataset` returns `{"s0","s1"}` dataloaders over the cached splits; new `run_inference` returns per-case numpy `trajectories`/`truth` (subsampled to the observed subspace), no metrics; fixed `state_dim` weight inference (`enc_out` shape[0], was shape[1]); removed the duplicate embedded `main()` CLI, dead `EvalConfig` and unused helpers/imports
+- `evaluation/estimate_metrics.py` — new: generic, scheme-agnostic evaluator (pooled RMSE/EV/ES per group, `save_estimates`/`evaluate_npz`)
+- `eval_neural_l96.py` — two-step inference: runs the model, saves per-case `estimates_{s0,s1}.npz`, writes `neural_eval.json` via the generic evaluator; dataset auto-detection also looks in `experiments/`
+- `reports/benchmark_table_l96.py` — `load_da_baseline` reads actual cache schema (`s0`/`s1` → `mean`/`groups`/`ev.groups`, not `baselines`/`rmse`); `load_neural_results` reads the new `neural_eval.json` schema; fixed cache paths (`experiments/`); explicit per-case + degradation rows with experiment-dir labels
+- `tests/test_neural_inference.py` — `run_inference` returns per-case arrays, `evaluate_estimates`/`evaluate_npz` metric tests
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user wants the neural evaluation to be truly standalone and comparable to the DA baselines, run on the identical test dataset and procedure (both S0 and S1), and decoupled from model internals by storing raw estimates for a generic shared evaluation step.
+
+**Verification:** `pytest tests/test_neural_inference.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_metrics.py tests/test_baselines_hydra.py -m "not slow"` — 79 passed. Ruff/mypy on changed files: no new errors (only pre-existing UP045/RUF059/TRY004/I001). L1/L2 evaluated on the cached DA-parity dataset: S0 all_obs RMSE 1.56 (slow 0.48 / obs_fast 2.10), S1 1.56, S1/S0 ≈ 1.00. Note: this DA-parity RMSE (1.56) differs from the training-time in-process `results.json` (~0.59) because the two evals run on different test windows; the standalone path is the comparable one.
