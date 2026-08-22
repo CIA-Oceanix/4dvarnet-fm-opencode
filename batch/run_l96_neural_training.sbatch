@@ -21,14 +21,15 @@ export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 mkdir -p "$MPLCONFIGDIR"
 
 EXPERIMENTS=(
-  L1_direct_unet_s0s1
-  L2_vanilla_cfm_s0s1
+  L1b_direct_unet_s0s1
+  L2b_vanilla_cfm_s0s1
 )
 EXP=${EXPERIMENTS[$SLURM_ARRAY_TASK_ID]}
 
 echo "============================================"
-echo " L96 Neural Training | $(date)"
+echo " L96 Neural Training (DA-parity, L1b/L2b) | $(date)"
 echo "  Task: ${SLURM_ARRAY_TASK_ID} / Experiment: ${EXP}"
+echo "  Config inherits lorenz96_default (all params randomized +-20%; partial obs obs_j=2)"
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
 echo "============================================"
 echo ""
