@@ -16,16 +16,18 @@ DA_CACHE_PATTERNS = [
     "experiments/l96_baselines_dws500_obsj2_int100.json",
 ]
 
-# Neural model evaluation results (neural_eval.json) and checkpoint patterns
+# Neural model evaluation results (neural_eval.json) and checkpoint patterns.
+# L1b/L2b inherit the randomized-param default (all params +-20%, obs_j=2), so
+# they are the DA-parity neural models comparable to the DA baseline cache.
 NEURAL_CKPT_PATTERNS = [
-    "experiments/L1_direct_unet_s0s1/checkpoints/*.pt",
-    "experiments/L2_vanilla_cfm_s0s1/checkpoints/*.pt",
+    "experiments/L1b_direct_unet_s0s1/checkpoints/*.pt",
+    "experiments/L2b_vanilla_cfm_s0s1/checkpoints/*.pt",
 ]
 
 # Pre-computed neural eval results (preferred over re-evaluation)
 NEURAL_JSON_PATTERNS = [
-    "experiments/L1_direct_unet_s0s1/neural_eval.json",
-    "experiments/L2_vanilla_cfm_s0s1/neural_eval.json",
+    "experiments/L1b_direct_unet_s0s1/neural_eval.json",
+    "experiments/L2b_vanilla_cfm_s0s1/neural_eval.json",
 ]
 
 
