@@ -1,24 +1,14 @@
 """Standalone neural model inference and evaluation for L96."""
-import json
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
-import hydra
 import torch
-import yaml
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
+from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
-from models.dynamics import get_dynamics
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, make_dataloaders, collate_fm
-from evaluation.metrics import energy_score
-import torch
-import torch.nn.functional as F
-import numpy as np
 
 
 class BatchDict:
@@ -36,50 +26,8 @@ def collate_eval(batch):
     return {"true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing, "params": None}
 
 
-def _per_group_rmse(preds: torch.Tensor, truth: torch.Tensor, obs_var_indices: list) -> dict:
-    """Compute per-group RMSE (slow/obs_fast)."""
-    rmse_full = torch.sqrt(torch.mean((preds - truth) ** 2, dim=0))
-    
-    return {
-        "slow": rmse_full[:8].tolist(),
-        "obs_fast": rmse_full[8:].tolist(),
-        "all_obs": rmse_full.tolist(),
-    }
-
-
-def _per_group_ev(preds: torch.Tensor, truth: torch.Tensor, obs_var_indices: list) -> dict:
-    """Compute per-group explained variance."""
-    mean_truth = torch.mean(truth, dim=0)
-    var_truth = torch.var(truth, dim=0)
-    
-    mse = torch.mean((preds - truth) ** 2, dim=0)
-    
-    # Avoid division by zero
-    var_truth_safe = torch.where(var_truth > 1e-10, var_truth, torch.ones_like(var_truth))
-    
-    ev_full = 1 - torch.mean(mse, dim=0) / var_truth_safe
-    
-    return {
-        "slow": ev_full[:8].tolist(),
-        "obs_fast": ev_full[8:].tolist(),
-        "all_obs": ev_full.tolist(),
-    }
-from data.lorenz96 import Lorenz96Config
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class EvalConfig:
-    """Evaluation configuration."""
-    checkpoint_path: str
-    config_path: Optional[str] = None
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size: int = 200
-    num_workers: int = 0
-    deterministic: bool = False  # DirectUNet only
-    seed: Optional[int] = None
 
 
 def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> tuple:
@@ -95,9 +43,11 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         # Infer architecture parameters from state_dict
         inferred_params = {}
 
-        # state_dim = output_dim = first channel of the final enc_out conv
+        # state_dim = output_dim = first channel of the final enc_out conv.
+        # enc_out.2 is Conv1d(in_c, output_dim, 3) -> weight shape (output_dim, in_c, 3),
+        # so shape[0] is the state/output dimension.
         if "model.unet.enc_out.2.weight" in state_dict:
-            inferred_params["state_dim"] = state_dict["model.unet.enc_out.2.weight"].shape[1]
+            inferred_params["state_dim"] = state_dict["model.unet.enc_out.2.weight"].shape[0]
         state_dim = inferred_params.get("state_dim", 24)
 
         # proj_in = state_dim + obs_dim + cond_extra_dim, with obs_dim = state_dim
@@ -224,8 +174,15 @@ def prepare_dataset(
     num_test_windows: int = 200,
     obs_interval: int = 100,
     **kwargs,
-) -> ConcatFMDataset:
-    """Prepare test dataset for evaluation."""
+) -> tuple:
+    """Prepare S0/S1 test dataloaders for evaluation.
+
+    Returns ``(dataset, dataloaders)`` where ``dataset`` is the cached S0/S1
+    dict and ``dataloaders`` maps ``"s0"``/``"s1"`` to ``DataLoader`` over the
+    matching test split. The cached dataset (as used by the DA baselines) is
+    loaded when ``test_dataset_path`` is given; otherwise the S0/S1 train/val/
+    test split is generated.
+    """
     # Try to load cached dataset
     if test_dataset_path:
         logger.info(f"Loading cached test dataset from {test_dataset_path}")
@@ -245,37 +202,43 @@ def prepare_dataset(
         )
         train, val, test = make_l96_s0_s1_trainval(cfg_test)
         dataset = test
-    
-    # Create dataloader for evaluation (use S0 test dataset)
-    test_s0 = dataset["test_s0"]
-    dataloader = DataLoader(
-        test_s0,
-        batch_size=kwargs.get("batch_size", 200),
-        shuffle=False,
-        collate_fn=collate_eval,
-        num_workers=kwargs.get("num_workers", 0),
-    )
-    return dataset, dataloader
+
+    # Create dataloaders for both the S0 and S1 test splits
+    dataloaders = {}
+    for key, case in (("test_s0", "s0"), ("test_s1", "s1")):
+        split = dataset[key]
+        dataloaders[case] = DataLoader(
+            split,
+            batch_size=kwargs.get("batch_size", 200),
+            shuffle=False,
+            collate_fn=collate_eval,
+            num_workers=kwargs.get("num_workers", 0),
+        )
+    return dataset, dataloaders
 
 
-def evaluate_model(
+def _run_case_inference(
     model: torch.nn.Module,
     dataloader: DataLoader,
     device: torch.device,
 ) -> dict:
-    """Evaluate model and compute metrics."""
+    """Run a model on a single case dataloader and return state estimates.
+
+    Returns a dict with numpy arrays ``{"trajectories": (W, T, D), "truth": (W, T, D)}``
+    where ``D`` is the observed subspace (the neural model's output dim) and
+    ``truth`` is subsampled to that same subspace for direct comparison. No
+    metrics are computed here — that is the job of the generic evaluator.
+    """
     model.eval()
     all_preds = []
     all_true = []
-    all_obs = []
-    all_forcing = []
-    
+
     with torch.no_grad():
         for batch in dataloader:
             # Convert tensors to device, skip None values
             batch = {k: v.to(device) if v is not None else v for k, v in batch.items()}
             batch_obj = BatchDict(batch)
-            
+
             if isinstance(model, DirectUNet):
                 # DirectUNet.forward takes a batch dict
                 pred = model(batch_obj)
@@ -284,135 +247,36 @@ def evaluate_model(
                 pred = model.sample(batch_obj, N_outer=1)
             else:
                 raise ValueError(f"Unknown model type: {type(model)}")
-            
+
             all_preds.append(pred.detach().cpu())
             all_true.append(batch["true_state"].detach().cpu())
-            all_obs.append(batch["obs"].detach().cpu())
-            all_forcing.append(batch["forcing_corrupted"].detach().cpu())
-    
+
     # Concatenate
     all_preds = torch.cat(all_preds, dim=0)
     all_true = torch.cat(all_true, dim=0)
-    all_obs = torch.cat(all_obs, dim=0)
-    all_forcing = torch.cat(all_forcing, dim=0)
-    
-    # Compute metrics (MSE)
-    mse = torch.mean((all_preds - all_true) ** 2)
-    rmse = torch.sqrt(mse)
-    
-    # Per-group metrics
-    obs_var_indices = None
-    if hasattr(model, 'state_dim') and model.state_dim > 0:
-        obs_j = getattr(model, 'obs_j', 2)
-        NO = getattr(model, 'NO', 8)
-        J = getattr(model, 'J', 4)
-        obs_var_indices = list(range(obs_j * NO))
-    
-    if obs_var_indices is not None:
-        rmse_full = _per_group_rmse(all_preds, all_true, obs_var_indices)
-        rmse_obs = rmse_full["obs_fast"]
-        rmse_slow = rmse_full["slow"]
-    else:
-        rmse_full = torch.tensor([rmse.item()])
-        rmse_obs = torch.tensor([rmse.item()])
-        rmse_slow = torch.tensor([rmse.item()])
-    
-    # Explained variance
-    if obs_var_indices is not None:
-        ev = _per_group_ev(all_preds, all_true, obs_var_indices)
-        ev_mean = np.mean(ev["all_obs"])
-    else:
-        mean_truth = torch.mean(all_true, dim=0)
-        var_truth = torch.var(all_true, dim=0)
-        mse = torch.mean((all_preds - all_true) ** 2, dim=0)
-        var_truth_safe = torch.where(var_truth > 1e-10, var_truth, torch.ones_like(var_truth))
-        ev = 1 - torch.mean(mse, dim=0) / var_truth_safe
-        ev_mean = ev.mean().item()
-    
-    # Energy Score (N=1 -> MAE)
-    es = energy_score(all_preds, all_true, ensemble_size=1)
-    
-    results = {
-        "rmse": rmse.item(),
-        "rmse_full": rmse_full.tolist(),
-        "rmse_obs_fast": rmse_obs.tolist(),
-        "rmse_slow": rmse_slow.tolist(),
-        "ev": ev.item() if isinstance(ev, torch.Tensor) else ev,
-        "es": es.item() if isinstance(es, torch.Tensor) else es,
-        "obs_var_indices": obs_var_indices,
-        "num_samples": all_true.shape[0],
+
+    # The neural model predicts the observed subspace while the cached truth is
+    # the full state. Subsample truth to the observed dims (first D columns,
+    # the obs_var_indices ordering) for a fair comparison.
+    d_pred = all_preds.shape[-1]
+    if all_true.shape[-1] > d_pred:
+        all_true = all_true[..., :d_pred]
+
+    return {
+        "trajectories": all_preds.detach().cpu().numpy(),
+        "truth": all_true.detach().cpu().numpy(),
     }
-    
-    return results
 
 
-def main():
-    """CLI entry point."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Evaluate trained neural model on L96 test dataset")
-    parser.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
-    parser.add_argument("--config", help="Path to model config YAML (optional)")
-    parser.add_argument("--dataset", help="Path to cached test dataset (optional)")
-    parser.add_argument("--num-windows", type=int, default=200, help="Number of test windows")
-    parser.add_argument("--obs-interval", type=int, default=100, help="Observation interval")
-    parser.add_argument("--batch-size", type=int, default=200, help="Batch size")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
-    parser.add_argument("--deterministic", action="store_true", help="Use deterministic mode (DirectUNet only)")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed")
-    parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON file")
-    parser.add_argument("--exp-dir", default="experiments", help="Experiment directory")
-    
-    args = parser.parse_args()
-    
-    device = torch.device(args.device)
-    
-    # Load model
-    logger.info(f"Loading model from {args.checkpoint}")
-    model, cfg = load_model(args.checkpoint, args.config, device=device)
-    logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
-    
-    # Prepare dataset
-    dataset_path = args.dataset
-    if not dataset_path:
-        # Infer from checkpoint filename or config
-        ckpt_dir = Path(args.checkpoint).parent
-        dataset_path = list(ckpt_dir.glob("l96_datasets_obsj2_int100_nwin200.pt"))[0] if ckpt_dir.glob("l96_datasets_obsj2_int100_nwin200.pt") else None
-    
-    dataset, dataloader = prepare_dataset(cfg, dataset_path, args.num_windows, args.obs_interval)
-    logger.info(f"Dataset: {len(dataset)} windows, {args.batch_size} samples/batch")
-    
-    # Evaluate
-    logger.info("Evaluating model...")
-    results = evaluate_model(model, dataloader, device)
-    
-    # Save results
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    output = {
-        "checkpoint": args.checkpoint,
-        "config": OmegaConf.to_container(cfg, resolve=True),
-        "dataset": {
-            "path": str(dataset_path) if dataset_path else None,
-            "num_windows": args.num_windows,
-            "obs_interval": args.obs_interval,
-        },
-        "metrics": results,
-    }
-    
-    with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
-    
-    logger.info(f"Results saved to {output_path}")
-    logger.info(f"RMSE: {results['rmse']:.4f}")
-    logger.info(f"RMSE (slow): {results['rmse_slow']:.4f}")
-    logger.info(f"RMSE (obs_fast): {results['rmse_obs_fast']:.4f}")
-    logger.info(f"EV: {results['ev']:.4f}")
-    logger.info(f"ES: {results['es']:.4f}")
-    
-    return results
+def run_inference(
+    model: torch.nn.Module,
+    dataloaders: dict,
+    device: torch.device,
+) -> dict:
+    """Run inference on both S0 and S1, returning per-case estimates.
 
-
-if __name__ == "__main__":
-    main()
+    Returns ``{"s0": {...}, "s1": {...}}`` where each entry holds the numpy
+    ``trajectories``/``truth`` arrays (no metrics). To produce scores, pass
+    these to the generic evaluator (``evaluate_estimates``).
+    """
+    return {case: _run_case_inference(model, dl, device) for case, dl in dataloaders.items()}
