@@ -99,8 +99,10 @@ def load_neural_results(checkpoint_path: str) -> dict:
             raise FileNotFoundError(f"No cached L96 dataset found near {checkpoint_path}")
         dataset_path = str(dataset_candidates[0])
 
-        _, dataloaders = prepare_dataset(cfg, dataset_path, num_test_windows=200, obs_interval=100)
-        estimates = run_inference(model, dataloaders, device)
+        _, dataloaders, obs_var_indices = prepare_dataset(
+            cfg, dataset_path, num_test_windows=200, obs_interval=100, obs_j=2
+        )
+        estimates = run_inference(model, dataloaders, device, obs_var_indices)
         for case in ("s0", "s1"):
             m = evaluate_estimates(estimates[case]["trajectories"], estimates[case]["truth"])
             results[f"{case}_rmse"] = m["rmse"]

@@ -22,7 +22,7 @@
 #
 set -euo pipefail
 
-MAIN_BRANCH="${MAIN_BRANCH:-feat/l96-fast-weights-randomization}"
+MAIN_BRANCH="${MAIN_BRANCH:-feat/l96-neural-eval-fix}"
 REPO="CIA-Oceanix/4dvarnet-fm-opencode"
 REMOTE="origin"
 REVIEWER_GH_TOKEN="${REVIEWER_GH_TOKEN:-}"
