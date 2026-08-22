@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-23: L96 neural DA-parity eval re-run + ES backfill — neural now beats DA
+
+**Summary:** Re-ran the standalone **DA-parity** evaluation (`eval_neural_l96.py`) on the freshly retrained L1b (DirectUNet) and L2b (VanillaCFM τ=0) checkpoints against the cached S0/S1 test set (`experiments/l96_datasets_obsj2_int100_nwin200.pt`), using the correct `stage1_best.ckpt` Lightning checkpoints. This resolves the earlier alarming **1.56-vs-0.65 discrepancy**: the stale benchmark table had been generated on pre-retrain checkpoints with the pre-#46 truth-subsampling bug (first-24-columns instead of the non-contiguous `obs_var_indices`). With the fix, the DA-parity neural eval matches the in-process result (~0.62). Also added an **ES backfill** (`backfill_l96_baselines_es.py`, mirroring the EV backfill) so the DA rows in the benchmark table show real Energy Scores instead of 0.0000, and repointed the table at the correct **S0c** DA cache (the apple-to-apples comparator matching the neural training setup).
+
+**Result:** On the identical S0/S1 test set (Obs30, 200 windows), **neural models now beat the best DA baseline**: L1b S0/S1 RMSE 0.622/0.625, L2b 0.633/0.633 vs Strong-4DVar 0.742/1.432 (EnKF 0.892/1.506, ETKF 0.864/1.472). Neural degradation S1/S0 ≈ 1.00 vs DA ≈ 1.9× (model necessarily robust, no forward model). Neural also lower ES (better) on both cases. Note: L2b (VanillaCFM τ=0) ≈ L1b (DirectUNet) — confirming DirectUNet's obs-only empirical risk minimizer is already close to the CFM design at τ=0.
+
+**Files modified:**
+- `reports/benchmark_table_l96.py` — primary DA cache → S0c `..._obsj2_int100_fw.json` (matches neural test setup); `load_da_baseline` reads backfilled `es` instead of hardcoding 0.0; `find_all_results` uses first-existing DA cache (primary wins) instead of `update()`-overriding with un-backfilled fallbacks
+- `backfill_l96_baselines_es.py` — new CPU script (mirrors `backfill_l96_baselines_ev.py`): computes pooled per-dim MAE Energy Score from cached DA trajectory `.npz` + dataset truth and writes `es` into the S0c baseline JSON cache
+- `reports/outputs/neural_benchmark_table.md` — regenerated with fresh neural numbers, S0c DA comparator, and populated ES
+
+**Rationale:** The previous benchmark output was misleading — it compared stale/old-architecture checkpoints (evaluated with the pre-#46 subsampling bug) against the wrong (non-S0c) DA cache and showed ES=0.0000 for all DA rows. Fixing the eval path, DA comparator, and ES backfill makes the neural-vs-DA comparison apples-to-apples and reveals the correct conclusion (neural beats DA on both S0 and S1).
+
+**Verification:** `pytest tests/test_neural_inference.py tests/test_metrics.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_hydra_config.py -m "not slow"` — 39 passed. `ruff check` on changed files: only pre-existing EXE001 (shebang) and one pre-existing nested-import I001; no new errors.
+
 ## 2026-08-21: Energy Score metric + L96 joint state-parameter estimation
 
 **Summary:** Two new independent developments merged to master. (1) Added per-dimension **Energy Score (ES)** — a proper scoring rule for DA ensemble quality — computed on-the-fly inside EnKF/ETKF (zero extra memory), wired into `run_l96.py` cache/display as ES-all/ES-slow/ES-fast. (2) Added **L96 joint state-parameter estimation** (EnKF/ETKF/Strong-4DVar variants) estimating 8 params (F, c1, hx, eps + fast_weights; h fixed) mirroring the L63 joint extension, with `eval_joint_comparison_l96.py` evaluating on the same cached S0/S1 test datasets used by the DA baselines and neural models.
