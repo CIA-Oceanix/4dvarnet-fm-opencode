@@ -72,9 +72,10 @@ baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9
 - **Q1 (in progress, L3)**: does multi-τ CFM beat conditional-mean estimation?
   `config/experiment/L3_vanilla_cfm_s0s1.yaml` = clone of L2b with
   `train_tau_0_only: false`; sbatch `run_l96_neural_training_l3.sbatch`.
-- **Q2 (future)**: model-size sensitivity — small `[32,64,128]` variants of L1b/L2b.
-- **Q3 (future)**: forcing conditioning — `cond_extra_dim: 1` variant fed the corrupted
-  forcing, testing S1 robustness gains over obs-only models.
+- **Q2 (in progress, L4/L5)**: model-size sensitivity — small `[32,64,128]` variants of
+  L1b/L2b; sbatch `run_l96_neural_training_l4l5l6.sbatch`.
+- **Q3 (in progress, L6)**: forcing conditioning — `cond_extra_dim: 1` variant fed the
+  corrupted forcing, testing S1 robustness gains over obs-only models.
 
 ## Experiments
 
@@ -103,8 +104,9 @@ The **L-series** (Lorenz-96) is listed separately below.
 | L1b_direct_unet_s0s1 | DirectUNet | [64,128,256] | 200 | n/a | done (beats DA on S0+S1) |
 | L2b_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | τ=0 | done (≈ L1b) |
 | L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | **training** (Q1) |
-| L4/L5 (future) | DirectUNet / CFM-τ0 | [32,64,128] | — | — | planned (Q2 size ablation) |
-| L6 (future) | VanillaCFM | [64,128,256] | — | τ=0 | planned (Q3 cond_extra_dim=1) |
+| L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | **training** (Q2) |
+| L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | **training** (Q2) |
+| L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | **training** (Q3) |
 
 ## Phases
 
