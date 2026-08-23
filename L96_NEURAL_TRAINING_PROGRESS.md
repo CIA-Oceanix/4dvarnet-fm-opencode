@@ -30,7 +30,7 @@ Key design decisions:
 |---|---|---|---|---|
 | WP1 | `models/lorenz96_dynamics.py` — all-5-param `step()` | ✅ | `3a1c8d5` | kwargs `c1,h,hx,eps` + `F`; verified scalar/batch/traj |
 | WP2 | `data/lorenz96.py` — RandomParam/RandBias all-5, `make_l96_s0_s1_trainval` | ✅ | `3a1c8d5` | windows store true + `*_da` params; obs_var_indices propagated |
-| WP3 | `models/direct_unet.py`, `models/vanilla_cfm.py` — `param_dim=0` | ✅ | `3a1c8d5` | `obs_dim = state_dim + 1` |
+| WP3 | `models/direct_unet.py`, `models/vanilla_cfm.py` — `param_dim=0` | ✅ | `3a1c8d5` | now obs-only via `cond_extra_dim=0` (2026-08-22 refactor; proj_in = 2·state_dim = 48) |
 | WP4 | `config/lorenz96_default.yaml`, `L1_*.yaml`, `L2_*.yaml` | ✅ | `3a1c8d5` | state_dim=24, obs_j=2, fast_weights |
 | WP5 | `data/dataloader.py` — `obs_var_indices` subsampling | ✅ | this session | `FlowMatchingDataset` subsamples true_state to24D |
 | WP6 | `train.py` — obs_j → obs_var_indices + per-group RMSE | ✅ | this session | computes indices, passes to data/eval |
@@ -39,10 +39,10 @@ Key design decisions:
 | WP7 | `tests/test_lorenz96_training.py` — partial-obs tests | ✅ | this session | 22 tests pass (11 original + 11 new) |
 | — | `L96_NEURAL_TRAINING_PROGRESS.md` | ✅ | this session | this file |
 | Step 11c | DA baseline consistency re-run (partial obs) | ✅ | — | sbatch 48683; 200-window obs_j=2 EnKF/ETKF/Strong-4DVar + EV backfill. S0 EnKF EV +0.544, ETKF +0.538, Strong +0.586; S1 EnKF +0.022, ETKF +0.036, Strong +0.205 |
-| Step 11d | Obs-density variation (S0-Obs100/S1-Obs100) | 🔄 in progress | — | sbatch 48688 (OBS_INTERVAL=100); trajectory-reuse cache, 2× denser obs (~30/window), EV captured |
-| Step 11e | Fast-weights randomization experiment (S0b/S1b: F + fast_weights) | ⬜ planned | — | requires threading per-window fast_weights through dynamics + randomization |
-| Step 12 | Neural training L1 + L2 (full) | 🔄 in progress | — | `batch/run_l96_neural_training.sbatch`, job 49013 (L1 running, L2 pending) |
-| WP8 | Results comparison + iteration | ⬜ pending | — | `batch/run_l96_evaluate_all.sbatch` |
+| Step 11d | Obs-density variation (S0-Obs100/S1-Obs100) | ✅ | — | Obs30 (obs_interval=100) is now the default; S0c/S1c DA caches regenerated at int100 (`reports/outputs/s0c_s1c_obs30_results.md`) |
+| Step 11e | Fast-weights randomization experiment (S0b/S1b: F + fast_weights) | ✅ | — | merged via `feat/l96-fast-weights-randomization`; all-5 + fast_weights ±20% is the DA-parity default; <1% DA effect at dws500 |
+| Step 12 | Neural training L1 + L2 (full) | ✅ | — | retrained as **L1b/L2b** (DA-parity, obs-only cond_extra_dim=0), job array 49125, Aug 22 |
+| WP8 | Results comparison + iteration | ✅ | — | `reports/outputs/neural_benchmark_table.md` (PR #48): neural beats best DA on S0+S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×. Supersedes the retired `l96_neural_comparison.md` |
 
 ## File Change Log
 
@@ -126,10 +126,11 @@ Key design decisions:
 
 ## Next steps (handoff)
 
-1. **Commit** partial-obs implementation on `feat/l96-neural-training`.
-2. **Re-run DA baselines** with `--obs-j=2` via sbatch (Step 11c).
-3. **Train L1 + L2** (state_dim=24) via `batch/run_l96_neural_training.sbatch` (Step 12).
-4. **WP8**: compare DA vs neural on S0/S1 with per-group scoring.
+1. ~~Commit partial-obs implementation~~ ✅ merged.
+2. ~~Re-run DA baselines with `--obs-j=2`~~ ✅ Step 11c done.
+3. ~~Train L1b + L2b~~ ✅ Step 12 done; benchmark table in `reports/outputs/neural_benchmark_table.md`.
+4. **Q1 (running)**: L3 multi-τ CFM (`config/experiment/L3_vanilla_cfm_s0s1.yaml`, sbatch `run_l96_neural_training_l3.sbatch`) → evaluate on the cached DA-parity test set, add row to the benchmark table.
+5. **Future**: Q2 size ablation (small L1b/L2b variants), Q3 forcing conditioning (`cond_extra_dim: 1`).
 
 ## Session notes
 

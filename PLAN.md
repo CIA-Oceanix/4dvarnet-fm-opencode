@@ -9,7 +9,11 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
 - **TweedieSolver**: Original two-stage solver — legacy, maintained
 - **RandomParamDataset**: Per-window randomized `σ,ρ,β` ±20% for robust training — implemented
 - **CS3/CS4**: Evaluation on unseen random parameter draws — implemented
-- **Exp G (τ=0 CFM)**: Ablate multi-τ training to isolate CFM's source of advantage — implemented (superseded by S9/S10)
+- **Exp G (τ=0 CFM)**: Ablate multi-τ training to isolate CFM's source of advantage — implemented (L63; τ=0 runs superseded by the S-series, also L63)
+
+**System naming convention:** the E/F/G/S experiment series are all **Lorenz-63**
+(`train_mix: cs1+cs2`, `state_dim=3` checkpoints). The **L-series** is the two-scale
+**Lorenz-96** benchmark (`system: lorenz96`, `state_dim=24` observed subspace).
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
@@ -30,7 +34,8 @@ See `L96_NEURAL_TRAINING_PROGRESS.md` for the per-WP tracker and handoff.
 
 - **All 5 params randomized ±20%**: `models/lorenz96_dynamics.py` accepts `c1,h,hx,eps`
   + `F` kwargs; `data/lorenz96.py` `RandomParam`/`RandomBias` + `make_l96_s0_s1_trainval`.
-- **Neural `param_dim=0`** (DirectUNet, VanillaCFM-τ=0): obs + corrupted forcing only.
+- **Neural `param_dim=0` + `cond_extra_dim=0`** (DirectUNet, VanillaCFM-τ=0): obs-only
+  input (no forcing/params conditioning; 24D in, 24D out).
 - **DA parity**: `evaluation/run_l96.py` + `evaluate_all_l96.py` pass per-window all-5
   params to DA; S1 uses biased `*_da` params.
 - Configs: `config/lorenz96_default.yaml`, `L1_direct_unet_s0s1.yaml`,
@@ -58,22 +63,48 @@ namespaces subject to the repo ruleset.
 **REMINDER:** run `gh auth login` and enable branch protection on `feat/l96-*`
 (require 1 PR approval + status checks) to unlock the GitHub PR path.
 
-**To do (next)**: run DA consistency re-run (Step 11c), train L1/L2 (Step 12), then
-compare DA vs neural on S0/S1 (WP8) — all via the L96 sbatch scripts.
+**Status (2026-08-23)**: Step 11c/12 + WP8 are complete — L1b (DirectUNet) and L2b
+(VanillaCFM τ=0) trained on the DA-parity config and evaluated on the shared cached
+test set (`reports/outputs/neural_benchmark_table.md`): neural beats the best DA
+baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×.
+
+**Open questions (L96)**:
+- **Q1 (in progress, L3)**: does multi-τ CFM beat conditional-mean estimation?
+  `config/experiment/L3_vanilla_cfm_s0s1.yaml` = clone of L2b with
+  `train_tau_0_only: false`; sbatch `run_l96_neural_training_l3.sbatch`.
+- **Q2 (future)**: model-size sensitivity — small `[32,64,128]` variants of L1b/L2b.
+- **Q3 (future)**: forcing conditioning — `cond_extra_dim: 1` variant fed the corrupted
+  forcing, testing S1 robustness gains over obs-only models.
 
 ## Experiments
 
+All E/F/G/S rows are **Lorenz-63** (`cs1+cs2` mixes); results live under `experiments/`.
+The **L-series** (Lorenz-96) is listed separately below.
+
+### Lorenz-63
+
 | ID | Model | Hidden | Epochs | Train mix | Status |
 |---|---|---|---|---|---|
-| E1_direct_unet_default | DirectUNet | [64,128,256] | 200 | cs1+cs2 | config ready |
-| E2_direct_unet_small | DirectUNet | [32,64,128] | 200 | cs1+cs2 | config ready |
-| E3_direct_unet_rand | DirectUNet | [32,64,128] | 200 | cs1_rand+cs2_rand | config ready |
-| F1_vanilla_cfm_default | VanillaCFM | [64,128,256] | 400 | cs1+cs2 | config ready |
-| F2_vanilla_cfm_small | VanillaCFM | [32,64,128] | 400 | cs1+cs2 | config ready |
-| F3_vanilla_cfm_rand | VanillaCFM | [32,64,128] | 400 | cs1_rand+cs2_rand | config ready |
-| G1_vanilla_cfm_t0_default | VanillaCFM (τ=0) | [64,128,256] | 400 | cs1+cs2 | **to implement** |
-| G2_vanilla_cfm_t0_small | VanillaCFM (τ=0) | [32,64,128] | 400 | cs1+cs2 | **to implement** |
-| G3_vanilla_cfm_t0_rand | VanillaCFM (τ=0) | [32,64,128] | 400 | cs1_rand+cs2_rand | **to implement** |
+| E1_direct_unet_default | DirectUNet | [64,128,256] | 200 | cs1+cs2 | done |
+| E2_direct_unet_small | DirectUNet | [32,64,128] | 200 | cs1+cs2 | done |
+| E3_direct_unet_rand | DirectUNet | [32,64,128] | 200 | cs1_rand+cs2_rand | done |
+| F1_vanilla_cfm_default | VanillaCFM | [64,128,256] | 400 | cs1+cs2 | done |
+| F2_vanilla_cfm_small | VanillaCFM | [32,64,128] | 400 | cs1+cs2 | done |
+| F3_vanilla_cfm_rand | VanillaCFM | [32,64,128] | 400 | cs1_rand+cs2_rand | done |
+| G1_vanilla_cfm_t0_default | VanillaCFM (τ=0) | [64,128,256] | 400 | cs1+cs2 | done |
+| G2_vanilla_cfm_t0_small | VanillaCFM (τ=0) | [32,64,128] | 400 | cs1+cs2 | done |
+| G3_vanilla_cfm_t0_rand | VanillaCFM (τ=0) | [32,64,128] | 400 | cs1_rand+cs2_rand | done |
+| S1–S10 (incl. τ=0 + joint-CFM variants) | various | various | — | s0_s1 | done |
+
+### Lorenz-96 (DA-parity: all-5 params ±20%, obs_j=2 → 24D, Obs30)
+
+| ID | Model | Hidden | Epochs | τ mode | Status |
+|---|---|---|---|---|---|
+| L1b_direct_unet_s0s1 | DirectUNet | [64,128,256] | 200 | n/a | done (beats DA on S0+S1) |
+| L2b_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | τ=0 | done (≈ L1b) |
+| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | **training** (Q1) |
+| L4/L5 (future) | DirectUNet / CFM-τ0 | [32,64,128] | — | — | planned (Q2 size ablation) |
+| L6 (future) | VanillaCFM | [64,128,256] | — | τ=0 | planned (Q3 cond_extra_dim=1) |
 
 ## Phases
 
@@ -101,25 +132,24 @@ compare DA vs neural on S0/S1 (WP8) — all via the L96 sbatch scripts.
 - [x] `batch/run_config_validation.sbatch` — Hydra config + model factory validation
 - [x] Deprecated duplicate `run_vanilla_experiments.sbatch` and interactive `run_tests.sh`
 
-### Phase 3: τ=0 CFM Ablation (Exp G)
-- [ ] `conf/schema.py` — add `train_tau_0_only: bool = False` to `VanillaCFMConfig`
-- [ ] `models/vanilla_cfm.py` — τ=0 logic in `compute_cfm_loss` and `sample`
-- [ ] `train.py` — wire `train_tau_0_only` flag through `model_factory`
-- [ ] 3 config YAMLs: G1_vanilla_cfm_t0_default, G2_vanilla_cfm_t0_small, G3_vanilla_cfm_t0_rand
-- [ ] Update `batch/run_one_epoch_tests.sbatch` + `batch/run_new_experiments.sbatch` with G1-G3
-- [ ] Tests for τ=0 mode
+### Phase 3: τ=0 CFM Ablation (Exp G) — complete (2026-07-01)
+- [x] `conf/schema.py` — `train_tau_0_only: bool = False` on `VanillaCFMConfig`
+- [x] `models/vanilla_cfm.py` — τ=0 logic in `compute_cfm_loss` and `sample`
+- [x] `train.py` — `train_tau_0_only` wired through `model_factory`
+- [x] 3 config YAMLs: G1_vanilla_cfm_t0_default, G2_vanilla_cfm_t0_small, G3_vanilla_cfm_t0_rand
+- [x] `batch/run_one_epoch_tests.sbatch` + `batch/run_new_experiments.sbatch` updated with G1-G3
+- [x] Tests for τ=0 mode
 
-### Phase 4: Verify (all via sbatch)
-- [ ] `sbatch batch/run_config_validation.sbatch` — all 10 configs load
-- [ ] `sbatch batch/run_lint.sbatch` — ruff + mypy pass
-- [ ] `sbatch batch/run_test_suite.sbatch` — all fast tests pass
-- [ ] `sbatch batch/run_one_epoch_tests.sbatch` — GPU smoke test (E1-F3 + G1-G3, 1 epoch)
+### Phase 4: Verify (all via sbatch) — complete (2026-07-01)
+- [x] `sbatch batch/run_config_validation.sbatch` — all configs load
+- [x] `sbatch batch/run_lint.sbatch` — ruff + mypy pass
+- [x] `sbatch batch/run_test_suite.sbatch` — fast tests pass
+- [x] `sbatch batch/run_one_epoch_tests.sbatch` — GPU smoke test (E1-F3 + G1-G3, 1 epoch)
 
-### Phase 5: Launch
-- [ ] `sbatch batch/run_new_experiments.sbatch` — full E1-F3 + G1-G3
-- [ ] Collect results → `python reports/generate_experiment_report.py`
-- [ ] Merge to master, push
-- [ ] Update CHANGELOG.md
+### Phase 5: Launch — complete (2026-07)
+- [x] `sbatch batch/run_new_experiments.sbatch` — full E1-F3 + G1-G3
+- [x] Results collected under `experiments/` (see Experiments tables above)
+- [x] CHANGELOG.md entries per change
 
 ## Interfaces
 

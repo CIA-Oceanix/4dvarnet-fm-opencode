@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-08-23: L3 multi-τ CFM ablation launched + L63/L96 experiment-series correction + docs sync
+
+**Summary:** Launched **Q1** (does multi-τ CFM beat conditional-mean estimation on L96?): added `config/experiment/L3_vanilla_cfm_s0s1.yaml` — an exact clone of L2b (`hidden [64,128,256]`, `cond_extra_dim: 0`, `param_dim: 0`, 400 epochs) with `train_tau_0_only: false` — plus a dedicated single-job sbatch. While training runs, synced all stale planning docs. Critically, **corrected a series-naming misidentification**: the E/F/G/**S** experiment directories are all **Lorenz-63** models (`cs1+cs2`, `state_dim=3`) — only the **L-series (L1b/L2b)** are Lorenz-96 — voiding a planned "evaluate S7–S10 on the L96 cached test set" task before any wrong numbers were produced. Retired the broken superseded comparison report (`generate_l96_neural_comparison.py` looked for a nonexistent cache; output table was empty) in favor of `reports/benchmark_table_l96.py`. Recorded Q2 (small `[32,64,128]` variants of L1b/L2b) and Q3 (forcing-conditioned `cond_extra_dim: 1` variant) as queued future work.
+
+**Files modified:**
+- `config/experiment/L3_vanilla_cfm_s0s1.yaml` — new: multi-τ VanillaCFM L96 config (`train_tau_0_only: false`)
+- `batch/run_l96_neural_training_l3.sbatch` — new: single-job GPU training run for L3
+- `reports/generate_l96_neural_comparison.py` — deleted (broken; superseded by `reports/benchmark_table_l96.py`)
+- `reports/outputs/l96_neural_comparison.md` — deleted (empty/broken output)
+- `batch/run_l96_evaluate_all.sbatch` — repointed to `benchmark_table_l96.py`
+- `PLAN.md` — system-naming convention note (E/F/G/S = L63, L = L96); fixed stale param_dim description (obs-only via cond_extra_dim=0); Phases 3–5 marked complete; experiments table split L63/L96 with statuses; new Open questions Q1/Q2/Q3
+- `L96_NEURAL_TRAINING_PROGRESS.md` — closed Step 11d/11e/12/WP8 rows with outcomes; WP3 note updated to cond_extra_dim refactor; handoff list rewritten
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The S-series naming ("s0_s1" data setup) is shared between systems and misled this session's plan into treating L63 checkpoints as L96 candidates; checkpoint-shape inspection caught it before evaluation. Documenting the convention prevents recurrence. L3 isolates the single τ-sampling factor against L1b/L2b; Q2/Q3 are recorded so follow-up sessions can pick them up without re-derivation.
+
+**Verification:** Hydra composition + `model_factory` validated locally for L3 (VanillaCFM, proj_in=48, `train_tau_0_only=False` on the model instance); `bash -n` on the sbatch. Training job submitted separately (see next entry for results). Docs-only edits otherwise.
+
 ## 2026-08-23: Generalize PR workflow to AGENTS.md (all sessions) + auto-allow /tmp & conda access
 
 **Summary:** Promoted the L96-specific run-to-completion rule into a canonical **`Git / PR Workflow`** section in `AGENTS.md` so it applies to code changes in *every* session, not just the L96 integration branch. AGENTS.md now covers branch naming (`feature/<topic>` for new work, `feat/*` reserved for integration branches, ruleset blocks pushes of new `feat/l96-*`), the run-to-completion policy, reviewer identity (`rfablet-review` via `scripts/open_pr.sh`), the pytest-only CI merge gate (ruff informational), pre-merge local verification, and hygiene. PLAN.md's duplicated paragraph was trimmed to a pointer at AGENTS.md. Separately, reordered the global `~/.config/opencode/opencode.json` `external_directory` rules to auto-allow `/tmp/**` and the miniforge3 conda env, eliminating the per-session approval prompts for scratch work and Python invocations (last-match-wins ordering: catch-all `*` first, specific allows after).

@@ -25,7 +25,7 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 echo ""
 
-python reports/generate_l96_neural_comparison.py
+python reports/benchmark_table_l96.py
 
 echo ""
 echo " Done at: $(date)"
