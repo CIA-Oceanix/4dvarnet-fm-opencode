@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-23: Q2/Q3 L96 training runs launched (L4/L5 small variants + L6 forcing-conditioned)
+
+**Summary:** Launched the remaining open L96 questions as GPU training runs alongside Q1 (L3): **Q2** model-size sensitivity via `L4_direct_unet_s0s1_small.yaml` (DirectUNet [32,64,128], 200 epochs) and `L5_vanilla_cfm_s0s1_small_tau0.yaml` (VanillaCFM τ=0, small, 400 epochs); **Q3** forcing conditioning via `L6_vanilla_cfm_s0s1_forcing_cond.yaml` (VanillaCFM τ=0 with `cond_extra_dim: 1`, fed the corrupted forcing — proj_in=49 vs 48 obs-only). Single array sbatch requests an explicit `gpu:rtx8000:1` per task. Also fixed #53's generic `--gres=gpu:1` request, which this cluster rejects (GPU model must be explicit) — learned at resubmission; rtx8000 chosen because node sl-mee-br-204 was idle while A40s were saturated.
+
+**Files modified:**
+- `config/experiment/L4_direct_unet_s0s1_small.yaml` — new
+- `config/experiment/L5_vanilla_cfm_s0s1_small_tau0.yaml` — new
+- `config/experiment/L6_vanilla_cfm_s0s1_forcing_cond.yaml` — new (`cond_extra_dim: 1`)
+- `batch/run_l96_neural_training_l4l5l6.sbatch` — new array job (3 tasks)
+- `PLAN.md` — L4/L5/L6 rows → training; Q2/Q3 marked in progress
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Idle RTX8000 capacity allowed all three runs to start immediately; running them concurrently with L3 answers Q1–Q3 in one wall-clock window (~5h each). L4/L5 mirror the S-series small-vs-default pairing on L96; L6 tests whether corrupted-forcing input improves S1 robustness over obs-only models.
+
+**Verification:** Hydra compose + model_factory for all 3 (L4/L5 proj_in=48/proj_out=32; L6 proj_in=49); loss+sample smoke on L96-shaped batches passed for all 3; `bash -n` sbatch OK; jobs 49304_0/1/2 RUNNING on sl-mee-br-204 within 30 s of submission (`Device: cuda (Quadro RTX 8000)`).
+
 ## 2026-08-23: L3 multi-τ CFM ablation launched + L63/L96 experiment-series correction + docs sync
 
 **Summary:** Launched **Q1** (does multi-τ CFM beat conditional-mean estimation on L96?): added `config/experiment/L3_vanilla_cfm_s0s1.yaml` — an exact clone of L2b (`hidden [64,128,256]`, `cond_extra_dim: 0`, `param_dim: 0`, 400 epochs) with `train_tau_0_only: false` — plus a dedicated single-job sbatch. While training runs, synced all stale planning docs. Critically, **corrected a series-naming misidentification**: the E/F/G/**S** experiment directories are all **Lorenz-63** models (`cs1+cs2`, `state_dim=3`) — only the **L-series (L1b/L2b)** are Lorenz-96 — voiding a planned "evaluate S7–S10 on the L96 cached test set" task before any wrong numbers were produced. Retired the broken superseded comparison report (`generate_l96_neural_comparison.py` looked for a nonexistent cache; output table was empty) in favor of `reports/benchmark_table_l96.py`. Recorded Q2 (small `[32,64,128]` variants of L1b/L2b) and Q3 (forcing-conditioned `cond_extra_dim: 1` variant) as queued future work.
