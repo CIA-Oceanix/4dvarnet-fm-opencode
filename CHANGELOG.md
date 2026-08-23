@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-23: Generalize PR workflow to AGENTS.md (all sessions) + auto-allow /tmp & conda access
+
+**Summary:** Promoted the L96-specific run-to-completion rule into a canonical **`Git / PR Workflow`** section in `AGENTS.md` so it applies to code changes in *every* session, not just the L96 integration branch. AGENTS.md now covers branch naming (`feature/<topic>` for new work, `feat/*` reserved for integration branches, ruleset blocks pushes of new `feat/l96-*`), the run-to-completion policy, reviewer identity (`rfablet-review` via `scripts/open_pr.sh`), the pytest-only CI merge gate (ruff informational), pre-merge local verification, and hygiene. PLAN.md's duplicated paragraph was trimmed to a pointer at AGENTS.md. Separately, reordered the global `~/.config/opencode/opencode.json` `external_directory` rules to auto-allow `/tmp/**` and the miniforge3 conda env, eliminating the per-session approval prompts for scratch work and Python invocations (last-match-wins ordering: catch-all `*` first, specific allows after).
+
+**Files modified:**
+- `AGENTS.md` — new canonical `## Git / PR Workflow` section (branching, run-to-completion, review+merge, hygiene)
+- `PLAN.md` — replaced the inlined run-to-completion paragraph with a pointer to `AGENTS.md` (`Git / PR Workflow`)
+- `CHANGELOG.md` — this entry
+- `~/.config/opencode/opencode.json` — `external_directory` reordered: `"*": "ask"` first, then `"/tmp/**": "allow"` and `"/Odyssey/private/rfablet/miniforge3/**": "allow"` (private to a future-open-session PR; applied directly)
+
+**Rationale:** The run-to-completion expectation was previously scoped to the L96 branch in PLAN.md, so future sessions on other topics would not inherit it (causing stalls mid-PR in Easteregg sessions). Documenting it in AGENTS.md — which is loaded into every session — makes the drive-to-merge behavior a portable, enforced default. The permission reorder targets the repeated manual approval the user had to grant for `/tmp/` and the Python env each session, with the minimal allow-list they requested.
+
+**Verification:** `ruff check` — not applicable (markdown/JSON config only). `python -c "import json; json.load(open(os.path.expanduser('~/.config/opencode/opencode.json')))"` — JSON parses. No code/tests affected.
+
+## 2026-08-23: Clarify agent run-to-completion policy in the PR workflow
+
+**Summary:** Added an explicit **run-to-completion policy** to the `Multi-agent review workflow` section of `PLAN.md`. Previously the implementer → reviewer → verifier loop was described as a set of commands but did not state whether a single agent should drive Option A (create → wait for CI → reviewer approval → merge) to completion without pausing. This ambiguity caused the agent to stop after opening PR #48 and wait for user input instead of finishing the review/merge autonomously. The new policy makes it unambiguous: once the user says "go", the agent runs the whole loop to a merged PR, pausing only on genuine external blockers (reviewer request-changes, non-informational CI failure, merge conflict, or a user-requested checkpoint).
+
+**Files modified:**
+- `PLAN.md` — added the "Run-to-completion policy (IMPORTANT)" paragraph to the `Multi-agent review workflow` section + a "Do NOT treat 'PR created' as a natural stopping point" directive
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Prevent future sessions from stalling mid-PR and forcing the user to prompt (as happened in this session). The policy turns the previously implicit expectation into an explicit instruction so the automated loop runs end-to-end whenever a go-ahead has been given.
+
+**Verification:** `ruff check` — not applicable (markdown-only change). No code/tests affected.
+
 ## 2026-08-23: L96 neural DA-parity eval re-run + ES backfill — neural now beats DA
 
 **Summary:** Re-ran the standalone **DA-parity** evaluation (`eval_neural_l96.py`) on the freshly retrained L1b (DirectUNet) and L2b (VanillaCFM τ=0) checkpoints against the cached S0/S1 test set (`experiments/l96_datasets_obsj2_int100_nwin200.pt`), using the correct `stage1_best.ckpt` Lightning checkpoints. This resolves the earlier alarming **1.56-vs-0.65 discrepancy**: the stale benchmark table had been generated on pre-retrain checkpoints with the pre-#46 truth-subsampling bug (first-24-columns instead of the non-contiguous `obs_var_indices`). With the fix, the DA-parity neural eval matches the in-process result (~0.62). Also added an **ES backfill** (`backfill_l96_baselines_es.py`, mirroring the EV backfill) so the DA rows in the benchmark table show real Energy Scores instead of 0.0000, and repointed the table at the correct **S0c** DA cache (the apple-to-apples comparator matching the neural training setup).
