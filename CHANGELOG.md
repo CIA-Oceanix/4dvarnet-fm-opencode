@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-23: QG S0/S1 — rollout-based free divergence + calibration report fix
+
+**Summary:** Completed the QG Phase A.3 S0/S1 along-track evaluation dataset deliverable and fixed two bugs in its calibration report. Added `QGDynamics.rollout_trajectory(state, steps, wind_state)` (full `(steps+1, D)` path, index-aligned with and bitwise-equivalent to `generate_full_trajectory` given the same IC+wind). Rewrote `reports/calibrate_qg_alongtrack.py`'s free-divergence to use it and added `--device`. Fixed two correctness bugs that made forced S0 windows spuriously diverge: (1) passing a `(1,D)` IC into `rollout_trajectory` returned `(T,1,D)` that broadcast against `(T,D)` truth into a `(T,T,D)` ~17 GB tensor (SIGKILL/OOM at nx=64); (2) `_build_dyn` omitted `wind_amp`/`wind_sigma`, so the `_wind_curl_spectral` forcing gate (`wind_amp==0`) silently disabled wind during rollouts. Verified separation: S0 divergence `[3.7e-07 … 2.4e-04]` ≪ S1a `[0.48 … 1.35]` (**2033×**) with the sanity gate `max(S0) < min(S1a)`.
+
+**Files modified:**
+- `models/qg_dynamics.py` — new `rollout_trajectory` (full-path rollout mirroring `generate_full_trajectory` time-first layout).
+- `reports/calibrate_qg_alongtrack.py` — `_free_divergence` uses `rollout_trajectory(true_state[0], num_steps-1, ws)` index-aligned (avoids `(T,T,D)` blowup → the SIGKILL); `_build_dyn` now passes `wind_amp` (per-window) + `wind_sigma` so the forcing gate opens; added `--device` (default cuda) + printed sanity gate.
+- `tests/test_qg_dynamics.py` — added `test_rollout_trajectory_reproduces_generate` + `test_rollout_trajectory_batched` (2 new tests; 22 total dynamics tests).
+- `reports/outputs/figs/qg_alongtrack_calibration.{png,json}` — regenerated with the fixed divergence (S0 round-trip, S1a biased).
+- `data/qg.py` — (from the A.3 dataset work on this branch) along-track obs, `QGS01Dataset`, `make_qg_s0_s1_datasets`; unchanged this turn.
+- `tests/test_qg_s0s1.py` — 14-test S0/S1 suite (from the A.3 work); unchanged this turn.
+- `PLAN.md`/`CHANGELOG.md` — Phase A.3 documented (with the wind-gate root-cause note).
+
+**Rationale:** The S0/S1 calibration exists to prove the dataset separates model-error-free (S0) from biased/structural-error (S1a/S1b) cases; the earlier report silently disabled wind forcing in the forward model, so forced windows looked as divergent as S1a — invalidating the design check. The `(1,D)` broadcast bug independently caused login-node OOM kills. Both fixed, the report now shows the intended 2033× separation.
+
+**Verification:** `pytest tests/test_qg_dynamics.py tests/test_qg_data.py tests/test_qg_s0s1.py` — 49 passed. Full fast suite: 23 failures identical to base branch `4ed4d7c` (pre-existing Lorenz63/baselines/joint-estimation environment issues; **zero new failures introduced**). `ruff check` clean on all 5 touched files; `mypy` clean on `data/qg.py`, `models/qg_dynamics.py`, `reports/calibrate_qg_alongtrack.py` (remaining errors are pre-existing `lorenz96`/`random_*` debt). Report on GPU (Quadro RTX 8000, nx=64, 5 windows): S0 `[3.7e-07, 3.8e-07, 6.8e-07, 2.4e-04, 3.6e-06]` < S1a `[0.48, 0.83, 0.81, 1.35, 1.32]`, gate `max(S0)=2.4e-04 < min(S1a)=4.85e-01` (2033×).
+
 ## 2026-08-21: QG — coherent-storm wind amplitude (wind_tau_days 5→15 d) + 1-day animation
 
 **Summary:** The wind-stress-curl amplitude OU `wind_tau_days` was raised `5 → 15` days so the storm's amplitude decorrelates on the storm-passage timescale (~23-day transit) rather than flickering on a 5-day timescale. This makes the wind storm a coherent entity that waxes as it enters and wanes as it exits the basin, eliminating the frame-to-frame amplitude "blinking" in the animations. Animation sampling reduced from 2-day to 1-day stride (`--sample-days 1.0`) to make the smooth amplitude evolution visible. Amplitude recalibrated under the new timescale: `wind_amp=1e-11` → KE +30% vs unforced (3.51e-3), essentially on the +32% comparable-contribution target, so the default is **unchanged**. Added a coherence regression test (lag-1-day amplitude autocorrelation > 0.8).

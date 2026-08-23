@@ -232,3 +232,21 @@ def test_storm_track_drift_direction():
     dy = ((y1 - y0) % dyn.W)
     assert dx > 0
     assert dy > 0
+
+
+def test_rollout_trajectory_reproduces_generate():
+    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, wind_amp=1e-8, **NOMINAL)
+    nsteps = 8
+    traj, ws = dyn.generate_full_trajectory(num_steps=nsteps, spinup_steps=5,
+                                            seed=3)
+    roll = dyn.rollout_trajectory(traj[0], nsteps - 1, wind_state=ws)
+    assert roll.shape == (nsteps, dyn.state_dim)
+    assert torch.allclose(roll, traj, rtol=1e-5, atol=1e-5)
+
+
+def test_rollout_trajectory_batched():
+    dyn = QGDynamics(nx=NX_SMALL, dt=7200.0, **NOMINAL)
+    batch = torch.randn(3, dyn.state_dim)
+    ws = torch.zeros(5, 3)
+    out = dyn.rollout_trajectory(batch, 5, wind_state=ws)
+    assert out.shape == (6, 3, dyn.state_dim)
