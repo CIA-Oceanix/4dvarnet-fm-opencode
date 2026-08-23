@@ -10,10 +10,14 @@ from tabulate import tabulate
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# DA baseline cache patterns
+# DA baseline cache patterns (primary first). The S0c/S1c Obs30 run matches the
+# neural training test setup (obs_interval=100, obs_j=2, h fixed, fast_weights
+# randomized +-20%) and is the apples-to-apples DA comparator. The trailing one
+# is a fallback for runs whose fast-weight randomization produced a different tag.
 DA_CACHE_PATTERNS = [
-    "experiments/l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2_int100.json",  # S0c/S1c default
-    "experiments/l96_baselines_dws500_obsj2_int100.json",
+    "experiments/l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.json",
+    "experiments/l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2_int100_fw.json",
+    "experiments/l96_baselines_dws500_inf2.0_etkf_inf2.0_obsj2_int100.json",
 ]
 
 # Neural model evaluation results (neural_eval.json) and checkpoint patterns.
@@ -49,12 +53,15 @@ def load_da_baseline(cache_path: str) -> dict:
             ev_groups = metrics.get("ev", {})
             if isinstance(ev_groups, dict):
                 ev_groups = ev_groups.get("groups", {})
+            es_groups = metrics.get("es", {})
+            if isinstance(es_groups, dict):
+                es_groups = es_groups.get("groups", {})
             results[key] = {
                 "rmse": metrics.get("mean", 0.0),
                 "rmse_slow": metrics.get("groups", {}).get("slow", 0.0),
                 "rmse_obs_fast": metrics.get("groups", {}).get("obs_fast", 0.0),
                 "ev": ev_groups.get("all_obs", 0.0) if isinstance(ev_groups, dict) else 0.0,
-                "es": 0.0,  # ES not recorded in DA caches
+                "es": es_groups.get("all_obs", 0.0) if isinstance(es_groups, dict) else 0.0,
             }
     return results
 
@@ -123,12 +130,14 @@ def find_all_results() -> tuple:
     da_results = {}
     neural_results = {}
     
-    # Load DA baselines
+    # Load DA baselines (use the first existing pattern; list is ordered primary
+    # first so the S0c/S1c apples-to-apples cache wins over fallbacks).
     for pattern in DA_CACHE_PATTERNS:
         cache_path = Path(pattern)
         if cache_path.exists():
             logger.info(f"Loading DA baseline: {cache_path}")
             da_results.update(load_da_baseline(str(cache_path)))
+            break
     
     # Load neural models: prefer pre-computed neural_eval.json results
     for pattern in NEURAL_JSON_PATTERNS:
