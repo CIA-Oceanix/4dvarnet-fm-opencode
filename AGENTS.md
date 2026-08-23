@@ -9,6 +9,53 @@ Every opencode session in this repository MUST follow this workflow:
 3. **Verify** — Run the relevant test/lint commands (see below).
 4. **Log changes** — Append a dated entry to `CHANGELOG.md` describing what was implemented, why, and any notable design decisions.
 
+## Git / PR Workflow
+
+These general requirements apply to code changes in **every** session (not just L96).
+The canonical, current version of these rules lives here; PLAN.md may carry
+L96-specific details and pointers.
+
+### Branching
+
+- New work branches use the `feature/<topic>` prefix (e.g. `feature/session-workflow-automation`).
+- `feat/*` names are **reserved for integration branches** (e.g. `feat/l96-neural-eval-fix`).
+  A repo ruleset **blocks direct pushes of new `feat/l96-*` branches**, so always create
+  `feature/...` branches for new work.
+- Check the active integration branch (remote / PLAN.md) and use it as the PR base.
+
+### Run-to-completion policy (IMPORTANT)
+
+Once the user gives a go-ahead (e.g. "go", "proceed", "approved"), the implementing agent
+drives a subtask **all the way to a merged PR without pausing for another approval between
+the create → CI → review → merge steps**. The loop is fully automated (approval is done by
+the `rfablet-review` identity and the `pytest` CI check is the merge gate), so nothing a human
+must decide sits in the middle. Concretely, after pushing and opening the PR, continue:
+wait for the `pytest` check to pass, run the reviewer approval, then verify and squash-merge.
+Do **NOT** treat "PR created" as a natural stopping point.
+
+Stop for user input only on a genuine external blocker:
+
+- a reviewer **request-changes** (must be fixed with a new commit)
+- a **non-informational CI failure** (informational ruff `continue-on-error` does not block)
+- a **merge conflict**
+- a **checkpoint the user explicitly asked to review**
+
+### Review + merge
+
+- Approvals come from the second GitHub account **`rfablet-review`** — not the author
+  (GitHub blocks self-approval). Use `scripts/open_pr.sh review <PR#>` with the reviewer
+  token at `~/.config/opencode/reviewer-token`.
+- Pipeline: `scripts/open_pr.sh create "<msg>"` → wait for CI → `review <PR#>` →
+  `verify <PR#>` (squash-merge).
+- **Merge gate = `pytest -m "not slow"`** on the required test files. Ruff is informational
+  (`continue-on-error: true`) so `mergeStateStatus: UNSTABLE` does not block the merge.
+- Before merging, run the fast tests and `ruff check` on touched files locally.
+
+### Hygiene
+
+- Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
+- Add a CHANGELOG.md entry (see format below) for every merged change.
+
 ## Changelog Format
 
 Each entry in `CHANGELOG.md` should follow this format:

@@ -50,6 +50,11 @@ Two execution paths:
 - **Option B — Local**: `scripts/agent_review_loop.sh <STEP> "<desc>" [--review]`
   provides the same loop with local git (works immediately).
 
+**Run-to-completion policy:** the general rules (branch naming, drive-to-merge, reviewer
+identity, CI gate) live in `AGENTS.md` under **Git / PR Workflow** and apply to every
+session — follow those. This branch additionally uses `feat/l96-*` as its integration
+namespaces subject to the repo ruleset.
+
 **REMINDER:** run `gh auth login` and enable branch protection on `feat/l96-*`
 (require 1 PR approval + status checks) to unlock the GitHub PR path.
 
