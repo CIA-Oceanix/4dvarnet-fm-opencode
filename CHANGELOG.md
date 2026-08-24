@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-24: QG DA baselines on S0/S1a (EnKF/ETKF) — along-track moving-track obs generalization
+
+**Summary:** Added the first DA baselines for the QG S0/S1 along-track case study. Generalized `evaluation/baselines.py` so the ensemble filters support **per-timestep observation indices** (`ObsOperator.obs_indices_t`/`index_at(t)` — needed because the nadir-altimetry track shifts a full meridional column each repeat cycle) plus a **generic 2-D Gaspari–Cohn localization builder** (`_build_qg_loc_matrices`), with the default path byte-for-byte unchanged for L63/L96. Added `evaluation/run_qg_baselines.py` running EnKF/ETKF per-window over the S0/S1a scenarios, observing upper-layer PV q₁ with a `WindStateAdapter` mapping the baseline forcing channel to QG `wind_state_t`. Finding: at 0.026% along-track coverage over a 60-day window, noise-cold-start EnKF/ETKF recover the state to ~field-std (EV≲0) — under error-free S0 the exact-IC free forecast is near-perfect so DA cannot beat it, while under S1a (biased params + corrupted wind) the degraded forecast is pulled toward truth and localization helps.
+
+**Files modified:**
+- `evaluation/baselines.py` — `ObsOperator`: optional `obs_indices_t` + `index_at(t)` (fixed-index default unchanged); `_gc_matrix` (vectorized Gaspari–Cohn) + `_build_qg_loc_matrices` (per-time, (x,y,layer) distance, cross-layer suppressed); EnKF/ETKF gained `loc_Lx_t`/`loc_Ly_t` and per-time index/od/loc resolution in all four analysis paths (assimilate + assimilate_batch), backward compatible.
+- `evaluation/run_qg_baselines.py` — new: `WindStateAdapter(DynamicsBase)`, per-window dynamics (`da_model`/`da_params`, `clip_range=1e-3`), q₁ along-track index obs, per-pass `obs_indices_t`, RMSE + pooled EV + free-forecast RMSE (`forecast_improvement = forecast_rmse/da_rmse`).
+- `tests/test_qg_baselines.py` — new: 8 tests (per-time obs-index resolution, loc shapes+suppression, wind-adapter forwarding, q-obs gen, per-pass layout, small EnKF smoke finite/bounded).
+- `reports/outputs/figs/qg_da_baselines_{etkf,enkf}.json` — nx=32, 3 windows, 60 d, N=80, loc 12: S0 EV≈−0.5 (free forecast 1e-10), S1a da_rmse≈4e-6 vs forecast 2.7e-6 (improv~0.65×), localization reduces RMSE vs unlocalized.
+- `PLAN.md`/`CHANGELOG.md` — Phase A.5 documented with the sparse-coverage finding.
+
+**Rationale:** The QG along-track observations move zonally each pass, which the filters' fixed single-index `ObsOperator` could not represent. The minimal, backward-compatible generalization adds per-timestep index selection and per-time localization so EnKF/ETKF can assimilate the actual moving-track obs. Observing upper-layer PV q₁ directly keeps the observation operator a linear index selection (the dynamical state is q, not ψ; a ψ-based H would need the full nonlocal inversion).
+
+**Verification:** `pytest tests/test_qg_baselines.py tests/test_baselines_hydra.py` — 16 passed (8 + 8). `pytest tests/test_qg_dynamics.py tests/test_qg_data.py tests/test_qg_s0s1.py tests/test_qg1l_dynamics.py tests/test_qg_baselines.py tests/test_baselines_hydra.py` — 83 passed. Ruff clean on new files (runner + test); `baselines.py` ruff 39 errors (down from 43 base) and mypy 99 (down from 100 base) — all remaining are pre-existing repo debt, none in new code. GPU runs (Quadro RTX 8000, nx=32, 3 windows): ETKF/EnKF S0 RMSE≈3e-6 (EV≈−0.5, free forecast 1e-10), S1a RMSE≈4e-6 vs forecast 2.7e-6.
+
 ## 2026-08-24: QG S1b — reduced-gravity single-layer dynamics (`qg1l`)
 
 **Summary:** Wired the S1b structural-model-error scenario by adding `models/qg1l_dynamics.py` (`QG1LDynamics`), a reduced-gravity single-layer QG model over a motionless deep layer, and connected it into the S0/S1 free-divergence calibration. S1b divergence `[1.13 … 1.36]` now separates above S1a `[0.58 … 1.31]`, both ≫ S0 `[5.7e-06 … 2.9e-04]` (2034× separation gate holds), confirming structural error is the largest free-divergence signal.
@@ -177,6 +192,7 @@
 
 ### Fixed
 - **EV computation**: `evaluate_baseline` now computes explained variance using **pooled variance across all windows** (`1 − mean(MSE_i) / var(ref_all)`) instead of per-window metric (`mean(1 − MSE_i / var_i)`). Per-window EV was dominated by low-variance X windows (26% of windows have X variance < 0.1 in L96), producing artifactually negative mean EV even when DA is skillful. Pooled EV matches the correct climatological interpretation.
+- **S0 common-24 extraction misalignment**: `evaluation/run_l96_sweep2.py` extracted `m[:24]` (first 4 nodes × all 4 Y's) instead of `m[list(obs_indices)]` (all 8 nodes × Y1/Y2). S1 path on `exp/maooam-torch` also had the wrong `obs_var_indices` (fixed on this branch). The common-24 subset now correctly matches the J=2 observed variable ordering across all 8 nodes.
 
 ### Added
 - Explained variance metric in `evaluation/run_l96_sweep2.py`: stores `mean_expvar_slow`, `mean_expvar_fast`, `per_var_expvar_mean`, `per_var_expvar_std` in JSON output; prints grouped EV summary in console.
