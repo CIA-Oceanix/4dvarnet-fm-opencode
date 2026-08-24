@@ -426,3 +426,30 @@ def test_fast_weights_active():
         Lorenz96Config(randomize={"fast_weights": {"randomized": True}})) is True
     assert _fast_weights_active(
         Lorenz96Config(randomize={"F": {"randomized": True}})) is False
+
+
+class TestMethodTruth:
+    def test_slices_to_method_state_dim(self):
+        from evaluation.run_l96 import _method_truth
+
+        class M:
+            state_dim = 24
+
+        truth = torch.randn(2, 50, 40)
+        ovi = make_obs_j_indices(8, 4, 2)
+        out = _method_truth(truth, M(), ovi)
+        assert out.shape == (2, 50, 24)
+        torch.testing.assert_close(out, truth[..., ovi])
+
+    def test_full_dim_and_unknown_method_unchanged(self):
+        from evaluation.run_l96 import _method_truth
+
+        class Full:
+            state_dim = 40
+
+        class Bare:
+            pass
+
+        truth = torch.randn(2, 50, 40)
+        assert _method_truth(truth, Full(), list(range(24))) is truth
+        assert _method_truth(truth, Bare(), list(range(24))) is truth
