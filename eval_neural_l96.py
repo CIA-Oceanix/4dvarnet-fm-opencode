@@ -16,10 +16,15 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from evaluation.estimate_metrics import evaluate_estimates, save_estimates
+from evaluation.estimate_metrics import (
+    evaluate_ensemble_estimates,
+    evaluate_estimates,
+    save_estimates,
+)
 from evaluation.neural_inference import load_model, prepare_dataset, run_inference
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,6 +43,13 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
     parser.add_argument("--train-tau0-only", action="store_true",
                         help="Load with train_tau_0_only=True (tau=0-trained CFM checkpoints)")
+    parser.add_argument("--n-members", type=int, default=1,
+                        help="Number of stochastic members to sample (CFM; 1 = legacy single sample)")
+    parser.add_argument("--n-outer", type=int, default=1,
+                        help="Euler integration steps for CFM sampling")
+    parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
+    parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
+                        help="Which test cases to evaluate")
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
     args = parser.parse_args()
 
@@ -71,22 +83,40 @@ def main():
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
     # Step 1: inference -> estimates
-    logger.info("Running inference (step 1)...")
-    estimates = run_inference(model, dataloaders, device, obs_var_indices)
+    torch.manual_seed(args.seed)
+    logger.info(
+        f"Running inference (step 1): cases={args.cases} n_members={args.n_members} "
+        f"n_outer={args.n_outer} seed={args.seed}"
+    )
+    estimates = run_inference(
+        model, dataloaders, device, obs_var_indices,
+        n_members=args.n_members, n_outer=args.n_outer,
+    )
 
     # Save per-case .npz estimates + truth, and compute generic metrics (step 2)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     metrics = {}
-    for case in ("s0", "s1"):
+    estimates_paths = {}
+    for case in args.cases:
         est = estimates[case]
         npz_path = output_path.parent / f"estimates_{case}.npz"
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
-        metrics[case] = evaluate_estimates(est["trajectories"], est["truth"])
-        logger.info(f"Saved estimates: {npz_path}")
+        estimates_paths[case] = str(npz_path)
+        if "members" in est:
+            members_path = output_path.parent / f"members_{case}.npz"
+            np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
+            estimates_paths[f"{case}_members"] = str(members_path)
+            metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])
+            logger.info(f"Saved estimates: {npz_path} + members: {members_path}")
+        else:
+            metrics[case] = evaluate_estimates(est["trajectories"], est["truth"])
+            logger.info(f"Saved estimates: {npz_path}")
 
     metrics["degradation"] = (
-        float(metrics["s1"]["rmse"] / metrics["s0"]["rmse"]) if metrics["s0"]["rmse"] > 0 else float("nan")
+        float(metrics["s1"]["rmse"] / metrics["s0"]["rmse"])
+        if "s0" in metrics and "s1" in metrics and metrics["s0"]["rmse"] > 0
+        else float("nan")
     )
 
     output = {
@@ -97,10 +127,13 @@ def main():
             "num_windows": args.num_windows,
             "obs_interval": args.obs_interval,
         },
-        "estimates": {
-            "s0": str(output_path.parent / "estimates_s0.npz"),
-            "s1": str(output_path.parent / "estimates_s1.npz"),
+        "sampling": {
+            "n_members": args.n_members,
+            "n_outer": args.n_outer,
+            "seed": args.seed,
+            "cases": list(args.cases),
         },
+        "estimates": estimates_paths,
         "metrics": metrics,
     }
     with open(output_path, "w") as f:
@@ -109,11 +142,17 @@ def main():
     logger.info(f"\n{'='*70}")
     logger.info(f"Results saved to: {output_path}")
     logger.info(f"{'='*70}")
-    for case in ("s0", "s1"):
+    for case in args.cases:
         m = metrics[case]
+        extra = ""
+        if "ensemble" in m:
+            es = m["ensemble"]["es_cache_convention"]["groups"]["all_obs"]
+            sp = m["ensemble"]["spread"]["groups"]["all_obs"]
+            extra = f" | ESens(cache): {es:.6f} | spread: {sp:.6f}"
         logger.info(f"[{case.upper()}] RMSE: {m['rmse']:.6f} | "
                     f"slow: {m['groups']['slow']:.6f} | obs_fast: {m['groups']['obs_fast']:.6f} | "
-                    f"EV(all): {m['ev']['groups']['all_obs']:.6f} | ES(all): {m['es']['groups']['all_obs']:.6f}")
+                    f"EV(all): {m['ev']['groups']['all_obs']:.6f} | ES(all): {m['es']['groups']['all_obs']:.6f}"
+                    f"{extra}")
     logger.info(f"[DEGRADATION] S1/S0 RMSE: {metrics['degradation']:.6f}")
     logger.info(f"{'='*70}\n")
 
