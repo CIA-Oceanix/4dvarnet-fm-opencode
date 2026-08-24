@@ -154,7 +154,9 @@ class QGDynamics(DynamicsBase):
         return q.to(device=device, dtype=self.dtype)
 
     def generate_wind_state(self, num_steps: int,
-                            seed: int | None = None) -> torch.Tensor:
+                            seed: int | None = None,
+                            x0: float | None = None,
+                            y0: float | None = None) -> torch.Tensor:
         out = torch.zeros(num_steps, 3, dtype=torch.float64)
         if self.wind_amp == 0.0:
             return out.to(self.dtype).to(self.device)
@@ -167,8 +169,8 @@ class QGDynamics(DynamicsBase):
         a = torch.zeros((), dtype=torch.float64)
         wx = torch.zeros((), dtype=torch.float64)
         wy = torch.zeros((), dtype=torch.float64)
-        x0 = self.L / 2.0
-        y0 = self.W / 2.0
+        x0 = self.L / 2.0 if x0 is None else float(x0)
+        y0 = self.W / 2.0 if y0 is None else float(y0)
         for k in range(num_steps):
             a = a - (1.0 / tau_a) * a * dt + coeff_a * torch.randn((), generator=gen)
             wx = wx - (1.0 / tau_d) * wx * dt + coeff_d * torch.randn((), generator=gen)
@@ -288,6 +290,34 @@ class QGDynamics(DynamicsBase):
         q_final = torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))
         out = self._flatten(q_final)
         return out.squeeze(0) if single else out
+
+    def rollout_trajectory(self, state: torch.Tensor, steps: int,
+                           wind_state: torch.Tensor | None = None,
+                           **kwargs) -> torch.Tensor:
+        """Roll the model forward and return the full trajectory.
+
+        Returns (steps+1, D) for a single state, (steps+1, B, D) for a batch,
+        where index 0 is the input state and index k is the state after k
+        RK4 steps. Mirrors `generate_full_trajectory`'s time-first layout.
+        """
+        single = state.dim() == 1
+        state_b = state.unsqueeze(0) if single else state
+        q = self._grid(state_b)
+        qh = torch.fft.rfft2(q, dim=(-2, -1))
+        U1 = kwargs.get("U1", self.U1)
+        U2 = kwargs.get("U2", self.U2)
+        beta = kwargs.get("beta", self.beta)
+        rek = kwargs.get("rek", self.rek)
+        wstate = wind_state if wind_state is not None \
+            else torch.zeros(steps, 3, device=qh.device, dtype=self.dtype)
+        traj = [torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1))]
+        for k in range(steps):
+            qh = self._rk4_step(qh, self.dt, U1, U2, beta, rek, wstate[k])
+            traj.append(torch.fft.irfft2(qh, s=(self.ny, self.nx), dim=(-2, -1)))
+        out = self._flatten(torch.stack(traj, dim=0))
+        if single:
+            out = out.squeeze(1)
+        return out
 
     def generate_full_trajectory(self, num_steps: int, seed: int = 42,
                                  device: torch.device | None = None,
