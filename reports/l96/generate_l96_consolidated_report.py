@@ -9,7 +9,7 @@ Consumes only cached artifacts of the DA-parity benchmark (Obs30, dws=500,
 - Test dataset     ``experiments/l96_datasets_obsj2_int100_nwin200.pt``
 - Neural estimates ``experiments/L*/estimates_{s0,s1}.npz``
 
-Outputs ``reports/outputs/l96_consolidated_benchmark.md`` with RMSE/EV/ES tables
+Outputs ``reports/l96/outputs/l96_consolidated_benchmark.md`` with RMSE/EV/ES tables
 over the all/slow/fast variable groups, a consistency-check section (cached
 metrics recomputed from stored arrays), and Hovmöller reconstruction figures
 (state + |error| maps, slow/fast blocks) for the worst/median/best test windows
@@ -22,7 +22,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import matplotlib
 
@@ -36,7 +36,7 @@ from evaluation.estimate_metrics import evaluate_estimates
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 DA_JSON_CANDIDATES = [
     "experiments/l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.json",
@@ -350,7 +350,7 @@ def main() -> None:
     parser.add_argument("--methods", nargs="+", default=DEFAULT_FIGURE_METHODS,
                         help="Methods for the reconstruction figures (DA schemes and/or experiment dir names)")
     parser.add_argument("--ranks", nargs="+", default=RANKS, choices=RANKS)
-    parser.add_argument("--out-dir", default="reports/outputs")
+    parser.add_argument("--out-dir", default="reports/l96/outputs")
     parser.add_argument("--tolerance", type=float, default=1e-3)
     args = parser.parse_args()
 
