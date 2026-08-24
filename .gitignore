@@ -32,7 +32,7 @@ data/processed/
 
 # Outputs
 outputs/
-!reports/outputs/
+!reports/*/outputs/
 results/
 lightning_logs/
 
