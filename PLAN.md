@@ -204,13 +204,24 @@ baselines** exist; the L96 joint **neural** models are missing.
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
 The original esfix array (job 49383 + resubmissions) failed before regenerating the
-non-canonical baseline caches. The `_ESAccumulator` fix is now on master (PR #74), so
-resuming is: submit `batch/run_l96_esfix.sbatch` against current master, wait for each
-`*_validation.json` gate (now with missing-`es` handling + 2% rel tolerance), swap the
-passing caches (`.json` → `.json.bak`, promote `*_esfix*`), regenerate the consolidated
-report, and open a follow-up PR. Affected caches: s0c int200 fw, fw6 int100/int200,
-legacy int100/int200, dws50. This is what unblocks the remaining per-method DA-parity
-ES column being marked `*` (N=1 MAE proxy) for the deterministic methods in the report.
+non-canonical baseline caches. A 2026-08-24 resubmission (job 49488, `--array=1-7`,
+against fixed master) **still cannot complete**: it *resumed from the stale partial
+`*_esfix*` caches* written by 49383 rather than doing a clean regeneration, and the
+validation gate then **failed on 6 of 7 caches** (RMSE mismatch vs originals: e.g. dws50
+EnKF S0 1.009→1.102, Strong-4DVar and S1 EnKF/ETKF drifting). Only the **legacy int100**
+cache passes cleanly and was swapped (`.bak` + promoted esfix). Rather than force-swap
+gate-failing caches (would corrupt RMSE consistency), the rest stay stale.
+
+**Important scoping note:** the consolidated report's DA candidates
+(`DA_JSON_CANDIDATES` in `reports/l96/generate_l96_consolidated_report.py`) point at the
+**canonical s0c int100 fw** cache first, which was already swapped bug-fixed and is
+correct (ETKF/EnKF proper textbook ES) — so **the report is already correct on the DA
+side** and none of the 6 non-report caches affect it. The 6 remaining caches (s0c int200
+fw, fw6 int100/int200, legacy int200, dws50, dws50 fw) serve other lineages and are
+**not** referenced by the consolidated report. To finish them correctly, delete the stale
+`*_esfix*` files for those caches and do a clean full regeneration (hours GPU each) —
+outcome uncertain given the CHANGELOG's note that some L96 caches "are not reproducible
+under current code semantics."
 
 ## Experiments
 
