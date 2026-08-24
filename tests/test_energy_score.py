@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from evaluation.metrics import energy_score
-from evaluation.baselines import EnKF, BaselineResult
+from evaluation.baselines import EnKF, Strong4DVar, BaselineResult
 
 
 class TestEnergyScoreMetric:
@@ -115,3 +115,41 @@ class TestEnKFEnergyScore:
         force = torch.zeros(T, device=device)
         result = enkf.assimilate(obs, mask, force)
         assert result.es is None
+
+
+class TestStrong4DVarBatchES:
+    def test_batch_reports_mae_es(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        method = Strong4DVar(
+            da_window_steps=5, max_iter=2, lr=0.1, dt=0.01,
+            device=device, dynamics=Lorenz63Dynamics(dt=0.01),
+        )
+        B, T, D = 2, 10, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::3] = True
+        force = torch.zeros(B, T, device=device)
+        truth = torch.randn(B, T, D, device=device)
+        results = method.assimilate_batch(obs, mask, force, true_state=truth)
+        assert len(results) == B
+        for b, result in enumerate(results):
+            assert result.es is not None
+            assert result.es.shape == (D,)
+            mae = np.mean(np.abs(result.trajectory - truth[b].cpu().numpy()), axis=0)
+            np.testing.assert_allclose(result.es, mae, rtol=1e-5)
+
+    def test_batch_es_none_when_truth_absent(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        method = Strong4DVar(
+            da_window_steps=5, max_iter=2, lr=0.1, dt=0.01,
+            device=device, dynamics=Lorenz63Dynamics(dt=0.01),
+        )
+        B, T, D = 1, 5, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::3] = True
+        force = torch.zeros(B, T, device=device)
+        results = method.assimilate_batch(obs, mask, force)
+        assert all(r.es is None for r in results)

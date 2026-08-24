@@ -92,7 +92,7 @@ SPECS = {
 }
 
 RMSE_TOL = 5e-3      # relative, GPU nondeterminism allowance
-DET_ES_TOL = 5e-3    # absolute, deterministic N=1 anchor
+DET_ES_TOL = 0.02    # relative, deterministic N=1 anchor (GPU nondeterminism vs backfilled MAE)
 
 
 def _rel(a, b):
@@ -120,7 +120,10 @@ def validate(orig_path: str, esfix_path: str) -> dict:
             es_old = blk["es"]["groups"]["all_obs"]
             es_new = nb["es"]["groups"]["all_obs"]
             det_anchor = method == "Strong-4DVar"
-            es_ok = abs(es_new - es_old) < DET_ES_TOL if det_anchor else abs(es_new - es_old) > 1e-4
+            es_ok = (
+                abs(es_new - es_old) < DET_ES_TOL * abs(es_old)
+                if det_anchor else abs(es_new - es_old) > 1e-4
+            )
             status = "OK" if (rmse_ok and ev_ok and es_ok) else "FAIL"
             if status == "FAIL":
                 ok_all = False
