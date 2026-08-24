@@ -258,5 +258,118 @@ class TestNeuralInference:
         expected = float(np.mean(np.sqrt(np.mean((traj - truth) ** 2, axis=(0, 1)))))
         assert m["rmse"] == pytest.approx(expected)
 
+
+class TestEnsembleInference:
+    """Multi-member (N=30-style) CFM inference + ensemble ES evaluation."""
+
+    def test_run_inference_multi_member_shapes_mean_and_dtype(self):
+        from evaluation.estimate_metrics import evaluate_ensemble_estimates
+
+        class StubCFM(VanillaCFM):
+            def __init__(self):
+                super().__init__(state_dim=24, hidden_channels=[4, 8], param_dim=0)
+
+            def sample(self, batch, N_outer=1):
+                return torch.randn_like(batch.obs) * N_outer
+
+        B, T, D, M = 2, 3, 24, 3
+        truth = torch.zeros(B, T, D)
+        model = StubCFM()
+        dl = {"s0": _build_case_dataloader(truth, truth)}
+
+        est = run_inference(model, dl, torch.device("cpu"), n_members=M, n_outer=2)
+        assert set(est["s0"].keys()) == {"trajectories", "truth", "members"}
+        assert est["s0"]["members"].shape == (B, T, D, M)
+        assert est["s0"]["members"].dtype == np.float32
+        assert np.allclose(est["s0"]["trajectories"], est["s0"]["members"].mean(axis=-1))
+        m = evaluate_ensemble_estimates(est["s0"]["members"], est["s0"]["truth"])
+        assert m["ensemble"]["num_members"] == M
+
+    def test_run_case_inference_multi_member_subsamples_truth_columns(self):
+        class StubCFM(VanillaCFM):
+            def __init__(self):
+                super().__init__(state_dim=6, hidden_channels=[4, 8], param_dim=0)
+
+            def sample(self, batch, N_outer=1):
+                return batch.obs
+
+        B, T, D_full, d_obs, M = 2, 3, 10, 6, 2
+        full_truth = torch.arange(B * T * D_full, dtype=torch.float32).reshape(B, T, D_full)
+        obs = torch.zeros(B, T, d_obs)
+        idx = tuple(range(4)) + (8, 9)
+        dl = {"s0": _build_case_dataloader(full_truth, obs)}
+        out = _run_case_inference(StubCFM(), dl["s0"], torch.device("cpu"), idx, M, 1)
+        expected_truth = full_truth.numpy()[..., list(idx)]
+        assert np.array_equal(out["truth"], expected_truth)
+        assert out["members"].shape == (B, T, d_obs, M)
+
+    def test_pooled_ensemble_es_matches_per_window_energy_score_and_accumulator(self):
+        from evaluation.estimate_metrics import ensemble_es_terms, pooled_ensemble_es
+        from evaluation.metrics import energy_score
+
+        rng = np.random.default_rng(7)
+        W, T, D, M = 4, 5, 3, 4
+        members = rng.normal(size=(W, T, D, M))
+        truth = rng.normal(size=(W, T, D))
+
+        es_tb = pooled_ensemble_es(members, truth, convention="textbook")
+        es_per_window = np.mean(
+            [energy_score(np.moveaxis(members[w], -1, 0), truth[w]) for w in range(W)], axis=0
+        )
+        assert np.allclose(es_tb, es_per_window)
+
+        ensemble_es_terms(members, truth)
+        acc_abs = np.zeros(D)
+        acc_pw = np.zeros(D)
+        for w in range(W):
+            e = members[w]
+            acc_abs += np.abs(e - truth[w][:, :, None]).mean(axis=(0, 2))
+            for i in range(M):
+                for j in range(M):
+                    acc_pw += np.abs(e[:, :, i] - e[:, :, j]).mean(axis=0) / (M * M)
+        es_cache_manual = acc_abs / W / M - 0.5 * acc_pw / W
+        assert np.allclose(pooled_ensemble_es(members, truth, convention="cache"), es_cache_manual)
+
+    def test_ensemble_es_degenerate_cases(self):
+        from evaluation.estimate_metrics import pooled_ensemble_es
+
+        W, T, D, M = 2, 4, 3, 5
+        rng = np.random.default_rng(3)
+        traj = rng.normal(size=(W, T, D))
+        truth = rng.normal(size=(W, T, D))
+        members = np.stack([traj] * M, axis=-1)
+
+        # Identical members: spread term vanishes -> ES == MAE of the trajectory
+        mae = np.mean(np.abs(traj - truth), axis=(0, 1))
+        assert np.allclose(pooled_ensemble_es(members, truth, convention="textbook"), mae)
+        assert np.allclose(
+            pooled_ensemble_es(members, truth, convention="cache"), mae / M
+        )
+        # Single member: both conventions coincide with the MAE proxy
+        single = traj[:, :, :, None]
+        assert np.allclose(pooled_ensemble_es(single, truth, convention="cache"), mae)
+        assert np.allclose(pooled_ensemble_es(single, truth, convention="textbook"), mae)
+
+    def test_evaluate_ensemble_estimates_schema_and_member_mean_consistency(self):
+        from evaluation.estimate_metrics import (
+            evaluate_ensemble_estimates,
+            evaluate_estimates,
+        )
+
+        W, T, D, M = 3, 4, 24, 6
+        rng = np.random.default_rng(11)
+        members = rng.normal(size=(W, T, D, M))
+        truth = rng.normal(size=(W, T, D))
+
+        m = evaluate_ensemble_estimates(members, truth)
+        ref = evaluate_estimates(members.mean(axis=-1), truth)
+        for key in ("rmse", "groups"):
+            assert m[key] == pytest.approx(ref[key])
+        assert set(m["ensemble"]) == {"num_members", "es_cache_convention", "es_textbook", "spread"}
+        assert m["ensemble"]["num_members"] == M
+        for blk in ("es_cache_convention", "es_textbook", "spread"):
+            assert set(m["ensemble"][blk]["groups"]) == {"slow", "obs_fast", "all_obs"}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

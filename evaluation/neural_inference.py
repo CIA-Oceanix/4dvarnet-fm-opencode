@@ -2,6 +2,7 @@
 import logging
 from typing import Any, Optional
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
@@ -261,16 +262,22 @@ def _run_case_inference(
     dataloader: DataLoader,
     device: torch.device,
     obs_var_indices: tuple | None = None,
+    n_members: int = 1,
+    n_outer: int = 1,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
-    Returns a dict with numpy arrays ``{"trajectories": (W, T, D), "truth": (W, T, D)}``
-    where ``D`` is the observed subspace (the neural model's output dim) and
-    ``truth`` is subsampled to that same subspace for direct comparison. No
-    metrics are computed here — that is the job of the generic evaluator.
+    For stochastic samplers (VanillaCFM) each call to ``sample`` draws a fresh
+    initial condition, so ``n_members > 1`` produces an ensemble of independent
+    members; ``n_outer`` is the number of Euler integration steps. The returned
+    dict holds numpy arrays ``{"trajectories": (W, T, D), "truth": (W, T, D)}``
+    where ``D`` is the observed subspace; with ``n_members > 1`` it also holds
+    ``"members": (W, T, D, M)`` (float32) and ``trajectories`` is the member
+    mean. No metrics are computed here — that is the job of the generic
+    evaluator.
     """
     model.eval()
-    all_preds = []
+    member_preds: list[list] = [[] for _ in range(n_members)]
     all_true = []
 
     with torch.no_grad():
@@ -279,20 +286,22 @@ def _run_case_inference(
             batch = {k: v.to(device) if v is not None else v for k, v in batch.items()}
             batch_obj = BatchDict(batch)
 
-            if isinstance(model, DirectUNet):
-                # DirectUNet.forward takes a batch dict
-                pred = model(batch_obj)
-            elif isinstance(model, VanillaCFM):
-                # VanillaCFM.sample takes a batch dict
-                pred = model.sample(batch_obj, N_outer=1)
-            else:
-                raise ValueError(f"Unknown model type: {type(model)}")
-
-            all_preds.append(pred.detach().cpu())
+            for m in range(n_members):
+                if isinstance(model, DirectUNet):
+                    # DirectUNet.forward takes a batch dict (deterministic:
+                    # all members are identical copies)
+                    pred = model(batch_obj)
+                elif isinstance(model, VanillaCFM):
+                    # VanillaCFM.sample takes a batch dict; each call draws a
+                    # fresh x0 ~ N(0, sigma_prior^2)
+                    pred = model.sample(batch_obj, N_outer=n_outer)
+                else:
+                    raise ValueError(f"Unknown model type: {type(model)}")
+                member_preds[m].append(pred.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
 
     # Concatenate
-    all_preds = torch.cat(all_preds, dim=0)
+    per_member = [torch.cat(mp, dim=0).numpy() for mp in member_preds]
     all_true = torch.cat(all_true, dim=0)
 
     # The neural model predicts the observed subspace while the cached truth is
@@ -300,17 +309,23 @@ def _run_case_inference(
     # IMPORTANT: obs_var_indices is a NON-CONTIGUOUS subset (e.g. X1-X8 then
     # Y1,Y2 of each node), so we must use those exact columns, NOT the first
     # `state_dim` columns (which would mix in unobserved fast vars).
-    d_pred = all_preds.shape[-1]
+    d_pred = per_member[0].shape[-1]
     if all_true.shape[-1] > d_pred:
         if obs_var_indices is not None and len(obs_var_indices) == d_pred:
             all_true = all_true[..., list(obs_var_indices)]
         else:
             all_true = all_true[..., :d_pred]
 
-    return {
-        "trajectories": all_preds.detach().cpu().numpy(),
+    out = {
         "truth": all_true.detach().cpu().numpy(),
     }
+    if n_members == 1:
+        out["trajectories"] = per_member[0]
+    else:
+        members = np.stack(per_member, axis=-1).astype(np.float32)
+        out["members"] = members
+        out["trajectories"] = members.mean(axis=-1)
+    return out
 
 
 def run_inference(
@@ -318,14 +333,17 @@ def run_inference(
     dataloaders: dict,
     device: torch.device,
     obs_var_indices: tuple | None = None,
+    n_members: int = 1,
+    n_outer: int = 1,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
     Returns ``{"s0": {...}, "s1": {...}}`` where each entry holds the numpy
-    ``trajectories``/``truth`` arrays (no metrics). To produce scores, pass
-    these to the generic evaluator (``evaluate_estimates``).
+    ``trajectories``/``truth`` arrays (plus ``members`` when ``n_members > 1``;
+    no metrics). To produce scores, pass these to the generic evaluator
+    (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
     """
     return {
-        case: _run_case_inference(model, dl, device, obs_var_indices)
+        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer)
         for case, dl in dataloaders.items()
     }
