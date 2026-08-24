@@ -67,8 +67,13 @@ N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
                  "L6_vanilla_cfm_s0s1_forcing_cond"}
 
-# L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES.
-L3_ENS30_DIR = "L3_vanilla_cfm_s0s1/ens30_no10"
+# L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES, per case.
+# S0 was the original ens30 study (dual-convention JSON); S1 the bug-fixed
+# single-ES follow-up (see PLAN.md "L3 ens30 on S1").
+L3_ENS30_DIR = {
+    "s0": "L3_vanilla_cfm_s0s1/ens30_no10",
+    "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
+}
 DEFAULT_FIGURE_METHODS = [
     "Strong-4DVar",
     "EnKF",
@@ -158,10 +163,10 @@ def collect_estimates(
         est[method] = {case: load_da_trajectories(da_traj_path, case, method, obs_idx) for case in CASES}
     for dirname in neural_dirs:
         if dirname == "L3_vanilla_cfm_s0s1":
-            ens30_dir = ROOT / "experiments" / L3_ENS30_DIR
             regular_dir = ROOT / "experiments" / dirname
             est[dirname] = {}
             for case in CASES:
+                ens30_dir = ROOT / "experiments" / L3_ENS30_DIR[case]
                 ens30_est = load_neural_trajectories(ens30_dir, case)
                 est[dirname][case] = ens30_est if ens30_est is not None else load_neural_trajectories(regular_dir, case)
         else:
@@ -267,8 +272,24 @@ def collect_metric_values(
     values: dict[str, dict[tuple[str, str], dict[str, float | None]]] = {"rmse": {}, "ev": {}, "es": {}}
     da_cache = json.load(open(da_json_path))
     l3_n1_cells: set[tuple[str, str]] = set()
-    l3_ens30_json = ROOT / "experiments" / L3_ENS30_DIR / "neural_eval.json"
-    l3_es = json.load(open(l3_ens30_json)) if l3_ens30_json.exists() else {}
+
+    def _l3_ens30_es(case: str) -> dict[str, float] | None:
+        """Proper (N=30, textbook) ensemble ES for L3 from the ens30 JSON.
+
+        Handles both stored schemas: the S0 study's dual-convention JSON
+        (``ensemble.es_textbook``) and the S1 study's single-convention JSON
+        (``ensemble.es``). Returns None when the JSON / block is unavailable.
+        """
+        ens30_json = ROOT / "experiments" / L3_ENS30_DIR[case] / "neural_eval.json"
+        if not ens30_json.exists():
+            return None
+        blk = json.load(open(ens30_json)).get("metrics", {}).get(case, {}).get("ensemble", {})
+        for key in ("es_textbook", "es"):
+            e = blk.get(key, {}).get("groups")
+            if e:
+                return e
+        return None
+
     for row in row_order:
         for case in CASES:
             m = evaluate_estimates(est[row][case], truth[case])
@@ -282,10 +303,9 @@ def collect_metric_values(
                 else:
                     values["es"][(row, case)] = {g: None for g in GROUPS}
             elif row == "L3_vanilla_cfm_s0s1":
-                l3_m = l3_es.get("metrics", {}).get(case, {})
-                es_blk = l3_m.get("es")
-                if es_blk and "groups" in es_blk:
-                    values["es"][(row, case)] = es_blk["groups"]
+                ens_es = _l3_ens30_es(case)
+                if ens_es:
+                    values["es"][(row, case)] = ens_es
                 else:
                     values["es"][(row, case)] = m["es"]["groups"]
                     l3_n1_cells.add((row, case))
