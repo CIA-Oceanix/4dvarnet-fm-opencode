@@ -179,27 +179,31 @@ These were proposed alongside the S1 ens30 study (Phase A, done 2026-08-24) but 
 ### Phase B — CFM architecture variants (low priority; **requires a design doc first**)
 
 Investigate whether a Tweedie-style two-stage decomposition or a diffusion-style
-variant improves on VanillaCFM for L96. **Status: not designed in detail.** Grounded
-anchors only: `TweedieSolver` (`models/solver.py:7`, legacy two-stage solver) and
-`VanillaCFM` (explicitly "no Tweedie decomposition", `PLAN.md` Overview). No concrete
-config/task exists. **Before any implementation**, a design doc (à la
-`docs/experiment_G_tau0_cfm.md`) must define the variants precisely (e.g. V2 = CFM +
-Tweedie residual; V3 = multi-step generative) with expected outcomes vs L2b/L3 and
-success criteria. Do NOT re-run the previous session's under-defined "V2/V3" without this doc.
+variant improves on VanillaCFM for L96. **Design doc drafted 2026-08-25**
+(`docs/phase_B_l96_cfm_variants.md`) — defines V1 (L96 TweedieSolver port,
+obs-only, `use_energy=false`, 2-stage) and V2 (CFM + Tweedie residual hybrid)
+precisely with reference bars vs L2b/L3/L4 and the open design questions to
+resolve (cond_extra_dim plumbing, energy flag, stage-1 budget, 24D cell
+validity, multi-member sampling, single-sample vs ens30×10 bar). **V3 diffusion
+deferred** (no scaffolding exists). **No Phase B code implements these yet** — a
+future session must resolve the doc's open questions before implementing.
 
-### Phase C — L96 joint state-parameter neural estimation (concrete, deferred)
+### Phase C — L96 joint state-parameter neural estimation (infra done 2026-08-25; training pending)
 
 Extend the existing **L63 joint infrastructure** to L96. Currently only L96 **Joint DA
-baselines** exist; the L96 joint **neural** models are missing.
+baselines** exist; the L96 joint **neural** models were missing.
 - **Existing (real) pieces:** `JointCFM` (`models/vanilla_cfm.py:75`, L63-shaped,
   `output_dim = state_dim + param_dim`); `JointCFMConfig` (`conf/schema.py:162`);
   L63 configs `H1_joint_cfm_default.yaml`, `H2_joint_cfm_tau0.yaml`, `S5/S6`; L96
   Joint DA baselines `JointEnKFL96`/`JointETKFL96`/`JointStrong4DVarL96`
   (`evaluation/baselines.py`) + `eval_joint_comparison_l96.py` (ready DA comparator).
-- **Missing:** `JointDirectUNet` / L96-`JointVanillaCFM` (5 L96 params, 24D state),
-  L96 joint neural configs, `train.py`/`lightning_module.py` dispatch, tests.
-- **Estimated work:** new `ParamHead` + joint model(s), schema + configs, dispatch,
-  tests, ~5h GPU training (2 models), eval vs the L96 Joint DA baselines.
+- **Done (2026-08-25):** design doc `docs/phase_C_l96_joint_neural.md`; L96 joint
+  neural models `JointCFM` (port) + `JointDirectUNet` (new); 3 configs L7/L8/L9;
+  `data/lorenz96.py` flattens `fast_weights` to per-index `w1..w4`/`true_w1..`/`_da`
+  scalar keys; `train.py`/`lightning_module.py` dispatch; `eval_joint_neural_l96.py`
+  (extended `evaluation/neural_inference.py` for joint types); 8 joint-neural tests
+  + WP1 dataset-key tests; 2 sbatch (training 3-task array, eval). `param_dim=8`,
+  h fixed. Training (~5h GPU × 3) + eval + joint-neural-vs-joint-DA report remain.
 
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
@@ -253,6 +257,9 @@ The **L-series** (Lorenz-96) is listed separately below.
 | L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | done (Q2: best overall, 0.619/0.621) |
 | L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | done (Q2: small hurts CFM, +4.3%) |
 | L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | done (Q3: neutral vs obs-only) |
+| L7_joint_cfm_s0s1 | JointCFM | [64,128,256] | 400 | τ=0, joint 8-param | infra done; training pending (Phase C) |
+| L8_joint_direct_unet_s0s1 | JointDirectUNet | [64,128,256] | 200 | joint 8-param | infra done; training pending (Phase C) |
+| L9_joint_cfm_s0s1_multitau | JointCFM | [64,128,256] | 400 | multi-τ, joint 8-param | infra done; training pending (Phase C) |
 
 **Standalone DA-parity results (cached test set, Obs30, 200 windows)** — S0/S1 RMSE
 (single-sample convention; L3's S0 ranking is superseded by the ens30 study above):

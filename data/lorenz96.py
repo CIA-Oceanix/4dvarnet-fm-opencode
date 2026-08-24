@@ -212,6 +212,24 @@ def _l96_param_refs(cfg) -> Dict:
     return refs
 
 
+def _set_window_params(w: Dict, params: Dict, prefix: str = "", suffix: str = "") -> None:
+    """Write scalar param keys into a window dict, flattening fast_weights.
+
+    `fast_weights` (list of 4) is exposed as scalar `w1..w4` keys so the
+    generic scalar param-extraction path in FlowMatchingDataset can read the
+    full L96 8-param vector without list-aware handling. The key for param `k`
+    is `{prefix}{k}{suffix}` — e.g. prefix="" (current), prefix="true_"
+    (ground truth), suffix="_da" (biased DA params) — mirroring the existing
+    `{k}`, `true_{k}`, `{k}_da` conventions; fast_weights becomes `w{j}`.
+    """
+    for k, v in params.items():
+        if k == "fast_weights":
+            for j, wj in enumerate(v, start=1):
+                w[f"{prefix}w{j}{suffix}"] = wj
+        else:
+            w[f"{prefix}{k}{suffix}"] = v
+
+
 def _uses_perparam_randomize(cfg) -> bool:
     return bool(getattr(cfg, "randomize", None) or {})
 
@@ -324,6 +342,8 @@ class RandomParamLorenz96Dataset:
             for k, v in params.items():
                 w[k] = v
                 w[f"true_{k}"] = v
+            _set_window_params(w, params)
+            _set_window_params(w, params, "true_")
             self.windows.append(w)
 
     def __len__(self):
@@ -419,6 +439,9 @@ class RandomBiasLorenz96Dataset:
                 w[f"true_{k}"] = v
             for k, v in params_da.items():
                 w[f"{k}_da"] = v
+            _set_window_params(w, params_true)
+            _set_window_params(w, params_true, "true_")
+            _set_window_params(w, params_da, suffix="_da")
             self.windows.append(w)
 
     def __len__(self):

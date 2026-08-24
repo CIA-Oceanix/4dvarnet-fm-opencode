@@ -1,6 +1,41 @@
 # Changelog
 
-## 2026-08-24: L96 DA cache ES regeneration blocked — esfix array resumes stale partials, 6/7 gate-fail
+## 2026-08-25: L96 joint state-parameter neural estimation infrastructure (Phase C) + Phase B design doc
+
+**Summary:** Built the full L96 joint **neural** infrastructure (previously only joint
+DA baselines existed) and drafted the Phase B design doc. Three joint models estimate
+the 24D state **and** 8 parameters (F, c1, hx, eps + 4 fast_weights; h fixed, matching
+the joint DA convention): L7 `JointCFM` τ=0, L8 `JointDirectUNet` (new), L9 `JointCFM`
+multi-τ. `data/lorenz96.py` now flattens the `fast_weights` list into per-index scalar
+keys (`w1..w4`, `true_w1..`, `_da` variants) so the generic scalar param-extraction path
+handles the 8-param vector unmodified. Wired dispatch in `train.py`/`lightning_module.py`,
+added `eval_joint_neural_l96.py` (extended `evaluation/neural_inference.py` to resolve/
+construct/infer joint types), 8 joint-neural tests + WP1 dataset-key tests (added to the
+CI gate), and 2 sbatch (3-task training array, 3-task eval array). Also drafted
+`docs/phase_B_l96_cfm_variants.md` (V1 TweedieSolver port + V2 CFM-Tweedie hybrid; V3
+diffusion deferred) and `docs/phase_C_l96_joint_neural.md`.
+
+**Files modified:** `models/direct_unet.py` — `JointDirectUNet` (+`compute_loss`/`sample`);
+`conf/schema.py` — `JointDirectUNetConfig` + `ModelConfig.joint_direct_unet`; `data/lorenz96.py` —
+`_set_window_params` flattening fast_weights to `w1..w4`/`true_w1..`/`_da`; `train.py` —
+`joint_direct_unet` dispatch in `model_factory`/`evaluate_model`/`save_trajectories`, `with_params`
+widened; `training/lightning_module.py` — `joint_direct_unet` branch; `evaluation/neural_inference.py` —
+joint model classes + `collate_joint_eval` + `param_dim` inference + joint inference path;
+`eval_joint_neural_l96.py` — new; `config/experiment/L{7,8,9}_*.yaml` — new; `tests/test_joint_estimation_l96_neural.py` —
+new (8 tests); `tests/test_lorenz96_training.py` — 2 WP1 tests; `batch/run_l96_joint_neural_{training,eval}.sbatch` —
+new; `.github/workflows/ci.yml` — gate + joint test file; `docs/phase_C_l96_joint_neural.md`,
+`docs/phase_B_l96_cfm_variants.md` — new; `PLAN.md` — Phase B/C docs pointer + L7/L8/L9 status; `CHANGELOG.md` — this entry.
+
+**Rationale:** Phase C extends the already-built L96 joint DA baseline work to neural
+estimators, filling the gap where only Joint DF / joint DA existed. The `fast_weights`
+flattening keeps the shared dataloader generic (no list-aware special-casing). The separate
+`eval_joint_neural_l96.py` keeps the DA comparator stable while enabling an apples-to-apples
+joint-neural-vs-joint-DA comparison once training completes. Phase B stays doc-gated per
+`PLAN.md` (no code).
+
+**Verification:** `pytest tests/test_joint_estimation_l96_neural.py tests/test_joint_estimation_l96.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_hydra_config.py tests/test_neural_inference.py tests/test_metrics.py tests/test_energy_score.py -m "not slow"` — 108 passed. Manual 1-epoch CPU smoke for L7/L8 through `train.py`-equivalent pieces (model_factory → dataloader → LitModel → Trainer → `stage1_best.ckpt` → evaluate_model with 8-param RMSE) — both OK; joint inference path verified (state `(W,T,24)` + params `(W,8)`). `bash -n` on both sbatch OK. Ruff: only pre-existing debt on touched files (EXE001 shebang matches sibling eval scripts, PLR0402/UP/TRY pre-existing); new files clean.
+
+
 
 **Summary:** Resubmitted the L96 DA cache esfix array (`batch/run_l96_esfix.sbatch`,
 `--array=1-7`, job 49488, against fixed master) to regenerate the non-canonical baseline
