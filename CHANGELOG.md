@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-24: Consolidated report — L3 uses ens30 for both S0 and S1 (per-case + proper ensemble ES)
+
+**Summary:** Fixed `reports/l96/generate_l96_consolidated_report.py` so L3's row in the
+consolidated benchmark table uses the ens30 (N=30, 10-step) evaluation for **both** S0 and
+S1, not just S0. The generator previously hardcoded `L3_ENS30_DIR = "ens30_no10"` (the S0
+study dir), so L3's S1 fell back to the single-sample `estimates_s1.npz` (RMSE 0.6906,
+ES = N=1 MAE proxy 0.4469\*) and L3's S0 ES used the member-mean N=1 MAE (0.3578) instead
+of the proper textbook ensemble ES. Now `L3_ENS30_DIR` is a per-case map
+(`s0`→`ens30_no10`, `s1`→`ens30_s1_no10`) and L3's ES is read from each case's ens30 JSON
+(HANDLING both schemas: S0's dual-convention `ensemble.es_textbook`, S1's single-convention
+`ensemble.es`). Regenerated report: L3 S1 RMSE **0.5668** / EV **0.8770** / ES **0.2671**
+(all bold-best, matching DA's proper N=30 textbook ES convention); L3 S0 ES corrected
+0.3578 → **0.2649**; L3 S1/S0 degradation 1.223 → **1.004**. Both consistency checks PASS.
+L3 is now bold=best on S0 and S1 across RMSE/EV/ES.
+
+**Files modified:** `reports/l96/generate_l96_consolidated_report.py` — per-case L3_ENS30_DIR + `_l3_ens30_es` helper; `reports/l96/outputs/l96_consolidated_benchmark.md` + `reports/l96/outputs/figs/l96_hovm_*.png` — regenerated.
+
+**Rationale:** The canonical report understated L3 on S1 (single-sample 0.6906 vs its ens30
+0.5667) and used an inconsistent ES convention on S0 (N=1 proxy vs DA's proper N=30). This
+makes the L3 row internally consistent and apples-to-apples with the DA ensemble ES.
+
+**Verification:** report regenerated (both consistency checks PASS; L3 S1 0.5668/0.2671, L3 S0 ES 0.2649); `pytest tests/test_lorenz96_training.py tests/test_neural_inference.py -m "not slow"` — 53 passed. ruff on the generator: only the file's pre-existing SIM115 (open-without-context) style.
+
 ## 2026-08-24: PR #74 — S1 ens30 + restore ES-accumulator fix & ensemble inference to master
 
 **Summary:** Merged PR #74 to master (squash `f6fa0b3`). Master was missing the
