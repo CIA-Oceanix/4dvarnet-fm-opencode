@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-24: Benchmarked-schemes table in the consolidated L96 report
+
+**Summary:** Added a `## Benchmarked schemes` section to `reports/l96/outputs/l96_consolidated_benchmark.md`: an ID / Type / Description table for all 9 benchmarked schemes (Strong-4DVar, EnKF, ETKF + L1b–L6) with their key settings (4D-Var B_var/R_var/max_iter/lr; EnKF/ETKF N_ens=30, inflation=2.0, no loc; per-model backbone size, τ mode, conditioning and epochs), followed by a shared-setup paragraph (DA-parity protocol, 24D subspace, obs-only defaults). Rendered by a new `fmt_scheme_table()` over a hardcoded `SCHEME_DESCRIPTIONS` list, inserted between the setup paragraph and the RMSE table.
+
+**Files modified:** `reports/l96/generate_l96_consolidated_report.py` — new constant + builder + md insertion; `reports/l96/outputs/l96_consolidated_benchmark.md` — regenerated
+
+**Rationale:** The report listed scheme names without explaining what they are; a compact description table makes it self-contained for readers outside the project. Facts verified against `evaluate_all_l96.py`, `evaluation/baselines.py`, `batch/run_l96_da_s0c.sbatch` and the six `config/experiment/L*.yaml`. L3's row states its single-sample evaluation explicitly, setting up the planned N=30 ensemble study.
+
+**Verification:** Script re-run end-to-end: exit 0, both consistency checks PASS, section renders correctly. `ruff check` clean. Fast gate 74 passed.
+
 ## 2026-08-24: Restructure reports/ into per-system subdirs (l63/, l96/) + prune stale L96 artifacts
 
 **Summary:** Reorganized `reports/` into system-scoped subdirs to make future systems (e.g. QG/SW) drop-in: all L63-era scripts/outputs moved untouched to `reports/l63[/outputs]`, and the L96 benchmark now lives under `reports/l96/` (`generate_l96_consolidated_report.py` + `outputs/{l96_consolidated_benchmark.md, s0_s1_obs_density_da_baselines.md, figs/l96_hovm_*.png}`). Deleted stale L96 one-offs superseded by the consolidated report or completed phases: figure generators (`generate_l96_{trajectory_figures,reconstruction_figures,multi_method_reconstruction}.py` + their tracked PNGs), sweep-era EV post-processor (`compute_explained_var.py` + `l96_clim_var.json`), ablation comparators (`compare_s0_s0b.py`, `compare_s0b_s0c.py`, `repro_gate_b2.py`, root `backfill_l96_baselines_{ev,es}.py`), dead SW code (`diagnose_sw_eddies.py`; SW models not merged), the retired flat table (`benchmark_table_l96.py` + `neural_benchmark_table.md`), and historical summaries (`l96_baseline_report.md`, `s0c_s1c_obs30_results.md`). Also removed dangling batch files (`gen_reconstruction_fig.slurm`) and repointed `batch/run_l96_evaluate_all.sbatch` at the consolidated script (downgraded a40/2h → CPU Odyssey/30min). CI now also triggers on PRs → `master` (previously only `feat/l96-*`).
