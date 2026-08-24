@@ -1,0 +1,33 @@
+{
+  "method": "enkf",
+  "nx": 32,
+  "N_ensemble": 80,
+  "inflation": 1.1,
+  "loc_radius": 12.0,
+  "scenarios": {
+    "test_s0": {
+      "rmse_mean": 2.979911675567331e-06,
+      "rmse_list": [
+        1.404093488277096e-06,
+        4.792020608680663e-06,
+        2.743620929744234e-06
+      ],
+      "forecast_rmse_mean": 2.87767323858823e-10,
+      "forecast_improvement": 9.656907827781048e-05,
+      "expvar_full": -0.49434239585990053,
+      "expvar_upper_q": -0.7234802438585184
+    },
+    "test_s1a": {
+      "rmse_mean": 4.161185189099143e-06,
+      "rmse_list": [
+        1.8320476939031765e-06,
+        6.20709991269102e-06,
+        4.444407960703234e-06
+      ],
+      "forecast_rmse_mean": 2.722039558496666e-06,
+      "forecast_improvement": 0.6541500641758176,
+      "expvar_full": -1.8222623709273733,
+      "expvar_upper_q": -2.4659370212763347
+    }
+  }
+}

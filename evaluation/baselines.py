@@ -49,19 +49,99 @@ def _build_loc_matrices(state_dim, obs_operator, NO, J, loc_radius, device):
     return L_x, L_y
 
 
+def _gc_matrix(z: torch.Tensor) -> torch.Tensor:
+    """Vectorized Gaspari-Cohn correlation function (z = distance/radius)."""
+    z2 = z * z
+    z3 = z2 * z
+    z4 = z3 * z
+    z5 = z4 * z
+    out = torch.zeros_like(z)
+    m_lt1 = z < 1.0
+    m_ge1 = (z >= 1.0) & (z < 2.0)
+    out[m_lt1] = (-0.25 * z5[m_lt1] + 0.5 * z4[m_lt1] + (5.0 / 8.0) * z3[m_lt1]
+                  - (5.0 / 3.0) * z2[m_lt1] + 1.0)
+    out[m_ge1] = ((1.0 / 12.0) * z5[m_ge1] - 0.5 * z4[m_ge1]
+                  + (5.0 / 8.0) * z3[m_ge1] + (5.0 / 3.0) * z2[m_ge1]
+                  - 5.0 * z[m_ge1] + 4.0 - 2.0 / (3.0 * z[m_ge1]))
+    return out
+
+
+def _build_qg_loc_matrices(state_dim: int, obs_indices_t: list, nlayers: int,
+                           ny: int, nx: int, loc_radius: float,
+                           device) -> tuple:
+    """Per-time Gaspari-Cohn localization for a layer-major flattened grid.
+
+    Returns (Lx_t, Ly_t): lists (one per obs time) of (state_dim, od) and
+    (od, od) correlation matrices built from grid distance. Cross-layer
+    separations are treated as very distant (weight -> 0).
+    """
+    gpl = ny * nx
+    ar = torch.arange(state_dim, device=device, dtype=torch.float64)
+    state_layer = ar // gpl
+    g = ar % gpl
+    state_y = g // nx
+    state_x = g % nx
+    layer_gap = 2.0 * max(ny, nx)
+    Lx_t: list[torch.Tensor | None] = []
+    Ly_t: list[torch.Tensor | None] = []
+    for idx_t in obs_indices_t:
+        if idx_t is None:
+            Lx_t.append(None)
+            Ly_t.append(None)
+            continue
+        idx = torch.tensor(idx_t, dtype=torch.long, device=device)
+        od = len(idx)
+        obs_layer = idx.to(device).to(torch.float64) // gpl
+        gg = (idx.to(device) % gpl).to(torch.float64)
+        obs_y = gg // nx
+        obs_x = gg % nx
+        dy = state_y.unsqueeze(1) - obs_y.unsqueeze(0)
+        dx = state_x.unsqueeze(1) - obs_x.unsqueeze(0)
+        dl = (state_layer.unsqueeze(1) - obs_layer.unsqueeze(0)).abs() * layer_gap
+        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
+        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
+        doy = obs_y.unsqueeze(1) - obs_y.unsqueeze(0)
+        dox = obs_x.unsqueeze(1) - obs_x.unsqueeze(0)
+        dol = (obs_layer.unsqueeze(1) - obs_layer.unsqueeze(0)).abs() * layer_gap
+        dod = torch.sqrt(doy ** 2 + dox ** 2 + dol ** 2)
+        Ly_t.append(_gc_matrix(dod / loc_radius).to(torch.float32))
+    return Lx_t, Ly_t
+
+
 class ObsOperator:
-    def __init__(self, state_dim: int, obs_indices=None):
+    def __init__(self, state_dim: int, obs_indices=None, obs_indices_t=None):
+        self.indices: torch.Tensor | None = None
+        self.obs_indices_t: list[torch.Tensor | None] | None = None
+        if obs_indices_t is not None:
+            self.obs_indices_t = [
+                None if x is None else torch.as_tensor(x, dtype=torch.long)
+                for x in obs_indices_t]
         if obs_indices is not None:
-            self.indices = torch.tensor(obs_indices, dtype=torch.long)
+            self.indices = torch.as_tensor(obs_indices, dtype=torch.long)
             self._obs_dim = len(obs_indices)
+        elif self.obs_indices_t is not None:
+            first = next((x for x in self.obs_indices_t if x is not None), None)
+            if first is not None:
+                self.indices = torch.as_tensor(first, dtype=torch.long)
+            self._obs_dim = len(first) if first is not None else state_dim
         else:
-            self.indices = None
             self._obs_dim = state_dim
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        if self.indices is None:
+    def index_at(self, index: int | None = None) -> torch.Tensor | None:
+        if self.obs_indices_t is not None:
+            if index is None:
+                first = next((x for x in self.obs_indices_t if x is not None),
+                             None)
+                return first if first is not None else self.indices
+            return self.obs_indices_t[index]
+        return self.indices
+
+    def __call__(self, x: torch.Tensor, index: int | None = None,
+                 indices: torch.Tensor | None = None) -> torch.Tensor:
+        idx = indices if indices is not None else self.index_at(index)
+        if idx is None:
             return x
-        return x[..., self.indices]
+        return x[..., idx]
 
     @property
     def obs_dim(self) -> int:
@@ -524,6 +604,8 @@ class ETKF:
         etkf_ridge: float = 0.0,
         etkf_additive: float = 0.0,
         R_var_vec: np.ndarray = None,
+        loc_Lx_t: list | None = None,
+        loc_Ly_t: list | None = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -540,9 +622,20 @@ class ETKF:
         self.noise_init_std = noise_init_std
         self.etkf_ridge = etkf_ridge
         self.etkf_additive = etkf_additive
-        if loc_radius is not None:
+        self.loc_Lx_t = loc_Lx_t
+        self.loc_Ly_t = loc_Ly_t
+        if loc_radius is not None and loc_Lx_t is None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
+
+    def _per_time(self, t: int) -> tuple:
+        idx = self.obs_operator.index_at(t)
+        od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
+        loc_Lx = self.loc_Lx_t[t] if self.loc_Lx_t is not None else getattr(
+            self, "loc_Lx", None)
+        loc_Ly = self.loc_Ly_t[t] if self.loc_Ly_t is not None else getattr(
+            self, "loc_Ly", None)
+        return idx, od_t, loc_Lx, loc_Ly
 
     def assimilate(
         self,
@@ -596,31 +689,32 @@ class ETKF:
 
 
             if obs_mask[t]:
+                idx, od_t, loc_Lx, loc_Ly = self._per_time(t)
                 y_t = observations[t]
                 mu = torch.mean(ensemble, dim=0)
                 A = ensemble - mu
-                mu_obs = H(mu)
-                HA = H(ensemble) - mu_obs.unsqueeze(0)
+                mu_obs = H(mu, index=t)
+                HA = H(ensemble, index=t) - mu_obs.unsqueeze(0)
                 dy = y_t - mu_obs
 
-                if self.loc_radius is not None:
+                if self.loc_radius is not None or self.loc_Lx_t is not None:
                     Pf_Ht = A.T @ HA
                     H_Pf_Ht = HA.T @ HA
-                    loc_Pf_Ht = self.loc_Lx * Pf_Ht
-                    loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
+                    loc_Pf_Ht = loc_Lx * Pf_Ht
+                    loc_H_Pf_Ht = loc_Ly * H_Pf_Ht
                     if self.R_var_vec is not None:
                         R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
                     else:
-                        R_obs = torch.eye(od, device=self.device) * self.R_var
-                    Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od, device=self.device)
+                        R_obs = torch.eye(od_t, device=self.device) * self.R_var
+                    Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od_t, device=self.device)
                     K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                     mu = mu + K @ dy
                     if self.loc_mode == "square_root":
                         ensemble = mu.unsqueeze(0) + A - HA @ K.T
                     else:
                         for n in range(N):
-                            perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
-                            ensemble[n] += K @ (perturbed - H(ensemble[n]))
+                            perturbed = y_t + torch.randn(od_t, device=self.device) * r_sqrt
+                            ensemble[n] += K @ (perturbed - H(ensemble[n], index=t))
                 else:
                     HA_w = torch.nan_to_num(HA / r_sqrt)
                     try:
@@ -717,31 +811,32 @@ class ETKF:
                     if not obs_mask[b, t]:
                         continue
                     ens_b = ensemble[b]
+                    idx, od_t, loc_Lx, loc_Ly = self._per_time(t)
                     y_t = observations[b, t]
                     mu = torch.mean(ens_b, dim=0)
                     A = ens_b - mu
-                    mu_obs = H(mu)
-                    HA = H(ens_b) - mu_obs.unsqueeze(0)
+                    mu_obs = H(mu, index=t)
+                    HA = H(ens_b, index=t) - mu_obs.unsqueeze(0)
                     dy = y_t - mu_obs
 
-                    if self.loc_radius is not None:
+                    if self.loc_radius is not None or self.loc_Lx_t is not None:
                         Pf_Ht = A.T @ HA
                         H_Pf_Ht = HA.T @ HA
-                        loc_Pf_Ht = self.loc_Lx * Pf_Ht
-                        loc_H_Pf_Ht = self.loc_Ly * H_Pf_Ht
+                        loc_Pf_Ht = loc_Lx * Pf_Ht
+                        loc_H_Pf_Ht = loc_Ly * H_Pf_Ht
                         if self.R_var_vec is not None:
                             R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
                         else:
-                            R_obs = torch.eye(od, device=self.device) * self.R_var
-                        Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od, device=self.device)
+                            R_obs = torch.eye(od_t, device=self.device) * self.R_var
+                        Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od_t, device=self.device)
                         K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                         mu = mu + K @ dy
                         if self.loc_mode == "square_root":
                             ens_b = mu.unsqueeze(0) + A - HA @ K.T
                         else:
                             for n in range(N):
-                                perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
-                                ens_b[n] += K @ (perturbed - H(ens_b[n]))
+                                perturbed = y_t + torch.randn(od_t, device=self.device) * r_sqrt
+                                ens_b[n] += K @ (perturbed - H(ens_b[n], index=t))
                     else:
                         HA_w = torch.nan_to_num(HA / r_sqrt)
                         try:
@@ -792,6 +887,8 @@ class EnKF:
         J: int = 4,
         noise_init_std: float = 1.5,
         R_var_vec: np.ndarray = None,
+        loc_Lx_t: list | None = None,
+        loc_Ly_t: list | None = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -805,9 +902,20 @@ class EnKF:
         self.obs_operator = obs_operator or ObsOperator(self.state_dim)
         self.loc_radius = loc_radius
         self.noise_init_std = noise_init_std
-        if loc_radius is not None:
+        self.loc_Lx_t = loc_Lx_t
+        self.loc_Ly_t = loc_Ly_t
+        if loc_radius is not None and loc_Lx_t is None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
+
+    def _per_time(self, t: int) -> tuple:
+        idx = self.obs_operator.index_at(t)
+        od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
+        loc_Lx = self.loc_Lx_t[t] if self.loc_Lx_t is not None else getattr(
+            self, "loc_Lx", None)
+        loc_Ly = self.loc_Ly_t[t] if self.loc_Ly_t is not None else getattr(
+            self, "loc_Ly", None)
+        return idx, od_t, loc_Lx, loc_Ly
 
     def assimilate(
         self,
@@ -857,26 +965,27 @@ class EnKF:
                 ensemble[nan_mask] = mu_nan
 
             if obs_mask[t]:
+                idx, od_t, loc_Lx, loc_Ly = self._per_time(t)
                 y_t = observations[t]
                 mean_e = torch.mean(ensemble, dim=0)
                 A = ensemble - mean_e
-                H_ens = H(ensemble)
+                H_ens = H(ensemble, index=t)
                 H_mean_e = torch.mean(H_ens, dim=0)
                 HA = H_ens - H_mean_e.unsqueeze(0)
                 P_obs = (HA.T @ HA) / (self.N_ensemble - 1)
                 cross_cov = (A.T @ HA) / (self.N_ensemble - 1)
-                if self.loc_radius is not None:
-                    P_obs = self.loc_Ly * P_obs
-                    cross_cov = self.loc_Lx * cross_cov
-                R_obs = torch.eye(od, device=self.device) * self.R_var
+                if self.loc_radius is not None or self.loc_Lx_t is not None:
+                    P_obs = loc_Ly * P_obs
+                    cross_cov = loc_Lx * cross_cov
+                R_obs = torch.eye(od_t, device=self.device) * self.R_var
                 if self.R_var_vec is not None:
                     R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
-                ridge = 1e-4 * torch.eye(od, device=self.device)
+                ridge = 1e-4 * torch.eye(od_t, device=self.device)
                 Ph = P_obs + R_obs + ridge
                 K = torch.linalg.lstsq(Ph, cross_cov.T).solution.T
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn(od, device=self.device) * r_sqrt
-                    ensemble[n] += K @ (perturbed - H(ensemble[n]))
+                    perturbed = y_t + torch.randn(od_t, device=self.device) * r_sqrt
+                    ensemble[n] += K @ (perturbed - H(ensemble[n], index=t))
 
                 mean_e = torch.mean(ensemble, dim=0)
                 ensemble = mean_e + self.inflation * (ensemble - mean_e)
@@ -949,27 +1058,30 @@ class EnKF:
                         ensemble[b, nan_mask_step[b]] = mean_e_pre[b]
 
             if obs_mask[:, t].any():
+                idx, od_t, loc_Lx, loc_Ly = self._per_time(t)
+                def _h(x):
+                    return x[..., idx] if idx is not None else H(x)
                 y_t = observations[:, t]
                 mean_e = torch.mean(ensemble, dim=1)
                 A = ensemble - mean_e.unsqueeze(1)
-                H_ens = H(ensemble)
+                H_ens = _h(ensemble)
                 H_mean_e = torch.mean(H_ens, dim=1)
                 HA = H_ens - H_mean_e.unsqueeze(1)
                 P_obs = (HA.transpose(1, 2) @ HA) / (self.N_ensemble - 1)
                 cross_cov = (A.transpose(1, 2) @ HA) / (self.N_ensemble - 1)
-                if self.loc_radius is not None:
-                    P_obs = self.loc_Ly.unsqueeze(0) * P_obs
-                    cross_cov = self.loc_Lx.unsqueeze(0) * cross_cov
-                R_obs = torch.eye(od, device=self.device).unsqueeze(0) * self.R_var
-                ridge = 1e-4 * torch.eye(od, device=self.device).unsqueeze(0)
+                if self.loc_radius is not None or self.loc_Lx_t is not None:
+                    P_obs = loc_Ly.unsqueeze(0) * P_obs
+                    cross_cov = loc_Lx.unsqueeze(0) * cross_cov
+                R_obs = torch.eye(od_t, device=self.device).unsqueeze(0) * self.R_var
+                ridge = 1e-4 * torch.eye(od_t, device=self.device).unsqueeze(0)
                 Ph = P_obs + R_obs + ridge
                 # Use lstsq for numerical robustness with underdetermined systems
                 K = torch.linalg.lstsq(
                     Ph, cross_cov.transpose(1, 2)
                 ).solution.transpose(1, 2)
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn((B, od), device=self.device) * np.sqrt(self.R_var)
-                    ensemble[:, n] += (K @ (perturbed - H(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
+                    perturbed = y_t + torch.randn((B, od_t), device=self.device) * np.sqrt(self.R_var)
+                    ensemble[:, n] += (K @ (perturbed - _h(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
 
                 mean_e = torch.mean(ensemble, dim=1)
                 ensemble = mean_e.unsqueeze(1) + self.inflation * (ensemble - mean_e.unsqueeze(1))

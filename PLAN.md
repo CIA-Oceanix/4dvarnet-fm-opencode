@@ -71,6 +71,16 @@ S0/S1 evaluation mirroring the L96 case-study pattern, on a **nadir-altimetry-st
 - **Tests** `tests/test_qg_s0s1.py` (14): window schema, shared-truth across scenarios, S0 da_params==true, S1a param-bias sign, corrupted-wind OU stats (loc jitter σ, amp bias/η with expected ratio `√((1+b)²+σ_frac²)`), track geometry (advance, mask, noise scale), density, determinism; plus `rollout_trajectory` regression tests in `tests/test_qg_dynamics.py`.
 - **To do (next)**: QG DA baselines (EnKF/ETKF/4DVar on ψ/q) on the S0/S1 with held-out truth; then `train.py` dispatch + neural training on psi/q; parameter randomization as the final S0/S1 analog step.
 
+### QG Phase A.5 — DA baselines on S0/S1a (EnKF/ETKF)
+
+- **Generalization** `evaluation/baselines.py`: `ObsOperator` gained optional per-timestep obs indices (`obs_indices_t`, `index_at(t)`), plus a generic 2-D Gaspari–Cohn builder `_build_qg_loc_matrices` (grid-distance, per-time, cross-layer suppressed). Default path (`obs_indices_t=None`, `loc_Lx_t=None`) is byte-for-byte unchanged for L63/L96.
+- **Runner** `evaluation/run_qg_baselines.py` (`--method enkf|etkf`, `--nx`, `--ensemble`, `--inflation`, `--loc-radius`, `--out`):
+  - `WindStateAdapter(DynamicsBase)` forwards the generic baseline `forcing` channel as QG `wind_state_t` and drops the L63 default params.
+  - Per-window dynamics from `da_params`/`da_model` (qg2l/qg1l; `clip_range=1e-3` bounds ensemble blowup); per-time moving along-track column indices → `obs_indices_t`; obs of **upper-layer PV q₁** (state-consistent index obs, since baselines `ObsOperator` is index-selection and the dynamical state is q, not ψ).
+  - Metrics: RMSE, pooled EV, and a **free-forecast RMSE** reference (`rollout_trajectory(true_state[0])` under the scenario wind) → `forecast_improvement = forecast_rmse/da_rmse`. JSON to `reports/outputs/figs/qg_da_baselines_{method}.json`.
+- **Finding**: at 0.026% nadir-altimetry along-track coverage over a 60-day window, noise-cold-start EnKF/ETKF recover the state to ~field-std (EV≲0): under error-free S0 the free forecast from an exact IC is near-perfect (`forecast_rmse ~1e-10`), so DA cannot beat it; under S1a (biased params + corrupted wind) the free forecast degrades and DA pulls toward truth, with localization improving skill. 4DVar (torch-autograd adjoint) deferred.
+- **Tests** `tests/test_qg_baselines.py` (8): per-time obs-index resolution, loc-matrix shapes + cross-layer suppression, wind-adapter forwarding, q-obs generation, per-pass layout, small EnKF smoke (finite/bounded).
+
 ## Experiments
 
 | ID | Model | Hidden | Epochs | Train mix | Status |
