@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-08-24: L3 ens30 on S1 (multi-τ CFM, job 49447) + restore ensemble/ES-fix code
+
+**Summary:** Ran the S1 counterpart of the S0 ens30 study for L3 multi-τ CFM: 30-member
+ensembles (matching DA `N_ensemble=30`) on the cached S1 test set at n_outer ∈ {1,10},
+via a 2-task l40s array (`batch/run_l96_cfms_ens30_s1.sbatch`, job 49447, both
+COMPLETED ~2-3 min). Results: 30×1 RMSE 0.6528 → 30×10 **0.5667** (ratio 0.868, −13.2%,
+statistically identical to S0). S1/S0 degradation at 30×10 ≈ **1.004** (S1 0.5667 vs S0
+0.5643) — the multi-τ ensemble is essentially as good on S1 as on S0, consistent with the
+neural models' known robustness to the parameter-biased S1 test setup. Outputs in
+`experiments/L3_vanilla_cfm_s0s1/ens30_s1_no{1,10}/` (`members_s1.npz` (200,3000,24,30) f32,
+`estimates_s1.npz`, `neural_eval.json` with a single textbook `ensemble.es`). Also merged
+`feat/l96-neural-eval-fix` into this branch (commit b6a61c3), restoring the ensemble
+inference + `_ESAccumulator` ES-fix code that the previously-committed ensemble/seed-study
+artifacts and canonically-swapped s0c cache were produced with but this branch lacked.
+
+**Files modified:** `batch/run_l96_cfms_ens30_s1.sbatch` — new 2-task S1 array; `PLAN.md` —
+new "L3 ens30 on S1" + "Deferred future work (Phases B & C)" sections, L3 table row updated;
+`CHANGELOG.md` — this entry. (Merge b6a61c3 also brought in `eval_neural_l96.py`,
+`evaluation/{neural_inference,estimate_metrics,baselines}.py`, `batch/run_l96_cfms_ens30.sbatch`,
+`batch/run_l96_esfix.sbatch`, `tests/test_neural_inference.py`, `tests/test_energy_score.py`.)
+
+**Rationale:** PLAN.md documented "S1 + other models' ensemble runs" as open follow-up; this
+completes the S1 leg of the L3 ens30 study and confirms the integration-coarseness advantage and
+the ≈1.00 robustness extend to S1. The merge resolves the branch's internal inconsistency (code
+that could not run the committed ensemble/seed sbatch or reproduce the swapped cache's ES).
+
+**Verification:** job 49447 both tasks COMPLETED (ExitCode 0:0); outputs shape-checked
+(200,3000,24,30); `pytest tests/test_energy_score.py tests/test_neural_inference.py tests/test_lorenz96_training.py -m "not slow"` — 65 passed.
+
 ## 2026-08-24: Canonical s0c DA cache swap + consolidated report ES convention fix
 
 **Summary:** Swapped the canonical L96 DA baseline cache (s0c Obs30 int100) to the bug-fixed esfix version (JSON + trajectory npz, backups saved as `.bak`). Fixed the esfix validation gate: (1) handle missing `es` in original caches (dws50 KeyError), (2) loosened RMSE/EV tolerance from 0.5% to 2% relative (GPU nondeterminism causes ~1% drift). Updated the consolidated report generator to read DA ES from the swapped JSON cache (proper ensemble ES for EnKF/ETKF, N=30) and L3 ES from the ens30×10 run (proper ensemble ES, N=30) instead of the N=1 MAE proxy recomputed from trajectory means. L3 now uses ens30×10 for both RMSE (0.564) and ES (0.358) on S0; S1 falls back to single-sample (marked `*`). N=1 methods (Strong-4DVar, L1b/L2b/L4/L5/L6) are marked with `*` in the ES table with a footnote explaining the convention. Consistency checks still PASS (DA max Δ 2.1e-4, neural truth exact).

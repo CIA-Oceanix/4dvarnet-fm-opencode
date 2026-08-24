@@ -104,15 +104,18 @@ array 49383; they will be swapped when their validation gates pass.
   (L6 0.639/0.638 vs obs-only L2b 0.633/0.633); neural degradation was already ≈1.00,
   so there was no robustness gap for conditioning to close.
 
-### L3 ensemble study (`ens30`, S0 only, job array 49350)
+### L3 ensemble study (`ens30`, S0 + S1, job arrays 49350 / 49447)
 
 N=30 members to match DA EnKF/ETKF `N_ensemble=30`; outputs in
 `experiments/{L3,L2b}_vanilla_cfm_s0s1/ens30_no{1,10}/` (`estimates_s0.npz` member mean,
 `members_s0.npz` (200,3000,24,30) f32, `neural_eval.json` with a `sampling` block).
-ES note: this study ran while the DA `_ESAccumulator` still had its normalization bug,
-so the JSONs store both conventions ("cache" = legacy buggy `mae/M − 0.5·pairwise`,
+ES note: this S0 study ran while the DA `_ESAccumulator` still had its normalization bug,
+so the S0 JSONs store both conventions ("cache" = legacy buggy `mae/M − 0.5·pairwise`,
 "textbook" = proper scoring rule); after the 2026-08-24 fix there is a single ES
 (the textbook formula) everywhere — the table below keeps both columns as record.
+The S1 ens30 study (`experiments/L3_vanilla_cfm_s0s1/ens30_s1_no{1,10}/`, job 49447,
+2026-08-24) ran against the bug-fixed code, so its JSONs store the single textbook
+ensemble ES (matched by the DA EnKF/ETKF N=30 caches).
 
 | Model | members × steps | RMSE | EV | ESens(cache)* | ESens(textbook) | spread |
 |---|---|---|---|---|---|---|
@@ -127,8 +130,8 @@ Reference points (single-sample): L3 0.688, L2b 0.633, L4 DirectUNet 0.6189;
 best DA Strong-4DVar 0.742 (S1 1.432). Multi-τ spread (~0.28 at 10 steps) is ~4.5×
 the τ=0 spread — the τ-sampled velocity field yields genuinely diverse members whose
 mean beats every deterministic scheme; whether that diversity helps probabilistic
-scores (CRPS vs the ES conventions here) is open follow-up work, as are S1 + other
-models' ensemble runs.
+scores (CRPS vs the ES conventions here) is open follow-up work. The S1 ens30 study
+is complete (2026-08-24, see below); other models' ensemble runs remain open follow-up.
 
 ### 5-seed reproducibility (S0, job array 49419)
 
@@ -145,6 +148,53 @@ At inference τ is a deterministic schedule (k/N_outer), not random; all member
 diversity comes from fresh x₀ noise. The improvement comes from proper ODE
 integration of the multi-τ-trained field across τ∈(0,1], not from τ=0 evaluations
 (the 1-step result at 0.650 is worse than the τ=0-trained L2b control at 0.629).
+
+### L3 ens30 on S1 (job array 49447, 2026-08-24)
+
+S1 counterpart of the S0 ens30 study, run against the bug-fixed single-ES code
+(`--cases s1 --n-members 30 --seed 0`, n_outer ∈ {1,10}). Outputs in
+`experiments/L3_vanilla_cfm_s0s1/ens30_s1_no{1,10}/` (`members_s1.npz` (200,3000,24,30) f32,
+`estimates_s1.npz`, `neural_eval.json` with a single textbook `ensemble.es`).
+
+| Model | members × steps | RMSE | EV | ES (ens, N=30) | spread |
+|---|---|---|---|---|---|
+| L3 multi-τ | 30 × 1 | 0.6528 | 0.843 | 0.338 | 0.194 |
+| L3 multi-τ | 30 × 10 | **0.5667** | 0.877 | 0.267 | 0.278 |
+
+The 10-step/1-step ratio is 0.868 (−13.2%) — the integration-coarseness effect is
+statistically identical to S0. S1/S0 degradation at 30×10 is ≈ **1.004** (S1 0.5667 vs
+S0 0.5643): the multi-τ ensemble is essentially as good on S1 as on S0, consistent
+with the neural models' known robustness to the parameter-biased S1 test setup.
+
+## Deferred future work (Phases B & C)
+
+These were proposed alongside the S1 ens30 study (Phase A, done 2026-08-24) but are
+**not committed for execution** — recorded so a future session can pick them up.
+
+### Phase B — CFM architecture variants (low priority; **requires a design doc first**)
+
+Investigate whether a Tweedie-style two-stage decomposition or a diffusion-style
+variant improves on VanillaCFM for L96. **Status: not designed in detail.** Grounded
+anchors only: `TweedieSolver` (`models/solver.py:7`, legacy two-stage solver) and
+`VanillaCFM` (explicitly "no Tweedie decomposition", `PLAN.md` Overview). No concrete
+config/task exists. **Before any implementation**, a design doc (à la
+`docs/experiment_G_tau0_cfm.md`) must define the variants precisely (e.g. V2 = CFM +
+Tweedie residual; V3 = multi-step generative) with expected outcomes vs L2b/L3 and
+success criteria. Do NOT re-run the previous session's under-defined "V2/V3" without this doc.
+
+### Phase C — L96 joint state-parameter neural estimation (concrete, deferred)
+
+Extend the existing **L63 joint infrastructure** to L96. Currently only L96 **Joint DA
+baselines** exist; the L96 joint **neural** models are missing.
+- **Existing (real) pieces:** `JointCFM` (`models/vanilla_cfm.py:75`, L63-shaped,
+  `output_dim = state_dim + param_dim`); `JointCFMConfig` (`conf/schema.py:162`);
+  L63 configs `H1_joint_cfm_default.yaml`, `H2_joint_cfm_tau0.yaml`, `S5/S6`; L96
+  Joint DA baselines `JointEnKFL96`/`JointETKFL96`/`JointStrong4DVarL96`
+  (`evaluation/baselines.py`) + `eval_joint_comparison_l96.py` (ready DA comparator).
+- **Missing:** `JointDirectUNet` / L96-`JointVanillaCFM` (5 L96 params, 24D state),
+  L96 joint neural configs, `train.py`/`lightning_module.py` dispatch, tests.
+- **Estimated work:** new `ParamHead` + joint model(s), schema + configs, dispatch,
+  tests, ~5h GPU training (2 models), eval vs the L96 Joint DA baselines.
 
 ## Experiments
 
@@ -172,7 +222,7 @@ The **L-series** (Lorenz-96) is listed separately below.
 |---|---|---|---|---|---|
 | L1b_direct_unet_s0s1 | DirectUNet | [64,128,256] | 200 | n/a | done (beats DA on S0+S1) |
 | L2b_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | τ=0 | done (≈ L1b) |
-| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | done (Q1 revised by ens30: best on S0 at N=30×10 steps) |
+| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | done (ens30×10 best on S0 0.564 + S1 0.567, job 49447) |
 | L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | done (Q2: best overall, 0.619/0.621) |
 | L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | done (Q2: small hurts CFM, +4.3%) |
 | L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | done (Q3: neutral vs obs-only) |
