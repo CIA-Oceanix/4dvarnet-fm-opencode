@@ -69,8 +69,22 @@ namespaces subject to the repo ruleset.
 `reports/l96/generate_l96_consolidated_report.py`). Headline: neural beats the best DA
 baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×.
 Note: tables use the **pooled** RMSE convention for every method (the DA cache stores
-mean-of-per-window RMSE); EnKF/ETKF cached ES is ensemble-based while deterministic ES is
-an N=1 MAE proxy — both caveats documented in the report.
+mean-of-per-window RMSE). ES note (**DA performance pending update**): a normalization
+bug in `_ESAccumulator` (accuracy term divided by N twice) deflated cached EnKF/ETKF ES
+to spread-dominated values, and separately `Strong4DVar.assimilate_batch` never computed
+ES in-run (historical Strong values came from a since-deleted offline backfill). Fixes
+merged to `feat/l96-neural-eval-fix`: PR #67 (accumulator formula + esfix infra),
+#68 (batch-path Strong ES wiring + relative gate tolerance), #70 (dim-compatible truth
+for reduced-dynamics S1 methods; #69 was an accidental empty merge).
+**All DA ES values currently in caches and in the consolidated report are stale and must
+be regenerated; RMSE/EV rankings are unaffected** (fresh runs agree within ~0.5%) and
+neural numbers are unaffected. Re-run in flight: 8-task sbatch array **49383**
+(`batch/run_l96_esfix.sbatch`) regenerating all affected L96 baseline caches into
+parallel `*_esfix*` files behind a validation gate (RMSE/EV within 5e-3 rel;
+Strong-4DVar ES within 2% rel of backfilled anchors; EnKF/ETKF ES must change).
+Pending after completion (processed on request): validate all `*_validation.json`
+gates → swap originals to `.json.bak`, promote esfix files → regenerate the consolidated
+report (DA ES columns change) → one PR with updated benchmark tables + CHANGELOG entries.
 
 **Open questions (L96)** — all answered (standalone DA-parity eval, cached test set):
 - **Q1 (answered, L3)**: multi-τ CFM does NOT beat conditional-mean estimation —
@@ -81,6 +95,48 @@ an N=1 MAE proxy — both caveats documented in the report.
 - **Q3 (answered, L6)**: corrupted-forcing conditioning is neutral-to-slightly-negative
   (L6 0.639/0.638 vs obs-only L2b 0.633/0.633); neural degradation was already ≈1.00,
   so there was no robustness gap for conditioning to close.
+
+### L3 ensemble study (`ens30`, S0 only, job array 49350)
+
+N=30 members to match DA EnKF/ETKF `N_ensemble=30`; outputs in
+`experiments/{L3,L2b}_vanilla_cfm_s0s1/ens30_no{1,10}/` (`estimates_s0.npz` member mean,
+`members_s0.npz` (200,3000,24,30) f32, `neural_eval.json` with a `sampling` block).
+ES note: this study ran while the DA `_ESAccumulator` still had its normalization bug,
+so the JSONs store both conventions ("cache" = legacy buggy `mae/M − 0.5·pairwise`,
+"textbook" = proper scoring rule); after the 2026-08-24 fix there is a single ES
+(the textbook formula) everywhere — the table below keeps both columns as record.
+
+| Model | members × steps | RMSE | EV | ESens(cache)* | ESens(textbook) | spread |
+|---|---|---|---|---|---|---|
+| L3 multi-τ | 30 × 1 | 0.6503 | 0.845 | −0.094 | 0.336 | 0.194 |
+| L3 multi-τ | 30 × 10 | **0.5643** | 0.879 | −0.140 | 0.265 | 0.278 |
+| L2b τ=0 | 30 × 1 | 0.6290 | 0.854 | −0.021 | 0.371 | 0.062 |
+| L2b τ=0 | 30 × 10 | 0.6290 (≡ no1 bitwise) | 0.854 | −0.021 | 0.371 | 0.062 |
+
+(*legacy buggy convention, kept for provenance only.)
+
+Reference points (single-sample): L3 0.688, L2b 0.633, L4 DirectUNet 0.6189;
+best DA Strong-4DVar 0.742 (S1 1.432). Multi-τ spread (~0.28 at 10 steps) is ~4.5×
+the τ=0 spread — the τ-sampled velocity field yields genuinely diverse members whose
+mean beats every deterministic scheme; whether that diversity helps probabilistic
+scores (CRPS vs the ES conventions here) is open follow-up work, as are S1 + other
+models' ensemble runs.
+
+### 5-seed reproducibility (S0, job array 49419)
+
+Five independent 30-member ensembles (seeds 1–5) confirm the multi-τ advantage is
+not a seed artifact. Report: `reports/l96/outputs/ens30_seed_report.md`.
+
+| scheme | seeds 1-5 mean±std | seed0 (orig) | range (6 runs) |
+|---|---|---|---|
+| 1-step (n_outer=1) | 0.6502 ± 0.0002 | 0.6503 | [0.6500, 0.6506] |
+| 10-step (n_outer=10) | 0.5642 ± 0.0005 | 0.5643 | [0.5637, 0.5650] |
+
+10-step/1-step ratio = 0.868 (−13.2%), cross-seed std < 0.001 for both schemes.
+At inference τ is a deterministic schedule (k/N_outer), not random; all member
+diversity comes from fresh x₀ noise. The improvement comes from proper ODE
+integration of the multi-τ-trained field across τ∈(0,1], not from τ=0 evaluations
+(the 1-step result at 0.650 is worse than the τ=0-trained L2b control at 0.629).
 
 ## Experiments
 
