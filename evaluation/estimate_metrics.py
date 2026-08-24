@@ -69,10 +69,73 @@ def evaluate_estimates(trajectories: np.ndarray, truth: np.ndarray) -> dict:
     }
 
 
+def ensemble_es_terms(members: np.ndarray, truth: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-dimension accuracy / spread terms of the Energy Score.
+
+    Parameters
+    ----------
+    members : np.ndarray, shape (W, T, D, M)
+        Per-window ensemble member trajectories.
+    truth : np.ndarray, shape (W, T, D)
+
+    Returns
+    -------
+    ``(mae, pairwise)`` per-dim arrays where ``mae_d`` is the mean absolute
+    error over all windows/timesteps/members and ``pairwise_d`` is the mean
+    over windows/timesteps of the member-pairwise absolute difference
+    ``(1/M^2) sum_i sum_j |x_i - x_j|``.
+    """
+    mae = np.mean(np.abs(members - truth[:, :, :, None]), axis=(0, 1, 3))
+    pairwise = np.zeros(members.shape[2])
+    for w in range(members.shape[0]):
+        em = np.moveaxis(members[w], -1, 0)
+        pairwise += np.abs(em[:, None] - em[None, :]).mean(axis=(0, 1, 2))
+    pairwise /= members.shape[0]
+    return mae, pairwise
+
+
+def pooled_ensemble_es(members: np.ndarray, truth: np.ndarray) -> np.ndarray:
+    """Per-dimension pooled ensemble Energy Score (proper scoring rule).
+
+    ``ES_d = mae_d - 0.5 * pairwise_d`` where ``mae_d`` is the mean absolute
+    error over windows/timesteps/members and ``pairwise_d`` the mean pairwise
+    member distance — identical to ``metrics.energy_score`` averaged over
+    windows.
+    """
+    mae, pairwise = ensemble_es_terms(members, truth)
+    return mae - 0.5 * pairwise
+
+
+def evaluate_ensemble_estimates(members: np.ndarray, truth: np.ndarray) -> dict:
+    """Evaluate an ensemble reconstruction: member-mean metrics + ensemble ES.
+
+    The deterministic RMSE/EV/ES block is computed on the member **mean**
+    trajectory (what a downstream consumer would use as the point estimate);
+    the ``ensemble`` block adds the proper ensemble ES plus the spread.
+    """
+    mean_traj = members.mean(axis=-1)
+    out = evaluate_estimates(mean_traj, truth)
+    n = int(members.shape[3])
+    es = pooled_ensemble_es(members, truth)
+    spread = np.std(members, axis=-1).mean(axis=(0, 1))
+    out["ensemble"] = {
+        "num_members": n,
+        "es": {"groups": _groups_from(es)},
+        "spread": {"groups": _groups_from(spread)},
+    }
+    return out
+
+
 def evaluate_npz(path: str) -> dict:
     """Evaluate a stored ``.npz`` with ``trajectories`` and ``truth`` arrays."""
     data = np.load(path)
     return evaluate_estimates(data["trajectories"], data["truth"])
+
+
+def evaluate_ensemble_npz(path: str) -> dict:
+    """Evaluate a stored ``.npz`` with ``members`` and ``truth`` arrays."""
+    data = np.load(path)
+    return evaluate_ensemble_estimates(data["members"], data["truth"])
 
 
 def save_estimates(path: str, trajectories: np.ndarray, truth: np.ndarray) -> None:

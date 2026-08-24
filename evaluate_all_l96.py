@@ -90,9 +90,10 @@ def main():
                         help="Number of fast vars observed per slow node (default: 2)")
     parser.add_argument("--regenerate-data", action="store_true", default=False,
                         help="Force dataset regeneration, ignoring cached .pt file")
-    parser.add_argument("--randomize", type=str, default=None,
-                        help='JSON dict of per-param randomization, e.g. '
+    parser.add_argument("--randomize", type=str, default=None,                        help='JSON dict of per-param randomization, e.g. '
                              '\'{"fast_weights": {"randomized": true, "noise": 0.2}}\'')
+    parser.add_argument("--data-cache-tag", type=str, default="",
+                        help="Suffix for the dataset .pt cache filename (parallel-safe reruns)")
     args = parser.parse_args()
 
     randomize = json.loads(args.randomize) if args.randomize else {}
@@ -143,8 +144,9 @@ def main():
         print("  Randomizing all params: F, c1, h, hx, eps")
 
     print("\n── Generating L96 S0/S1 datasets ──")
-    ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}.pt")
-    ref_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_nwin{args.num_test_windows}.pt")
+    tag = args.data_cache_tag
+    ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}{tag}.pt")
+    ref_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_nwin{args.num_test_windows}{tag}.pt")
     t0 = time.time()
     if os.path.exists(ds_cache) and not args.regenerate_data:
         print(f"  Loading cached datasets ({ds_cache})...")

@@ -85,11 +85,21 @@ L96 baseline caches (legacy int100/int200, fw, dws50) are still being regenerate
 array 49383; they will be swapped when their validation gates pass.
 
 **Open questions (L96)** — all answered (standalone DA-parity eval, cached test set):
-- **Q1 (answered, L3)**: multi-τ CFM does NOT beat conditional-mean estimation —
-  L3 0.688/0.690 vs τ=0 L2b 0.633/0.633 (+8.6%); mirrors the L63 G-series finding.
+- **Q1 (REVISED 2026-08-24, L3 ens30 study — see below)**: the original answer
+  (multi-τ worse than τ=0, +8.6%) was an artifact of single-sample × 1-step evaluation.
+  With N=30 members and proper integration, multi-τ CFM **beats** conditional-mean
+  estimation: L3 0.5643 vs τ=0 L2b 0.6290 (−10.4%), also beating DirectUNet L4
+  (0.6189) — the new overall best on S0. Decomposition of the published L3 0.688:
+  −5.5% from 30-member averaging (sampling variance), −13.2% further from 10 Euler
+  steps (integration coarseness). τ=0 control is exactly invariant to n_outer
+  (single-Euler-step shortcut), confirming the effect is specific to multi-τ.
+- **Q1-original (superseded)**: multi-τ CFM does NOT beat conditional-mean estimation —
+  L3 0.688/0.690 vs τ=0 L2b 0.633/0.633 (+8.6%); mirrors the L63 G-series finding
+  **at 1 member × 1 step only**; see the ens30 revision above before quoting this.
 - **Q2 (answered, L4/L5)**: size sensitivity is model-dependent — small DirectUNet
   (L4) slightly beats default L1b (0.619 vs 0.622); small τ=0 CFM (L5) is worse than
-  default L2b (+4.3%). CFM benefits from capacity; DirectUNet does not.
+  default L2b (+4.3%). CFM benefits from capacity; DirectUNet does not. (Note: Q2's
+  "best overall" ranking is superseded for S0 by L3 ens30×10 = 0.5643.)
 - **Q3 (answered, L6)**: corrupted-forcing conditioning is neutral-to-slightly-negative
   (L6 0.639/0.638 vs obs-only L2b 0.633/0.633); neural degradation was already ≈1.00,
   so there was no robustness gap for conditioning to close.
@@ -162,12 +172,13 @@ The **L-series** (Lorenz-96) is listed separately below.
 |---|---|---|---|---|---|
 | L1b_direct_unet_s0s1 | DirectUNet | [64,128,256] | 200 | n/a | done (beats DA on S0+S1) |
 | L2b_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | τ=0 | done (≈ L1b) |
-| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | done (Q1: worse than τ=0, +8.6%) |
+| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | done (Q1 revised by ens30: best on S0 at N=30×10 steps) |
 | L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | done (Q2: best overall, 0.619/0.621) |
 | L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | done (Q2: small hurts CFM, +4.3%) |
 | L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | done (Q3: neutral vs obs-only) |
 
-**Standalone DA-parity results (cached test set, Obs30, 200 windows)** — S0/S1 RMSE:
+**Standalone DA-parity results (cached test set, Obs30, 200 windows)** — S0/S1 RMSE
+(single-sample convention; L3's S0 ranking is superseded by the ens30 study above):
 L4 **0.619**/0.621 < L1b 0.622/0.625 < L2b 0.633/0.633 ≈ L6 0.639/0.638 < L5 0.660/0.660 < L3 0.688/0.690.
 All neural degradation ≈ 1.00; best DA (Strong-4DVar): 0.742/1.432.
 

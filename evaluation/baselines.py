@@ -150,9 +150,14 @@ class _ESAccumulator:
         self.t += 1
 
     def es(self) -> np.ndarray:
+        """Pooled per-dimension Energy Score (matches ``metrics.energy_score``).
+
+        ES_d = mean_t[ (1/N) sum_i |x_i,d(t) - y_d(t)|
+                       - (1/(2 N^2)) sum_i sum_j |x_i,d(t) - x_j,d(t)| ]
+        """
         t = max(self.t, 1)
         return (
-            self.abs_err / (t * self.N)
+            self.abs_err / t
             - 0.5 * self.pairwise / (t * self.N * self.N)
         )
 
@@ -547,11 +552,18 @@ class Strong4DVar:
             current_bg = final_traj[:, -1].detach()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
-            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b))
+            es_b = (
+                np.mean(np.abs(analysis[b] - ref_full[b]), axis=0)
+                if ref_full is not None else None
+            )
+            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b, es=es_b))
         return results
 
 
@@ -776,8 +788,8 @@ class ETKF:
                 for b in range(B):
                     if nan_mask[b].any():
                         ensemble[b, nan_mask[b]] = mu_nan[b]
-            if es_accs is not None:
-                for b in range(B):
+            for b in range(B):
+                if es_accs[b] is not None:
                     es_accs[b].step(ensemble[b], ref_full[b, t])
 
             if obs_mask[:, t].any():
@@ -840,7 +852,7 @@ class ETKF:
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((N, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
-                es=(es_accs[b].es() if es_accs is not None else None),
+                es=(es_accs[b].es() if es_accs[b] is not None else None),
             ))
         return results
 
@@ -1031,8 +1043,8 @@ class EnKF:
                 for b in range(B):
                     if nan_mask_step[b].any():
                         ensemble[b, nan_mask_step[b]] = mean_e_pre[b]
-            if es_accs is not None:
-                for b in range(B):
+            for b in range(B):
+                if es_accs[b] is not None:
                     es_accs[b].step(ensemble[b], ref_full[b, t])
 
             if obs_mask[:, t].any():
@@ -1076,7 +1088,7 @@ class EnKF:
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
-                es=(es_accs[b].es() if es_accs is not None else None),
+                es=(es_accs[b].es() if es_accs[b] is not None else None),
             ))
         return results
 
