@@ -69,8 +69,10 @@ namespaces subject to the repo ruleset.
 `reports/l96/generate_l96_consolidated_report.py`). Headline: neural beats the best DA
 baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×.
 Note: tables use the **pooled** RMSE convention for every method (the DA cache stores
-mean-of-per-window RMSE); EnKF/ETKF cached ES is ensemble-based while deterministic ES is
-an N=1 MAE proxy — both caveats documented in the report.
+mean-of-per-window RMSE). ES note: a normalization bug in `_ESAccumulator` (accuracy
+term divided by N twice) deflated cached EnKF/ETKF ES to spread-dominated values;
+fixed 2026-08-24 and affected L96 caches regenerated via `batch/run_l96_esfix.sbatch`
+— all benchmark ES is now the proper scoring rule, uniformly reported as "ES".
 
 **Open questions (L96)** — all answered (standalone DA-parity eval, cached test set):
 - **Q1 (REVISED 2026-08-24, L3 ens30 study — see below)**: the original answer
@@ -97,16 +99,19 @@ an N=1 MAE proxy — both caveats documented in the report.
 N=30 members to match DA EnKF/ETKF `N_ensemble=30`; outputs in
 `experiments/{L3,L2b}_vanilla_cfm_s0s1/ens30_no{1,10}/` (`estimates_s0.npz` member mean,
 `members_s0.npz` (200,3000,24,30) f32, `neural_eval.json` with a `sampling` block).
-Ensemble ES reported under both conventions: `"cache"` reproduces the DA-cache
-`_ESAccumulator` formula (mae/M − 0.5·pairwise; spread-dominated, can go negative,
-comparable with cached EnKF/ETKF ES), `"textbook"` is the proper scoring rule.
+ES note: this study ran while the DA `_ESAccumulator` still had its normalization bug,
+so the JSONs store both conventions ("cache" = legacy buggy `mae/M − 0.5·pairwise`,
+"textbook" = proper scoring rule); after the 2026-08-24 fix there is a single ES
+(the textbook formula) everywhere — the table below keeps both columns as record.
 
-| Model | members × steps | RMSE | EV | ESens(cache) | ESens(textbook) | spread |
+| Model | members × steps | RMSE | EV | ESens(cache)* | ESens(textbook) | spread |
 |---|---|---|---|---|---|---|
 | L3 multi-τ | 30 × 1 | 0.6503 | 0.845 | −0.094 | 0.336 | 0.194 |
 | L3 multi-τ | 30 × 10 | **0.5643** | 0.879 | −0.140 | 0.265 | 0.278 |
 | L2b τ=0 | 30 × 1 | 0.6290 | 0.854 | −0.021 | 0.371 | 0.062 |
 | L2b τ=0 | 30 × 10 | 0.6290 (≡ no1 bitwise) | 0.854 | −0.021 | 0.371 | 0.062 |
+
+(*legacy buggy convention, kept for provenance only.)
 
 Reference points (single-sample): L3 0.688, L2b 0.633, L4 DirectUNet 0.6189;
 best DA Strong-4DVar 0.742 (S1 1.432). Multi-τ spread (~0.28 at 10 steps) is ~4.5×

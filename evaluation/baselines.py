@@ -150,9 +150,14 @@ class _ESAccumulator:
         self.t += 1
 
     def es(self) -> np.ndarray:
+        """Pooled per-dimension Energy Score (matches ``metrics.energy_score``).
+
+        ES_d = mean_t[ (1/N) sum_i |x_i,d(t) - y_d(t)|
+                       - (1/(2 N^2)) sum_i sum_j |x_i,d(t) - x_j,d(t)| ]
+        """
         t = max(self.t, 1)
         return (
-            self.abs_err / (t * self.N)
+            self.abs_err / t
             - 0.5 * self.pairwise / (t * self.N * self.N)
         )
 
