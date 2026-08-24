@@ -71,6 +71,30 @@ CASES = ["s0", "s1"]
 GROUPS = ("all_obs", "slow", "obs_fast")
 NO = 8
 
+SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
+    ("Strong-4DVar", "Variational",
+     ("Strong-constraint 4D-Var over the dws=500 window (`B_var=2.0`, `R_var=0.5`, `max_iter=10`, "
+      "`lr=0.2`, autodiff minimization); assimilates the full window trajectory.")),
+    ("EnKF", "Ensemble KF",
+     ("Stochastic ensemble Kalman filter, `N_ens=30`, inflation=2.0, no localization; sequential "
+      "observation updates.")),
+    ("ETKF", "Ensemble KF",
+     "Deterministic ensemble square-root filter, `N_ens=30`, inflation=2.0, no localization."),
+    ("L1b_direct_unet_s0s1", "Neural (DirectUNet)",
+     "Single-pass regression obs → state, hidden [64,128,256]; obs-only conditioning; 200 epochs."),
+    ("L2b_vanilla_cfm_s0s1", "Neural (CFM, τ=0)",
+     ("Conditional flow matching trained at τ=0 only; sampled with a single Euler step (deterministic, "
+      "conditional-mean-like); hidden [64,128,256]; 400 epochs.")),
+    ("L3_vanilla_cfm_s0s1", "Neural (CFM, multi-τ)",
+     ("Standard multi-τ CFM training; evaluated with a single sample (`N_outer=1`, one Euler step from a "
+      "random x₀) — stochastic, no ensemble averaging; hidden [64,128,256]; 400 epochs.")),
+    ("L4_direct_unet_s0s1_small", "Neural (DirectUNet)", "As L1b with small backbone [32,64,128]."),
+    ("L5_vanilla_cfm_s0s1_small_tau0", "Neural (CFM, τ=0)", "As L2b with small backbone [32,64,128]."),
+    ("L6_vanilla_cfm_s0s1_forcing_cond", "Neural (CFM, τ=0)",
+     ("As L2b plus corrupted-forcing conditioning (`cond_extra_dim=1`); tests the robustness value of "
+      "forcing input.")),
+]
+
 
 def make_obs_j_indices(no: int, j_truth: int, j_obs: int) -> np.ndarray:
     x_idx = list(range(no))
@@ -266,6 +290,17 @@ def fmt_block_table(
     return "\n".join(lines)
 
 
+def fmt_scheme_table() -> str:
+    lines = [
+        "| ID | Type | Description |",
+        "|---|---|---|",
+    ]
+    for scheme_id, family, description in SCHEME_DESCRIPTIONS:
+        lines.append(f"| {short_name(scheme_id)} | {family} | {description} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def plot_hovmoller(
     fig_path: Path,
     case: str,
@@ -390,6 +425,17 @@ def main() -> None:
         (
             "All table values are recomputed from the stored trajectory arrays via "
             "`evaluation/estimate_metrics.py`; **bold** marks the best value per column."
+        ),
+        "",
+        "## Benchmarked schemes",
+        "",
+        fmt_scheme_table(),
+        (
+            "Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity "
+            "benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the "
+            "24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window "
+            "parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what "
+            "makes the DA-vs-neural comparison apples-to-apples."
         ),
         "",
         "## RMSE (pooled, lower is better)",
