@@ -69,10 +69,22 @@ namespaces subject to the repo ruleset.
 `reports/l96/generate_l96_consolidated_report.py`). Headline: neural beats the best DA
 baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×.
 Note: tables use the **pooled** RMSE convention for every method (the DA cache stores
-mean-of-per-window RMSE). ES note: a normalization bug in `_ESAccumulator` (accuracy
-term divided by N twice) deflated cached EnKF/ETKF ES to spread-dominated values;
-fixed 2026-08-24 and affected L96 caches regenerated via `batch/run_l96_esfix.sbatch`
-— all benchmark ES is now the proper scoring rule, uniformly reported as "ES".
+mean-of-per-window RMSE). ES note (**DA performance pending update**): a normalization
+bug in `_ESAccumulator` (accuracy term divided by N twice) deflated cached EnKF/ETKF ES
+to spread-dominated values, and separately `Strong4DVar.assimilate_batch` never computed
+ES in-run (historical Strong values came from a since-deleted offline backfill). Fixes
+merged to `feat/l96-neural-eval-fix`: PR #67 (accumulator formula + esfix infra),
+#68 (batch-path Strong ES wiring + relative gate tolerance), #70 (dim-compatible truth
+for reduced-dynamics S1 methods; #69 was an accidental empty merge).
+**All DA ES values currently in caches and in the consolidated report are stale and must
+be regenerated; RMSE/EV rankings are unaffected** (fresh runs agree within ~0.5%) and
+neural numbers are unaffected. Re-run in flight: 8-task sbatch array **49383**
+(`batch/run_l96_esfix.sbatch`) regenerating all affected L96 baseline caches into
+parallel `*_esfix*` files behind a validation gate (RMSE/EV within 5e-3 rel;
+Strong-4DVar ES within 2% rel of backfilled anchors; EnKF/ETKF ES must change).
+Pending after completion (processed on request): validate all `*_validation.json`
+gates → swap originals to `.json.bak`, promote esfix files → regenerate the consolidated
+report (DA ES columns change) → one PR with updated benchmark tables + CHANGELOG entries.
 
 **Open questions (L96)** — all answered (standalone DA-parity eval, cached test set):
 - **Q1 (REVISED 2026-08-24, L3 ens30 study — see below)**: the original answer
