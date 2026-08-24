@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
+import torch
 
 from evaluation.metrics import energy_score
-from evaluation.baselines import EnKF, BaselineResult
+from evaluation.baselines import EnKF, Strong4DVar, BaselineResult
 
 
 class TestEnergyScoreMetric:
@@ -46,6 +47,46 @@ class TestEnergyScoreMetric:
         assert np.all(energy_score(sharp, truth) < energy_score(vague, truth))
 
 
+class TestESAccumulator:
+    def _acc(self, N, sd, T):
+        from evaluation.baselines import _ESAccumulator
+        return _ESAccumulator(T, sd, N)
+
+    def test_matches_energy_score_stepwise(self):
+        """Feeding ensembles timestep-by-timestep must reproduce energy_score."""
+        rng = np.random.RandomState(7)
+        N, T, D = 6, 20, 3
+        ens = rng.randn(N, T, D)
+        truth = rng.randn(T, D)
+
+        acc = self._acc(N, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(ens[:, t]), torch.from_numpy(truth[t]))
+        np.testing.assert_allclose(acc.es(), energy_score(ens, truth), rtol=1e-12)
+
+    def test_identical_members_equal_mae_any_n(self):
+        rng = np.random.RandomState(3)
+        N, T, D = 5, 15, 2
+        traj = rng.randn(T, D)
+        truth = rng.randn(T, D)
+        acc = self._acc(N, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(np.stack([traj[t]] * N)), torch.from_numpy(truth[t]))
+        mae = np.mean(np.abs(traj - truth), axis=0)
+        # Spread term vanishes -> ES == MAE of the (shared) trajectory
+        np.testing.assert_allclose(acc.es(), mae, atol=1e-12)
+
+    def test_single_member_mae_proxy(self):
+        rng = np.random.RandomState(11)
+        T, D = 12, 3
+        traj = rng.randn(T, D)
+        truth = rng.randn(T, D)
+        acc = self._acc(1, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(traj[t][None]), torch.from_numpy(truth[t]))
+        np.testing.assert_allclose(acc.es(), np.mean(np.abs(traj - truth), axis=0), atol=1e-12)
+
+
 class TestEnKFEnergyScore:
     def test_batch_reports_es_field(self, device):
         torch = pytest.importorskip("torch")
@@ -74,3 +115,54 @@ class TestEnKFEnergyScore:
         force = torch.zeros(T, device=device)
         result = enkf.assimilate(obs, mask, force)
         assert result.es is None
+
+
+class TestStrong4DVarBatchES:
+    def test_batch_reports_mae_es(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        method = Strong4DVar(
+            da_window_steps=5, max_iter=2, lr=0.1, dt=0.01,
+            device=device, dynamics=Lorenz63Dynamics(dt=0.01),
+        )
+        B, T, D = 2, 10, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::3] = True
+        force = torch.zeros(B, T, device=device)
+        truth = torch.randn(B, T, D, device=device)
+        results = method.assimilate_batch(obs, mask, force, true_state=truth)
+        assert len(results) == B
+        for b, result in enumerate(results):
+            assert result.es is not None
+            assert result.es.shape == (D,)
+            mae = np.mean(np.abs(result.trajectory - truth[b].cpu().numpy()), axis=0)
+            np.testing.assert_allclose(result.es, mae, rtol=1e-5)
+
+    def test_batch_es_none_when_truth_absent(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        method = Strong4DVar(
+            da_window_steps=5, max_iter=2, lr=0.1, dt=0.01,
+            device=device, dynamics=Lorenz63Dynamics(dt=0.01),
+        )
+        B, T, D = 1, 5, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::3] = True
+        force = torch.zeros(B, T, device=device)
+        results = method.assimilate_batch(obs, mask, force)
+        assert all(r.es is None for r in results)
+
+    def test_batch_dim_mismatch_no_crash_es_none(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        enkf = EnKF(N_ensemble=4, dt=0.01, device=device, dynamics=Lorenz63Dynamics(dt=0.01))
+        B, T, D = 1, 6, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::2] = True
+        force = torch.zeros(B, T, device=device)
+        truth_wide = torch.randn(B, T, D + 2, device=device)
+        results = enkf.assimilate_batch(obs, mask, force, true_state=truth_wide)
+        assert all(r.es is None for r in results)
