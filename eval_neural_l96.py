@@ -146,9 +146,9 @@ def main():
         m = metrics[case]
         extra = ""
         if "ensemble" in m:
-            es = m["ensemble"]["es_cache_convention"]["groups"]["all_obs"]
+            es = m["ensemble"]["es"]["groups"]["all_obs"]
             sp = m["ensemble"]["spread"]["groups"]["all_obs"]
-            extra = f" | ESens(cache): {es:.6f} | spread: {sp:.6f}"
+            extra = f" | ESens: {es:.6f} | spread: {sp:.6f}"
         logger.info(f"[{case.upper()}] RMSE: {m['rmse']:.6f} | "
                     f"slow: {m['groups']['slow']:.6f} | obs_fast: {m['groups']['obs_fast']:.6f} | "
                     f"EV(all): {m['ev']['groups']['all_obs']:.6f} | ES(all): {m['es']['groups']['all_obs']:.6f}"

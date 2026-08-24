@@ -304,7 +304,7 @@ class TestEnsembleInference:
         assert out["members"].shape == (B, T, d_obs, M)
 
     def test_pooled_ensemble_es_matches_per_window_energy_score_and_accumulator(self):
-        from evaluation.estimate_metrics import ensemble_es_terms, pooled_ensemble_es
+        from evaluation.estimate_metrics import pooled_ensemble_es
         from evaluation.metrics import energy_score
 
         rng = np.random.default_rng(7)
@@ -312,13 +312,12 @@ class TestEnsembleInference:
         members = rng.normal(size=(W, T, D, M))
         truth = rng.normal(size=(W, T, D))
 
-        es_tb = pooled_ensemble_es(members, truth, convention="textbook")
+        es_tb = pooled_ensemble_es(members, truth)
         es_per_window = np.mean(
             [energy_score(np.moveaxis(members[w], -1, 0), truth[w]) for w in range(W)], axis=0
         )
         assert np.allclose(es_tb, es_per_window)
 
-        ensemble_es_terms(members, truth)
         acc_abs = np.zeros(D)
         acc_pw = np.zeros(D)
         for w in range(W):
@@ -327,8 +326,8 @@ class TestEnsembleInference:
             for i in range(M):
                 for j in range(M):
                     acc_pw += np.abs(e[:, :, i] - e[:, :, j]).mean(axis=0) / (M * M)
-        es_cache_manual = acc_abs / W / M - 0.5 * acc_pw / W
-        assert np.allclose(pooled_ensemble_es(members, truth, convention="cache"), es_cache_manual)
+        es_manual = acc_abs / W - 0.5 * acc_pw / W
+        assert np.allclose(pooled_ensemble_es(members, truth), es_manual)
 
     def test_ensemble_es_degenerate_cases(self):
         from evaluation.estimate_metrics import pooled_ensemble_es
@@ -341,14 +340,10 @@ class TestEnsembleInference:
 
         # Identical members: spread term vanishes -> ES == MAE of the trajectory
         mae = np.mean(np.abs(traj - truth), axis=(0, 1))
-        assert np.allclose(pooled_ensemble_es(members, truth, convention="textbook"), mae)
-        assert np.allclose(
-            pooled_ensemble_es(members, truth, convention="cache"), mae / M
-        )
-        # Single member: both conventions coincide with the MAE proxy
+        assert np.allclose(pooled_ensemble_es(members, truth), mae)
+        # Single member: ES reduces to the MAE proxy
         single = traj[:, :, :, None]
-        assert np.allclose(pooled_ensemble_es(single, truth, convention="cache"), mae)
-        assert np.allclose(pooled_ensemble_es(single, truth, convention="textbook"), mae)
+        assert np.allclose(pooled_ensemble_es(single, truth), mae)
 
     def test_evaluate_ensemble_estimates_schema_and_member_mean_consistency(self):
         from evaluation.estimate_metrics import (
@@ -365,9 +360,9 @@ class TestEnsembleInference:
         ref = evaluate_estimates(members.mean(axis=-1), truth)
         for key in ("rmse", "groups"):
             assert m[key] == pytest.approx(ref[key])
-        assert set(m["ensemble"]) == {"num_members", "es_cache_convention", "es_textbook", "spread"}
+        assert set(m["ensemble"]) == {"num_members", "es", "spread"}
         assert m["ensemble"]["num_members"] == M
-        for blk in ("es_cache_convention", "es_textbook", "spread"):
+        for blk in ("es", "spread"):
             assert set(m["ensemble"][blk]["groups"]) == {"slow", "obs_fast", "all_obs"}
 
 

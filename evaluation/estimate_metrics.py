@@ -94,28 +94,16 @@ def ensemble_es_terms(members: np.ndarray, truth: np.ndarray) -> tuple[np.ndarra
     return mae, pairwise
 
 
-def pooled_ensemble_es(
-    members: np.ndarray, truth: np.ndarray, convention: str = "cache"
-) -> np.ndarray:
-    """Per-dimension pooled ensemble ES.
+def pooled_ensemble_es(members: np.ndarray, truth: np.ndarray) -> np.ndarray:
+    """Per-dimension pooled ensemble Energy Score (proper scoring rule).
 
-    ``convention="cache"`` reproduces exactly what ``_ESAccumulator``
-    (``evaluation/baselines.py``) stores in the DA baseline caches so neural
-    ensembles are directly comparable with EnKF/ETKF cached ES:
-
-        ES_d = mae_d / M - 0.5 * pairwise_d
-
-    ``convention="textbook"`` is the proper scoring rule
-    (``metrics.energy_score`` pooled over windows):
-
-        ES_d = mae_d - 0.5 * pairwise_d
+    ``ES_d = mae_d - 0.5 * pairwise_d`` where ``mae_d`` is the mean absolute
+    error over windows/timesteps/members and ``pairwise_d`` the mean pairwise
+    member distance — identical to ``metrics.energy_score`` averaged over
+    windows.
     """
     mae, pairwise = ensemble_es_terms(members, truth)
-    if convention == "cache":
-        return mae / members.shape[3] - 0.5 * pairwise
-    if convention == "textbook":
-        return mae - 0.5 * pairwise
-    raise ValueError(f"Unknown ES convention: {convention}")
+    return mae - 0.5 * pairwise
 
 
 def evaluate_ensemble_estimates(members: np.ndarray, truth: np.ndarray) -> dict:
@@ -123,18 +111,16 @@ def evaluate_ensemble_estimates(members: np.ndarray, truth: np.ndarray) -> dict:
 
     The deterministic RMSE/EV/ES block is computed on the member **mean**
     trajectory (what a downstream consumer would use as the point estimate);
-    the ``ensemble`` block adds both ES conventions plus the ensemble spread.
+    the ``ensemble`` block adds the proper ensemble ES plus the spread.
     """
     mean_traj = members.mean(axis=-1)
     out = evaluate_estimates(mean_traj, truth)
     n = int(members.shape[3])
-    es_cache = pooled_ensemble_es(members, truth, convention="cache")
-    es_textbook = pooled_ensemble_es(members, truth, convention="textbook")
+    es = pooled_ensemble_es(members, truth)
     spread = np.std(members, axis=-1).mean(axis=(0, 1))
     out["ensemble"] = {
         "num_members": n,
-        "es_cache_convention": {"groups": _groups_from(es_cache)},
-        "es_textbook": {"groups": _groups_from(es_textbook)},
+        "es": {"groups": _groups_from(es)},
         "spread": {"groups": _groups_from(spread)},
     }
     return out

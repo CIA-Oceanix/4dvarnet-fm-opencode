@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 
 from evaluation.metrics import energy_score
 from evaluation.baselines import EnKF, BaselineResult
@@ -44,6 +45,46 @@ class TestEnergyScoreMetric:
         # Force vague to be centered on the truth mean so it's purely a spread issue
         vague += (truth[np.newaxis] - vague.mean(axis=0, keepdims=True))
         assert np.all(energy_score(sharp, truth) < energy_score(vague, truth))
+
+
+class TestESAccumulator:
+    def _acc(self, N, sd, T):
+        from evaluation.baselines import _ESAccumulator
+        return _ESAccumulator(T, sd, N)
+
+    def test_matches_energy_score_stepwise(self):
+        """Feeding ensembles timestep-by-timestep must reproduce energy_score."""
+        rng = np.random.RandomState(7)
+        N, T, D = 6, 20, 3
+        ens = rng.randn(N, T, D)
+        truth = rng.randn(T, D)
+
+        acc = self._acc(N, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(ens[:, t]), torch.from_numpy(truth[t]))
+        np.testing.assert_allclose(acc.es(), energy_score(ens, truth), rtol=1e-12)
+
+    def test_identical_members_equal_mae_any_n(self):
+        rng = np.random.RandomState(3)
+        N, T, D = 5, 15, 2
+        traj = rng.randn(T, D)
+        truth = rng.randn(T, D)
+        acc = self._acc(N, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(np.stack([traj[t]] * N)), torch.from_numpy(truth[t]))
+        mae = np.mean(np.abs(traj - truth), axis=0)
+        # Spread term vanishes -> ES == MAE of the (shared) trajectory
+        np.testing.assert_allclose(acc.es(), mae, atol=1e-12)
+
+    def test_single_member_mae_proxy(self):
+        rng = np.random.RandomState(11)
+        T, D = 12, 3
+        traj = rng.randn(T, D)
+        truth = rng.randn(T, D)
+        acc = self._acc(1, D, T)
+        for t in range(T):
+            acc.step(torch.from_numpy(traj[t][None]), torch.from_numpy(truth[t]))
+        np.testing.assert_allclose(acc.es(), np.mean(np.abs(traj - truth), axis=0), atol=1e-12)
 
 
 class TestEnKFEnergyScore:
