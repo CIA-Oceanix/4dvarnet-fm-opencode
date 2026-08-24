@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-24: QG S1b — reduced-gravity single-layer dynamics (`qg1l`)
+
+**Summary:** Wired the S1b structural-model-error scenario by adding `models/qg1l_dynamics.py` (`QG1LDynamics`), a reduced-gravity single-layer QG model over a motionless deep layer, and connected it into the S0/S1 free-divergence calibration. S1b divergence `[1.13 … 1.36]` now separates above S1a `[0.58 … 1.31]`, both ≫ S0 `[5.7e-06 … 2.9e-04]` (2034× separation gate holds), confirming structural error is the largest free-divergence signal.
+
+**Files modified:**
+- `models/qg1l_dynamics.py` — new: `QG1LDynamics(DynamicsBase)`. `q = lap psi - psi/rd^2`, masked inversion `psi_hat = -q_hat/(K2 + rd^-2)`, `dq/dt = -J(psi, q + beta*y) - rek*lap psi + curl_tau`; same spectral/RK4/pyqg-filter/moving-storm-wind machinery as `QGDynamics`; `param_names=["beta","rd","rek","U1"]`, `state_dim=ny*nx`; `wind_amp=0` bitwise-unforced guard; `state_from_streamfunction(psi)` builds the model state from an upper-layer streamfunction.
+- `tests/test_qg1l_dynamics.py` — new: 18 tests (state roundtrip/layout, inversion residual, inviscid energy+enstrophy conservation, determinism, rollout parity+batch, wind-term hand-check, zero-wind bitwise guard, nominal stability).
+- `reports/calibrate_qg_alongtrack.py` — `_build_dyn` branches on `window["da_model"]` (qg2l vs qg1l); `_free_divergence_s1b` seeds the 1-layer model from the truth upper-layer ψ₁ (`state_from_streamfunction`) and compares roll-out ψ₁ vs the truth target; S1b added to the divergence table + JSON; separation gate now `max(S0) < min(S1a,S1b)`.
+- `reports/outputs/figs/qg_alongtrack_calibration.{png,json}` — regenerated at nx=64.
+- `tests/test_qg1l_dynamics.py` — (included above) new tests.
+- `PLAN.md`/`CHANGELOG.md` — Phase A.3 S1b + reduced-gravity model documented.
+
+**Rationale:** S1b represents a genuine structural model error (a fundamentally different 1-layer dynamical operator) rather than a parametric/boundary perturbation. Projecting the truth's upper-layer streamfunction into the single-layer model and comparing predicted ψ₁ measures how badly the reduced-gravity analog diverges from true 2-layer baroclinic evolution — the largest divergence of the three scenarios, as expected.
+
+**Verification:** `pytest tests/test_qg1l_dynamics.py tests/test_qg_dynamics.py tests/test_qg_data.py tests/test_qg_s0s1.py` — 67 passed (18 + 22 + 13 + 14). `ruff check` clean on all 3 touched files. `mypy` clean on `models/qg1l_dynamics.py`/`tests/test_qg1l_dynamics.py`/`reports/calibrate_qg_alongtrack.py` (only pre-existing `lorenz96`/`random_*` debt via import chain). GPU (Quadro RTX 8000, nx=64, 5 windows): S0 `[5.7e-06 … 2.9e-04]` < S1a `[0.58 … 1.31]` < S1b `[1.13 … 1.36]`, gate `max(S0)=2.86e-4 < min_err=5.81e-01` (2034×).
+
 ## 2026-08-24: QG S0/S1 dataset PR merged (#52) + PR-workflow documentation ported to QG worktree
 
 **Summary:** PR #52 (`feat/qg-s0s1-alongtrack-dataset` → `feat/qg-case-study`, commit `1a7a4f1`) was approved by the `rfablet-review` account and squash-merged via `scripts/open_pr.sh verify`. Also ported the **run-to-completion / review-identity PR workflow** from the L96 worktree into this QG worktree's `AGENTS.md`, closing a documentation gap that had caused the first approval attempt to fail (see rationale).
