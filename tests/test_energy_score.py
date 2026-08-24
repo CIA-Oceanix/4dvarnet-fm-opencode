@@ -153,3 +153,16 @@ class TestStrong4DVarBatchES:
         force = torch.zeros(B, T, device=device)
         results = method.assimilate_batch(obs, mask, force)
         assert all(r.es is None for r in results)
+
+    def test_batch_dim_mismatch_no_crash_es_none(self, device):
+        pytest.importorskip("torch")
+        from models.lorenz63_dynamics import Lorenz63Dynamics
+        enkf = EnKF(N_ensemble=4, dt=0.01, device=device, dynamics=Lorenz63Dynamics(dt=0.01))
+        B, T, D = 1, 6, 3
+        obs = torch.randn(B, T, D, device=device)
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        mask[:, ::2] = True
+        force = torch.zeros(B, T, device=device)
+        truth_wide = torch.randn(B, T, D + 2, device=device)
+        results = enkf.assimilate_batch(obs, mask, force, true_state=truth_wide)
+        assert all(r.es is None for r in results)
