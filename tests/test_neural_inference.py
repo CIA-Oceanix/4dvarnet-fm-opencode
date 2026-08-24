@@ -11,7 +11,9 @@ from evaluation.neural_inference import (
     load_checkpoint,
     resolve_model_class,
     create_model,
+    load_model,
     run_inference,
+    _run_case_inference,
 )
 from evaluation.estimate_metrics import evaluate_estimates, evaluate_npz
 from models.direct_unet import DirectUNet
@@ -154,6 +156,93 @@ class TestNeuralInference:
             # metrics come from the generic evaluator
             m = evaluate_estimates(est[case]["trajectories"], est[case]["truth"])
             assert m["rmse"] == pytest.approx(0.0)
+
+    def test_run_case_inference_uses_obs_var_indices_not_first_cols(self):
+        """_run_case_inference must subsample the full truth by the non-contiguous
+        observed subspace, not by the first `state_dim` columns.
+
+        The bug fixed here: with a 40D truth and an identity observation predictor,
+        ``all_true[..., :d_pred]`` grabbed the first 24 columns (mixing in 8
+        unobserved fast vars Y3,Y4 of the first nodes), inflating RMSE ~2.6x.
+        No dataset generation and no model are needed — we only need the model to
+        return the input obs as its prediction so trajectories == obs, and truth to
+        be subsampled by obs_var_indices.
+        """
+        NO, J, obs_j = 8, 4, 2
+        obs_var_indices = tuple(list(range(NO)) +
+                                [NO + k * J + j for k in range(NO) for j in range(obs_j)])
+        assert len(obs_var_indices) == 24
+        # non-contiguous: index 10 (Y3 of node 0) and 40-8-1 (last Y3,Y4) excluded
+        assert 10 not in obs_var_indices
+        assert 40 - 1 not in obs_var_indices
+
+        B, T = 3, 5
+        D = 24
+        full_state = 40
+
+        # truth: each of the 40 columns has a distinct constant value equal to its
+        # column index, so we can check exactly which columns are selected.
+        truth = torch.zeros(B, T, full_state)
+        for c in range(full_state):
+            truth[..., c] = c
+        obs = truth[..., list(obs_var_indices)]  # already subsampled obs (24D)
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        model = _Identity()
+        dataloader = _build_case_dataloader(truth, obs)
+        out = _run_case_inference(model, dataloader, torch.device("cpu"), obs_var_indices)
+
+        assert out["trajectories"].shape == (B, T, D)
+        assert out["truth"].shape == (B, T, D)
+        # trajectories == obs == truth[..., obs_var_indices]; with identity model and
+        # the truth columns equal to their index, RMSE must be 0.
+        m = evaluate_estimates(out["trajectories"], out["truth"])
+        assert m["rmse"] == pytest.approx(0.0)
+
+        # Direct check: the returned truth columns are exactly obs_var_indices.
+        expected_truth = truth[..., list(obs_var_indices)].numpy()
+        assert np.allclose(out["truth"], expected_truth)
+
+    def _save_lightning_ckpt(self, tmp_path, model, model_type):
+        state_dict = {f"model.{k}": v for k, v in model.state_dict().items()}
+        path = tmp_path / f"stage1_{model_type}.ckpt"
+        torch.save({"state_dict": state_dict, "hyper_parameters": {"model_type": model_type}}, str(path))
+        return str(path)
+
+    def test_infer_hidden_channels_reads_all_down_blocks(self, tmp_path):
+        """hidden_channels must be recovered from downs.1 AND downs.2.
+
+        The bug: the third channel was hardcoded to 256, so a [32,64,128]
+        checkpoint built a [32,64,256] model and strict=False loading silently
+        skipped every downs.2/ups weight (shape mismatch), producing garbage
+        metrics with no error.
+        """
+        model = VanillaCFM(state_dim=24, hidden_channels=[32, 64, 128], param_dim=0)
+        path = self._save_lightning_ckpt(tmp_path, model, "vanilla_cfm")
+        _, cfg = load_checkpoint(path)
+        assert list(cfg.model.hidden_channels) == [32, 64, 128]
+        assert cfg.model.cond_extra_dim == 0
+
+    def test_load_model_overrides_train_tau_0_only(self, tmp_path):
+        """overrides must reach the instantiated model.
+
+        The bug: Lightning hyper_parameters do not record train_tau_0_only, so
+        tau=0-trained CFM checkpoints were loaded with the flag False and
+        sampled via multi-step integration (residual-noise estimates) instead
+        of the single Euler step used at training.
+        """
+        model = VanillaCFM(state_dim=24, hidden_channels=[32, 64, 128], param_dim=0)
+        path = self._save_lightning_ckpt(tmp_path, model, "vanilla_cfm")
+        m_default, _ = load_model(path)
+        assert not m_default.train_tau_0_only
+        m_tau0, cfg = load_model(path, overrides={"train_tau_0_only": True})
+        assert m_tau0.train_tau_0_only
+        assert cfg.model.train_tau_0_only
 
     def test_evaluate_npz_roundtrip(self, tmp_path):
         """evaluate_npz loads stored .npz and returns metrics."""

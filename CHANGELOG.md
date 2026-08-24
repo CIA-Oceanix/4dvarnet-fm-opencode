@@ -1,5 +1,125 @@
 # Changelog
 
+## 2026-08-24: Restructure reports/ into per-system subdirs (l63/, l96/) + prune stale L96 artifacts
+
+**Summary:** Reorganized `reports/` into system-scoped subdirs to make future systems (e.g. QG/SW) drop-in: all L63-era scripts/outputs moved untouched to `reports/l63[/outputs]`, and the L96 benchmark now lives under `reports/l96/` (`generate_l96_consolidated_report.py` + `outputs/{l96_consolidated_benchmark.md, s0_s1_obs_density_da_baselines.md, figs/l96_hovm_*.png}`). Deleted stale L96 one-offs superseded by the consolidated report or completed phases: figure generators (`generate_l96_{trajectory_figures,reconstruction_figures,multi_method_reconstruction}.py` + their tracked PNGs), sweep-era EV post-processor (`compute_explained_var.py` + `l96_clim_var.json`), ablation comparators (`compare_s0_s0b.py`, `compare_s0b_s0c.py`, `repro_gate_b2.py`, root `backfill_l96_baselines_{ev,es}.py`), dead SW code (`diagnose_sw_eddies.py`; SW models not merged), the retired flat table (`benchmark_table_l96.py` + `neural_benchmark_table.md`), and historical summaries (`l96_baseline_report.md`, `s0c_s1c_obs30_results.md`). Also removed dangling batch files (`gen_reconstruction_fig.slurm`) and repointed `batch/run_l96_evaluate_all.sbatch` at the consolidated script (downgraded a40/2h → CPU Odyssey/30min). CI now also triggers on PRs → `master` (previously only `feat/l96-*`).
+
+**Files modified:** `reports/**` (restructure + deletions above); `backfill_l96_baselines_{ev,es}.py` — deleted; `batch/gen_reconstruction_fig.slurm` — deleted; `batch/run_l96_evaluate_all.sbatch` — repointed + resource trim; `.gitignore` — outputs negation widened to `!reports/*/outputs/`; `.github/workflows/ci.yml` — master PR trigger; `PLAN.md` — canonical artifact pointer updated with pooled-RMSE/ES-convention notes; `reports/l96/generate_l96_consolidated_report.py` — path fixes for new depth (`ROOT parents[2]`, `sys.path ../..`, `--out-dir` default)
+
+**Rationale:** `reports/` had accumulated ~10 half-superseded L96 scripts and mixed-system outputs; consolidating under per-system subdirs keeps each system's reporting self-contained and lets the consolidated report be the single canonical artifact (the flat table duplicated a subset of its columns).
+
+**Verification:** Consolidated script re-run from new location: exit 0, both consistency checks PASS, outputs regenerated under `reports/l96/outputs/`. `ruff check reports/l96/generate_l96_consolidated_report.py` clean. Fast gate 74 passed. `bash -n batch/run_l96_evaluate_all.sbatch` OK.
+
+## 2026-08-24: Consolidated L96 benchmark report — all-metric tables + Hovmöller reconstruction examples
+
+**Summary:** Added `reports/generate_l96_consolidated_report.py`, a CPU-only report builder over the cached DA-parity benchmark artifacts (S0c/S1c Obs30 JSON + trajectory `.npz`, shared 200-window dataset, six neural `estimates_{s0,s1}.npz`). It produces `reports/outputs/l96_consolidated_benchmark.md` with (1) full metric tables — **RMSE / EV / ES × {all_obs, slow, obs_fast}** for the 3 DA baselines and all 6 neural models with best-per-column bolding and S1/S0 degradation; (2) a consistency-check section; and (3) Hovmöller reconstruction figures (`figs/l96_hovm_{s0,s1}_{worst,median,best}.png`): rows = Truth/methods, columns = state & |error| maps for slow-X (8D) / fast-Y (16D) blocks with shared color scales and obs-time markers, windows ranked per case by Strong-4DVar per-window RMSE.
+
+**Findings:** Two metric-convention caveats surfaced while building the consistency checks. (A) The DA cache stores RMSE as *mean of per-window RMSEs* (`evaluation/run_l96.py:205`) whereas the neural evaluation pools first (`sqrt(mean sq err)`, `estimate_metrics.py`); pooled ≤ mean-of-window, so the legacy table slightly penalized DA — the consolidated tables use the pooled convention uniformly for every method (orderings unchanged). (B) EnKF/ETKF cached ES is ensemble-based (proper scoring, N=30) while deterministic schemes' ES is an N=1 MAE proxy — documented as not strictly comparable. Consistency results: DA cache vs recompute-from-npz max |Δ| = 2.1e-4 (42 values); neural stored truth ≡ `true_state[:, obs_var_indices]` exactly. Reconstruction examples confirm the headline result visually — e.g. S0-worst window #138: L4 0.808 vs Strong-4DVar 1.388; S1-worst #75: L4 0.832 vs 1.974.
+
+**Files modified:**
+- `reports/generate_l96_consolidated_report.py` — new (tables + consistency checks + Hovmöller figures)
+- `reports/outputs/l96_consolidated_benchmark.md` — new generated report
+- `reports/outputs/figs/l96_hovm_{s0,s1}_{worst,median,best}.png` — 6 generated figures
+- `CHANGELOG.md` — this entry
+
+**Rationale:** After closing Q1–Q3, the benchmark existed only as scattered caches plus a flat table showing only all_obs EV/ES. A single consolidated artifact with all metrics × groups, built-in reproducibility checks against the raw arrays, and visual reconstruction examples makes the L96 case-study results verifiable and presentation-ready.
+
+**Verification:** Script runs end-to-end on CPU (`fdv` env, ~90 s): exit 0 with both consistency checks PASS. `ruff check reports/generate_l96_consolidated_report.py` clean. Fast gate `pytest tests/{neural_inference,metrics,lorenz96_training,direct_unet,vanilla_cfm,hydra_config} -m "not slow"` — 74 passed. Table cross-checked against `neural_benchmark_table.md` (neural rows identical; DA RMSE differs only by the documented convention).
+
+## 2026-08-24: Q1–Q3 answered — L3–L6 DA-parity eval + checkpoint-loader fixes
+
+**Summary:** Evaluated all four new L96 trainings (L3 multi-τ, L4/L5 small, L6 forcing-cond) plus a re-evaluated L2b on the shared cached test set (Obs30, 200 windows) via a 5-task parallel sbatch array. Two latent loader bugs were found and fixed first: (A) `load_checkpoint` hardcoded the third hidden channel to 256 when inferring from weights, so [32,64,128] checkpoints silently loaded into mismatched models (`strict=False` skipped every downs.2/ups weight — garbage metrics, no error); (B) Lightning `hyper_parameters` do not record `train_tau_0_only`, so τ=0-trained CFM checkpoints were sampled multi-step instead of the training-consistent single Euler step — added `load_model(overrides=...)` + `--train-tau0-only`.
+
+**Results (standalone S0/S1 RMSE):** L4 **0.619**/0.621 < L1b 0.622/0.625 < L2b 0.633/0.633 ≈ L6 0.639/0.638 < L5 0.660/0.660 < L3 0.688/0.690; best DA Strong-4DVar 0.742/1.432; all neural degradation ≈1.00. **Q1**: multi-τ does not beat conditional-mean estimation (+8.6% vs τ=0; mirrors L63 G-series). **Q2**: small DirectUNet slightly beats default (best overall); small CFM worse (+4.3%) — capacity helps CFM only. **Q3**: corrupted-forcing conditioning neutral-to-slightly-negative; no robustness gap to close.
+
+**Files modified:**
+- `evaluation/neural_inference.py` — hidden-triple inference from downs.1+downs.2; `load_model(overrides=...)`
+- `eval_neural_l96.py` — `--train-tau0-only`; inferred-cfg sanity log
+- `reports/benchmark_table_l96.py` — NEURAL_JSON_PATTERNS +L3–L6; full-width model labels
+- `batch/run_l96_neural_eval.sbatch` — new 5-task array (rtx8000)
+- `tests/test_neural_inference.py` — 2 regression tests for A/B
+- `PLAN.md`, `L96_NEURAL_TRAINING_PROGRESS.md` — Q1–Q3 closed with numbers
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The four trainings (jobs 49302/49304-49306) completed ~5.5h each; the standalone eval is the canonical apples-to-apples benchmark against the cached DA baselines. Bug A would have produced silently wrong L4/L5 numbers; bug B made τ=0 inference inconsistent with training (empirically negligible for L2b: 0.633→0.633, but correctness matters for future τ=0 checkpoints).
+
+**Verification:** Real-checkpoint load matrix: 0 missing/mismatched/extra weights for all 4 ckpts (proj_in 48/48/49/48, correct hidden triples). pytest fast 74 passed; ruff net −1 error on touched files. Jobs 49315–49319 COMPLETED in ~20 s each; estimates shapes (200,3000,24); table regenerated with all 6 neural rows.
+
+## 2026-08-23: Q2/Q3 L96 training runs launched (L4/L5 small variants + L6 forcing-conditioned)
+
+**Summary:** Launched the remaining open L96 questions as GPU training runs alongside Q1 (L3): **Q2** model-size sensitivity via `L4_direct_unet_s0s1_small.yaml` (DirectUNet [32,64,128], 200 epochs) and `L5_vanilla_cfm_s0s1_small_tau0.yaml` (VanillaCFM τ=0, small, 400 epochs); **Q3** forcing conditioning via `L6_vanilla_cfm_s0s1_forcing_cond.yaml` (VanillaCFM τ=0 with `cond_extra_dim: 1`, fed the corrupted forcing — proj_in=49 vs 48 obs-only). Single array sbatch requests an explicit `gpu:rtx8000:1` per task. Also fixed #53's generic `--gres=gpu:1` request, which this cluster rejects (GPU model must be explicit) — learned at resubmission; rtx8000 chosen because node sl-mee-br-204 was idle while A40s were saturated.
+
+**Files modified:**
+- `config/experiment/L4_direct_unet_s0s1_small.yaml` — new
+- `config/experiment/L5_vanilla_cfm_s0s1_small_tau0.yaml` — new
+- `config/experiment/L6_vanilla_cfm_s0s1_forcing_cond.yaml` — new (`cond_extra_dim: 1`)
+- `batch/run_l96_neural_training_l4l5l6.sbatch` — new array job (3 tasks)
+- `PLAN.md` — L4/L5/L6 rows → training; Q2/Q3 marked in progress
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Idle RTX8000 capacity allowed all three runs to start immediately; running them concurrently with L3 answers Q1–Q3 in one wall-clock window (~5h each). L4/L5 mirror the S-series small-vs-default pairing on L96; L6 tests whether corrupted-forcing input improves S1 robustness over obs-only models.
+
+**Verification:** Hydra compose + model_factory for all 3 (L4/L5 proj_in=48/proj_out=32; L6 proj_in=49); loss+sample smoke on L96-shaped batches passed for all 3; `bash -n` sbatch OK; jobs 49304_0/1/2 RUNNING on sl-mee-br-204 within 30 s of submission (`Device: cuda (Quadro RTX 8000)`).
+
+## 2026-08-23: L3 multi-τ CFM ablation launched + L63/L96 experiment-series correction + docs sync
+
+**Summary:** Launched **Q1** (does multi-τ CFM beat conditional-mean estimation on L96?): added `config/experiment/L3_vanilla_cfm_s0s1.yaml` — an exact clone of L2b (`hidden [64,128,256]`, `cond_extra_dim: 0`, `param_dim: 0`, 400 epochs) with `train_tau_0_only: false` — plus a dedicated single-job sbatch. While training runs, synced all stale planning docs. Critically, **corrected a series-naming misidentification**: the E/F/G/**S** experiment directories are all **Lorenz-63** models (`cs1+cs2`, `state_dim=3`) — only the **L-series (L1b/L2b)** are Lorenz-96 — voiding a planned "evaluate S7–S10 on the L96 cached test set" task before any wrong numbers were produced. Retired the broken superseded comparison report (`generate_l96_neural_comparison.py` looked for a nonexistent cache; output table was empty) in favor of `reports/benchmark_table_l96.py`. Recorded Q2 (small `[32,64,128]` variants of L1b/L2b) and Q3 (forcing-conditioned `cond_extra_dim: 1` variant) as queued future work.
+
+**Files modified:**
+- `config/experiment/L3_vanilla_cfm_s0s1.yaml` — new: multi-τ VanillaCFM L96 config (`train_tau_0_only: false`)
+- `batch/run_l96_neural_training_l3.sbatch` — new: single-job GPU training run for L3
+- `reports/generate_l96_neural_comparison.py` — deleted (broken; superseded by `reports/benchmark_table_l96.py`)
+- `reports/outputs/l96_neural_comparison.md` — deleted (empty/broken output)
+- `batch/run_l96_evaluate_all.sbatch` — repointed to `benchmark_table_l96.py`
+- `PLAN.md` — system-naming convention note (E/F/G/S = L63, L = L96); fixed stale param_dim description (obs-only via cond_extra_dim=0); Phases 3–5 marked complete; experiments table split L63/L96 with statuses; new Open questions Q1/Q2/Q3
+- `L96_NEURAL_TRAINING_PROGRESS.md` — closed Step 11d/11e/12/WP8 rows with outcomes; WP3 note updated to cond_extra_dim refactor; handoff list rewritten
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The S-series naming ("s0_s1" data setup) is shared between systems and misled this session's plan into treating L63 checkpoints as L96 candidates; checkpoint-shape inspection caught it before evaluation. Documenting the convention prevents recurrence. L3 isolates the single τ-sampling factor against L1b/L2b; Q2/Q3 are recorded so follow-up sessions can pick them up without re-derivation.
+
+**Verification:** Hydra composition + `model_factory` validated locally for L3 (VanillaCFM, proj_in=48, `train_tau_0_only=False` on the model instance); `bash -n` on the sbatch. Training job submitted separately (see next entry for results). Docs-only edits otherwise.
+
+## 2026-08-23: Generalize PR workflow to AGENTS.md (all sessions) + auto-allow /tmp & conda access
+
+**Summary:** Promoted the L96-specific run-to-completion rule into a canonical **`Git / PR Workflow`** section in `AGENTS.md` so it applies to code changes in *every* session, not just the L96 integration branch. AGENTS.md now covers branch naming (`feature/<topic>` for new work, `feat/*` reserved for integration branches, ruleset blocks pushes of new `feat/l96-*`), the run-to-completion policy, reviewer identity (`rfablet-review` via `scripts/open_pr.sh`), the pytest-only CI merge gate (ruff informational), pre-merge local verification, and hygiene. PLAN.md's duplicated paragraph was trimmed to a pointer at AGENTS.md. Separately, reordered the global `~/.config/opencode/opencode.json` `external_directory` rules to auto-allow `/tmp/**` and the miniforge3 conda env, eliminating the per-session approval prompts for scratch work and Python invocations (last-match-wins ordering: catch-all `*` first, specific allows after).
+
+**Files modified:**
+- `AGENTS.md` — new canonical `## Git / PR Workflow` section (branching, run-to-completion, review+merge, hygiene)
+- `PLAN.md` — replaced the inlined run-to-completion paragraph with a pointer to `AGENTS.md` (`Git / PR Workflow`)
+- `CHANGELOG.md` — this entry
+- `~/.config/opencode/opencode.json` — `external_directory` reordered: `"*": "ask"` first, then `"/tmp/**": "allow"` and `"/Odyssey/private/rfablet/miniforge3/**": "allow"` (private to a future-open-session PR; applied directly)
+
+**Rationale:** The run-to-completion expectation was previously scoped to the L96 branch in PLAN.md, so future sessions on other topics would not inherit it (causing stalls mid-PR in Easteregg sessions). Documenting it in AGENTS.md — which is loaded into every session — makes the drive-to-merge behavior a portable, enforced default. The permission reorder targets the repeated manual approval the user had to grant for `/tmp/` and the Python env each session, with the minimal allow-list they requested.
+
+**Verification:** `ruff check` — not applicable (markdown/JSON config only). `python -c "import json; json.load(open(os.path.expanduser('~/.config/opencode/opencode.json')))"` — JSON parses. No code/tests affected.
+
+## 2026-08-23: Clarify agent run-to-completion policy in the PR workflow
+
+**Summary:** Added an explicit **run-to-completion policy** to the `Multi-agent review workflow` section of `PLAN.md`. Previously the implementer → reviewer → verifier loop was described as a set of commands but did not state whether a single agent should drive Option A (create → wait for CI → reviewer approval → merge) to completion without pausing. This ambiguity caused the agent to stop after opening PR #48 and wait for user input instead of finishing the review/merge autonomously. The new policy makes it unambiguous: once the user says "go", the agent runs the whole loop to a merged PR, pausing only on genuine external blockers (reviewer request-changes, non-informational CI failure, merge conflict, or a user-requested checkpoint).
+
+**Files modified:**
+- `PLAN.md` — added the "Run-to-completion policy (IMPORTANT)" paragraph to the `Multi-agent review workflow` section + a "Do NOT treat 'PR created' as a natural stopping point" directive
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Prevent future sessions from stalling mid-PR and forcing the user to prompt (as happened in this session). The policy turns the previously implicit expectation into an explicit instruction so the automated loop runs end-to-end whenever a go-ahead has been given.
+
+**Verification:** `ruff check` — not applicable (markdown-only change). No code/tests affected.
+
+## 2026-08-23: L96 neural DA-parity eval re-run + ES backfill — neural now beats DA
+
+**Summary:** Re-ran the standalone **DA-parity** evaluation (`eval_neural_l96.py`) on the freshly retrained L1b (DirectUNet) and L2b (VanillaCFM τ=0) checkpoints against the cached S0/S1 test set (`experiments/l96_datasets_obsj2_int100_nwin200.pt`), using the correct `stage1_best.ckpt` Lightning checkpoints. This resolves the earlier alarming **1.56-vs-0.65 discrepancy**: the stale benchmark table had been generated on pre-retrain checkpoints with the pre-#46 truth-subsampling bug (first-24-columns instead of the non-contiguous `obs_var_indices`). With the fix, the DA-parity neural eval matches the in-process result (~0.62). Also added an **ES backfill** (`backfill_l96_baselines_es.py`, mirroring the EV backfill) so the DA rows in the benchmark table show real Energy Scores instead of 0.0000, and repointed the table at the correct **S0c** DA cache (the apple-to-apples comparator matching the neural training setup).
+
+**Result:** On the identical S0/S1 test set (Obs30, 200 windows), **neural models now beat the best DA baseline**: L1b S0/S1 RMSE 0.622/0.625, L2b 0.633/0.633 vs Strong-4DVar 0.742/1.432 (EnKF 0.892/1.506, ETKF 0.864/1.472). Neural degradation S1/S0 ≈ 1.00 vs DA ≈ 1.9× (model necessarily robust, no forward model). Neural also lower ES (better) on both cases. Note: L2b (VanillaCFM τ=0) ≈ L1b (DirectUNet) — confirming DirectUNet's obs-only empirical risk minimizer is already close to the CFM design at τ=0.
+
+**Files modified:**
+- `reports/benchmark_table_l96.py` — primary DA cache → S0c `..._obsj2_int100_fw.json` (matches neural test setup); `load_da_baseline` reads backfilled `es` instead of hardcoding 0.0; `find_all_results` uses first-existing DA cache (primary wins) instead of `update()`-overriding with un-backfilled fallbacks
+- `backfill_l96_baselines_es.py` — new CPU script (mirrors `backfill_l96_baselines_ev.py`): computes pooled per-dim MAE Energy Score from cached DA trajectory `.npz` + dataset truth and writes `es` into the S0c baseline JSON cache
+- `reports/outputs/neural_benchmark_table.md` — regenerated with fresh neural numbers, S0c DA comparator, and populated ES
+
+**Rationale:** The previous benchmark output was misleading — it compared stale/old-architecture checkpoints (evaluated with the pre-#46 subsampling bug) against the wrong (non-S0c) DA cache and showed ES=0.0000 for all DA rows. Fixing the eval path, DA comparator, and ES backfill makes the neural-vs-DA comparison apples-to-apples and reveals the correct conclusion (neural beats DA on both S0 and S1).
+
+**Verification:** `pytest tests/test_neural_inference.py tests/test_metrics.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_hydra_config.py -m "not slow"` — 39 passed. `ruff check` on changed files: only pre-existing EXE001 (shebang) and one pre-existing nested-import I001; no new errors.
+
 ## 2026-08-21: Energy Score metric + L96 joint state-parameter estimation
 
 **Summary:** Two new independent developments merged to master. (1) Added per-dimension **Energy Score (ES)** — a proper scoring rule for DA ensemble quality — computed on-the-fly inside EnKF/ETKF (zero extra memory), wired into `run_l96.py` cache/display as ES-all/ES-slow/ES-fast. (2) Added **L96 joint state-parameter estimation** (EnKF/ETKF/Strong-4DVar variants) estimating 8 params (F, c1, hx, eps + fast_weights; h fixed) mirroring the L63 joint extension, with `eval_joint_comparison_l96.py` evaluating on the same cached S0/S1 test datasets used by the DA baselines and neural models.

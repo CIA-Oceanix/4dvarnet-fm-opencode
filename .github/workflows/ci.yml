@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - 'feat/l96-*'
+      - master
   push:
     branches:
       - 'feat/l96-*'

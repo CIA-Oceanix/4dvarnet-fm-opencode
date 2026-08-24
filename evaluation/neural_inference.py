@@ -55,14 +55,18 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             cond_proj_weight = state_dict["model.unet.cond_encoder.proj.weight"]
             inferred_params["cond_extra_dim"] = cond_proj_weight.shape[1] - 2 * state_dim
 
-        # Infer hidden_channels from downs/ups layers
-        # downs.0.conv1: [hidden[0], hidden[0], 3] (first layer, same in/out)
-        # downs.1.conv1: [hidden[1], hidden[0], 3] (second layer)
-        # downs.2.conv1: [hidden[2], hidden[1], 3] (third layer)
+        # Infer hidden_channels from downs layers
+        # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
+        # the full triple is recovered for any depth-3 UNet (small nets included;
+        # hardcoding the last channel as 256 broke [32,64,128] architectures).
         if "model.unet.downs.1.block.conv1.weight" in state_dict:
             conv1 = state_dict["model.unet.downs.1.block.conv1.weight"]
-            # Shape is [hidden[1], hidden[0], 3]
-            inferred_params["hidden_channels"] = [conv1.shape[1], conv1.shape[0], 256]
+            hidden = [conv1.shape[1], conv1.shape[0]]
+            if "model.unet.downs.2.block.conv1.weight" in state_dict:
+                hidden.append(state_dict["model.unet.downs.2.block.conv1.weight"].shape[0])
+            else:
+                hidden.append(256)
+            inferred_params["hidden_channels"] = hidden
 
         # Use inferred params or defaults
         cfg_dict = {
@@ -137,8 +141,18 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
 
 
 def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs) -> tuple:
-    """Load model from checkpoint."""
+    """Load model from checkpoint.
+
+    ``overrides`` (optional dict) is merged into the constructed ``cfg.model``
+    before instantiation. Needed for ``train_tau_0_only`` on tau=0-trained CFM
+    checkpoints: Lightning hyper_parameters do not record it, and sampling a
+    tau=0 model with multi-step integration adds residual noise to estimates.
+    """
+    overrides = kwargs.pop("overrides", None)
     state_dict, cfg = load_checkpoint(checkpoint_path, config_path)
+    if overrides:
+        for key, value in overrides.items():
+            cfg.model[key] = value
     model_class, cfg_model = resolve_model_class(cfg)
     model = create_model(model_class, cfg_model)
     
@@ -173,15 +187,18 @@ def prepare_dataset(
     test_dataset_path: Optional[str] = None,
     num_test_windows: int = 200,
     obs_interval: int = 100,
+    obs_var_indices: tuple | None = None,
     **kwargs,
 ) -> tuple:
     """Prepare S0/S1 test dataloaders for evaluation.
 
-    Returns ``(dataset, dataloaders)`` where ``dataset`` is the cached S0/S1
-    dict and ``dataloaders`` maps ``"s0"``/``"s1"`` to ``DataLoader`` over the
-    matching test split. The cached dataset (as used by the DA baselines) is
-    loaded when ``test_dataset_path`` is given; otherwise the S0/S1 train/val/
-    test split is generated.
+    Returns ``(dataset, dataloaders, obs_var_indices)`` where ``dataset`` is the
+    cached S0/S1 dict and ``dataloaders`` maps ``"s0"``/``"s1"`` to ``DataLoader``
+    over the matching test split. The cached dataset (as used by the DA baselines)
+    is loaded when ``test_dataset_path`` is given; otherwise the S0/S1 train/val/
+    test split is generated. ``obs_var_indices`` (the observed subspace of the
+    full 40D state) is resolved if not supplied and returned to the caller so the
+    model's 24D predictions can be compared against the correct truth columns.
     """
     # Try to load cached dataset
     if test_dataset_path:
@@ -214,13 +231,36 @@ def prepare_dataset(
             collate_fn=collate_eval,
             num_workers=kwargs.get("num_workers", 0),
         )
-    return dataset, dataloaders
+
+    # Resolve the observed-subspace indices of the full state. The cached DA
+    # dataset stores the full 40D true_state with obs already subsampled to the
+    # observed dims. When the model predicts a 24D observed state we must compare
+    # against true_state[..., obs_var_indices] (a non-contiguous subset), NOT the
+    # first `state_dim` columns.
+    if obs_var_indices is None:
+        obs_j = int(kwargs.get("obs_j", cfg.get("data", {}).get("obs_j", 2))) if hasattr(cfg, "get") else 2
+        try:
+            NO = int(cfg.data.system_config.NO)
+        except Exception:
+            NO = 8
+        try:
+            J = int(cfg.data.system_config.J)
+        except Exception:
+            J = 4
+        from evaluation.run_l96 import make_obs_j_indices
+        obs_var_indices = make_obs_j_indices(NO, J, obs_j)
+        if obs_var_indices is None:
+            obs_var_indices = tuple(range(NO + NO * J))
+    obs_var_indices = tuple(obs_var_indices)
+
+    return dataset, dataloaders, obs_var_indices
 
 
 def _run_case_inference(
     model: torch.nn.Module,
     dataloader: DataLoader,
     device: torch.device,
+    obs_var_indices: tuple | None = None,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -256,11 +296,16 @@ def _run_case_inference(
     all_true = torch.cat(all_true, dim=0)
 
     # The neural model predicts the observed subspace while the cached truth is
-    # the full state. Subsample truth to the observed dims (first D columns,
-    # the obs_var_indices ordering) for a fair comparison.
+    # the full state. Subsample truth to the observed dims for a fair comparison.
+    # IMPORTANT: obs_var_indices is a NON-CONTIGUOUS subset (e.g. X1-X8 then
+    # Y1,Y2 of each node), so we must use those exact columns, NOT the first
+    # `state_dim` columns (which would mix in unobserved fast vars).
     d_pred = all_preds.shape[-1]
     if all_true.shape[-1] > d_pred:
-        all_true = all_true[..., :d_pred]
+        if obs_var_indices is not None and len(obs_var_indices) == d_pred:
+            all_true = all_true[..., list(obs_var_indices)]
+        else:
+            all_true = all_true[..., :d_pred]
 
     return {
         "trajectories": all_preds.detach().cpu().numpy(),
@@ -272,6 +317,7 @@ def run_inference(
     model: torch.nn.Module,
     dataloaders: dict,
     device: torch.device,
+    obs_var_indices: tuple | None = None,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -279,4 +325,7 @@ def run_inference(
     ``trajectories``/``truth`` arrays (no metrics). To produce scores, pass
     these to the generic evaluator (``evaluate_estimates``).
     """
-    return {case: _run_case_inference(model, dl, device) for case, dl in dataloaders.items()}
+    return {
+        case: _run_case_inference(model, dl, device, obs_var_indices)
+        for case, dl in dataloaders.items()
+    }
