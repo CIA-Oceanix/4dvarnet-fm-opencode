@@ -123,6 +123,24 @@ def fmt_es(es_arr, NO=8, obs_j=2):
     return d
 
 
+def _method_truth(truth: torch.Tensor, method, obs_var_indices) -> torch.Tensor:
+    """Slice truth to the method's state dims so in-run ES/RMSE refs are valid.
+
+    Reduced-dynamics methods (e.g. S1 with J=2) have ``state_dim`` equal to the
+    observed subspace while cached windows store the full 40D truth; without
+    this slice their ``ref_full`` guard yields None and no ES is accumulated.
+    """
+    sd = getattr(method, "state_dim", None)
+    if (
+        sd is not None
+        and obs_var_indices is not None
+        and truth.shape[-1] > sd
+        and len(obs_var_indices) == sd
+    ):
+        return truth[..., obs_var_indices]
+    return truth
+
+
 def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1, da_J=None):
     rmse_list = []
     results_list = []
@@ -150,7 +168,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
             pw = [_per_window_params(w, cfg, da_J=da_J) for w in batch]
             kw = _build_eval_kwargs(pw, device)
-            results = method.assimilate_batch(obs, mask, force, truth, **kw)
+            results = method.assimilate_batch(obs, mask, force, _method_truth(truth, method, obs_var_indices), **kw)
             for result_idx, result in enumerate(results):
                 analysis = result.trajectory
                 if obs_var_indices is not None:
@@ -180,7 +198,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             force = w[force_key].to(device)
             kw = _per_window_params(w, cfg, da_J=da_J)
             _to_tensor_kw(kw, device)
-            result = method.assimilate(obs, mask, force, truth, **kw)
+            result = method.assimilate(obs, mask, force, _method_truth(truth, method, obs_var_indices), **kw)
             analysis = result.trajectory
             if obs_var_indices is not None:
                 ref = truth.numpy()[..., obs_var_indices]
