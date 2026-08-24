@@ -132,6 +132,22 @@ mean beats every deterministic scheme; whether that diversity helps probabilisti
 scores (CRPS vs the ES conventions here) is open follow-up work, as are S1 + other
 models' ensemble runs.
 
+### 5-seed reproducibility (S0, job array 49419)
+
+Five independent 30-member ensembles (seeds 1–5) confirm the multi-τ advantage is
+not a seed artifact. Report: `reports/l96/outputs/ens30_seed_report.md`.
+
+| scheme | seeds 1-5 mean±std | seed0 (orig) | range (6 runs) |
+|---|---|---|---|
+| 1-step (n_outer=1) | 0.6502 ± 0.0002 | 0.6503 | [0.6500, 0.6506] |
+| 10-step (n_outer=10) | 0.5642 ± 0.0005 | 0.5643 | [0.5637, 0.5650] |
+
+10-step/1-step ratio = 0.868 (−13.2%), cross-seed std < 0.001 for both schemes.
+At inference τ is a deterministic schedule (k/N_outer), not random; all member
+diversity comes from fresh x₀ noise. The improvement comes from proper ODE
+integration of the multi-τ-trained field across τ∈(0,1], not from τ=0 evaluations
+(the 1-step result at 0.650 is worse than the τ=0-trained L2b control at 0.629).
+
 ## Experiments
 
 All E/F/G/S rows are **Lorenz-63** (`cs1+cs2` mixes); results live under `experiments/`.

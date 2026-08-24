@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-24: 5-seed reproducibility study for L3 multi-τ CFM ensemble (S0)
+
+**Summary:** Ran 5 independent 30-member ensembles (seeds 1–5) for L3 multi-τ CFM on the cached S0 test set, for both 1-step and 10-step integration, via a 10-task l40s sbatch array (job 49419, all COMPLETED in ~2–3 min/task, ~10 min wall). Result: the multi-τ advantage is rock-solid across seeds — 1-step RMSE 0.6502 ± 0.0002, 10-step RMSE 0.5642 ± 0.0005, ratio 0.868 (−13.2%). Cross-seed std < 0.001 for both schemes; the original seed-0 values (0.6503/0.5643) sit squarely within the 5-seed spread. Generated a dedicated report comparing the 5 new runs + the original seed-0 run, with L2b/DirectUNet/Strong-4DVar anchors for context. Also confirmed via code review that the CFM sampler uses a deterministic τ schedule (k/N_outer) at inference — all member diversity comes from fresh x₀ noise, not random τ; the improvement is from proper ODE integration of the multi-τ-trained field, not from τ=0 evaluations (the 1-step result 0.650 is worse than the τ=0-trained L2b control at 0.629).
+
+**Files modified:** `batch/run_l96_cfms_ens30_seeds.sbatch` — new 10-task l40s array (5 seeds × 2 schemes, L3 only, S0 only); `reports/l96/generate_ens30_seed_report.py` — new CPU report builder; `reports/l96/outputs/ens30_seed_report.md` — generated report; `experiments/L3_vanilla_cfm_s0s1/ens30_seed{1..5}_no{1,10}/` — 10 new output dirs (members_s0.npz, estimates_s0.npz, neural_eval.json); `PLAN.md` — new "5-seed reproducibility" subsection; `CHANGELOG.md` — this entry.
+
+**Rationale:** The ens30 headline (0.5643) was a single-seed result; this study confirms it's not a seed artifact and quantifies the Monte-Carlo uncertainty across independent ensemble draws (the correlation-robust alternative to the member-level bootstrap, which was abandoned as too slow).
+
+**Verification:** All 10 tasks COMPLETED (ExitCode 0:0). Report re-run from JSONs: exit 0. `ruff check --select F401` clean. Cross-seed std < 0.001 for both schemes.
+
 ## 2026-08-24: Wire ES into `Strong4DVar.assimilate_batch` + relative Strong-ES gate
 
 **Summary:** Discovered while monitoring the esfix array (job 49357) that `Strong4DVar.assimilate_batch` never populated `BaselineResult.es` — the batch path returned bare results (es=None → stored 0), so all historical Strong-4DVar ES values in L96 caches came from the since-deleted offline backfill, not from in-run accumulation. Wired it now: per-window deterministic ES computed as full-state per-dim MAE (`np.mean(|analysis−truth|, axis=0)`), exactly matching the `_ESAccumulator` N=1 semantics of the sequential path and subsampled to obs dims by the evaluator as before. Added 2 regression tests (batch ES ≡ trajectory-vs-truth MAE identity; es=None when truth absent). Loosened the esfix validation gate's deterministic anchor from absolute 5e-3 to relative 2% — GPU nondeterminism makes fresh-run MAE differ slightly from backfilled values computed on different trajectories.
