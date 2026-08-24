@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-24: Q1–Q3 answered — L3–L6 DA-parity eval + checkpoint-loader fixes
+
+**Summary:** Evaluated all four new L96 trainings (L3 multi-τ, L4/L5 small, L6 forcing-cond) plus a re-evaluated L2b on the shared cached test set (Obs30, 200 windows) via a 5-task parallel sbatch array. Two latent loader bugs were found and fixed first: (A) `load_checkpoint` hardcoded the third hidden channel to 256 when inferring from weights, so [32,64,128] checkpoints silently loaded into mismatched models (`strict=False` skipped every downs.2/ups weight — garbage metrics, no error); (B) Lightning `hyper_parameters` do not record `train_tau_0_only`, so τ=0-trained CFM checkpoints were sampled multi-step instead of the training-consistent single Euler step — added `load_model(overrides=...)` + `--train-tau0-only`.
+
+**Results (standalone S0/S1 RMSE):** L4 **0.619**/0.621 < L1b 0.622/0.625 < L2b 0.633/0.633 ≈ L6 0.639/0.638 < L5 0.660/0.660 < L3 0.688/0.690; best DA Strong-4DVar 0.742/1.432; all neural degradation ≈1.00. **Q1**: multi-τ does not beat conditional-mean estimation (+8.6% vs τ=0; mirrors L63 G-series). **Q2**: small DirectUNet slightly beats default (best overall); small CFM worse (+4.3%) — capacity helps CFM only. **Q3**: corrupted-forcing conditioning neutral-to-slightly-negative; no robustness gap to close.
+
+**Files modified:**
+- `evaluation/neural_inference.py` — hidden-triple inference from downs.1+downs.2; `load_model(overrides=...)`
+- `eval_neural_l96.py` — `--train-tau0-only`; inferred-cfg sanity log
+- `reports/benchmark_table_l96.py` — NEURAL_JSON_PATTERNS +L3–L6; full-width model labels
+- `batch/run_l96_neural_eval.sbatch` — new 5-task array (rtx8000)
+- `tests/test_neural_inference.py` — 2 regression tests for A/B
+- `PLAN.md`, `L96_NEURAL_TRAINING_PROGRESS.md` — Q1–Q3 closed with numbers
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The four trainings (jobs 49302/49304-49306) completed ~5.5h each; the standalone eval is the canonical apples-to-apples benchmark against the cached DA baselines. Bug A would have produced silently wrong L4/L5 numbers; bug B made τ=0 inference inconsistent with training (empirically negligible for L2b: 0.633→0.633, but correctness matters for future τ=0 checkpoints).
+
+**Verification:** Real-checkpoint load matrix: 0 missing/mismatched/extra weights for all 4 ckpts (proj_in 48/48/49/48, correct hidden triples). pytest fast 74 passed; ruff net −1 error on touched files. Jobs 49315–49319 COMPLETED in ~20 s each; estimates shapes (200,3000,24); table regenerated with all 6 neural rows.
+
 ## 2026-08-23: Q2/Q3 L96 training runs launched (L4/L5 small variants + L6 forcing-conditioned)
 
 **Summary:** Launched the remaining open L96 questions as GPU training runs alongside Q1 (L3): **Q2** model-size sensitivity via `L4_direct_unet_s0s1_small.yaml` (DirectUNet [32,64,128], 200 epochs) and `L5_vanilla_cfm_s0s1_small_tau0.yaml` (VanillaCFM τ=0, small, 400 epochs); **Q3** forcing conditioning via `L6_vanilla_cfm_s0s1_forcing_cond.yaml` (VanillaCFM τ=0 with `cond_extra_dim: 1`, fed the corrupted forcing — proj_in=49 vs 48 obs-only). Single array sbatch requests an explicit `gpu:rtx8000:1` per task. Also fixed #53's generic `--gres=gpu:1` request, which this cluster rejects (GPU model must be explicit) — learned at resubmission; rtx8000 chosen because node sl-mee-br-204 was idle while A40s were saturated.

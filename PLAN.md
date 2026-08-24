@@ -68,14 +68,15 @@ namespaces subject to the repo ruleset.
 test set (`reports/outputs/neural_benchmark_table.md`): neural beats the best DA
 baseline on both S0 and S1 (RMSE 0.62 vs 0.74), degradation ≈1.00 vs DA ≈1.9×.
 
-**Open questions (L96)**:
-- **Q1 (in progress, L3)**: does multi-τ CFM beat conditional-mean estimation?
-  `config/experiment/L3_vanilla_cfm_s0s1.yaml` = clone of L2b with
-  `train_tau_0_only: false`; sbatch `run_l96_neural_training_l3.sbatch`.
-- **Q2 (in progress, L4/L5)**: model-size sensitivity — small `[32,64,128]` variants of
-  L1b/L2b; sbatch `run_l96_neural_training_l4l5l6.sbatch`.
-- **Q3 (in progress, L6)**: forcing conditioning — `cond_extra_dim: 1` variant fed the
-  corrupted forcing, testing S1 robustness gains over obs-only models.
+**Open questions (L96)** — all answered (standalone DA-parity eval, cached test set):
+- **Q1 (answered, L3)**: multi-τ CFM does NOT beat conditional-mean estimation —
+  L3 0.688/0.690 vs τ=0 L2b 0.633/0.633 (+8.6%); mirrors the L63 G-series finding.
+- **Q2 (answered, L4/L5)**: size sensitivity is model-dependent — small DirectUNet
+  (L4) slightly beats default L1b (0.619 vs 0.622); small τ=0 CFM (L5) is worse than
+  default L2b (+4.3%). CFM benefits from capacity; DirectUNet does not.
+- **Q3 (answered, L6)**: corrupted-forcing conditioning is neutral-to-slightly-negative
+  (L6 0.639/0.638 vs obs-only L2b 0.633/0.633); neural degradation was already ≈1.00,
+  so there was no robustness gap for conditioning to close.
 
 ## Experiments
 
@@ -103,10 +104,14 @@ The **L-series** (Lorenz-96) is listed separately below.
 |---|---|---|---|---|---|
 | L1b_direct_unet_s0s1 | DirectUNet | [64,128,256] | 200 | n/a | done (beats DA on S0+S1) |
 | L2b_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | τ=0 | done (≈ L1b) |
-| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | **training** (Q1) |
-| L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | **training** (Q2) |
-| L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | **training** (Q2) |
-| L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | **training** (Q3) |
+| L3_vanilla_cfm_s0s1 | VanillaCFM | [64,128,256] | 400 | multi-τ | done (Q1: worse than τ=0, +8.6%) |
+| L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | done (Q2: best overall, 0.619/0.621) |
+| L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | done (Q2: small hurts CFM, +4.3%) |
+| L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | done (Q3: neutral vs obs-only) |
+
+**Standalone DA-parity results (cached test set, Obs30, 200 windows)** — S0/S1 RMSE:
+L4 **0.619**/0.621 < L1b 0.622/0.625 < L2b 0.633/0.633 ≈ L6 0.639/0.638 < L5 0.660/0.660 < L3 0.688/0.690.
+All neural degradation ≈ 1.00; best DA (Strong-4DVar): 0.742/1.432.
 
 ## Phases
 

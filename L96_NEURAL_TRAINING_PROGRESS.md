@@ -129,8 +129,16 @@ Key design decisions:
 1. ~~Commit partial-obs implementation~~ ✅ merged.
 2. ~~Re-run DA baselines with `--obs-j=2`~~ ✅ Step 11c done.
 3. ~~Train L1b + L2b~~ ✅ Step 12 done; benchmark table in `reports/outputs/neural_benchmark_table.md`.
-4. **Q1 (running)**: L3 multi-τ CFM (`config/experiment/L3_vanilla_cfm_s0s1.yaml`, sbatch `run_l96_neural_training_l3.sbatch`) → evaluate on the cached DA-parity test set, add row to the benchmark table.
-5. **Future**: Q2 size ablation (small L1b/L2b variants), Q3 forcing conditioning (`cond_extra_dim: 1`).
+4. ~~Q1: L3 multi-τ CFM~~ ✅ done — trained + evaluated on the cached DA-parity test set:
+   0.688/0.690 (S0/S1) vs τ=0 L2b 0.633/0.633 → multi-τ does NOT beat conditional-mean
+   estimation (+8.6%), mirroring the L63 G-series finding.
+5. ~~Q2: size ablation~~ ✅ done — small DirectUNet (L4) slightly beats default
+   (0.619/0.621, best overall); small τ=0 CFM (L5) worse than default (+4.3%).
+6. ~~Q3: forcing conditioning (`cond_extra_dim: 1`)~~ ✅ done — neutral-to-slightly-negative
+   vs obs-only (L6 0.639/0.638); degradation was already ≈1.00 everywhere.
+7. Eval-infrastructure note: `neural_inference.load_checkpoint` now infers the full
+   hidden triple from downs.1+downs.2 and `load_model` accepts cfg overrides
+   (`--train-tau0-only` for τ=0-trained CFM checkpoints).
 
 ## Session notes
 
