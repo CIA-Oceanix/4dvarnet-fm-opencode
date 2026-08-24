@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-24: Consolidated L96 benchmark report — all-metric tables + Hovmöller reconstruction examples
+
+**Summary:** Added `reports/generate_l96_consolidated_report.py`, a CPU-only report builder over the cached DA-parity benchmark artifacts (S0c/S1c Obs30 JSON + trajectory `.npz`, shared 200-window dataset, six neural `estimates_{s0,s1}.npz`). It produces `reports/outputs/l96_consolidated_benchmark.md` with (1) full metric tables — **RMSE / EV / ES × {all_obs, slow, obs_fast}** for the 3 DA baselines and all 6 neural models with best-per-column bolding and S1/S0 degradation; (2) a consistency-check section; and (3) Hovmöller reconstruction figures (`figs/l96_hovm_{s0,s1}_{worst,median,best}.png`): rows = Truth/methods, columns = state & |error| maps for slow-X (8D) / fast-Y (16D) blocks with shared color scales and obs-time markers, windows ranked per case by Strong-4DVar per-window RMSE.
+
+**Findings:** Two metric-convention caveats surfaced while building the consistency checks. (A) The DA cache stores RMSE as *mean of per-window RMSEs* (`evaluation/run_l96.py:205`) whereas the neural evaluation pools first (`sqrt(mean sq err)`, `estimate_metrics.py`); pooled ≤ mean-of-window, so the legacy table slightly penalized DA — the consolidated tables use the pooled convention uniformly for every method (orderings unchanged). (B) EnKF/ETKF cached ES is ensemble-based (proper scoring, N=30) while deterministic schemes' ES is an N=1 MAE proxy — documented as not strictly comparable. Consistency results: DA cache vs recompute-from-npz max |Δ| = 2.1e-4 (42 values); neural stored truth ≡ `true_state[:, obs_var_indices]` exactly. Reconstruction examples confirm the headline result visually — e.g. S0-worst window #138: L4 0.808 vs Strong-4DVar 1.388; S1-worst #75: L4 0.832 vs 1.974.
+
+**Files modified:**
+- `reports/generate_l96_consolidated_report.py` — new (tables + consistency checks + Hovmöller figures)
+- `reports/outputs/l96_consolidated_benchmark.md` — new generated report
+- `reports/outputs/figs/l96_hovm_{s0,s1}_{worst,median,best}.png` — 6 generated figures
+- `CHANGELOG.md` — this entry
+
+**Rationale:** After closing Q1–Q3, the benchmark existed only as scattered caches plus a flat table showing only all_obs EV/ES. A single consolidated artifact with all metrics × groups, built-in reproducibility checks against the raw arrays, and visual reconstruction examples makes the L96 case-study results verifiable and presentation-ready.
+
+**Verification:** Script runs end-to-end on CPU (`fdv` env, ~90 s): exit 0 with both consistency checks PASS. `ruff check reports/generate_l96_consolidated_report.py` clean. Fast gate `pytest tests/{neural_inference,metrics,lorenz96_training,direct_unet,vanilla_cfm,hydra_config} -m "not slow"` — 74 passed. Table cross-checked against `neural_benchmark_table.md` (neural rows identical; DA RMSE differs only by the documented convention).
+
 ## 2026-08-24: Q1–Q3 answered — L3–L6 DA-parity eval + checkpoint-loader fixes
 
 **Summary:** Evaluated all four new L96 trainings (L3 multi-τ, L4/L5 small, L6 forcing-cond) plus a re-evaluated L2b on the shared cached test set (Obs30, 200 windows) via a 5-task parallel sbatch array. Two latent loader bugs were found and fixed first: (A) `load_checkpoint` hardcoded the third hidden channel to 256 when inferring from weights, so [32,64,128] checkpoints silently loaded into mismatched models (`strict=False` skipped every downs.2/ups weight — garbage metrics, no error); (B) Lightning `hyper_parameters` do not record `train_tau_0_only`, so τ=0-trained CFM checkpoints were sampled multi-step instead of the training-consistent single Euler step — added `load_model(overrides=...)` + `--train-tau0-only`.
