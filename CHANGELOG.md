@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-24: PR #74 — S1 ens30 + restore ES-accumulator fix & ensemble inference to master
+
+**Summary:** Merged PR #74 to master (squash `f6fa0b3`). Master was missing the
+`_ESAccumulator` formula fix (still `abs_err/(t·N)` double-N bug) and the ensemble
+inference code (PRs #65/#67/#68/#70 were squat-merged but the `baselines.py` fix and
+CLI were absent). The PR reconciled master (merge `a399745` — docs-only conflicts,
+kept the superset) and landed: the fixed `_ESAccumulator` (`abs_err/t`, proper
+textbook ensemble ES), the ensemble inference CLI (`--n-members/--n-outer/--seed/--cases`)
++ evaluator, Strong4DVar batch-path ES, S1 reduced-dynamics truth fix, plus the L3
+multi-τ CFM **S1 ens30 study** (30 mem × {1,10} steps, job 49447: 0.6528 → **0.5667**,
+S1/S0 degradation ≈1.004) and its sbatch + docs. This makes master's code consistent
+with its already-swapped canonical s0c cache and unblocks correct regeneration of the
+remaining DA caches.
+
+**Files modified:** `evaluation/{baselines,estimate_metrics,neural_inference}.py`,
+`eval_neural_l96.py`, `batch/run_l96_cfms_ens30_s1.sbatch` (new), `tests/{test_energy_score,test_neural_inference,test_lorenz96_training}.py`, `PLAN.md`, `CHANGELOG.md` — via merge `a399745` + squash-merge PR #74.
+
+**Rationale:** Master's ES code contradicted its own swapped cache and its CM's ensemble sbatch; a PR to master was required both to publish the S1 results and to restore the lost fix so the stalled DA-baseline regeneration can be resumed with correct textbook ES.
+
+**Verification:** `pytest tests/test_energy_score.py tests/test_neural_inference.py tests/test_lorenz96_training.py -m "not slow"` — 65 passed (local + CI green). PR #74: pytest CI pass, approved by `rfablet-review`, squash-merged.
+
 ## 2026-08-24: L3 ens30 on S1 (multi-τ CFM, job 49447) + restore ensemble/ES-fix code
 
 **Summary:** Ran the S1 counterpart of the S0 ens30 study for L3 multi-τ CFM: 30-member
