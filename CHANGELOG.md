@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-24: L96 DA cache ES regeneration blocked — esfix array resumes stale partials, 6/7 gate-fail
+
+**Summary:** Resubmitted the L96 DA cache esfix array (`batch/run_l96_esfix.sbatch`,
+`--array=1-7`, job 49488, against fixed master) to regenerate the non-canonical baseline
+caches with correct textbook ES. The array **still cannot complete**: it resumed from the
+stale partial `*_esfix*` caches written by the earlier failed array (49383) instead of a
+clean regeneration, and the validation gate then **failed on 6 of 7 caches** (RMSE
+mismatch vs originals — e.g. dws50 EnKF S0 1.009→1.102, Strong-4DVar and S1 EnKF/ETKF
+drifting). Only the **legacy int100** cache passes cleanly and was swapped (`.bak` +
+promoted esfix). **Key scoping finding:** the consolidated report's `DA_JSON_CANDIDATES`
+are already correct — `_first_existing` picks the canonical s0c int100 fw cache (swapped
+bug-fixed), so the report's DA ES columns (EnKF/ETKF proper N=30) were **already correct**
+and are unaffected by the 6 non-report caches. Per the validation-gate design intent
+("config mismatch ⇒ do NOT swap"), the 6 gate-failing caches stay stale rather than force-
+swapping (would corrupt RMSE consistency). Finishing them requires deleting the stale
+`*_esfix*` files and a clean full regeneration (hours GPU each); outcome uncertain given
+the changelog note that some L96 caches are "not reproducible under current code semantics."
+
+**Files modified:** `PLAN.md` — Phase C-adjacent note updated with the 2026-08-24 attempt outcome + scoping note (report already correct via canonical s0c); `CHANGELOG.md` — this entry. (Data-side: legacy `int100` cache swapped on disk — `.bak` + promoted esfix — gitignored.)
+
+**Rationale:** Records the blocker and the crucial scoping fact (the consolidated report's
+DA ES was already correct via the canonical s0c cache) so a future session does not repeat
+the failed resume-from-partial attempt or misunderstand that the report needed a contents
+change.
+
+**Verification:** `pytest tests/test_energy_score.py tests/test_neural_inference.py tests/test_lorenz96_training.py -m "not slow"` — 65 passed. Validation JSONs inspected: 1/7 PASS (legacy int100), 6/7 FAIL (gate), none force-swapped.
+
 ## 2026-08-24: Consolidated report — L3 uses ens30 for both S0 and S1 (per-case + proper ensemble ES)
 
 **Summary:** Fixed `reports/l96/generate_l96_consolidated_report.py` so L3's row in the
