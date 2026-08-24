@@ -187,9 +187,9 @@ def generate_comparison_table(da_results: dict, neural_results: dict) -> str:
 
     # Neural models (one row per model, echo S0 and S1)
     for ckpt, metrics in neural_results.items():
-        model_name = _neural_model_name(ckpt)[:24]
+        model_name = _neural_model_name(ckpt)
         for case in ("s0", "s1"):
-            rows.append([f"{model_name:<24}", case.upper(),
+            rows.append([f"{model_name:<32}", case.upper(),
                          f"{metrics[f'{case}_rmse']:.4f}", f"{metrics[f'{case}_slow']:.4f}",
                          f"{metrics[f'{case}_obs_fast']:.4f}", f"{metrics[f'{case}_ev']:.4f}",
                          f"{metrics[f'{case}_es']:.4f}", "Neural"])
