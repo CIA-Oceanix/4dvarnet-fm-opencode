@@ -58,6 +58,17 @@ NEURAL_EXP_DIRS = [
     "L5_vanilla_cfm_s0s1_small_tau0",
     "L6_vanilla_cfm_s0s1_forcing_cond",
 ]
+
+# ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
+# (MAE - 0.5*pairwise spread); deterministic N=1 methods use per-dim MAE.
+# N1_ES_METHODS = methods whose ES is the N=1 MAE proxy (marked with * in the table).
+# DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
+N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
+                 "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
+                 "L6_vanilla_cfm_s0s1_forcing_cond"}
+
+# L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES.
+L3_ENS30_DIR = "L3_vanilla_cfm_s0s1/ens30_no10"
 DEFAULT_FIGURE_METHODS = [
     "Strong-4DVar",
     "EnKF",
@@ -86,8 +97,8 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
      ("Conditional flow matching trained at τ=0 only; sampled with a single Euler step (deterministic, "
       "conditional-mean-like); hidden [64,128,256]; 400 epochs.")),
     ("L3_vanilla_cfm_s0s1", "Neural (CFM, multi-τ)",
-     ("Standard multi-τ CFM training; evaluated with a single sample (`N_outer=1`, one Euler step from a "
-      "random x₀) — stochastic, no ensemble averaging; hidden [64,128,256]; 400 epochs.")),
+     ("Standard multi-τ CFM training; evaluated as a 30-member ensemble with 10 Euler steps "
+      "(`ens30×10`, N=30, deterministic τ-schedule 0→1, fresh x₀ per member); hidden [64,128,256]; 400 epochs.")),
     ("L4_direct_unet_s0s1_small", "Neural (DirectUNet)", "As L1b with small backbone [32,64,128]."),
     ("L5_vanilla_cfm_s0s1_small_tau0", "Neural (CFM, τ=0)", "As L2b with small backbone [32,64,128]."),
     ("L6_vanilla_cfm_s0s1_forcing_cond", "Neural (CFM, τ=0)",
@@ -146,8 +157,16 @@ def collect_estimates(
     for method in DA_METHODS:
         est[method] = {case: load_da_trajectories(da_traj_path, case, method, obs_idx) for case in CASES}
     for dirname in neural_dirs:
-        exp_dir = ROOT / "experiments" / dirname
-        est[dirname] = {case: load_neural_trajectories(exp_dir, case) for case in CASES}
+        if dirname == "L3_vanilla_cfm_s0s1":
+            ens30_dir = ROOT / "experiments" / L3_ENS30_DIR
+            regular_dir = ROOT / "experiments" / dirname
+            est[dirname] = {}
+            for case in CASES:
+                ens30_est = load_neural_trajectories(ens30_dir, case)
+                est[dirname][case] = ens30_est if ens30_est is not None else load_neural_trajectories(regular_dir, case)
+        else:
+            exp_dir = ROOT / "experiments" / dirname
+            est[dirname] = {case: load_neural_trajectories(exp_dir, case) for case in CASES}
     return est
 
 
@@ -241,27 +260,53 @@ def collect_metric_values(
     est: dict[str, dict[str, np.ndarray | None]],
     truth: dict[str, np.ndarray],
     row_order: list[str],
-) -> dict[str, dict[tuple[str, str], dict[str, float]]]:
-    values: dict[str, dict[tuple[str, str], dict[str, float]]] = {"rmse": {}, "ev": {}, "es": {}}
+    da_json_path: Path,
+) -> dict[str, dict[tuple[str, str], dict[str, float | None]]]:
+    """Compute RMSE/EV from trajectories for all methods; ES from JSON for DA
+    ensembles + L3-ens30, from trajectories (MAE) for deterministic methods."""
+    values: dict[str, dict[tuple[str, str], dict[str, float | None]]] = {"rmse": {}, "ev": {}, "es": {}}
+    da_cache = json.load(open(da_json_path))
+    l3_n1_cells: set[tuple[str, str]] = set()
+    l3_ens30_json = ROOT / "experiments" / L3_ENS30_DIR / "neural_eval.json"
+    l3_es = json.load(open(l3_ens30_json)) if l3_ens30_json.exists() else {}
     for row in row_order:
         for case in CASES:
             m = evaluate_estimates(est[row][case], truth[case])
             values["rmse"][(row, case)] = m["groups"]
             values["ev"][(row, case)] = m["ev"]["groups"]
-            values["es"][(row, case)] = m["es"]["groups"]
-    return values
+            if row in DA_METHODS:
+                da_blk = da_cache.get(case, {}).get(row, {})
+                es_blk = da_blk.get("es")
+                if es_blk and "groups" in es_blk:
+                    values["es"][(row, case)] = es_blk["groups"]
+                else:
+                    values["es"][(row, case)] = {g: None for g in GROUPS}
+            elif row == "L3_vanilla_cfm_s0s1":
+                l3_m = l3_es.get("metrics", {}).get(case, {})
+                es_blk = l3_m.get("es")
+                if es_blk and "groups" in es_blk:
+                    values["es"][(row, case)] = es_blk["groups"]
+                else:
+                    values["es"][(row, case)] = m["es"]["groups"]
+                    l3_n1_cells.add((row, case))
+            else:
+                values["es"][(row, case)] = m["es"]["groups"]
+    return values, l3_n1_cells
 
 
 def fmt_block_table(
     title: str,
-    block: dict[tuple[str, str], dict[str, float]],
+    block: dict[tuple[str, str], dict[str, float | None]],
     row_order: list[str],
     higher_better: bool,
     include_degradation: bool,
+    n1_methods: set[str] | None = None,
+    n1_cells: set[tuple[str, str]] | None = None,
+    is_es: bool = False,
 ) -> str:
     agg = max if higher_better else min
     best = {
-        f"{case}_{group}": agg(block[(r, case)][group] for r in row_order)
+        f"{case}_{group}": agg(block[(r, case)][group] for r in row_order if block[(r, case)][group] is not None)
         for case in CASES
         for group in GROUPS
     }
@@ -276,15 +321,25 @@ def fmt_block_table(
         for case in CASES:
             for group in GROUPS:
                 v = block[(row, case)][group]
-                cell = f"{v:.4f}"
-                if abs(v - best[f"{case}_{group}"]) < 5e-5:
-                    cell = f"**{cell}**"
+                if v is None:
+                    cell = "  —  "
+                else:
+                    cell = f"{v:.4f}"
+                    if abs(v - best[f"{case}_{group}"]) < 5e-5:
+                        cell = f"**{cell}**"
+                if is_es:
+                    is_n1 = (n1_methods and row in n1_methods) or (n1_cells and (row, case) in n1_cells)
+                    if is_n1:
+                        cell = f"{cell}*"
                 cells.append(cell)
         line = f"| {short_name(row)} | " + " | ".join(cells) + " |"
         if include_degradation:
             s0 = block[(row, "s0")]["all_obs"]
             s1 = block[(row, "s1")]["all_obs"]
-            line += f" {s1 / s0:.3f} |" if s0 > 0 else " n/a |"
+            if s0 is not None and s1 is not None and s0 > 0:
+                line += f" {s1 / s0:.3f} |"
+            else:
+                line += " n/a |"
         lines.append(line)
     lines.append("")
     return "\n".join(lines)
@@ -404,7 +459,7 @@ def main() -> None:
     figure_methods = resolve_figure_methods(args.methods, est)
     table_rows = DA_METHODS + NEURAL_EXP_DIRS
 
-    values = collect_metric_values(est, truth, table_rows)
+    values, l3_n1_cells = collect_metric_values(est, truth, table_rows, da_json_path)
     with open(da_json_path) as f:
         cfg = json.load(f)["config"]
 
@@ -423,8 +478,11 @@ def main() -> None:
         ),
         "",
         (
-            "All table values are recomputed from the stored trajectory arrays via "
-            "`evaluation/estimate_metrics.py`; **bold** marks the best value per column."
+            "RMSE/EV are recomputed from the stored trajectory arrays via "
+            "`evaluation/estimate_metrics.py`; ES for DA ensemble methods (EnKF/ETKF) "
+            "and L3 (ens30×10) are proper ensemble scores (N=30, MAE − 0.5·pairwise spread) "
+            "read from cached run outputs; ES for deterministic methods is the N=1 per-dim "
+            "MAE proxy. **bold** marks the best value per column."
         ),
         "",
         "## Benchmarked schemes",
@@ -454,11 +512,13 @@ def main() -> None:
         fmt_block_table("EV by variable group", values["ev"], table_rows, True, False),
         "## Energy Score (lower is better)",
         "",
-        fmt_block_table("ES by variable group", values["es"], table_rows, False, False),
+        fmt_block_table("ES by variable group", values["es"], table_rows, False, False,
+                        n1_methods=N1_ES_METHODS, n1_cells=l3_n1_cells, is_es=True),
         (
-            "Caveat: EnKF/ETKF cached ES values are computed from their forecast ensembles (proper scoring "
-            "rule, N=30); neural models and Strong-4DVar are deterministic, so their ES reduces to a per-dim "
-            "MAE proxy (N=1). The two are not strictly comparable — deterministic ES ignores sharpness."
+            "`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). "
+            "Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). "
+            "EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; "
+            "Strong-4DVar and other neural models are deterministic (N=1)."
         ),
         "",
         "## Consistency checks",
