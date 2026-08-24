@@ -552,11 +552,18 @@ class Strong4DVar:
             current_bg = final_traj[:, -1].detach()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == self.state_dim
+        ) else None
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
-            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b))
+            es_b = (
+                np.mean(np.abs(analysis[b] - ref_full[b]), axis=0)
+                if ref_full is not None else None
+            )
+            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b, es=es_b))
         return results
 
 
