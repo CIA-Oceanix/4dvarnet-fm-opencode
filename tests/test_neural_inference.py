@@ -11,6 +11,7 @@ from evaluation.neural_inference import (
     load_checkpoint,
     resolve_model_class,
     create_model,
+    load_model,
     run_inference,
     _run_case_inference,
 )
@@ -206,6 +207,42 @@ class TestNeuralInference:
         # Direct check: the returned truth columns are exactly obs_var_indices.
         expected_truth = truth[..., list(obs_var_indices)].numpy()
         assert np.allclose(out["truth"], expected_truth)
+
+    def _save_lightning_ckpt(self, tmp_path, model, model_type):
+        state_dict = {f"model.{k}": v for k, v in model.state_dict().items()}
+        path = tmp_path / f"stage1_{model_type}.ckpt"
+        torch.save({"state_dict": state_dict, "hyper_parameters": {"model_type": model_type}}, str(path))
+        return str(path)
+
+    def test_infer_hidden_channels_reads_all_down_blocks(self, tmp_path):
+        """hidden_channels must be recovered from downs.1 AND downs.2.
+
+        The bug: the third channel was hardcoded to 256, so a [32,64,128]
+        checkpoint built a [32,64,256] model and strict=False loading silently
+        skipped every downs.2/ups weight (shape mismatch), producing garbage
+        metrics with no error.
+        """
+        model = VanillaCFM(state_dim=24, hidden_channels=[32, 64, 128], param_dim=0)
+        path = self._save_lightning_ckpt(tmp_path, model, "vanilla_cfm")
+        _, cfg = load_checkpoint(path)
+        assert list(cfg.model.hidden_channels) == [32, 64, 128]
+        assert cfg.model.cond_extra_dim == 0
+
+    def test_load_model_overrides_train_tau_0_only(self, tmp_path):
+        """overrides must reach the instantiated model.
+
+        The bug: Lightning hyper_parameters do not record train_tau_0_only, so
+        tau=0-trained CFM checkpoints were loaded with the flag False and
+        sampled via multi-step integration (residual-noise estimates) instead
+        of the single Euler step used at training.
+        """
+        model = VanillaCFM(state_dim=24, hidden_channels=[32, 64, 128], param_dim=0)
+        path = self._save_lightning_ckpt(tmp_path, model, "vanilla_cfm")
+        m_default, _ = load_model(path)
+        assert not m_default.train_tau_0_only
+        m_tau0, cfg = load_model(path, overrides={"train_tau_0_only": True})
+        assert m_tau0.train_tau_0_only
+        assert cfg.model.train_tau_0_only
 
     def test_evaluate_npz_roundtrip(self, tmp_path):
         """evaluate_npz loads stored .npz and returns metrics."""

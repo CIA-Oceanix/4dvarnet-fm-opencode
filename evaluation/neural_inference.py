@@ -55,14 +55,18 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             cond_proj_weight = state_dict["model.unet.cond_encoder.proj.weight"]
             inferred_params["cond_extra_dim"] = cond_proj_weight.shape[1] - 2 * state_dim
 
-        # Infer hidden_channels from downs/ups layers
-        # downs.0.conv1: [hidden[0], hidden[0], 3] (first layer, same in/out)
-        # downs.1.conv1: [hidden[1], hidden[0], 3] (second layer)
-        # downs.2.conv1: [hidden[2], hidden[1], 3] (third layer)
+        # Infer hidden_channels from downs layers
+        # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
+        # the full triple is recovered for any depth-3 UNet (small nets included;
+        # hardcoding the last channel as 256 broke [32,64,128] architectures).
         if "model.unet.downs.1.block.conv1.weight" in state_dict:
             conv1 = state_dict["model.unet.downs.1.block.conv1.weight"]
-            # Shape is [hidden[1], hidden[0], 3]
-            inferred_params["hidden_channels"] = [conv1.shape[1], conv1.shape[0], 256]
+            hidden = [conv1.shape[1], conv1.shape[0]]
+            if "model.unet.downs.2.block.conv1.weight" in state_dict:
+                hidden.append(state_dict["model.unet.downs.2.block.conv1.weight"].shape[0])
+            else:
+                hidden.append(256)
+            inferred_params["hidden_channels"] = hidden
 
         # Use inferred params or defaults
         cfg_dict = {
@@ -137,8 +141,18 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
 
 
 def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs) -> tuple:
-    """Load model from checkpoint."""
+    """Load model from checkpoint.
+
+    ``overrides`` (optional dict) is merged into the constructed ``cfg.model``
+    before instantiation. Needed for ``train_tau_0_only`` on tau=0-trained CFM
+    checkpoints: Lightning hyper_parameters do not record it, and sampling a
+    tau=0 model with multi-step integration adds residual noise to estimates.
+    """
+    overrides = kwargs.pop("overrides", None)
     state_dict, cfg = load_checkpoint(checkpoint_path, config_path)
+    if overrides:
+        for key, value in overrides.items():
+            cfg.model[key] = value
     model_class, cfg_model = resolve_model_class(cfg)
     model = create_model(model_class, cfg_model)
     

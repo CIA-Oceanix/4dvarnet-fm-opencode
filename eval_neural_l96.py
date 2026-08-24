@@ -36,6 +36,8 @@ def main():
     parser.add_argument("--obs-j", type=int, default=2, help="Fast vars observed per slow node (default: 2)")
     parser.add_argument("--batch-size", type=int, default=200, help="Batch size")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
+    parser.add_argument("--train-tau0-only", action="store_true",
+                        help="Load with train_tau_0_only=True (tau=0-trained CFM checkpoints)")
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
     args = parser.parse_args()
 
@@ -43,8 +45,11 @@ def main():
 
     # Load model
     logger.info(f"Loading model: {args.checkpoint}")
-    model, cfg = load_model(args.checkpoint, args.config, device=device)
+    overrides = {"train_tau_0_only": True} if args.train_tau0_only else None
+    model, cfg = load_model(args.checkpoint, args.config, device=device, overrides=overrides)
     logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
+    if hasattr(model, "train_tau_0_only"):
+        logger.info(f"train_tau_0_only={model.train_tau_0_only}")
 
     # Prepare dataset
     dataset_path = args.dataset

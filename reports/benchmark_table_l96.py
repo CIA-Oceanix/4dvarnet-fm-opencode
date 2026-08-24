@@ -32,6 +32,10 @@ NEURAL_CKPT_PATTERNS = [
 NEURAL_JSON_PATTERNS = [
     "experiments/L1b_direct_unet_s0s1/neural_eval.json",
     "experiments/L2b_vanilla_cfm_s0s1/neural_eval.json",
+    "experiments/L3_vanilla_cfm_s0s1/neural_eval.json",
+    "experiments/L4_direct_unet_s0s1_small/neural_eval.json",
+    "experiments/L5_vanilla_cfm_s0s1_small_tau0/neural_eval.json",
+    "experiments/L6_vanilla_cfm_s0s1_forcing_cond/neural_eval.json",
 ]
 
 
@@ -183,9 +187,9 @@ def generate_comparison_table(da_results: dict, neural_results: dict) -> str:
 
     # Neural models (one row per model, echo S0 and S1)
     for ckpt, metrics in neural_results.items():
-        model_name = _neural_model_name(ckpt)[:14]
+        model_name = _neural_model_name(ckpt)[:24]
         for case in ("s0", "s1"):
-            rows.append([f"{model_name:<14}", case.upper(),
+            rows.append([f"{model_name:<24}", case.upper(),
                          f"{metrics[f'{case}_rmse']:.4f}", f"{metrics[f'{case}_slow']:.4f}",
                          f"{metrics[f'{case}_obs_fast']:.4f}", f"{metrics[f'{case}_ev']:.4f}",
                          f"{metrics[f'{case}_es']:.4f}", "Neural"])
