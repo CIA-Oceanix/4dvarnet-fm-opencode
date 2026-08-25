@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 4DVarNet-FM: Training entry point with Hydra config management.
-Supports TweedieSolver, DirectUNet, and VanillaCFM models.
+Supports TweedieSolver, DirectUNet, VanillaCFM, TweedieCFM, PredictStateCFM models.
 
 Usage:
-    python train.py                                               # defaults (TweedieSolver)
-    python train.py --config-name experiment/E1_direct_unet_default  # experiment preset
+    python train.py
+    python train.py --config-name experiment/E1_direct_unet_default
 """
 import os
 import sys
@@ -71,7 +71,7 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 
 
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
-                         obs_interval=100, R_var=0.5, param_names=("F",),
+                         obs_interval=geführt, R_var=0.5, param_names=("F",),
                          obs_var_indices=None):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=4, pin_memory=True)
@@ -140,15 +140,44 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=jc.train_tau_0_only,
         )
     elif model_type == "joint_direct_unet":
-        from models.direct_unet import JointDirectUNet
+        from models.direct_unet import JointDirectUnet
         jdu = cfg.model.joint_direct_unet
         dc = cfg.model.direct_unet
-        model = JointDirectUNet(
+        model = JointDirectUnet(
             state_dim=cfg.model.state_dim,
             param_dim=jdu.param_dim,
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
+        )
+    elif model_type == "predict_state_cfm":
+        from models.vanilla_cfm import PredictStateCFM
+        pcfg = cfg.model.predict_state_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = PredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=pcfg.hidden_channels,
+            time_emb_dim=pcfg.time_emb_dim,
+            N_outer=pcfg.N_outer,
+            sigma_prior=pcfg.sigma_prior,
+            dropout=pcfg.dropout,
+            param_dim=param_dim,
+            cond_extra_dim=pcfg.cond_extra_dim,
+        )
+    elif model_type == "tweedie_cfm":
+        from models.vanilla_cfm import TweedieCFM
+        tcfg = cfg.model.tweedie_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = TweedieCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=tcfg.hidden_channels,
+            time_emb_dim=tcfg.time_emb_dim,
+            K_inner=tcfg.K_inner,
+            N_outer=tcfg.N_outer,
+            sigma_prior=tcfg.sigma_prior,
+            dropout=tcfg.dropout,
+            train_tau_0_only=tcfg.train_tau_0_only,
+            cond_extra_dim=tcfg.cond_extra_dim,
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -156,7 +185,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
 
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
-                     param_dim=4):
+                      param_dim=4):
     from data.dataloader import FlowMatchingBatch
     states = w["true_state"].unsqueeze(0).to(device)
     obs = w["obs"].unsqueeze(0).to(device)
@@ -165,15 +194,15 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
     if param_dim == 0:
         return FlowMatchingBatch(states, obs, mask, forcing)
     params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
-                          dtype=torch.float32, device=device)
+                           dtype=torch.float32, device=device)
     true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
-                               dtype=torch.float32, device=device)
+                                dtype=torch.float32, device=device)
     return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
 
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
-                   param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                   obs_var_indices=None):
+                    param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
+                    obs_var_indices=None):
     rmse_list = []
     param_list = []
     true_param_list = []
@@ -185,6 +214,10 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
         elif model_type == "direct_unet":
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
+            pred = model(sample)(batch).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred, params = model.sample(batch, return_params=True)
@@ -224,8 +257,8 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 
 def save_trajectories(model, dataset, device, model_type, save_path,
-                      param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None):
+                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
+                       obs_var_indices=None):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
@@ -235,6 +268,10 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "direct_unet":
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -263,7 +300,7 @@ def main(cfg: DictConfig):
     randomize_params = cfg.data.get("randomize_params", False)
     param_noise = cfg.data.get("param_noise", 0.2)
     data_setup = cfg.data.get("data_setup", "legacy")
-    exp_id = cfg.get("experiment_id", f"{model_type}_custom")
+    exp_id = cfg.get("experiment_id", f"{model-type}_custom")
     from hydra.core.hydra_config import HydraConfig
     hcfg = HydraConfig.get()
     if hcfg and hcfg.job.config_name and hcfg.job.config_name.startswith("experiment/"):
@@ -278,7 +315,6 @@ def main(cfg: DictConfig):
         print(f"  Results exist at {results_path}, skipping.")
         return
 
-    # Data
     dc = cfg.data
     system = dc.get("system", "lorenz63")
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
@@ -387,12 +423,9 @@ def main(cfg: DictConfig):
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
 
-    # Model
-    print(f"  Creating model (type={model_type})...")
     model = model_factory(cfg, device)
     param_dim = cfg.model.get("param_dim", 4)
 
-    # Train
     total_t0 = time.time()
     orig_cwd = os.getcwd()
     os.chdir(exp_dir)
@@ -403,7 +436,9 @@ def main(cfg: DictConfig):
 
         if epochs_s1 > 0:
             t0 = time.time()
-            if model_type == "tweedie":
+            if model_type == "tweedie_cfm":
+                model = train_stage(model, loaders, cfg, stage=1, device=device)
+            elif model_type == "tweedie":
                 model = train_stage(model, loaders, cfg, stage=1, device=device)
             else:
                 stage_cfg = cfg.training.stage1
@@ -418,7 +453,7 @@ def main(cfg: DictConfig):
             train_time += time.time() - t0
             print(f"    Stage 1 done in {train_time:.1f}s")
 
-        if model_type == "tweedie" and epochs_s2 > 0:
+        if model_type == "tweedie_cfm" and epochs_s2 > 0:
             t0 = time.time()
             model = train_stage(model, loaders, cfg, stage=2, device=device)
             train_time += time.time() - t0
@@ -427,7 +462,6 @@ def main(cfg: DictConfig):
         os.chdir(orig_cwd)
     total_t = time.time() - total_t0
 
-    # Evaluate
     model.to(device)
     model.eval()
     t0 = time.time()
@@ -453,7 +487,6 @@ def main(cfg: DictConfig):
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
-    # Save trajectories
     for key in test_keys:
         if key in datasets:
             case = key.replace("test_", "")
@@ -490,7 +523,7 @@ def main(cfg: DictConfig):
         "model_type": model_type,
         "config": {
             "hidden_channels": list(hc_src.hidden_channels) if hc_src is not None and "hidden_channels" in hc_src else list(cfg.model.hidden_channels),
-            "epochs": epochs_s1 + (epochs_s2 if model_type == "tweedie" else 0),
+            "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie_cfm", "tweedie") else 0),
             "train_mix": train_mix,
             "randomize_params": randomize_params,
             "data_setup": data_setup,
@@ -530,7 +563,7 @@ def main(cfg: DictConfig):
         parts = [f"{nm}={m[i]:.4f}" for i, nm in enumerate(state_names)]
         return " ".join(parts) + f"  mean={np.mean(m):.4f}"
 
-    print("\n  ── Results ─────────────────────────────────")
+    print("\\n  ── Results ─────────────────────────────────")
     if s0:
         m0, _ = s0
         groups0 = _per_group_rmse(m0, obs_var_indices, NO=NO, J=J, obs_j=obs_j_local) if obs_var_indices else {}

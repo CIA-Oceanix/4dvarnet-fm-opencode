@@ -360,3 +360,37 @@ VanillaCFM:
   "fm_degradation_cs3cs4": ...
 }
 ```
+
+### Session: L96-CFM-variants (2026-08-26)
+
+**Goal:** Fix V2 TweedieCFM and V3 PredictStateCFM classes, configs, and dispatch code that was lost during PR #78 merge.
+
+**Root cause:** Commit `577c37e` had working V2/V3 code. PR #78 merge (`a0ef7e4`) silently reverted:
+- `models/vanilla_cfm.py` (372→153 lines) — lost PredictStateCFM + TweedieCFM classes
+- `conf/schema.py` — lost PredictStateCFMConfig, TweedieCFMConfig dataclasses
+- `training/lightning_module.py` — missing V2/V3 dispatch branches
+- `train.py` — missing V2/V3 model_factory/eval/stage dispatch
+- `evaluation/neural_inference.py` — lost V2/V3 imports and dispatch
+
+**Fixes implemented:**
+1. Restored V2 TweedieCFM + V3 PredictStateCFM classes to `models/vanilla_cfm.py` (372 lines, fixed V3 sampling ODE integration with `(mu-x)/(1-tau)` conversion)
+2. Added PredictStateCFMConfig and TweedieCFMConfig to `conf/schema.py`, plus fields to ModelConfig
+3. Complete V2 dispatch in `training/lightning_module.py` (configure_optimizers, on_train_start, _forward_and_loss)
+4. Rewrote `train.py` with V2/V3 support in model_factory, evaluate_model, save_trajectory, and stage dispatch
+5. Rewrote `evaluation/neural_inference.py` with V2/V3 imports, resolve_class, create_model, and inference branches
+6. Created test file `tests/test_tweedie_cfm_variants.py` (init, forward, loss, sample, set_stage tests)
+7. Created V2 L96 config `config/experiment/V2_tweedie_cfm_l96.yaml` (200-epoch stage1, 400-epoch stage2)
+8. Created V3 L96 config `config/experiment/V3_predict_state_cfm_l96.yaml` (400-epoch single-stage)
+9. Created sbatch scripts for training: `run_l96_cfm_variants_train.sbatch` (V2), `run_l96_cfm_v3_train.sbatch` (V3)
+
+**Key code artifacts:**
+- `models/vanilla_cfm.py:242-372` — V2 TweedieCFM class (two-stage mean estimator + velocity UNet)
+- `models/vanilla_cfm.py:156-239` — V3 PredictStateCFM class with corrected ODE sampling
+- `conf/schema.py:161-186` — PredictStateCFMConfig and TweedieCFMConfig
+- `training/lightning_module.py` — V2 configure_optimizers (mean_estimator/velocity_unet), on_train_start (freeze/unfreeze), _forward_and_loss (stage-aware)
+- `train.py` — model_factory (`predict_state_cfm`, `tweedie_cfm` branches), evaluate_model, save_trajectories, stage dispatch (tweedie_cfm two-stage with set_stage)
+- `evaluation/neural_inference.py` — resolve_class and create_model for V2/V3
+
+**Training jobs:** Not yet submitted. Ready on A100 GPUs with `batch/run_l96_cfm_variants_train.sbatch` and `run_l96_cfm_v3_train.sbatch`. Expected training time: V2 ~5h (200+400 epochs), V3 ~4h (400 epochs).
+
+**Reference bars:** L2b VanillaCFM τ=0: 0.633, L3 ens30×10: 0.564 (best), L4 DirectUNet: 0.619

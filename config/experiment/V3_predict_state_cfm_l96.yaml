@@ -1,0 +1,41 @@
+# @package _global_
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: predict_state_cfm
+  state_dim: 24
+  param_dim: 0
+  predict_state_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    cond_extra_dim: 0
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  randomize:
+    fast_weights: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
+    F: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
+    c1: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
+    h: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
+    hx: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
+    eps: {randomized: false, noise: 0.2, biased: false, bias: 0.0}

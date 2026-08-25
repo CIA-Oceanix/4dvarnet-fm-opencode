@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Any, Dict
 
-
 @dataclass
 class ParamRandomization:
     randomized: bool = True
@@ -9,8 +8,7 @@ class ParamRandomization:
     biased: bool = False
     bias: float = 0.0
 
-
-@dataclass
+@dataclass  
 class DataConfig:
     system: str = "lorenz63"
     dt: float = 0.01
@@ -42,8 +40,6 @@ class DataConfig:
     param_noise: float = 0.2
     test_randparam: bool = True
     test_param_noise: float = 0.2
-
-    # Lorenz96 (two-scale) fields
     NO: int = 8
     J: int = 4
     h: float = 1.0
@@ -56,8 +52,6 @@ class DataConfig:
     fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
     obs_j: int = 2
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
-
-    # Device
     device: str = "cpu"
 
     @property
@@ -84,7 +78,6 @@ class DataConfig:
         return self.biased_params
 
     def to_lorenz96_config(self) -> Any:
-        """Convert to data.lorenz96.Lorenz96Config."""
         from data.lorenz96 import Lorenz96Config as L96C
         return L96C(
             case=self.case, dt=self.dt, T_max=self.T_max,
@@ -122,7 +115,6 @@ class DataConfig:
         return tuple(X_idx + Y_idx)
 
     def to_lorenz63_config(self) -> Any:
-        """Convert to data.lorenz63.Lorenz63Config."""
         from data.lorenz63 import Lorenz63Config as L63C
         return L63C(
             case=self.case, dt=self.dt, T_max=self.T_max,
@@ -168,14 +160,37 @@ class JointCFMConfig:
 
 
 @dataclass
-class JointDirectUNetConfig:
+class JointDirectUnetConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
 
 
 @dataclass
+class PredictStateCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
+
+
+@dataclass
+class TweedieCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    K_inner: int = 5
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
+    model_type: str = "tweedie"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -188,7 +203,9 @@ class ModelConfig:
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
-    joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    joint_direct_unet: JointDirectUnetConfig = field(default_factory=JointDirectUnetConfig)
+    tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
+    predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
 
 
 @dataclass
@@ -277,6 +294,26 @@ class CS2Config:
 
 
 @dataclass
+class ModelConfig:
+    model_type: str = "tweedie"
+    state_dim: int = 3
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    K_inner: int = 5
+    N_outer: int = 10
+    nu: float = 1.0
+    use_obs: bool = True
+    use_energy: bool = True
+    dropout: float = 0.1
+    direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
+    vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
+    joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
+    joint_direct_unet: JointDirectUnetConfig = field(default_factory=JointDirectUnetConfig)
+    tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
+    predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
+
+
+@dataclass
 class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -285,3 +322,5 @@ class ExperimentConfig:
     baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
     cs1: CS1Config = field(default_factory=CS1Config)
     cs2: CS2Config = field(default_factory=CS2Config)
+
+print("Schema compiled successfully")
