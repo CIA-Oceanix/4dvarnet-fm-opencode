@@ -168,6 +168,12 @@ class JointCFMConfig:
 
 
 @dataclass
+class JointDirectUNetConfig:
+    param_dim: int = 4
+    param_loss_weight: float = 0.1
+
+
+@dataclass
 class ModelConfig:
     model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
     state_dim: int = 3
@@ -182,6 +188,7 @@ class ModelConfig:
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
+    joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
 
 
 @dataclass

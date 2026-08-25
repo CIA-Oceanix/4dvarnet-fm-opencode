@@ -142,6 +142,30 @@ def test_l96_s1_da_params_biased(tiny_l96_cfg):
     assert abs(da_mult - 1.1) < 1e-6
 
 
+def test_l96_fast_weights_flattened_scalar_keys(tiny_l96_cfg):
+    dyn = _make_lorenz96_dynamics(tiny_l96_cfg)
+    ds = RandomParamLorenz96Dataset(tiny_l96_cfg, param_noise=0.2, dynamics=dyn)
+    w = ds[0]
+    for j in range(1, 5):
+        assert f"w{j}" in w, f"missing w{j}"
+        assert f"true_w{j}" in w, f"missing true_w{j}"
+    assert [w[f"w{j}"] for j in range(1, 5)] == list(w["fast_weights"])
+    assert [w[f"true_w{j}"] for j in range(1, 5)] == list(w["true_fast_weights"])
+    assert all(k in w for k in ("w1", "w2", "w3", "w4", "true_w1", "true_w2", "true_w3", "true_w4"))
+
+
+def test_l96_s1_fast_weights_flattened_da_keys(tiny_l96_cfg):
+    bias_cfg = Lorenz96Config(**{**tiny_l96_cfg.__dict__, "param_bias": 0.1})
+    dyn = _make_lorenz96_dynamics(bias_cfg)
+    ds = RandomBiasLorenz96Dataset(bias_cfg, param_noise=0.2, dynamics=dyn,
+                                   bias_mode="fixed")
+    w = ds[0]
+    for j in range(1, 5):
+        assert f"w{j}_da" in w, f"missing w{j}_da"
+    assert [w[f"w{j}_da"] for j in range(1, 5)] == list(w["fast_weights_da"])
+    assert all(k in w for k in ("F_da", "c1_da", "hx_da", "eps_da"))
+
+
 def test_make_l96_s0_s1_trainval(tiny_l96_cfg):
     ds = make_l96_s0_s1_trainval(
         tiny_l96_cfg, num_train_windows=3, num_val_windows=2,

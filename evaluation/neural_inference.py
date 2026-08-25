@@ -8,8 +8,8 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
-from models.direct_unet import DirectUNet
-from models.vanilla_cfm import VanillaCFM
+from models.direct_unet import DirectUNet, JointDirectUNet
+from models.vanilla_cfm import VanillaCFM, JointCFM
 
 
 class BatchDict:
@@ -25,6 +25,27 @@ def collate_eval(batch):
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
     return {"true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing, "params": None}
+
+
+L96_JOINT_PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
+
+
+def collate_joint_eval(batch):
+    """Collate for joint models: also stack the 8 L96 params + true_params.
+
+    fast_weights is flattened to per-index scalar keys (w1..w4 / true_w1..)
+    by the dataset, so the generic param_names convention works here.
+    """
+    states = torch.stack([b["true_state"] for b in batch])
+    obs = torch.stack([b["obs"] for b in batch])
+    masks = torch.stack([b["obs_mask"] for b in batch])
+    forcing = torch.stack([b["forcing_corrupted"] for b in batch])
+    params = torch.tensor([[float(bd[n]) for n in L96_JOINT_PARAM_NAMES] for bd in batch])
+    true_params = torch.tensor([[float(bd[f"true_{n}"]) for n in L96_JOINT_PARAM_NAMES] for bd in batch])
+    return {
+        "true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing,
+        "params": params, "true_params": true_params,
+    }
 
 
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +72,15 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             inferred_params["state_dim"] = state_dict["model.unet.enc_out.2.weight"].shape[0]
         state_dim = inferred_params.get("state_dim", 24)
 
+        # For joint models the UNet outputs state_dim + param_dim channels. Infer
+        # param_dim as (output_dim - state_dim) when it is nonzero; the joint
+        # configs set output_dim = state_dim + 8.
+        if "model.unet.enc_out.2.weight" in state_dict:
+            out_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
+            if out_dim > state_dim:
+                inferred_params["param_dim"] = out_dim - state_dim
+        param_dim = inferred_params.get("param_dim", 0)
+
         # proj_in = state_dim + obs_dim + cond_extra_dim, with obs_dim = state_dim
         if "model.unet.cond_encoder.proj.weight" in state_dict:
             cond_proj_weight = state_dict["model.unet.cond_encoder.proj.weight"]
@@ -76,7 +106,7 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "state_dim": state_dim,
                 "hidden_channels": inferred_params.get("hidden_channels", [64, 128, 256]),
                 "time_emb_dim": 64,
-                "param_dim": 0,  # Lightning checkpoints were trained with param_dim=0
+                "param_dim": param_dim,  # 0 for obs-only; >0 for joint models
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
                 "device": "cpu",
             },
@@ -107,6 +137,10 @@ def resolve_model_class(cfg: Any) -> tuple:
         return DirectUNet, cfg
     elif model_type == "VANILLACFM":
         return VanillaCFM, cfg
+    elif model_type == "JOINTDIRECTUNET":
+        return JointDirectUNet, cfg
+    elif model_type == "JOINTCFM":
+        return JointCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -134,6 +168,26 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 1),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+        )
+    elif model_class == JointCFM:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 1),
+            param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+        )
+    elif model_class == JointDirectUNet:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 1),
+            param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")
@@ -222,6 +276,8 @@ def prepare_dataset(
         dataset = test
 
     # Create dataloaders for both the S0 and S1 test splits
+    is_joint = bool(kwargs.get("is_joint", False))
+    collate = collate_joint_eval if is_joint else collate_eval
     dataloaders = {}
     for key, case in (("test_s0", "s0"), ("test_s1", "s1")):
         split = dataset[key]
@@ -229,7 +285,7 @@ def prepare_dataset(
             split,
             batch_size=kwargs.get("batch_size", 200),
             shuffle=False,
-            collate_fn=collate_eval,
+            collate_fn=collate,
             num_workers=kwargs.get("num_workers", 0),
         )
 
@@ -274,11 +330,16 @@ def _run_case_inference(
     where ``D`` is the observed subspace; with ``n_members > 1`` it also holds
     ``"members": (W, T, D, M)`` (float32) and ``trajectories`` is the member
     mean. No metrics are computed here — that is the job of the generic
-    evaluator.
+    evaluator. For joint models the batch also carries ``params``; each
+    window's predicted params are returned in ``"params_pred"`` (W, P) and the
+    ground-truth in ``"params_true"`` (W, P).
     """
     model.eval()
     member_preds: list[list] = [[] for _ in range(n_members)]
     all_true = []
+    param_preds = []
+    param_trues = []
+    is_joint = isinstance(model, (JointCFM, JointDirectUNet))
 
     with torch.no_grad():
         for batch in dataloader:
@@ -287,18 +348,20 @@ def _run_case_inference(
             batch_obj = BatchDict(batch)
 
             for m in range(n_members):
-                if isinstance(model, DirectUNet):
-                    # DirectUNet.forward takes a batch dict (deterministic:
-                    # all members are identical copies)
+                if isinstance(model, (JointCFM, JointDirectUNet)):
+                    pred, params = model.sample(batch_obj, return_params=True)
+                    if m == 0:
+                        param_preds.append(params.detach().float().cpu())
+                elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
-                    # VanillaCFM.sample takes a batch dict; each call draws a
-                    # fresh x0 ~ N(0, sigma_prior^2)
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
+            if is_joint:
+                param_trues.append(batch["true_params"].detach().cpu())
 
     # Concatenate
     per_member = [torch.cat(mp, dim=0).numpy() for mp in member_preds]
@@ -325,6 +388,9 @@ def _run_case_inference(
         members = np.stack(per_member, axis=-1).astype(np.float32)
         out["members"] = members
         out["trajectories"] = members.mean(axis=-1)
+    if is_joint:
+        out["params_pred"] = torch.cat(param_preds, dim=0).numpy()
+        out["params_true"] = torch.cat(param_trues, dim=0).numpy()
     return out
 
 
