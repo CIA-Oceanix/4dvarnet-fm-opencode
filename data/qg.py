@@ -20,7 +20,7 @@ class QGConfig:
     rek: float = 5.787e-7
     filterfac: float = 23.6
 
-    window_days: float = 60.0
+    window_days: float = 30.0
     obs_interval: int = 6
     R_var: float = 1e-12
     num_windows: int = 200

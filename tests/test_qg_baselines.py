@@ -1,13 +1,24 @@
 import numpy as np
+import pytest
 import torch
 
 from data.qg import QGConfig, make_qg_s0_s1_datasets
-from evaluation.baselines import EnKF, ObsOperator, _build_qg_loc_matrices
+from evaluation.baselines import (
+    ETKF,
+    EnKF,
+    ObsOperator,
+    _build_qg_col_loc_matrices,
+    _build_qg_loc_matrices,
+)
 from evaluation.run_qg_baselines import (
     WindStateAdapter,
     _build_dyn,
+    _event_columns,
     _per_pass_indices,
+    _psi_h,
     _q_alongtrack_obs,
+    _obs_spec_rc,
+    _lagged_init_ensemble,
 )
 
 NX = 8
@@ -109,3 +120,117 @@ def test_enkf_smoke_finite_bounded():
     truth = w["true_state"].numpy()
     rmse = np.sqrt(np.mean((res.trajectory - truth) ** 2))
     assert rmse < 100.0 * field_std
+
+
+def _rc_cfg(**kw):
+    base = {"nx": NX, "window_days": 4.0, "spinup_years": 0.05,
+            "num_windows": 1, "obs_geometry": "random_columns",
+            "cols_per_day": 2, "seed": 3}
+    base.update(kw)
+    return QGConfig(**base)
+
+
+def _rc_window(**kw):
+    cfg = _rc_cfg(**kw)
+    ds = make_qg_s0_s1_datasets(cfg)
+    return cfg, ds["test_s0"][0]
+
+
+def test_psi_h_matches_manual_inversion_slice():
+    cfg, w = _rc_window()
+    device = torch.device("cpu")
+    dyn = _build_dyn(cfg, w, device)
+    obs_cols = _event_columns(cfg, w)
+    h = _psi_h(dyn, obs_cols, cfg.ny, device)
+    x = torch.randn(dyn.state_dim)
+    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
+    t = ev[0]
+    cols = obs_cols[t]
+    psi1 = dyn.inner.streamfunctions(x)[0]  # (ny, nx)
+    manual = torch.cat([psi1[:, c] for c in cols])
+    auto = h(x, index=t)
+    assert auto.shape == (cfg.cols_per_day * cfg.ny,)
+    assert torch.allclose(auto, manual, atol=1e-6)
+    # batched path
+    xb = torch.randn(7, dyn.state_dim)
+    ab = h(xb, index=t)
+    assert ab.shape == (7, cfg.cols_per_day * cfg.ny)
+
+
+def test_psi_h_per_time_columns():
+    cfg, w = _rc_window()
+    device = torch.device("cpu")
+    dyn = _build_dyn(cfg, w, device)
+    obs_cols = _event_columns(cfg, w)
+    h = _psi_h(dyn, obs_cols, cfg.ny, device)
+    x = torch.randn(dyn.state_dim)
+    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
+    t0, t1 = ev[0], ev[1]
+    r0 = h(x, index=t0)
+    r1 = h(x, index=t1)
+    assert not torch.allclose(r0, r1, atol=1e-6)
+
+
+def test_col_loc_matrices_shapes_and_cross_layer():
+    ny = nx = NX
+    state_dim = 2 * ny * nx
+    cols_t = [[0, 3], None, [2]]
+    Lx_t, Ly_t = _build_qg_col_loc_matrices(state_dim, cols_t, 2, ny, nx,
+                                            5.0, torch.device("cpu"))
+    assert Lx_t[0].shape == (state_dim, 2 * ny)
+    assert Ly_t[0].shape == (2 * ny, 2 * ny)
+    assert Lx_t[1] is None
+    assert bool(torch.isfinite(Lx_t[0]).all())
+    assert float(Lx_t[0][ny * nx:, :].max()) < 1e-3
+
+
+def test_init_ensemble_respected_analysis0():
+    cfg, w = _rc_window()
+    device = torch.device("cpu")
+    dyn = _build_dyn(cfg, w, device)
+    obs, r_var, od, obs_cols = _obs_spec_rc(cfg, w, device)
+    obs_op = ObsOperator(dyn.state_dim,
+                         h=_psi_h(dyn, obs_cols, cfg.ny, device),
+                         h_index_at=None, n_obs=od)
+    init = torch.randn(12, dyn.state_dim)
+    filt = ETKF(N_ensemble=12, R_var=r_var, inflation=1.1, device=device,
+                dynamics=dyn, obs_operator=obs_op, init_ensemble=init.clone())
+    res = filt.assimilate(obs, w["obs_mask"].to(device),
+                          w["wind_state_corrupted"].to(device),
+                          true_state=w["true_state"])
+    assert np.allclose(res.trajectory[0], init.mean(dim=0).numpy(),
+                       atol=1e-5)
+
+
+def test_lagged_init_ensemble_diversity():
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
+                                                         init_lag_days=3.0,
+                                                         device=device)
+    mean_lag_days_fake = float(w["init_dt_days"].numpy())
+    assert mean_lag_days == pytest.approx(mean_lag_days_fake, rel=0.1)
+    assert init_ensemble.shape == (20, cfg.state_dim)
+    assert bool(torch.isfinite(init_ensemble).all())
+    assert float(init_ensemble.std()) > 0.0
+    assert float(init_ensemble.std()) > 0.1 * (float(w["target_state_q"].std()) + 1e-12)
+
+
+def test_etkf_q_cols_lagged_smoke_finite():
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    dynam = _build_dyn(cfg, w, device)
+    obs, r_var, obs_op = _q_alongtrack_obs(cfg, w, device)
+    init_ensemble, _ = _lagged_init_ensemble(cfg, w, N=20,
+                                              init_lag_days=2.0,
+                                              device=device)
+    filt = ETKF(N_ensemble=20, R_var=r_var, inflation=1.1, device=device,
+                dynamics=dynam, obs_operator=obs_op)
+    filt.init_ensemble = init_ensemble
+    res = filt.assimilate(obs, w["obs_mask"].to(device),
+                          w["wind_state_corrupted"].to(device),
+                          true_state=w["true_state"])
+    assert np.isfinite(res.trajectory).all()
+    assert np.isfinite(res.ensemble_variance).all()
+
+

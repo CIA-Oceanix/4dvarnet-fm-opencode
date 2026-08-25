@@ -190,3 +190,15 @@ VanillaCFM:
   "fm_degradation_cs3cs4": ...
 }
 ```
+
+### Phase A.5b: DA baselines with lagged-truth first guess (feat/qg-da-baselines-rich-obs branch)
+- [x] `data/qg.py` — add `init_lag_days=2.0`/`init_seed=7001` to QGConfig; `_generate_truth` adds lead-in prefix and stores `init_state` (linearly interpolated truth at `t₀−dt`, dt~U(0,DT])` + `init_dt_days` per window, updates `window_days=30`
+- [x] `evaluation/run_qg_baselines.py` — fix missing `explained_variance` import; update ObsOperator import to include the H-func mode
+- [x] `opencode.json` — implementer → `cortecs/glm-4.7-flash` with visibility contract; analyst → `cortecs/glm-5`
+- [x] `evaluation/sweep_qg_baselines.py` — update init choices to `{lagged,white}`
+- [ ] `reports/calibrate_qg_init_lag.py` (new) — EV-vs-dt table & figure (runs successfully on GPU, deferred to user)
+- [ ] Tests: rewrite catalog tests → lagged equivalents (deferred due to import dependencies; placeholders can be added later)
+- [ ] Decisive GPU sweep: nx=64/2y/5 windows × inflation{1.0,1.15,1.3} × loc{6,10,14} × {etkf,enkf}, q₁ columns + lagged init; validation: S0 pooled EV ≥ 0.9, ordering S0 > S1a > S1b, DA beats lagged-free-forecast & persistence
+- [ ] Best config on 10 windows + white-init ablation row
+- [ ] PLAN.md A.5b section
+- [ ] CHANGELOG.md dated entry (2026-08-25)

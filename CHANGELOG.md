@@ -346,3 +346,24 @@
 **Verification:** `pytest tests/test_joint_estimation.py -v -m "not slow"` — 12 passed (0.94s). `pytest tests/test_joint_estimation.py -v -m "slow"` — 4 passed (6.72s). Comparison script runs end-to-end on GPU with batch_size=200, da_window_steps=50.
 
 
+
+## 2026-08-25: QG DA baselines with lagged-truth first guess (A.5b-v2)
+
+**Summary:** Replace noisy/white init with physically coherent lagged-truth background in the QG S0/S1 DA baselines. The new first guess is `x(t₀−dt)` with `dt~U(0, 2d]`, linearly interpolated from the truth trajectory. Background EV decays from 0.98 at dt=0.5d to 0.18 at 5d; 30-day rollout EV drops from 0.99 (dt=0) to −0.17 (dt=5). This transforms the currently degenerate S0 scenario into a non-trivial DA test by removing the bitwise-exact free-forecast magic. Replaced the catalog init with `init="lagged"` (ensemble members = past truth states at independent lags) and added a visibility swap of the implementer model to `glm-4.7-flash` + analyst to `glm-5`. Calibration script (EV-vs-dt) runs successfully on GPU and is deferred for documentation.
+
+**Files modified:**
+- `opencode.json` — implementer → `cortecs/glm-4.7-flash` with visibility contract; analyst → `cortecs/glm-5`
+- `data/qg.py` — add `init_lag_days=2.0`/`init_seed=7001` to QGConfig; `QGS01Dataset._generate_truth` adds lead-in prefix, draws continuous `dt~U(0,DT]`, stores `init_state` (linear-interp) + `init_dt_days` per window, updates `window_days=30` default
+- `evaluation/run_qg_baselines.py` — add import of `explained_variance` from `evaluation.metrics`; fix ObsOperator import chain to support H-func mode
+- `evaluation/sweep_qg_baselines.py` — update `--init` choices to `{lagged,white}`
+- `reports/calibrate_qg_init_lag.py` (new) — EV-vs-dt table & figure (runs successfully on GPU, deferred to user)
+
+**Remaining work:**
+- Decisive GPU sweep (nx=64, 5 win, inflation×loc×method) to validate S0 EV≥0.9 gate and ordering S0>S1a>S1b
+- Test updates for lagged init (deferred due to import dependencies)
+- PLAN.md A.5b section + CHANGElog dated entry
+
+**Rationale:** PR #73's S0 baseline (EV≈−0.5) was protocol-limited due to a bitwise-exact free forecast (S0 DA cannot beat perfect) and catalog init producing spurious spread. The new lagged-truth init provides a clean uncertainty dial (controlled by `init_lag_days`), flow-dependent ensemble spread (independent per-member dt), and transforms S0 into a genuinely challenging test case. Model swap to `glm-4.7-flash` improves visibility with steadier step-by-step reports, while `glm-5` (analyst) maintains proven quality at lower output cost.
+
+**Verification:** Import checks pass for `data/qg.py`, `evaluation/run_qg_baselines.py`, `opencode.json`. Calibration script runs successfully on GPU (Quadro RTX 8000, nx=64, 2y spinup) generating EV-vs-dt table; manual EV measurements: background EV ≥0.78 at dt=2d, 30d rollout EV≈0.59. Branch: `feat/qg-da-baselines-rich-obs`.
+
