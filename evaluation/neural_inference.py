@@ -30,18 +30,42 @@ def collate_eval(batch):
 L96_JOINT_PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
 
 
+def _window_param_vector(bd, prefix=""):
+    """Extract the 8-param vector from a window dict, handling both cache formats.
+
+    Newer datasets flatten fast_weights into scalar `w1..w4` (with `true_w1..`),
+    matching the joint config's `param_names`. Older cached datasets store
+    `fast_weights` / `true_fast_weights` as a length-4 list. Read the scalar
+    keys when present, otherwise split the list.
+    """
+    vec = [float(bd[f"{prefix}{n}"]) for n in ("F", "c1", "hx", "eps")]
+    list_key = f"{prefix}fast_weights"
+    scalar_keys = [f"{prefix}w{j}" for j in range(1, 5)]
+    if all(k in bd for k in scalar_keys):
+        vec += [float(bd[k]) for k in scalar_keys]
+    elif list_key in bd:
+        fw = list(bd[list_key])
+        if len(fw) < 4:
+            fw = fw + [0.0] * (4 - len(fw))
+        vec += [float(x) for x in fw]
+    else:
+        raise KeyError(f"missing fast_weights in window ({scalar_keys[0]}/{list_key})")
+    return vec
+
+
 def collate_joint_eval(batch):
     """Collate for joint models: also stack the 8 L96 params + true_params.
 
-    fast_weights is flattened to per-index scalar keys (w1..w4 / true_w1..)
-    by the dataset, so the generic param_names convention works here.
+    Reads the 8-param vector via ``_window_param_vector``, transparently
+    handling both the flattened (w1..w4) and legacy (fast_weights list) cache
+    formats.
     """
     states = torch.stack([b["true_state"] for b in batch])
     obs = torch.stack([b["obs"] for b in batch])
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
-    params = torch.tensor([[float(bd[n]) for n in L96_JOINT_PARAM_NAMES] for bd in batch])
-    true_params = torch.tensor([[float(bd[f"true_{n}"]) for n in L96_JOINT_PARAM_NAMES] for bd in batch])
+    params = torch.tensor([_window_param_vector(bd) for bd in batch])
+    true_params = torch.tensor([_window_param_vector(bd, prefix="true_") for bd in batch])
     return {
         "true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing,
         "params": params, "true_params": true_params,
