@@ -433,3 +433,17 @@
 
 **Verification:** Import checks pass for data/run_qg_baselines/plains (baseline H-func mode). Ruff clean (all modified files). Fast smoke: `torch.randn` shape verification successful, lagged-init ensemble construction has correct variance (spread>0.1×q_std). Calibration script ran successfully on GPU (Quadro RTX 8000, nx=64, 2y spinup) generating confirmed EV-vs-dt tables: background EV ≥0.78 at dt=2d, 30d rollout EV ≈0.59. Branch: `feat/qg-da-baselines-rich-obs`.
 
+
+## 2026-08-25: QG sbatch - fix A40 node + direct Python path to bypass AFS on Odyssey (#82)
+
+**Summary:** Fixed Kerberos/AFS token expiration failure on Odyssey compute nodes when using `conda activate fdv` by replacing the conda activate path with the direct Python binary path in the sbatch script. Also switched to A40 GPU node (`sl-mee-br-205`) to avoid nodes where AFS token explicitly failed. The PR #82 includes the `_per_pass_indices` → `_q_obs_indices_t` fix (line 309) in `run_qg_baselines.py` that was needed for random_columns geometry.
+
+**Files modified:**
+- `batch/run_qg_sweep.sbatch` - New sbatch script with direct Python path (`/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python`) and A40 GPU request (sl-mee-br-205, gpu:a40:1)
+- `evaluation/run_qg_baselines.py` - Line 309: `_per_pass_indices` → `_q_obs_indices_t` for random_columns q-obs geometry
+
+**Rationale:** The earlier sbatch job (49806) crashed on sl-mee-br-203/204 (RTX 8000 nodes) with `OSError: [Errno 127] Key has expired: '/homes/rfablet/.config/conda/.condarc'`. This is an AFS/Kerberos token expiration issue on specific Odyssey nodes, not a universal infrastructure problem. Switching to the direct Python path eliminates AFS dependency entirely, and using sl-mee-br-205 (an A40 node where your L96 training jobs already succeed) ensures the job runs on a node with working AFS access for the compiler/dependency setup (optional).
+
+**Verification:** PR #82 CI: pytests passing (68/68 QG tests), ruff informational only. The sbatch job 49830 was submitted successfully and is running on sl-mee-br-205. 40806 previous attempts (49806) all failed due to AFS issue.
+
+**Remaining work:** Wait for GPU sweep to complete (~48h for 36×5 windows), validate gates: S0 pooled EV ≥ 0.9, ordering S0 > S1a > S1b, DA beats persistence.
