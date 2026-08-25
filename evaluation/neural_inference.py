@@ -358,7 +358,9 @@ def _run_case_inference(
             batch_obj = BatchDict(batch)
 
             for m in range(n_members):
-                if isinstance(model, (JointCFM, JointDirectUNet)):
+                if isinstance(model, JointCFM):
+                    pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
+                elif isinstance(model, JointDirectUNet):
                     pred, params = model.sample(batch_obj, return_params=True)
                 elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
