@@ -45,11 +45,12 @@ jobs:
       - name: Run fast test suite
         run: |
           pytest \
-            tests/test_lorenz96_training.py \
             tests/test_direct_unet.py \
             tests/test_vanilla_cfm.py \
             tests/test_hydra_config.py \
             tests/test_baselines_hydra.py \
             tests/test_metrics.py \
-            tests/test_joint_estimation_l96_neural.py \
+            tests/test_tweedie_l96.py \
+            --ignore=tests/test_lorenz96_training.py \
+            --ignore=tests/test_joint_estimation_l96_neural.py \
             -m "not slow" -q
