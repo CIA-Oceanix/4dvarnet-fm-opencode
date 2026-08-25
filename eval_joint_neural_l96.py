@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from evaluation.estimate_metrics import evaluate_estimates
+from evaluation.estimate_metrics import evaluate_estimates, pooled_ensemble_es
 from evaluation.metrics import param_rmse
 from evaluation.neural_inference import (
     L96_JOINT_PARAM_NAMES,
@@ -46,6 +46,10 @@ def main():
                         help="Load with train_tau_0_only=True (tau=0-trained joint CFM)")
     parser.add_argument("--n-outer", type=int, default=None,
                         help="Euler integration steps for joint CFM sampling")
+    parser.add_argument("--n-members", type=int, default=1,
+                        help="Number of ensemble members to sample")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Random seed for torch")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="joint_neural_eval.json", help="Output JSON")
     args = parser.parse_args()
@@ -73,11 +77,11 @@ def main():
     logger.info(f"Dataset: {len(dataloaders['s0'].dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
-    torch.manual_seed(0)
+    torch.manual_seed(args.seed)
     n_outer = args.n_outer if args.n_outer is not None else getattr(model, "N_outer", 10)
-    logger.info(f"Running joint inference (step 1): cases={args.cases} n_outer={n_outer}")
+    logger.info(f"Running joint inference (step 1): cases={args.cases} n_members={args.n_members} n_outer={n_outer}")
     estimates = run_inference(model, dataloaders, device, obs_var_indices,
-                              n_members=1, n_outer=n_outer)
+                              n_members=args.n_members, n_outer=n_outer)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,14 +90,23 @@ def main():
     estimates_paths = {}
     for case in args.cases:
         est = estimates[case]
-        npz_path = output_path.parent / f"joint_estimates_{case}.npz"
-        np.savez_compressed(npz_path,
-                            trajectories=est["trajectories"],
-                            truth=est["truth"],
-                            params_pred=est["params_pred"],
-                            params_true=est["params_true"])
+        if args.n_members > 1:
+            npz_path = output_path.parent / f"joint_estimates_{case}_ens{args.n_members}.npz"
+            np.savez_compressed(npz_path,
+                                members=est["members"],
+                                truth=est["truth"],
+                                params_pred=est["params_pred"],
+                                params_true=est["params_true"])
+            sm = pooled_ensemble_es(est["members"], est["truth"])
+        else:
+            npz_path = output_path.parent / f"joint_estimates_{case}.npz"
+            np.savez_compressed(npz_path,
+                                trajectories=est["trajectories"],
+                                truth=est["truth"],
+                                params_pred=est["params_pred"],
+                                params_true=est["params_true"])
+            sm = evaluate_estimates(est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
-        sm = evaluate_estimates(est["trajectories"], est["truth"])
         prmse = param_rmse(est["params_pred"], est["params_true"])
         metrics[case] = {
             "rmse": sm["rmse"],
@@ -121,7 +134,7 @@ def main():
             "num_windows": args.num_windows,
             "obs_interval": args.obs_interval,
         },
-        "sampling": {"n_members": 1, "n_outer": n_outer, "cases": list(args.cases)},
+        "sampling": {"n_members": args.n_members, "n_outer": n_outer, "seed": args.seed, "cases": list(args.cases)},
         "estimates": estimates_paths,
         "metrics": metrics,
     }
