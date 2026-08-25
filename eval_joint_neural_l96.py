@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from evaluation.estimate_metrics import evaluate_estimates, pooled_ensemble_es
+from evaluation.estimate_metrics import evaluate_ensemble_estimates, evaluate_estimates
 from evaluation.metrics import param_rmse
 from evaluation.neural_inference import (
     L96_JOINT_PARAM_NAMES,
@@ -97,7 +97,7 @@ def main():
                                 truth=est["truth"],
                                 params_pred=est["params_pred"],
                                 params_true=est["params_true"])
-            sm = pooled_ensemble_es(est["members"], est["truth"])
+            sm = evaluate_ensemble_estimates(est["members"], est["truth"])
         else:
             npz_path = output_path.parent / f"joint_estimates_{case}.npz"
             np.savez_compressed(npz_path,

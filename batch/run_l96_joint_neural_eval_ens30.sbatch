@@ -1,3 +1,4 @@
+#!/bin/bash
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
 #SBATCH --gres=gpu:rtx8000:1
@@ -5,9 +6,10 @@
 #SBATCH --mem=32G
 #SBATCH --time=01:00:00
 #SBATCH --job-name=l96-joint-eval-ens30
-#SBATCH --array=0-7
+#SBATCH --array=0-3
+#SBATCH --output=sbatch_logs/l96_joint_ens30_%j_%a.out
+#SBATCH --error=sbatch_logs/l96_joint_ens30_%j_%a.err
 
-#!/bin/bash
 set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
@@ -21,14 +23,12 @@ DATASET="experiments/l96_datasets_obsj2_int100_nwin200.pt"
 TASKS=(
   "L7_joint_cfm_s0s1|1|--train-tau0-only"
   "L7_joint_cfm_s0s1|10|--train-tau0-only"
-  "L8_joint_direct_unet_s0s1|1|"
-  "L8_joint_direct_unet_s0s1|10|"
   "L9_joint_cfm_s0s1_multitau|1|"
   "L9_joint_cfm_s0s1_multitau|10|"
 )
 
 SPEC=${TASKS[$SLURM_ARRAY_TASK_ID]}
-read -r EXP NO FLAGS <<< "$SPEC"
+IFS='|' read -r EXP NO FLAGS <<< "$SPEC"
 
 echo "============================================"
 echo " L96 Joint Neural Eval (ens30) | $(date)"
