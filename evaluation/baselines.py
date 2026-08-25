@@ -108,10 +108,73 @@ def _build_qg_loc_matrices(state_dim: int, obs_indices_t: list, nlayers: int,
     return Lx_t, Ly_t
 
 
+def _build_qg_col_loc_matrices(state_dim: int, obs_columns_t: list,
+                               nlayers: int, ny: int, nx: int,
+                               loc_radius: float, device) -> tuple:
+    """Per-time Gaspari-Cohn localization for upper-layer column obs.
+
+    Each event observes `C` meridional columns of the upper layer (state dim
+    (nlayers, ny, nx), layer-major). Returns (Lx_t, Ly_t): lists (one per obs
+    time) of (state_dim, C*ny) and (C*ny, C*ny) correlation matrices built
+    from grid distance to the observed (layer=0) grid points. Cross-layer
+    separations -> weight 0.
+    """
+    gpl = ny * nx
+    ar = torch.arange(state_dim, device=device, dtype=torch.float64)
+    state_layer = ar // gpl
+    g = ar % gpl
+    state_y = g // nx
+    state_x = g % nx
+    layer_gap = 2.0 * max(ny, nx)
+    Lx_t: list[torch.Tensor | None] = []
+    Ly_t: list[torch.Tensor | None] = []
+    for cols in obs_columns_t:
+        if cols is None:
+            Lx_t.append(None)
+            Ly_t.append(None)
+            continue
+        cols_arr = torch.as_tensor(cols, dtype=torch.long, device=device)
+        C = cols_arr.numel()
+        od = C * ny
+        oy = torch.arange(ny, device=device, dtype=torch.float64).repeat(C)
+        ox = cols_arr.to(torch.float64).repeat_interleave(ny)
+        ol = torch.zeros(od, device=device, dtype=torch.float64)
+        dy = state_y.unsqueeze(1) - oy.unsqueeze(0)
+        dx = state_x.unsqueeze(1) - ox.unsqueeze(0)
+        dl = (state_layer.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
+        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
+        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
+        doy = oy.unsqueeze(1) - oy.unsqueeze(0)
+        dox = ox.unsqueeze(1) - ox.unsqueeze(0)
+        dod = torch.sqrt(doy ** 2 + dox ** 2)
+        Ly_t.append(_gc_matrix(dod / loc_radius).to(torch.float32))
+    return Lx_t, Ly_t
+
+
 class ObsOperator:
-    def __init__(self, state_dim: int, obs_indices=None, obs_indices_t=None):
+    def __init__(self, state_dim: int, obs_indices=None, obs_indices_t=None,
+                 h=None, h_index_at=None, n_obs=None):
+        """Observation operator.
+
+        Two mutually exclusive modes:
+          - index mode (default): `obs_indices` / `obs_indices_t` select state
+            coordinates (legacy, byte-for-byte unchanged).
+          - H-function mode: `h(state, index)` maps the full state to the obs
+            vector (e.g. spectral PV inversion for psi columns); `h_index_at`
+            maps a time to a per-time "mock" obs-index (for bookkeeping) and
+            `n_obs` fixes the (constant) observation dimension.
+        """
+        self._h = h
+        self._h_index_at = h_index_at
+        self._n_obs = n_obs if n_obs is not None else state_dim
         self.indices: torch.Tensor | None = None
         self.obs_indices_t: list[torch.Tensor | None] | None = None
+        if h is not None:
+            rep = h_index_at(None) if h_index_at is not None else None
+            if rep is not None:
+                self.indices = torch.as_tensor(rep, dtype=torch.long)
+            self._obs_dim = self._n_obs
+            return
         if obs_indices_t is not None:
             self.obs_indices_t = [
                 None if x is None else torch.as_tensor(x, dtype=torch.long)
@@ -127,7 +190,13 @@ class ObsOperator:
         else:
             self._obs_dim = state_dim
 
+    @property
+    def h_mode(self) -> bool:
+        return self._h is not None
+
     def index_at(self, index: int | None = None) -> torch.Tensor | None:
+        if self._h_index_at is not None:
+            return self._h_index_at(index)
         if self.obs_indices_t is not None:
             if index is None:
                 first = next((x for x in self.obs_indices_t if x is not None),
@@ -138,6 +207,8 @@ class ObsOperator:
 
     def __call__(self, x: torch.Tensor, index: int | None = None,
                  indices: torch.Tensor | None = None) -> torch.Tensor:
+        if self._h is not None:
+            return self._h(x, index)
         idx = indices if indices is not None else self.index_at(index)
         if idx is None:
             return x
@@ -606,6 +677,7 @@ class ETKF:
         R_var_vec: np.ndarray = None,
         loc_Lx_t: list | None = None,
         loc_Ly_t: list | None = None,
+        init_ensemble: torch.Tensor | None = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -624,13 +696,18 @@ class ETKF:
         self.etkf_additive = etkf_additive
         self.loc_Lx_t = loc_Lx_t
         self.loc_Ly_t = loc_Ly_t
+        self.init_ensemble = init_ensemble
         if loc_radius is not None and loc_Lx_t is None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
 
     def _per_time(self, t: int) -> tuple:
-        idx = self.obs_operator.index_at(t)
-        od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
+        if self.obs_operator.h_mode:
+            idx = self.obs_operator.index_at(t)
+            od_t = self.obs_operator.obs_dim
+        else:
+            idx = self.obs_operator.index_at(t)
+            od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
         loc_Lx = self.loc_Lx_t[t] if self.loc_Lx_t is not None else getattr(
             self, "loc_Lx", None)
         loc_Ly = self.loc_Ly_t[t] if self.loc_Ly_t is not None else getattr(
@@ -665,13 +742,16 @@ class ETKF:
             r_sqrt = np.sqrt(self.R_var)
             r_inv = 1.0 / self.R_var
 
-        interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, self.noise_init_std, self.device).unsqueeze(0).repeat(N, 1)
-        noise = torch.randn_like(ensemble) * self.noise_init_std
-        if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((N, od), device=self.device) * r_sqrt
-            noise[..., self.obs_operator.indices] = noise_obs
-        ensemble += noise
+        if self.init_ensemble is not None:
+            ensemble = self.init_ensemble.clone()
+        else:
+            interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
+            ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, self.noise_init_std, self.device).unsqueeze(0).repeat(N, 1)
+            noise = torch.randn_like(ensemble) * self.noise_init_std
+            if self.obs_operator.indices is not None:
+                noise_obs = torch.randn((N, od), device=self.device) * r_sqrt
+                noise[..., self.obs_operator.indices] = noise_obs
+            ensemble += noise
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
@@ -776,12 +856,15 @@ class ETKF:
             r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations, obs_mask)
-        ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, N, 1)
-        noise = torch.randn_like(ensemble) * self.noise_init_std
-        if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((B, N, od), device=self.device) * r_sqrt
-            noise[..., self.obs_operator.indices] = noise_obs
-        ensemble += noise
+        if self.init_ensemble is not None:
+            ensemble = self.init_ensemble.unsqueeze(0).expand(B, N, self.state_dim).clone()
+        else:
+            ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, N, 1)
+            noise = torch.randn_like(ensemble) * self.noise_init_std
+            if self.obs_operator.indices is not None:
+                noise_obs = torch.randn((B, N, od), device=self.device) * r_sqrt
+                noise[..., self.obs_operator.indices] = noise_obs
+            ensemble += noise
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
@@ -889,6 +972,7 @@ class EnKF:
         R_var_vec: np.ndarray = None,
         loc_Lx_t: list | None = None,
         loc_Ly_t: list | None = None,
+        init_ensemble: torch.Tensor | None = None,
     ):
         self.N_ensemble = N_ensemble
         self.R_var = R_var
@@ -904,13 +988,18 @@ class EnKF:
         self.noise_init_std = noise_init_std
         self.loc_Lx_t = loc_Lx_t
         self.loc_Ly_t = loc_Ly_t
+        self.init_ensemble = init_ensemble
         if loc_radius is not None and loc_Lx_t is None:
             self.loc_Lx, self.loc_Ly = _build_loc_matrices(
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
 
     def _per_time(self, t: int) -> tuple:
-        idx = self.obs_operator.index_at(t)
-        od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
+        if self.obs_operator.h_mode:
+            idx = self.obs_operator.index_at(t)
+            od_t = self.obs_operator.obs_dim
+        else:
+            idx = self.obs_operator.index_at(t)
+            od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
         loc_Lx = self.loc_Lx_t[t] if self.loc_Lx_t is not None else getattr(
             self, "loc_Lx", None)
         loc_Ly = self.loc_Ly_t[t] if self.loc_Ly_t is not None else getattr(
@@ -942,13 +1031,16 @@ class EnKF:
             r_sqrt = np.sqrt(self.R_var)
             r_inv = 1.0 / self.R_var
 
-        interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
-        noise = torch.randn_like(ensemble) * self.noise_init_std
-        if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((self.N_ensemble, od), device=self.device) * r_sqrt
-            noise[..., self.obs_operator.indices] = noise_obs
-        ensemble += noise
+        if self.init_ensemble is not None:
+            ensemble = self.init_ensemble.clone()
+        else:
+            interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
+            ensemble = _init_bg_from_obs(interp_obs[0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(0).repeat(self.N_ensemble, 1)
+            noise = torch.randn_like(ensemble) * self.noise_init_std
+            if self.obs_operator.indices is not None:
+                noise_obs = torch.randn((self.N_ensemble, od), device=self.device) * r_sqrt
+                noise[..., self.obs_operator.indices] = noise_obs
+            ensemble += noise
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
@@ -1028,12 +1120,15 @@ class EnKF:
             r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations, obs_mask)
-        ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
-        noise = torch.randn_like(ensemble) * self.noise_init_std
-        if self.obs_operator.indices is not None:
-            noise_obs = torch.randn((B, self.N_ensemble, od), device=self.device) * r_sqrt
-            noise[..., self.obs_operator.indices] = noise_obs
-        ensemble += noise
+        if self.init_ensemble is not None:
+            ensemble = self.init_ensemble.unsqueeze(0).expand(B, self.N_ensemble, self.state_dim).clone()
+        else:
+            ensemble = _init_bg_from_obs(interp_obs[:, 0], self.obs_operator, self.state_dim, self.noise_init_std, self.device).unsqueeze(1).repeat(1, self.N_ensemble, 1)
+            noise = torch.randn_like(ensemble) * self.noise_init_std
+            if self.obs_operator.indices is not None:
+                noise_obs = torch.randn((B, self.N_ensemble, od), device=self.device) * r_sqrt
+                noise[..., self.obs_operator.indices] = noise_obs
+            ensemble += noise
 
         analysis = np.zeros((B, num_steps, self.state_dim))
         ens_var = np.zeros((B, num_steps, self.state_dim))
