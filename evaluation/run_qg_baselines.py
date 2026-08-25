@@ -131,7 +131,6 @@ def _psi_h(dyn, obs_cols, ny, device):
     Returns:
         Callable that takes (state (state_dim,), index=int) -> (C*ny,)
     """
-    nx = dyn.inner.nx
     def h(state, index=None):
         batch = state.ndim > 1
         cols = obs_cols[index]
