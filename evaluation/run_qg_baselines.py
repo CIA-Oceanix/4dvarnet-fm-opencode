@@ -306,7 +306,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 spread_t0_list.append(float(init_ensemble.std()))
             if obs_var == "q":
                 if per_time is None:
-                    per_time, _ = _per_pass_indices(cfg, w)
+                    per_time = _q_obs_indices_t(cfg, w)
                 field_std = float(w["target_state_q"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None:
