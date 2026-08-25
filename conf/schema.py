@@ -159,6 +159,17 @@ class VanillaCFMConfig:
 
 
 @dataclass
+class TweedieSolverConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    K_inner: int = 5
+    N_outer: int = 10
+    nu: float = 1.0
+    cond_extra_dim: int = 0
+    dropout: float = 0.1
+
+
+@dataclass
 class JointCFMConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
@@ -174,8 +185,20 @@ class JointDirectUNetConfig:
 
 
 @dataclass
+class PredictStateCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    param_dim: int = 4
+    cond_extra_dim: int = 0
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "tweedie_l96" | "predict_state_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -184,11 +207,14 @@ class ModelConfig:
     nu: float = 1.0
     use_obs: bool = True
     use_energy: bool = True
+    cond_extra_dim: int = 0
     dropout: float = 0.1
+    tweedie_solver: TweedieSolverConfig = field(default_factory=TweedieSolverConfig)
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
 
 
 @dataclass

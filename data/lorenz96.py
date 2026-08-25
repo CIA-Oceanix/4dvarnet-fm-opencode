@@ -246,6 +246,30 @@ def _make_corrupted_forcing(cfg, W_L_true, true_fluid, seed, device=None):
     return W_L_true + cfg.forcing_state_bias * true_fluid[:, 0] + torch.tensor(eta, dtype=true_fluid.dtype, device=device)
 
 
+def _make_corrupted_forcing_batch(cfg, W_L_true, true_fluid, seeds, device=None):
+    """Vectorized OU corrupted-forcing for a batch of windows.
+
+    Args:
+        W_L_true: tensor (B, num_steps) true forcing
+        true_fluid: tensor (B, num_steps, D)
+        seeds: array (B,) per-window seeds
+    Returns:
+        tensor (B, num_steps)
+    """
+    device = device or W_L_true.device
+    B = W_L_true.shape[0]
+    num_steps = cfg.num_steps
+    sq = np.sqrt(2.0 / cfg.tau_eta)
+    isinstance_rng = isinstance(seeds, np.ndarray)
+    rng = np.random.RandomState(seeds) if isinstance_rng else np.random.RandomState(np.asarray(seeds))
+    eta = np.zeros((B, num_steps))
+    for et in range(1, num_steps):
+        d_eta = -(1.0 / cfg.tau_eta) * eta[:, et - 1] * cfg.dt + cfg.sigma_eta * sq * rng.normal(0.0, np.sqrt(cfg.dt), size=B)
+        eta[:, et] = eta[:, et - 1] + d_eta
+    eta_t = torch.tensor(eta, dtype=torch.float32, device=device)
+    return W_L_true + cfg.forcing_state_bias * true_fluid[:, :, 0] + eta_t
+
+
 def _draw_l96_params(rng, cfg, param_noise: float = 0.2, bias: float = None,
                       randomize_params: list = None) -> Dict:
     use_perparam = _uses_perparam_randomize(cfg)
@@ -288,14 +312,186 @@ def _draw_l96_params(rng, cfg, param_noise: float = 0.2, bias: float = None,
     return params
 
 
+def _param_tensors(params_list, device):
+    """Stack per-window param dicts into per-param tensors on `device`."""
+    F = torch.tensor([p["F"] for p in params_list], dtype=torch.float32, device=device)
+    c1 = torch.tensor([p["c1"] for p in params_list], dtype=torch.float32, device=device)
+    h = torch.tensor([p["h"] for p in params_list], dtype=torch.float32, device=device)
+    hx = torch.tensor([p["hx"] for p in params_list], dtype=torch.float32, device=device)
+    eps = torch.tensor([p["eps"] for p in params_list], dtype=torch.float32, device=device)
+    fw = None
+    if "fast_weights" in params_list[0]:
+        fw = torch.tensor([p["fast_weights"] for p in params_list],
+                          dtype=torch.float32, device=device)
+    return F, c1, h, hx, eps, fw
+
+
+def _generate_batch_true(dynamics, cfg, seeds, params_list, max_window_retries,
+                         device):
+    """Batch-generate true trajectories + forcing for the given windows.
+
+    Returns (traj[B,T,D], forcing[B,T]) float32, all finite. Non-finite windows
+    are regenerated individually with fresh seeds/params up to `max_window_retries`.
+    """
+    B = len(params_list)
+    cpu = torch.device("cpu")
+    traj_batch = torch.empty(B, cfg.num_steps, dynamics.state_dim,
+                             dtype=torch.float32, device=cpu)
+    forcing_batch = torch.empty(B, cfg.num_steps, dtype=torch.float32, device=cpu)
+
+    pending = list(range(B))
+    for attempt in range(max_window_retries):
+        if not pending:
+            break
+        seeds_i = np.asarray([seeds[i] + attempt for i in pending], dtype=np.int64)
+        params_i = [params_list[i] for i in pending]
+        F, c1, h, hx, eps, fw = _param_tensors(params_i, device)
+        try:
+            tg, fo = dynamics.generate_batch_trajectories(
+                len(pending), num_steps=cfg.num_steps,
+                spinup_steps=cfg.spinup_steps,
+                F_values=F, c1_values=c1, h_values=h, hx_values=hx,
+                eps_values=eps, fast_weights_values=fw,
+                seeds=seeds_i, device=device,
+            )
+        except RuntimeError:
+            tg = None
+            fo = None
+        if tg is not None:
+            if tg.device.type != "cpu":
+                tg = tg.cpu()
+                fo = fo.cpu()
+            finite = torch.isfinite(tg).all(dim=(1, 2))
+            still_bad = []
+            for j, orig_i in enumerate(pending):
+                if finite[j].item():
+                    traj_batch[orig_i] = tg[j]
+                    forcing_batch[orig_i] = fo[j]
+                else:
+                    still_bad.append(orig_i)
+            pending = still_bad
+    if pending:
+        raise RuntimeError(
+            f"{type(dynamics).__name__} batch: {len(pending)} unstable "
+            f"windows after {max_window_retries} retries")
+
+    return traj_batch, forcing_batch
+
+
+def _build_window(cfg, dynamics, device, params, traj_seed, obs_seed, param_bias,
+                  params_da=None):
+    """Assemble a single window dict (trajectory split out by the caller).
+
+    All stored tensors are on CPU (matching the legacy behavior); `device` is
+    only used as the computation device for observations/forcing.
+    """
+    cpu = torch.device("cpu")
+    true_fluid = params.pop("_traj")
+    W_L_true = params.pop("_forcing")
+    if cfg.use_corrupted_forcing:
+        W_L_star = _make_corrupted_forcing(cfg, W_L_true, true_fluid, traj_seed, cpu)
+    else:
+        W_L_star = W_L_true.clone()
+    noisy_obs, obs_mask = _make_obs(cfg, true_fluid, obs_seed, cpu)
+    w = {
+        "true_state": true_fluid, "obs": noisy_obs, "obs_mask": obs_mask,
+        "forcing_true": W_L_true, "forcing_corrupted": W_L_star,
+        "obs_seed": obs_seed,
+    }
+    if param_bias is not None:
+        w["param_bias"] = param_bias
+    for k, v in params.items():
+        w[k] = v
+        w[f"true_{k}"] = v
+    _set_window_params(w, params)
+    _set_window_params(w, params, "true_")
+    if params_da is not None:
+        for k, v in params_da.items():
+            w[f"{k}_da"] = v
+        _set_window_params(w, params_da, suffix="_da")
+    return w
+
+
+def _build_randparam_windows(cfg, dynamics, device, param_noise,
+                             randomize_params, max_window_retries, bias):
+    B = cfg.num_windows
+    traj_seeds = [cfg.seed + i * 100 for i in range(B)]
+    obs_seeds = [cfg.seed + i * 100 + 1 for i in range(B)]
+    params_list = []
+    for i in range(B):
+        rng_np = np.random.RandomState(traj_seeds[i])
+        params_list.append(_draw_l96_params(rng_np, cfg, param_noise=param_noise,
+                                            randomize_params=randomize_params))
+    traj_batch, forcing_batch = _generate_batch_true(
+        dynamics, cfg, traj_seeds, params_list, max_window_retries, device)
+    windows = []
+    for i in range(B):
+        p = dict(params_list[i])
+        p["_traj"] = traj_batch[i]
+        p["_forcing"] = forcing_batch[i]
+        windows.append(_build_window(
+            cfg, dynamics, device, p, traj_seeds[i], obs_seeds[i],
+            param_bias=bias))
+    return windows
+
+
+def _build_randbias_windows(cfg, dynamics, device, param_noise,
+                            randomize_params, bias_mode, bias_range,
+                            max_window_retries):
+    B = cfg.num_windows
+    traj_seeds = [cfg.seed + i * 100 for i in range(B)]
+    obs_seeds = [cfg.seed + i * 100 + 1 for i in range(B)]
+    params_list = []
+    params_da_list = []
+    biases = []
+    use_perparam = _uses_perparam_randomize(cfg)
+    for i in range(B):
+        rng_np = np.random.RandomState(traj_seeds[i])
+        b = (rng_np.uniform(bias_range[0], bias_range[1])
+             if bias_mode == "random" else cfg.param_bias)
+        biases.append(b)
+        params_true = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
+                                       randomize_params=randomize_params)
+        params_da = {}
+        for k, v in params_true.items():
+            if use_perparam:
+                spec = cfg.randomize.get(k) or {"biased": False}
+                if spec.get("biased"):
+                    bias_val = spec.get("bias", b)
+                    params_da[k] = ([x * (1.0 + bias_val) for x in v]
+                                    if k == "fast_weights" else v * (1.0 + bias_val))
+                else:
+                    params_da[k] = v
+            elif randomize_params is not None and k not in randomize_params:
+                params_da[k] = v
+            elif k == "fast_weights":
+                params_da[k] = v
+            else:
+                params_da[k] = v * (1.0 + b)
+        params_list.append(params_true)
+        params_da_list.append(params_da)
+
+    traj_batch, forcing_batch = _generate_batch_true(
+        dynamics, cfg, traj_seeds, params_list, max_window_retries, device)
+    windows = []
+    for i in range(B):
+        p = dict(params_list[i])
+        p["_traj"] = traj_batch[i]
+        p["_forcing"] = forcing_batch[i]
+        windows.append(_build_window(
+            cfg, dynamics, device, p, traj_seeds[i], obs_seeds[i], biases[i],
+            params_da=params_da_list[i]))
+    return windows
+
+
 class RandomParamLorenz96Dataset:
     def __init__(self, cfg: Lorenz96Config, param_noise: float = 0.2,
                  dynamics=None, cached_windows: list = None,
                  max_window_retries: int = 10,
-                 randomize_params: list = None):
+                 randomize_params: list = None, device=None):
         self.cfg = cfg
         self.param_noise = param_noise
-        self.device = torch.device("cpu")
+        self.device = torch.device("cpu" if device is None else device)
         self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
         self.randomize_params = randomize_params
 
@@ -303,48 +499,11 @@ class RandomParamLorenz96Dataset:
             self.windows = cached_windows
             return
 
-        self.windows = []
-        for i in range(cfg.num_windows):
-            base_seed = cfg.seed + i * 100
-            for attempt in range(max_window_retries):
-                traj_seed = base_seed + attempt
-                obs_seed = cfg.seed + i * 100 + 1 + attempt
-                rng_np = np.random.RandomState(traj_seed)
-                params = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
-                                          randomize_params=self.randomize_params)
-                F = params["F"]
-                try:
-                    true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
-                        num_steps=cfg.num_steps, seed=traj_seed, F=F,
-                        c1=params["c1"], h=params["h"], hx=params["hx"], eps=params["eps"],
-                        fast_weights=params["fast_weights"],
-                        spinup_steps=cfg.spinup_steps,
-                        coupling_exponent=cfg.coupling_exponent_truth,
-                    )
-                except RuntimeError:
-                    continue
-                if torch.isfinite(true_fluid).all():
-                    break
-            else:
-                raise RuntimeError(f"RandomParamLorenz96Dataset window {i} unstable (seed={cfg.seed})")
-
-            if cfg.use_corrupted_forcing:
-                W_L_star = _make_corrupted_forcing(cfg, W_L_true, true_fluid, traj_seed, self.device)
-            else:
-                W_L_star = W_L_true.clone()
-
-            noisy_obs, obs_mask = _make_obs(cfg, true_fluid, obs_seed, self.device)
-            w = {
-                "true_state": true_fluid, "obs": noisy_obs, "obs_mask": obs_mask,
-                "forcing_true": W_L_true, "forcing_corrupted": W_L_star,
-                "obs_seed": obs_seed,
-            }
-            for k, v in params.items():
-                w[k] = v
-                w[f"true_{k}"] = v
-            _set_window_params(w, params)
-            _set_window_params(w, params, "true_")
-            self.windows.append(w)
+        self.windows = _build_randparam_windows(
+            cfg, self.dynamics, self.device, param_noise,
+            self.randomize_params, max_window_retries,
+            bias=None,
+        )
 
     def __len__(self):
         return len(self.windows)
@@ -364,10 +523,10 @@ class RandomBiasLorenz96Dataset:
                  dynamics=None, cached_windows: list = None,
                  max_window_retries: int = 10,
                  bias_mode: str = "fixed", bias_range=(0.0, 0.15),
-                 randomize_params: list = None):
+                 randomize_params: list = None, device=None):
         self.cfg = cfg
         self.param_noise = param_noise
-        self.device = torch.device("cpu")
+        self.device = torch.device("cpu" if device is None else device)
         self.dynamics = dynamics or _make_lorenz96_dynamics(cfg)
         self.bias_mode = bias_mode
         self.bias_range = bias_range
@@ -377,72 +536,10 @@ class RandomBiasLorenz96Dataset:
             self.windows = cached_windows
             return
 
-        self.windows = []
-        for i in range(cfg.num_windows):
-            base_seed = cfg.seed + i * 100
-            for attempt in range(max_window_retries):
-                traj_seed = base_seed + attempt
-                obs_seed = cfg.seed + i * 100 + 1 + attempt
-                rng_np = np.random.RandomState(traj_seed)
-                if self.bias_mode == "random":
-                    b = rng_np.uniform(self.bias_range[0], self.bias_range[1])
-                else:
-                    b = cfg.param_bias
-                params_true = _draw_l96_params(rng_np, cfg, param_noise=param_noise,
-                                               randomize_params=self.randomize_params)
-                params_da = {}
-                use_perparam = _uses_perparam_randomize(cfg)
-                for k, v in params_true.items():
-                    if use_perparam:
-                        spec = cfg.randomize.get(k) or {"biased": False}
-                        if spec.get("biased"):
-                            bias_val = spec.get("bias", b)
-                            if k == "fast_weights":
-                                params_da[k] = [x * (1.0 + bias_val) for x in v]
-                            else:
-                                params_da[k] = v * (1.0 + bias_val)
-                        else:
-                            params_da[k] = v
-                    elif self.randomize_params is not None and k not in self.randomize_params:
-                        params_da[k] = v
-                    elif k == "fast_weights":
-                        params_da[k] = v
-                    else:
-                        params_da[k] = v * (1.0 + b)
-                F = params_true["F"]
-                try:
-                    true_fluid, W_L_true = self.dynamics.generate_full_trajectory(
-                        num_steps=cfg.num_steps, seed=traj_seed, F=F,
-                        c1=params_true["c1"], h=params_true["h"], hx=params_true["hx"], eps=params_true["eps"],
-                        fast_weights=params_true["fast_weights"],
-                        spinup_steps=cfg.spinup_steps,
-                        coupling_exponent=cfg.coupling_exponent_truth,
-                    )
-                except RuntimeError:
-                    continue
-                if torch.isfinite(true_fluid).all():
-                    break
-            else:
-                raise RuntimeError(f"RandomBiasLorenz96Dataset window {i} unstable (seed={cfg.seed})")
-
-            attr_cfg = cfg
-            W_L_star = _make_corrupted_forcing(attr_cfg, W_L_true, true_fluid, traj_seed, self.device)
-            noisy_obs, obs_mask = _make_obs(cfg, true_fluid, obs_seed, self.device)
-            w = {
-                "true_state": true_fluid, "obs": noisy_obs, "obs_mask": obs_mask,
-                "forcing_true": W_L_true, "forcing_corrupted": W_L_star,
-                "param_bias": b,
-                "obs_seed": obs_seed,
-            }
-            for k, v in params_true.items():
-                w[k] = v
-                w[f"true_{k}"] = v
-            for k, v in params_da.items():
-                w[f"{k}_da"] = v
-            _set_window_params(w, params_true)
-            _set_window_params(w, params_true, "true_")
-            _set_window_params(w, params_da, suffix="_da")
-            self.windows.append(w)
+        self.windows = _build_randbias_windows(
+            cfg, self.dynamics, self.device, param_noise,
+            self.randomize_params, bias_mode, bias_range, max_window_retries,
+        )
 
     def __len__(self):
         return len(self.windows)
@@ -455,11 +552,10 @@ class RandomBiasLorenz96Dataset:
             w["obs"] = obs
             w["obs_mask"] = obs_mask
         return w
-
-
 def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
                              num_test_windows: int = 200,
-                             randomize_params: list = None) -> Dict:
+                             randomize_params: list = None,
+                             device=None) -> Dict:
     dynamics = _make_lorenz96_dynamics(cfg)
     test_s0_cfg = Lorenz96Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.0,
         "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
@@ -467,9 +563,9 @@ def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
         "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
     return {
         "test_s0": RandomParamLorenz96Dataset(test_s0_cfg, param_noise=0.2, dynamics=dynamics,
-                                               randomize_params=randomize_params),
+                                               randomize_params=randomize_params, device=device),
         "test_s1": RandomBiasLorenz96Dataset(test_s1_cfg, param_noise=0.2, dynamics=dynamics,
-                                              randomize_params=randomize_params),
+                                              randomize_params=randomize_params, device=device),
     }
 
 
@@ -480,14 +576,15 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              param_noise: float = 0.2,
                              bias_range=(0.0, 0.2),
                              cached_datasets: dict = None,
-                             randomize_params: list = None) -> Dict:
+                             randomize_params: list = None,
+                             device=None) -> Dict:
     dynamics = _make_lorenz96_dynamics(cfg)
 
     def _build(key, cls, cfg_kwargs, **cls_kwargs):
         sub_cfg = Lorenz96Config(**{**cfg.__dict__, **cfg_kwargs})
         if cached_datasets is not None and key in cached_datasets:
             return cls(sub_cfg, cached_windows=cached_datasets[key], dynamics=dynamics, **cls_kwargs)
-        return cls(sub_cfg, dynamics=dynamics, **cls_kwargs)
+        return cls(sub_cfg, dynamics=dynamics, device=device, **cls_kwargs)
 
     train = _build("train", RandomBiasLorenz96Dataset,
                    {"seed": 42, "num_windows": num_train_windows, "case": 1,
@@ -495,6 +592,8 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                    param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                    randomize_params=randomize_params)
     val = _build("val", RandomBiasLorenz96Dataset,
+
+
                  {"seed": 99, "num_windows": num_val_windows, "case": 1,
                   "param_bias": 0.0, "forcing_state_bias": 0.1},
                  param_noise=param_noise, bias_mode="random", bias_range=bias_range,

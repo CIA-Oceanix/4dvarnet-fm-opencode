@@ -68,11 +68,14 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type == "joint_cfm":
             loss = self.model.compute_cfm_loss(batch)
-        elif self.model_type == "joint_direct_unet":
-            loss = self.model.compute_loss(batch)
-        else:
-            raise ValueError(f"Unknown model_type: {self.model_type}")
-        return loss
+    elif self.model_type == "joint_direct_unet":
+        loss = self.model.compute_loss(batch)
+    elif self.model_type == "predict_state_cfm":
+        loss = self.model.compute_loss(batch)
+    else:
+        raise ValueError(f"Unknown model_type: {self.model_type}")
+    return loss
+
 
     def training_step(self, batch, batch_idx):
         loss = self._forward_and_loss(batch)

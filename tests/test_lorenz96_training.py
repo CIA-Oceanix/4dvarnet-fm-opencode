@@ -493,3 +493,75 @@ class TestEsfixGateMissingES:
         assert rep["checks"]["s0/EnKF"]["status"] == "OK"
         assert rep["checks"]["s0/EnKF"]["es_old"] is None
         assert rep["checks"]["s0/EnKF"]["es_new"] == 0.45
+
+
+class TestBatchedTrajectoryGeneration:
+    def _dyn(self):
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        return Lorenz96Dynamics(
+            dt=0.001, coupling_exponent=1.6, c1=1.0, NO=8, J=4,
+            h=1.0, hx=1.0, eps=0.1, fast_weights=[1.0, 1.0, 0.1, 0.1])
+
+    def test_per_window_seeds_give_distinct_windows(self):
+        dyn = self._dyn()
+        seeds = np.arange(6) * 100 + 42
+        F = torch.full((6,), 8.0)
+        traj, forcing = dyn.generate_batch_trajectories(
+            6, num_steps=100, spinup_steps=100, F_values=F, seeds=seeds,
+            device=torch.device("cpu"))
+        assert traj.shape == (6, 100, 40)
+        assert forcing.shape == (6, 100)
+        assert torch.isfinite(traj).all()
+        assert not torch.allclose(traj[0], traj[1])
+        assert not torch.allclose(forcing[0], forcing[1])
+
+    def test_single_seed_legacy_path(self):
+        dyn = self._dyn()
+        traj, forcing = dyn.generate_batch_trajectories(
+            6, num_steps=100, spinup_steps=100, device=torch.device("cpu"))
+        assert traj.shape == (6, 100, 40)
+        assert forcing.shape == (6, 100)
+        assert torch.isfinite(traj).all()
+        assert torch.allclose(traj[0], traj[1])
+
+    def test_per_window_fast_weights_supported(self):
+        dyn = self._dyn()
+        seeds = np.arange(6) * 100 + 42
+        F = torch.full((6,), 8.0)
+        fw = torch.tensor(np.random.uniform(0.05, 1.0, size=(6, 4)).tolist())
+        traj, _ = dyn.generate_batch_trajectories(
+            6, num_steps=100, spinup_steps=100, F_values=F, seeds=seeds,
+            fast_weights_values=fw, device=torch.device("cpu"))
+        assert traj.shape == (6, 100, 40)
+        assert torch.isfinite(traj).all()
+
+    def test_batched_dataset_matches_structure(self, tiny_l96_cfg):
+        rp = RandomParamLorenz96Dataset(
+            tiny_l96_cfg, param_noise=0.2, max_window_retries=2)
+        assert len(rp) == tiny_l96_cfg.num_windows
+        w = rp[0]
+        for key in ["true_state", "obs", "obs_mask", "forcing_true",
+                    "forcing_corrupted", "F", "c1", "w1", "true_w1"]:
+            assert key in w
+        assert all(torch.isfinite(rp[i]["true_state"]).all().item()
+                   for i in range(len(rp)))
+
+    def test_batched_bias_dataset_has_da_params(self, tiny_l96_cfg):
+        rb = RandomBiasLorenz96Dataset(
+            tiny_l96_cfg, param_noise=0.2, bias_mode="fixed",
+            max_window_retries=2)
+        w = rb[0]
+        for key in ["F_da", "w1_da", "param_bias"]:
+            assert key in w
+        assert all(torch.isfinite(rb[i]["true_state"]).all().item()
+                   for i in range(len(rb)))
+
+    def test_build_forcing_batch_vectorized(self):
+        dyn = self._dyn()
+        seeds = np.arange(4) * 100 + 42
+        W = dyn._build_forcing_batch(4, 120, seeds, 1.0, 0.1, 0.05,
+                                     0.0, 0.08, 0.2, 1.6)
+        assert W.shape == (4, 120)
+        assert np.isfinite(W).all()
+        assert not np.allclose(W[0], W[1])
+

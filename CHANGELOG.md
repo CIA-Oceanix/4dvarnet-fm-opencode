@@ -1,6 +1,50 @@
 # Changelog
 
+## 2026-08-25: GPU-batched L96 dataset generation (~190x faster train/val gen)
+
+**Summary:** Accelerated the L96 `RandomParam`/`RandomBias` dataset generation (the
+train/val bottleneck) by generating trajectories in parallel on GPU instead of looping
+`generate_full_trajectory` per-window on CPU. New `generate_batch_trajectories` path in
+`Lorenz96Dynamics` adds per-window seeds (distinct forcing + ICs per window) and writes
+into a preallocated `[B, T, D]` buffer; a vectorized `_build_forcing_batch` computes the
+AR(1) forcing for all windows at once. The dataset classes now draw all window params
+up-front, call the batched generator on `device` (default CPU preserves legacy behavior),
+and split the result into window dicts; unstable windows are retried per-window (fresh
+seed + attempt) as before. Confirmed benchmark: full 1600-window train/val/test split =
+**111s on GPU** vs ~**6h** CPU per-window (**~190x**), with GPU time essentially
+batch-size-independent (x200/x600/x1100 all ~24-25s, dominated by the constant RK4
+spinup+time integration). Wired `device=device` into `train.py` L96 data call. The three
+stalled L7/L8/L9 joint training jobs (stuck ~2.7h in CPU data gen) were killed and
+relaunched (job 49535): data gen now ~2 min, L8 (DirectUNet) completed training+eval in
+~13 min, L7/L9 (CFM) training.
+
+**Files modified:** `models/lorenz96_dynamics.py` — `_build_forcing_batch` (vectorized
+AR(1)), `generate_batch_trajectories` per-window seeds + preallocated buffer + param
+`.to(device)` hardening + batched fast_weights (B,4); `data/lorenz96.py` —
+`RandomParam`/`RandomBias` `device` kwarg + batched construction via new
+`_build_randparam_windows`/`_build_randbias_windows`/`_generate_batch_true`/
+`_param_tensors`/`_build_window`, `_make_corrupted_forcing_batch`, `device` threaded
+through `make_l96_s0_s1_trainval`/`make_l96_s0_s1_datasets`; `train.py` — pass
+`device=device` to `make_l96_s0_s1_trainval`; `tests/test_lorenz96_training.py` — new
+`TestBatchedTrajectoryGeneration` (6 tests); `CHANGELOG.md` — this entry.
+
+**Rationale:** Train/val generation took ~6h on CPU per run, so the L7/L8/L9 joint
+trainings were spending >2.5h stuck before training even began. Batching on GPU is both
+trivial (the RK4 ops are already `torch.roll`/vectorized) and high-impact. Train/val use
+new random draws (distribution-equivalent) by design; the cached DA-parity test set is
+unaffected.
+
+**Verification:** `pytest tests/test_lorenz96_training.py tests/test_joint_estimation_l96.py
+tests/test_energy_score.py tests/test_neural_inference.py tests/test_direct_unet.py
+tests/test_vanilla_cfm.py tests/test_hydra_config.py tests/test_joint_estimation_l96_neural.py
+-m "not slow"` — 108 passed (incl. 6 new). GPU E2E: `make_l96_s0_s1_trainval(device=cuda)`
+110.8s, all windows finite. `train.py` 1-epoch GPU smoke for L7/L8 exit 0. Benchmark:
+CPU per-window ~13.4s/window, CPU batched ~0.26s/window, GPU batched ~24s per 200-1100
+windows. Ruff: 3 errors introduced by this change fixed (F841, F841, F401); remaining
+50 are pre-existing debt.
+
 ## 2026-08-25: L96 joint state-parameter neural estimation infrastructure (Phase C) + Phase B design doc
+
 
 **Summary:** Built the full L96 joint **neural** infrastructure (previously only joint
 DA baselines existed) and drafted the Phase B design doc. Three joint models estimate

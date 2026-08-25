@@ -176,7 +176,7 @@ with the neural models' known robustness to the parameter-biased S1 test setup.
 These were proposed alongside the S1 ens30 study (Phase A, done 2026-08-24) but are
 **not committed for execution** — recorded so a future session can pick them up.
 
-### Phase B — CFM architecture variants (low priority; **requires a design doc first**)
+### Phase B — CFM architecture variants (low priority; V1 implemented partially)
 
 Investigate whether a Tweedie-style two-stage decomposition or a diffusion-style
 variant improves on VanillaCFM for L96. **Design doc drafted 2026-08-25**
@@ -185,8 +185,23 @@ obs-only, `use_energy=false`, 2-stage) and V2 (CFM + Tweedie residual hybrid)
 precisely with reference bars vs L2b/L3/L4 and the open design questions to
 resolve (cond_extra_dim plumbing, energy flag, stage-1 budget, 24D cell
 validity, multi-member sampling, single-sample vs ens30×10 bar). **V3 diffusion
-deferred** (no scaffolding exists). **No Phase B code implements these yet** — a
-future session must resolve the doc's open questions before implementing.
+deferred** (no scaffolding exists).
+
+**Phase B V1 implementation status (2026-08-26):**
+- V1 TweedieSolver port implemented with cond_extra_dim plumbing (3 files)
+- Ensemble sampling support added (TweedieSolver.sample with n_members kwarg)
+- Schema + config ready (TweedieSolverConfig + V1_tweedie_l96.yaml)
+- Evaluation pipeline updated (neural_inference.py support)
+- 10 unit tests passing (test_tweedie_l96.py: cond_extra_dim, ensemble, IO, edge cases)
+- Ablation config created (V1_tweedie_ablation_means_only.yaml for standalone mean estimator eval)
+
+**Remaining Phase B work (Step 6-9):**
+- Step 6: Ablation training & evaluation (V1 mean-only vs L1b/L4)
+- Step 7: Tests completed
+- Step 8: V2 implementation (CFM + Tweedie hybrid, concat-channel conditioning per Option A)
+- Step 9: Results report + V2 go/no-go decision
+
+**No Phase B code implements V2 yet** — V2 deferred until V1 results are available.
 
 ### Phase C — L96 joint state-parameter neural estimation (infra done 2026-08-25; training pending)
 

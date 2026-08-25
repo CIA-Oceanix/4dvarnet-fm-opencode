@@ -1,0 +1,25 @@
+model:
+  model_type: tweedie
+  state_dim: 24
+  hidden_channels: [64, 128, 256]
+  use_energy: false
+  use_obs: true
+  cond_extra_dim: 0
+  tweedie_solver:
+    K_inner: 5
+    N_outer: 10
+    cond_extra_dim: 0
+    dropout: 0.1
+
+data:
+  system: lorenz96
+  obs_j: 2
+  param_dim: 0
+  case: 2
+
+train:
+  epochs: 200
+  batch_size: 32
+
+trainer:
+  max_epochs: 200

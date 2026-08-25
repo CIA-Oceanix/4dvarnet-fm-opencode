@@ -151,3 +151,87 @@ class JointCFM(VanillaCFM):
             params = F.softplus(pooled)
             return x, params
         return x
+
+
+class PredictStateCFM(nn.Module):
+    """V3 CFM variant where the network predicts E[x1|xt,y] instead of E[x1-x0|xt,y].
+
+    ODE formulation:
+        sz = (μ - x) / (1 - τ)  where μ = E[x1 | x_τ, y]
+    This represents a backward-drift mechanism that pulls the state towards 
+    the predicted final state.
+    """
+    def __init__(
+        self,
+        state_dim: int = 3,
+        hidden_channels: list = None,
+        time_emb_dim: int = 64,
+        N_outer: int = 10,
+        sigma_prior: float = 0.5,
+        dropout: float = 0.1,
+        train_tau_0_only: bool = False,
+        param_dim: int = 4,
+        cond_extra_dim: int = 0,
+    ):
+        super().__init__()
+        self.param_dim = param_dim
+        self.cond_extra_dim = cond_extra_dim
+        self.unet = UNet1D(
+            state_dim=state_dim,
+            obs_dim=state_dim,
+            cond_extra_dim=cond_extra_dim,
+            hidden_channels=hidden_channels,
+            use_obs=True,
+            use_energy=False,
+            time_emb_dim=time_emb_dim,
+            dropout=dropout,
+            output_dim=state_dim,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
+
+    def forward(self, x_t, batch, tau):
+        """Forward pass: predict final state mean μ = E[x1|xt,y]."""
+        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim, self.cond_extra_dim)
+        μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
+        return μ.transpose(1, 2)
+
+    def compute_loss(self, batch):
+        """Compute CFM loss: MSE(μ, x1) where μ = network prediction."""
+        B = batch.obs.shape[0]
+        device = batch.obs.device
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        x0 = torch.randn_like(batch.states) * self.sigma_prior
+        x_tau = self.interpolant.mix(x0, batch.states, tau)
+        μ_pred = self.forward(x_tau, batch, tau)
+        return F.mse_loss(μ_pred, batch.states)
+
+    def sample(self, batch, N_outer=None):
+        """Sample trajectories via forward ODE integration.
+
+        The network predicts μ = E[x_τ=1 | x_τ, y]. We sample by integrating forward:
+            x_0 ~ N(0, σ²)
+            For τ from 0 to 1: x_τ ← x_τ + dt * (μ_τ - x_τ) / (1 - τ)
+        """
+        if N_outer is None:
+            N_outer = self.N_outer
+        obs = batch.obs
+        B, T, D = obs.shape
+        device = obs.device
+
+        # Start from random x_0
+        x = torch.randn_like(obs) * self.sigma_prior
+        τ = torch.zeros(B, device=device)
+        dt = 1.0 / N_outer
+
+        # Forward integration
+        for step in range(N_outer):
+            τ_next = (step + 1) / N_outer
+            μ = self.forward(x, batch, τ_next)  # Predict E[x_τ=1 | x_τ]
+            dx_drift = (μ - x) / (1.0 - τ_next + 1e-8)
+            x = x + dt * dx_drift
+
+        return x

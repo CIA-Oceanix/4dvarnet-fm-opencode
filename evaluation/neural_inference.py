@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
 from models.vanilla_cfm import VanillaCFM, JointCFM
+from models.solver import TweedieSolver
+from models.vanilla_cfm import PredictStateCFM
 
 
 class BatchDict:
@@ -137,10 +139,14 @@ def resolve_model_class(cfg: Any) -> tuple:
         return DirectUNet, cfg
     elif model_type == "VANILLACFM":
         return VanillaCFM, cfg
+    elif model_type == "TWEEDIESOLVER":
+        return TweedieSolver, cfg
     elif model_type == "JOINTDIRECTUNET":
-        return JointDirectUNet, cfg
+        return JointDirectUnet, cfg
     elif model_type == "JOINTCFM":
         return JointCFM, cfg
+    elif model_type == "PREDICTSTATECFM":
+        return PredictStateCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -168,6 +174,17 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 1),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+        )
+    elif model_class == TweedieSolver:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            K_inner=cfg.model.get("K_inner", 5),
+            N_outer=cfg.model.get("N_outer", 10),
+            nu=cfg.model.get("nu", 1.0),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+            dropout=cfg.model.get("dropout", 0.1),
         )
     elif model_class == JointCFM:
         model = model_class(
@@ -320,17 +337,21 @@ def _run_case_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    mean_only: bool = False,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
     For stochastic samplers (VanillaCFM) each call to ``sample`` draws a fresh
     initial condition, so ``n_members > 1`` produces an ensemble of independent
-    members; ``n_outer`` is the number of Euler integration steps. The returned
-    dict holds numpy arrays ``{"trajectories": (W, T, D), "truth": (W, T, D)}``
-    where ``D`` is the observed subspace; with ``n_members > 1`` it also holds
-    ``"members": (W, T, D, M)`` (float32) and ``trajectories`` is the member
-    mean. No metrics are computed here — that is the job of the generic
-    evaluator. For joint models the batch also carries ``params``; each
+    members; ``n_outer`` is the number of Euler integration steps. For a
+    TweedieSolver model, ``mean_only=True`` calls ``model.estimate_mean(obs)``
+    to evaluate only the mean estimator without the non_gaussian residual.
+
+    The returned dict holds numpy arrays ``{"trajectories": (W, T, D), "truth":
+    (W, T, D)}`` where ``D`` is the observed subspace; with ``n_members > 1`` it
+    also holds ``"members": (W, T, D, M)`` (float32) and ``trajectories`` is
+    the member mean. No metrics are computed here — that is the job of the
+    generic evaluator. For joint models the batch also carries ``params``; each
     window's predicted params are returned in ``"params_pred"`` (W, P) and the
     ground-truth in ``"params_true"`` (W, P).
     """
@@ -339,7 +360,7 @@ def _run_case_inference(
     all_true = []
     param_preds = []
     param_trues = []
-    is_joint = isinstance(model, (JointCFM, JointDirectUNet))
+    is_joint = isinstance(model, (JointCFM, JointDirectUnet))
 
     with torch.no_grad():
         for batch in dataloader:
@@ -355,6 +376,13 @@ def _run_case_inference(
                 elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
+                    pred = model.sample(batch_obj, N_outer=n_outer)
+                elif isinstance(model, TweedieSolver):
+                    if mean_only:
+                        pred = model.estimate_mean(batch_obj.obs)
+                    else:
+                        pred = model.sample(batch_obj.obs, N_outer=n_outer, n_members=1)
+                elif isinstance(model, PredictStateCFM):
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
@@ -401,6 +429,7 @@ def run_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    mean_only: bool = False,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -408,8 +437,13 @@ def run_inference(
     ``trajectories``/``truth`` arrays (plus ``members`` when ``n_members > 1``;
     no metrics). To produce scores, pass these to the generic evaluator
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
+
+    For TweedieSolver models, setting ``mean_only=True`` calls
+    ``model.estimate_mean(obs)`` instead of the full ``model.forward(obs)``.
+    This is used for ablation training where stage-2 (non_gaussian) is
+    not trained.
     """
     return {
-        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer)
+        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer, mean_only)
         for case, dl in dataloaders.items()
     }

@@ -11,13 +11,14 @@ class IterativeUpdateCell(nn.Module):
         time_emb_dim: int = 64,
         use_obs: bool = True,
         use_energy: bool = False,
+        cond_extra_dim: int = 0,
         dropout: float = 0.1,
     ):
         super().__init__()
         self.use_energy = use_energy
         input_dim = state_dim
         if use_obs:
-            input_dim += state_dim
+            input_dim += state_dim + cond_extra_dim
         if use_energy:
             input_dim += state_dim * 3
 
@@ -27,6 +28,7 @@ class IterativeUpdateCell(nn.Module):
             time_emb_dim=time_emb_dim,
             use_obs=use_obs,
             use_energy=use_energy,
+            cond_extra_dim=cond_extra_dim,
             dropout=dropout,
         )
 
@@ -67,6 +69,7 @@ class MeanEstimatorCell(nn.Module):
         hidden_channels: list = None,
         time_emb_dim: int = 64,
         use_obs: bool = True,
+        cond_extra_dim: int = 0,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -76,6 +79,7 @@ class MeanEstimatorCell(nn.Module):
             time_emb_dim=time_emb_dim,
             use_obs=use_obs,
             use_energy=False,
+            cond_extra_dim=cond_extra_dim,
             dropout=dropout,
         )
 

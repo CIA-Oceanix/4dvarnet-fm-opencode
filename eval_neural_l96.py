@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--n-outer", type=int, default=1,
                         help="Euler integration steps for CFM sampling")
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
+    parser.add_argument("--mean-only", action="store_true",
+                        help="For TweedieSolver: evaluate only mean_estimator (no non_gaussian)")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
@@ -81,16 +83,13 @@ def main():
     )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
+    mean_only_mode = args.mean_only and type(model).__name__ == "TweedieSolver"
+    if mean_only_mode:
+        logger.info("Mode: mean-only (evaluating model.estimate_mean only, no non_gaussian)")
 
-    # Step 1: inference -> estimates
-    torch.manual_seed(args.seed)
-    logger.info(
-        f"Running inference (step 1): cases={args.cases} n_members={args.n_members} "
-        f"n_outer={args.n_outer} seed={args.seed}"
-    )
     estimates = run_inference(
         model, dataloaders, device, obs_var_indices,
-        n_members=args.n_members, n_outer=args.n_outer,
+        n_members=args.n_members, n_outer=args.n_outer, mean_only=mean_only_mode,
     )
 
     # Save per-case .npz estimates + truth, and compute generic metrics (step 2)

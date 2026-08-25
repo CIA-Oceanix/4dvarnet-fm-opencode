@@ -140,6 +140,27 @@ class Lorenz96Dynamics(DynamicsBase):
         W_arr = c1 * np.sign(W_AR) * np.abs(W_AR) ** coupling_exponent
         return W_arr
 
+    @staticmethod
+    def _build_forcing_batch(num_windows, length, seeds, c1, c2, gamma, W_L_bar, sigma_0, sigma_L, coupling_exponent):
+        """Vectorized AR(1) forcing for `num_windows` windows with distinct seeds.
+
+        Returns float32 numpy array of shape (num_windows, length). Only the
+        stochastic AR(1) component differs per window (driven by `seeds`); the
+        deterministic sinusoid and offsets are shared.
+        """
+        n = num_windows
+        W_raw = np.random.RandomState(seeds).randn(n, length) * sigma_0
+        scale = np.sqrt(1 - gamma ** 2)
+        W_AR = np.empty_like(W_raw)
+        W_AR[:, 0] = W_raw[:, 0]
+        for i in range(1, length):
+            W_AR[:, i] = gamma * W_AR[:, i - 1] + scale * W_raw[:, i]
+        W_AR += W_L_bar
+        W_AR += c2 * np.sin(np.arange(length) * 2 * np.pi / 80.0)
+        W_arr = c1 * np.sign(W_AR) * np.abs(W_AR) ** coupling_exponent
+        return W_arr
+
+
     def generate_full_trajectory(self, num_steps: int, seed: int = 42,
                                   device=None, F=8.0, c1=None, c2=None,
                                   W_L_bar=None, gamma=None,
@@ -190,54 +211,87 @@ class Lorenz96Dynamics(DynamicsBase):
                                   hx_values: torch.Tensor = None,
                                   eps_values: torch.Tensor = None,
                                   fast_weights_values: torch.Tensor = None,
+                                  seeds=None,
                                   seed: int = 42,
                                   device=None) -> tuple:
+        """Generate `num_windows` trajectories in parallel.
+
+        When `seeds` is an array-like of length `num_windows`, each window gets
+        its own stochastic forcing (AR(1) driven by that seed) and its own
+        initial condition (drawn from `seed + 1 + i`). When `seeds` is None, all
+        windows share the single forcing/IC from `seed` (legacy behavior).
+        """
         if device is None:
             device = torch.device("cpu")
         NO, J = self.NO, self.J
         sd = self.state_dim
+        B = num_windows
 
-        rng = np.random.RandomState(seed)
-        W_arr = self._build_forcing(num_steps + spinup_steps, seed,
-                                     self.c1, self.c2, self.gamma,
-                                     self.W_L_bar, self.sigma_0, self.sigma_L,
-                                     self.coupling_exponent)
-        W_t = torch.tensor(W_arr, dtype=torch.float32, device=device)
-
-        rng_np = np.random.RandomState(seed + 1)
-        s0 = torch.tensor(np.concatenate([
-            rng_np.randn(NO) * 0.01,
-            rng_np.randn(NO * J) * 0.01,
-        ]), dtype=torch.float32, device=device)
+        use_per_window_seeds = seeds is not None
+        if use_per_window_seeds:
+            seeds_arr = np.asarray(seeds, dtype=np.int64).reshape(B)
+            W_arr = self._build_forcing_batch(
+                B, num_steps + spinup_steps, seeds_arr,
+                self.c1, self.c2, self.gamma, self.W_L_bar,
+                self.sigma_0, self.sigma_L, self.coupling_exponent)
+            W_t = torch.tensor(W_arr, dtype=torch.float32, device=device)
+            s0_elems = []
+            for i in range(B):
+                rng_np = np.random.RandomState(int(seeds_arr[i]) + 1)
+                s0_elems.append(np.concatenate([
+                    rng_np.randn(NO) * 0.01,
+                    rng_np.randn(NO * J) * 0.01,
+                ]))
+            s0 = torch.tensor(np.stack(s0_elems), dtype=torch.float32, device=device)
+        else:
+            W_arr = self._build_forcing(num_steps + spinup_steps, seed,
+                                         self.c1, self.c2, self.gamma,
+                                         self.W_L_bar, self.sigma_0, self.sigma_L,
+                                         self.coupling_exponent)
+            W_t = torch.tensor(W_arr, dtype=torch.float32, device=device)
+            rng_np = np.random.RandomState(seed + 1)
+            s0 = torch.tensor(np.concatenate([
+                rng_np.randn(NO) * 0.01,
+                rng_np.randn(NO * J) * 0.01,
+            ]), dtype=torch.float32, device=device)
 
         if F_values is None:
-            F_values = torch.full((num_windows,), 8.0, device=device)
-        B = num_windows
-        c1 = torch.full((B,), self.c1, device=device) if c1_values is None else c1_values
-        h = torch.full((B,), self.h, device=device) if h_values is None else h_values
-        hx = torch.full((B,), self.hx, device=device) if hx_values is None else hx_values
-        eps = torch.full((B,), self.eps, device=device) if eps_values is None else eps_values
-        if fast_weights_values is None:
-            fw = self.fast_weights.to(device) if self.fast_weights is not None else None
+            F_values = torch.full((B,), 8.0, device=device)
         else:
-            fw = torch.tensor(fast_weights_values, dtype=torch.float32).to(device)
+            F_values = F_values.to(device)
+        c1 = torch.full((B,), self.c1, device=device) if c1_values is None else c1_values.to(device)
+        h = torch.full((B,), self.h, device=device) if h_values is None else h_values.to(device)
+        hx = torch.full((B,), self.hx, device=device) if hx_values is None else hx_values.to(device)
+        eps = torch.full((B,), self.eps, device=device) if eps_values is None else eps_values.to(device)
+        if fast_weights_values is None:
+            fw = None
+            if self.fast_weights is not None:
+                fw = self.fast_weights.to(device).unsqueeze(0).expand(B, -1).contiguous()
+        else:
+            fw = torch.as_tensor(fast_weights_values, dtype=torch.float32).to(device)
 
-        s = s0.unsqueeze(0).expand(B, -1).clone()
+        s = s0.unsqueeze(0).expand(B, -1).clone() if s0.dim() == 1 else s0.clone()
         F = F_values
 
+        total = num_steps + spinup_steps
+        traj = torch.empty(B, total, sd, dtype=torch.float32, device=device)
+        traj[:, 0] = s
+        W_at = (lambda i: W_t[i]) if W_t.dim() == 1 else (lambda i: W_t[:, i])
         for i in range(spinup_steps):
-            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+            s = self._rk4_step(s, W_at(i), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
                                fast_weights=fw)
-
-        traj_list = [s.clone()]
-        for i in range(spinup_steps, num_steps + spinup_steps):
-            s = self._rk4_step(s, W_t[i].expand(B), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
+            traj[:, i + 1] = s
+        for i in range(spinup_steps, total - 1):
+            s = self._rk4_step(s, W_at(i), F, self.dt, c1=c1, h=h, hx=hx, eps=eps,
                                fast_weights=fw)
-            traj_list.append(s.clone())
+            traj[:, i + 1] = s
 
-        traj = torch.stack(traj_list, dim=1)
-        forcing_t = W_t[-num_steps:].expand(B, -1)
-        return traj, forcing_t
+        forcing_t = W_t[-num_steps:]
+        if W_t.dim() == 2:
+            forcing_t = W_t[:, -num_steps:]
+        elif not use_per_window_seeds and forcing_t.dim() == 1:
+            forcing_t = forcing_t.unsqueeze(0).expand(B, -1)
+        return traj[:, spinup_steps:], forcing_t
 
     def rollout_with_q(self, x0: torch.Tensor, q: torch.Tensor,
                         forcing: torch.Tensor, steps: int,

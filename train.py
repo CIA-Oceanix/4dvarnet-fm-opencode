@@ -98,6 +98,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             nu=cfg.model.nu,
             K_inner=cfg.model.K_inner,
             N_outer=cfg.model.N_outer,
+            cond_extra_dim=cfg.model.cond_extra_dim,
             dropout=cfg.model.dropout,
         )
     elif model_type == "direct_unet":
@@ -140,19 +141,34 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=jc.train_tau_0_only,
         )
     elif model_type == "joint_direct_unet":
-        from models.direct_unet import JointDirectUNet
+        from models.direct_unet import JointDirectUnet
         jdu = cfg.model.joint_direct_unet
         dc = cfg.model.direct_unet
-        model = JointDirectUNet(
+        model = JointDirectUnet(
             state_dim=cfg.model.state_dim,
             param_dim=jdu.param_dim,
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
         )
+    elif model_type == "predict_state_cfm":
+        from models.vanilla_cfm import PredictStateCFM
+        pcfg = cfg.model.predict_state_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = PredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=pcfg.hidden_channels,
+            time_emb_dim=pcfg.time_emb_dim,
+            N_outer=pcfg.N_outer,
+            sigma_prior=pcfg.sigma_prior,
+            dropout=pcfg.dropout,
+            param_dim=param_dim,
+            cond_extra_dim=pcfg.cond_extra_dim,
+        )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     return model.to(device)
+
 
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
@@ -198,6 +214,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
             true_param_list.append(np.array(tp))
+        elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -224,14 +242,16 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 
 def save_trajectories(model, dataset, device, model_type, save_path,
-                      param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None):
+                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
+                       obs_var_indices=None):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
@@ -239,6 +259,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -326,6 +348,7 @@ def main(cfg: DictConfig):
                 num_test_windows=dc.get("num_test_windows", 200),
                 param_noise=dc.get("test_param_noise", 0.2),
                 bias_range=(0.0, dc.get("bias_max", 0.2)),
+                device=device,
             )
             test_keys = ["test_s0", "test_s1"]
         else:

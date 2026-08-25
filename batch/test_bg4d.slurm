@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH --time=00:30:00
+#SBATCH --partition=Odyssey_GPU
+#SBATCH --gres=gpu:rtx8000:1
+#SBATCH --mem=8G
+#SBATCH --cpus-per-task=2
+#SBATCH --chdir=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+#SBATCH --output=experiments/test_bg4d_%j.out
+#SBATCH --error=experiments/test_bg4d_%j.err
+
+set -euo pipefail
+
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+
+# Compare standard Strong4DVar vs bg-4d mode with different alphas
+# Using 5 windows for speed, same config as best S1 run
+
+for alpha in 0.001 0.01 0.1; do
+$PYTHON -u evaluation/run_l96_sweep2.py \
+    --label "bg4d_s1_a${alpha}" \
+    --param-bias 0.0 --forcing-state-bias 0.0 \
+    --num-windows 5 --da-window-steps 500 \
+    --obs-j 2 --s1-j 2 --obs-interval 5 \
+    --ensemble-size 30 --inflation 1.1 \
+    --truth-fast-weights-unobserved 0.1 \
+    --bg-4d \
+    --bg-alpha ${alpha} \
+    --skip-weak
+done

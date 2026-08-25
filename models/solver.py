@@ -15,12 +15,14 @@ class TweedieSolver(nn.Module):
         nu: float = 1.0,
         K_inner: int = 5,
         N_outer: int = 10,
+        cond_extra_dim: int = 0,
         dropout: float = 0.1,
     ):
         super().__init__()
         self.K_inner = K_inner
         self.N_outer = N_outer
         self.state_dim = state_dim
+        self.cond_extra_dim = cond_extra_dim
         self.interpolant = LinearInterpolant(nu=nu)
 
         self.mean_estimator = MeanEstimatorCell(
@@ -28,6 +30,7 @@ class TweedieSolver(nn.Module):
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
             use_obs=use_obs,
+            cond_extra_dim=cond_extra_dim,
             dropout=dropout,
         )
 
@@ -37,6 +40,7 @@ class TweedieSolver(nn.Module):
             time_emb_dim=time_emb_dim,
             use_obs=use_obs,
             use_energy=use_energy,
+            cond_extra_dim=cond_extra_dim,
             dropout=dropout,
         )
 
@@ -136,3 +140,60 @@ class TweedieSolver(nn.Module):
             x = x + dt * drift
 
         return x
+
+    def sample(
+        self,
+        obs: torch.Tensor,
+        N_outer: int = 10,
+        n_members: int = 1,
+    ) -> torch.Tensor:
+        B, T, D = obs.shape
+        device = obs.device
+
+        if n_members == 1:
+            return self.forward(obs, device=device)
+
+        x0 = torch.randn(n_members, T, D, device=device) * 0.5
+        all_samples = []
+
+        for m in range(n_members):
+            x = x0[m].clone()
+            for n in range(1, N_outer + 1):
+                tau = n / N_outer
+                a = self.interpolant.alpha(tau)
+                b = self.interpolant.beta(tau)
+                K = self.interpolant.gain_matrix(tau)
+
+                while K.dim() < D:
+                    K = K.unsqueeze(-1)
+                    a = a.unsqueeze(-1)
+                    b = b.unsqueeze(-1)
+
+                blended = (1 - K) * self.estimate_mean(obs) + K * x
+
+                for k in range(1, self.K_inner + 1):
+                    tau_k = (n + k - 1) / (N_outer * self.K_inner)
+                    tau_k = torch.full((1,), tau_k, device=device)
+
+                    ng_pre = self.interpolant.ng_prefactor(tau_k)
+                    while ng_pre.dim() < D:
+                        ng_pre = ng_pre.unsqueeze(-1)
+
+                    eps = self.energy_terms(
+                        blended.transpose(1, 2), obs, x.transpose(1, 2), tau_k,
+                    )
+                    residual = self.non_gaussian(
+                        blended.transpose(1, 2), obs.transpose(1, 2),
+                        x.transpose(1, 2), tau_k, y_diff=eps[0],
+                        phi_diff=eps[1], bg_diff=eps[2],
+                    )
+                    blended = blended + ng_pre * residual.transpose(1, 2)
+
+                drift = self.interpolant.compute_drift(x, blended, tau)
+                x = x + drift
+
+        all_samples.append(x)
+
+        members = torch.stack(all_samples, dim=0)  # (M, T, D)
+        trajectories = members.mean(dim=0)  # (T, D)
+        return trajectories.transpose(0, 1).unsqueeze(0)  # (1, T, D)
