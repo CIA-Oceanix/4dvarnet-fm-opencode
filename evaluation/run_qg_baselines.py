@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from data.qg import QGConfig, make_qg_s0_s1_datasets
 from evaluation.baselines import ETKF, EnKF, ObsOperator, _build_qg_loc_matrices
+from evaluation.metrics import explained_variance
 from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics

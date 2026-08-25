@@ -43,6 +43,7 @@ class QGConfig:
     track_repeat_days: float = 5.0
     track_advance_pts: int = 4
     track_phase_seed: int = 0
+    cols_per_day: int = 3
     obs_noise_std_frac: float = 0.05
     store_targets: bool = True
     param_range: float = 0.15
@@ -51,6 +52,8 @@ class QGConfig:
     s1_loc_sigma_frac: float = 0.25
     s1_tau_days: float = 10.0
     s1_sigma_eta_frac: float = 0.3
+    init_lag_days: float = 2.0
+    init_seed: int = 7001
 
     @property
     def ny(self) -> int:
@@ -184,16 +187,57 @@ def _generate_alongtrack_observations(
     return obs, obs_mask, track_idx
 
 
+def _generate_random_column_observations(
+    dynamics, state: torch.Tensor, field: str, cfg: QGConfig, seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Random-column obs: `cols_per_day` distinct meridional columns per day.
+
+    One simultaneous observation event at the first step of each day; within an
+    event the `cols_per_day` x-positions are sampled without replacement from
+    a seeded RNG (constellation-style rich sampling, near-complete domain
+    coverage over a window).
+
+    Returns (obs (T, C*ny), obs_mask (T,), obs_columns (T, C)) where
+    obs_columns holds the observed x indices and -1 on days without an event.
+    """
+    T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
+    C = max(1, int(cfg.cols_per_day))
+    f = _upper_field(dynamics, state, field)
+    sigma = cfg.obs_noise_std_frac * float(f.std())
+    steps_per_day = max(1, round(86400.0 / cfg.dt))
+    rng = torch.Generator().manual_seed(seed)
+    obs = torch.full((T, C * ny), float("nan"))
+    obs_mask = torch.zeros(T, dtype=torch.bool)
+    obs_cols = torch.full((T, C), -1, dtype=torch.long)
+    for t in range(0, T, steps_per_day):
+        cols = torch.randperm(nx, generator=rng)[:C]
+        obs_cols[t] = cols
+        obs_mask[t] = True
+        noise = torch.randn(C * ny, generator=rng) * sigma
+        for c, x_col in enumerate(cols.tolist()):
+            obs[t, c * ny: (c + 1) * ny] = f[t, :, x_col] + noise[c * ny: (c + 1) * ny]
+    return obs, obs_mask, obs_cols
+
+
 def expand_obs_to_grid(window: dict, cfg: QGConfig) -> torch.Tensor:
-    """Expand compact (T, ny) track obs to a (T, ny*nx) NaN grid."""
+    """Expand compact column obs to a (T, ny*nx) NaN-padded grid."""
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
     grid = torch.full((T, ny * nx), float("nan"))
-    idx_t = window["track_x_index"]
-    obs = window["obs"]
-    for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
-        x_col = int(idx_t[t])
-        if x_col >= 0:
-            grid[t, torch.arange(ny, dtype=torch.long) * nx + x_col] = obs[t]
+    if "obs_columns" in window:
+        obs = window["obs"]
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            cols = window["obs_columns"][t]
+            for c, x_col in enumerate(cols.tolist()):
+                if x_col >= 0:
+                    grid[t, torch.arange(ny, dtype=torch.long) * nx + x_col] = \
+                        obs[t, c * ny: (c + 1) * ny]
+    else:
+        obs = window["obs"]
+        idx_t = window["track_x_index"]
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            x_col = int(idx_t[t])
+            if x_col >= 0:
+                grid[t, torch.arange(ny, dtype=torch.long) * nx + x_col] = obs[t]
     return grid
 
 
@@ -288,25 +332,42 @@ class QGS01Dataset:
                 wind_drift_tau_days=cfg.wind_drift_tau_days,
                 wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=win_seed,
             )
-            wind_true = dyn.generate_wind_state(cfg.num_steps, seed=win_seed,
+            steps_per_day = round(86400.0 / cfg.dt)
+            lead = max(1, round(cfg.init_lag_days * steps_per_day)) + 1
+            wind_full = dyn.generate_wind_state(lead + cfg.num_steps, seed=win_seed,
                                                 x0=x0, y0=y0)
-            traj, _ = dyn.generate_full_trajectory(
-                num_steps=cfg.num_steps, seed=cfg.seed + 3000 + i * 101,
-                spinup_steps=cfg.spinup_steps, wind_state=wind_true,
+            traj_full, _ = dyn.generate_full_trajectory(
+                num_steps=lead + cfg.num_steps, seed=cfg.seed + 3000 + i * 101,
+                spinup_steps=cfg.spinup_steps, wind_state=wind_full,
             )
-            obs, obs_mask, track_idx = _generate_alongtrack_observations(
-                dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
-            )
+            traj = traj_full[lead:lead + cfg.num_steps]
+            wind_true = wind_full[lead:lead + cfg.num_steps]
+            rng_init = np.random.RandomState(cfg.init_seed + i * 17)
+            lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
+            lag_steps = lag_days * steps_per_day
+            kk = int(math.floor(lag_steps))
+            alpha = lag_steps - kk
+            a = traj_full[lead - kk - 1]
+            b = traj_full[lead - kk]
+            init_state = (1.0 - alpha) * a + alpha * b
+            if cfg.obs_geometry == "random_columns":
+                obs, obs_mask, obs_cols = _generate_random_column_observations(
+                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+                )
+            else:
+                obs, obs_mask, track_idx = _generate_alongtrack_observations(
+                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+                )
+                obs_cols = None
             psi1 = _upper_field(dyn, traj, "psi").reshape(cfg.num_steps, cfg.ny * cfg.nx)
             q1 = _upper_field(dyn, traj, "q").reshape(cfg.num_steps, cfg.ny * cfg.nx)
             wind_curl = dyn.wind_curl_field(wind_true)
             true_params = {"U1": dyn.U1, "rd": dyn.rd, "rek": dyn.rek,
                            "beta": dyn.beta, "U2": dyn.U2}
-            out.append({
+            entry = {
                 "true_state": traj,
                 "obs": obs,
                 "obs_mask": obs_mask,
-                "track_x_index": track_idx,
                 "obs_field": cfg.obs_field,
                 "target_state_psi": psi1,
                 "target_state_q": q1,
@@ -315,7 +376,14 @@ class QGS01Dataset:
                 "true_params": true_params,
                 "wind_seed": win_seed,
                 "wind_amp": amp,
-            })
+                "init_state": init_state,
+                "init_dt_days": lag_days,
+            }
+            if obs_cols is None:
+                entry["track_x_index"] = track_idx
+            else:
+                entry["obs_columns"] = obs_cols
+            out.append(entry)
         return out
 
     @staticmethod

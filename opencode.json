@@ -3,9 +3,9 @@
   "instructions": ["PLAN.md", "CHANGELOG.md"],
   "agent": {
     "implementer": {
-      "description": "Makes code changes per the plan; in PR mode creates a branch, commits, pushes, and opens a PR via gh CLI",
+      "description": "Makes code changes per the plan; in PR mode creates a branch, commits, pushes, and opens a PR via gh CLI. Works in small steps: reports a one-line summary after each file edited or test run.",
       "mode": "subagent",
-      "model": "cortecs/deepseek-v4-flash-0731"
+      "model": "cortecs/glm-4.7-flash"
     },
     "reviewer": {
       "description": "Reviews code for correctness, style, and repro safety; reads the diff (gh pr diff or git diff) and approves/request-changes via gh pr review",
@@ -25,7 +25,7 @@
     "analyst": {
       "description": "Interprets results and produces comparison tables",
       "mode": "subagent",
-      "model": "cortecs/glm-5.2"
+      "model": "cortecs/glm-5"
     }
   }
 }
