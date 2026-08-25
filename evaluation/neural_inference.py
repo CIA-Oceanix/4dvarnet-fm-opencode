@@ -285,6 +285,27 @@ def prepare_dataset(
             "test_s1": split_dict["test_s1"],
         }
 
+    # Resolve the observed-subspace indices of the full state. The cached DA
+    # dataset stores the full 40D true_state with obs already subsampled to the
+    # observed dims. When the model predicts a 24D observed state we must compare
+    # against true_state[..., obs_var_indices] (a non-contiguous subset), NOT the
+    # first `state_dim` columns.
+    if obs_var_indices is None:
+        obs_j = int(kwargs.get("obs_j", cfg.get("data", {}).get("obs_j", 2)))
+        try:
+            NO = int(cfg.data.system_config.NO)
+        except Exception:
+            NO = 8
+        try:
+            J = int(cfg.data.system_config.J)
+        except Exception:
+            J = 4
+        from evaluation.run_l96 import make_obs_j_indices
+        obs_var_indices = make_obs_j_indices(NO, J, obs_j)
+        if obs_var_indices is None:
+            obs_var_indices = tuple(range(NO + NO * J))
+    obs_var_indices = tuple(obs_var_indices)
+
     # Create dataloaders for both the S0 and S1 test splits
     is_joint = bool(kwargs.get("is_joint", False))
     collate = collate_joint_eval if is_joint else collate_eval
