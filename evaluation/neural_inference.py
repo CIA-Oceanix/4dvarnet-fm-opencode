@@ -56,35 +56,42 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
     """Load model checkpoint and config."""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
-    
+
     # Handle Lightning .ckpt files
     if "hyper_parameters" in ckpt:
         # Lightning checkpoint: extract model_type from hyper_parameters
         model_type = ckpt["hyper_parameters"].get("model_type", "direct_unet")
-        
+        is_joint = "joint" in model_type
+
         # Infer architecture parameters from state_dict
         inferred_params = {}
 
-        # state_dim = output_dim = first channel of the final enc_out conv.
-        # enc_out.2 is Conv1d(in_c, output_dim, 3) -> weight shape (output_dim, in_c, 3),
-        # so shape[0] is the state/output dimension.
+        # enc_out.2 is Conv1d(in_c, output_dim, 3)
         if "model.unet.enc_out.2.weight" in state_dict:
-            inferred_params["state_dim"] = state_dict["model.unet.enc_out.2.weight"].shape[0]
-        state_dim = inferred_params.get("state_dim", 24)
+            output_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
 
-        # For joint models the UNet outputs state_dim + param_dim channels. Infer
-        # param_dim as (output_dim - state_dim) when it is nonzero; the joint
-        # configs set output_dim = state_dim + 8.
-        if "model.unet.enc_out.2.weight" in state_dict:
-            out_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
-            if out_dim > state_dim:
-                inferred_params["param_dim"] = out_dim - state_dim
-        param_dim = inferred_params.get("param_dim", 0)
-
-        # proj_in = state_dim + obs_dim + cond_extra_dim, with obs_dim = state_dim
+        # proj_in = state_dim + 1 + output_dim for joint models
+        # proj_in = 2*state_dim for non-joint
         if "model.unet.cond_encoder.proj.weight" in state_dict:
-            cond_proj_weight = state_dict["model.unet.cond_encoder.proj.weight"]
-            inferred_params["cond_extra_dim"] = cond_proj_weight.shape[1] - 2 * state_dim
+            proj_in = state_dict["model.unet.cond_encoder.proj.weight"].shape[1]
+
+        if is_joint:
+            # state_dim = proj_in - 1 - output_dim
+            # param_dim = output_dim - state_dim
+            # cond_extra_dim = 1 + param_dim
+            state_dim = proj_in - 1 - output_dim
+            param_dim = output_dim - state_dim
+            cond_extra_dim = 1 + param_dim
+        else:
+            # Non-joint: output_dim = state_dim
+            state_dim = output_dim
+            param_dim = 0
+            # cond_extra_dim = proj_in - 2*state_dim
+            cond_extra_dim = proj_in - 2 * state_dim
+
+        inferred_params["state_dim"] = state_dim
+        inferred_params["param_dim"] = param_dim
+        inferred_params["cond_extra_dim"] = cond_extra_dim
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
@@ -272,8 +279,11 @@ def prepare_dataset(
             num_test_windows=num_test_windows,
             seed=42,
         )
-        train, val, test = make_l96_s0_s1_trainval(cfg_test)
-        dataset = test
+        split_dict = make_l96_s0_s1_trainval(cfg_test)
+        dataset = {
+            "test_s0": split_dict["test_s0"],
+            "test_s1": split_dict["test_s1"],
+        }
 
     # Create dataloaders for both the S0 and S1 test splits
     is_joint = bool(kwargs.get("is_joint", False))
@@ -288,27 +298,6 @@ def prepare_dataset(
             collate_fn=collate,
             num_workers=kwargs.get("num_workers", 0),
         )
-
-    # Resolve the observed-subspace indices of the full state. The cached DA
-    # dataset stores the full 40D true_state with obs already subsampled to the
-    # observed dims. When the model predicts a 24D observed state we must compare
-    # against true_state[..., obs_var_indices] (a non-contiguous subset), NOT the
-    # first `state_dim` columns.
-    if obs_var_indices is None:
-        obs_j = int(kwargs.get("obs_j", cfg.get("data", {}).get("obs_j", 2))) if hasattr(cfg, "get") else 2
-        try:
-            NO = int(cfg.data.system_config.NO)
-        except Exception:
-            NO = 8
-        try:
-            J = int(cfg.data.system_config.J)
-        except Exception:
-            J = 4
-        from evaluation.run_l96 import make_obs_j_indices
-        obs_var_indices = make_obs_j_indices(NO, J, obs_j)
-        if obs_var_indices is None:
-            obs_var_indices = tuple(range(NO + NO * J))
-    obs_var_indices = tuple(obs_var_indices)
 
     return dataset, dataloaders, obs_var_indices
 
@@ -350,8 +339,6 @@ def _run_case_inference(
             for m in range(n_members):
                 if isinstance(model, (JointCFM, JointDirectUNet)):
                     pred, params = model.sample(batch_obj, return_params=True)
-                    if m == 0:
-                        param_preds.append(params.detach().float().cpu())
                 elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
@@ -359,6 +346,8 @@ def _run_case_inference(
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
+                if isinstance(model, (JointCFM, JointDirectUNet)):
+                    param_preds.append(params.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
