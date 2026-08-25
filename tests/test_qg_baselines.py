@@ -14,6 +14,7 @@ from evaluation.run_qg_baselines import (
     WindStateAdapter,
     _build_dyn,
     _event_columns,
+    _make_obs_system,
     _per_pass_indices,
     _psi_h,
     _q_alongtrack_obs,
@@ -147,8 +148,7 @@ def test_psi_h_matches_manual_inversion_slice():
     t = ev[0]
     cols = obs_cols[t]
     psi1 = dyn.inner.streamfunctions(x)
-    psi1 = psi1[0] if psi1.shape[0] == 1 else psi1
-    manual = torch.cat([psi1[:, 0, c] for c in cols])
+    manual = torch.cat([psi1[0, :, c] for c in cols])
     auto = h(x, index=t)
     assert auto.shape == (cfg.cols_per_day * cfg.ny,)
     assert torch.allclose(auto, manual, atol=1e-6)
@@ -218,7 +218,7 @@ def test_etkf_q_cols_lagged_smoke_finite():
     cfg, w = _rc_window(window_days=6.0)
     device = torch.device("cpu")
     dynam = _build_dyn(cfg, w, device)
-    obs, r_var, obs_op = _q_alongtrack_obs(cfg, w, device)
+    obs, r_var, obs_op = _make_obs_system(cfg, w, device, "q", None)[:3]
     init_ensemble, _ = _lagged_init_ensemble(cfg, w, N=20,
                                               init_lag_days=2.0,
                                               device=device)

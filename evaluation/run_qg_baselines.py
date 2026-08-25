@@ -79,22 +79,24 @@ def _q_alongtrack_obs(cfg, window, device):
     q1 = window["target_state_q"].reshape(T, ny, nx)
     field_std = float(q1.std())
     sigma = cfg.obs_noise_std_frac * field_std
-    obs = torch.full((T, ny), float("nan"))
+    rng = torch.Generator().manual_seed(cfg.seed + 8000)
+
     if "track_x_index" in window:
+        obs = torch.full((T, ny), float("nan"))
         track = window["track_x_index"]
-        rng = torch.Generator().manual_seed(cfg.seed + 8000)
         for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
             x_col = int(track[t])
             obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
     elif "obs_columns" in window:
-        rng = torch.Generator().manual_seed(cfg.seed + 8000)
-        for t, cols in enumerate(window["obs_columns"]):
-            if cols is None:
-                continue
-            for c in cols:
-                if c < nx:
-                    noise = sigma * torch.randn(1, generator=rng, device=device).item()
-                    obs[t, c] = q1[t, :, c] + noise
+        cols_t = window["obs_columns"]
+        C = cols_t.shape[1]
+        obs = torch.full((T, C * ny), float("nan"))
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            for ci, x_col in enumerate(cols_t[t].tolist()):
+                if 0 <= x_col < nx:
+                    obs[t, ci * ny:(ci + 1) * ny] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+    else:
+        obs = torch.full((T, ny), float("nan"))
     return obs.to(device), sigma ** 2, field_std
 
 
@@ -135,8 +137,7 @@ def _psi_h(dyn, obs_cols, ny, device):
         cols = obs_cols[index]
         if not batch:
             psi1 = dyn.inner.streamfunctions(state)
-            single = psi1[0] if psi1.shape[0] == 1 else psi1
-            return torch.cat([single[:, c] for c in cols])
+            return torch.cat([psi1[0, :, c] for c in cols])
         else:
             psi1 = dyn.inner.streamfunctions(state)
             C = len(cols)
@@ -146,11 +147,38 @@ def _psi_h(dyn, obs_cols, ny, device):
     return h
 
 
+def _q_obs_indices_t(cfg, window):
+    """Per-time upper-layer q flat-indices for q-obs."""
+    ny, nx = cfg.ny, cfg.nx
+    T = cfg.num_steps
+    if "track_x_index" in window:
+        per_time = [None] * T
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            x_col = int(window["track_x_index"][t])
+            per_time[t] = [y * nx + x_col for y in range(ny)]
+        return per_time
+    elif "obs_columns" in window:
+        cols_t = window["obs_columns"]
+        C = cols_t.shape[1]
+        per_time = [None] * T
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            idx = []
+            for ci in range(C):
+                x_col = int(cols_t[t, ci])
+                if 0 <= x_col < nx:
+                    idx.extend([y * nx + x_col for y in range(ny)])
+            per_time[t] = idx if idx else None
+        return per_time
+    return [None] * T
+
+
 def _make_obs_system(cfg, window, device, obs_var, loc_radius):
     """Build ObsOperator with index or H-mode based on obs_var."""
     if obs_var == "q":
-        obs, r_var, _, _ = _q_alongtrack_obs(cfg, window, device)
-        return obs, r_var, ObsOperator(cfg.state_dim, obs_indices=None), _build_qg_loc_matrices
+        obs, r_var, field_std = _q_alongtrack_obs(cfg, window, device)
+        per_time = _q_obs_indices_t(cfg, window)
+        obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
+        return obs, r_var, obs_operator, _build_qg_loc_matrices
     else:
         obs_cols = _event_columns(cfg, window)
         h = _psi_h(_build_dyn(cfg, window, device), obs_cols, cfg.ny, device)
