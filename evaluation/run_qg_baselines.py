@@ -71,20 +71,30 @@ def _upper_indices(cfg):
 
 
 def _q_alongtrack_obs(cfg, window, device):
-    """Upper-layer PV-anomaly along-track obs (state-consistent index obs).
+    """Upper-layer PV-anomaly obs for either geometry.
 
-    Returns (obs (T, ny), R_var, field_std).
+    Returns (obs, R_var, field_std).
     """
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
     q1 = window["target_state_q"].reshape(T, ny, nx)
     field_std = float(q1.std())
     sigma = cfg.obs_noise_std_frac * field_std
-    rng = torch.Generator().manual_seed(cfg.seed + 8000)
     obs = torch.full((T, ny), float("nan"))
-    track = window["track_x_index"]
-    for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
-        x_col = int(track[t])
-        obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+    if "track_x_index" in window:
+        track = window["track_x_index"]
+        rng = torch.Generator().manual_seed(cfg.seed + 8000)
+        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+            x_col = int(track[t])
+            obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+    elif "obs_columns" in window:
+        rng = torch.Generator().manual_seed(cfg.seed + 8000)
+        for t, cols in enumerate(window["obs_columns"]):
+            if cols is None:
+                continue
+            for c in cols:
+                if c < nx:
+                    noise = sigma * torch.randn(1, generator=rng, device=device).item()
+                    obs[t, c] = q1[t, :, c] + noise
     return obs.to(device), sigma ** 2, field_std
 
 
@@ -119,12 +129,20 @@ def _psi_h(dyn, obs_cols, ny, device):
     Returns:
         Callable that takes (state (state_dim,), index=int) -> (C*ny,)
     """
+    nx = dyn.inner.nx
     def h(state, index=None):
-        if index is None:
-            index = obs_cols[0]
+        batch = state.ndim > 1
         cols = obs_cols[index]
-        psi1 = dyn.inner.streamfunctions(state)[0]  # (ny, nx)
-        return torch.cat([psi1[:, c] for c in cols])
+        if not batch:
+            psi1 = dyn.inner.streamfunctions(state)
+            single = psi1[0] if psi1.shape[0] == 1 else psi1
+            return torch.cat([single[:, c] for c in cols])
+        else:
+            psi1 = dyn.inner.streamfunctions(state)
+            C = len(cols)
+            o = C * dyn.inner.ny
+            stacked = torch.stack([psi1[:, 0, :, c] for c in cols], dim=1)
+            return stacked.reshape(state.shape[0], o)
     return h
 
 
@@ -173,11 +191,11 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
     mean_lag_days = 0.0
     gens = [torch.Generator().manual_seed(cfg.seed + 7 + i) for i in range(N)]
     init_ensemble = torch.zeros(N, truth.shape[-1], device=device)
-    for i in gens:
-        k_tplus1 = torch.randint(1, lead, (1,), generator=i).item()
-        x_tminus1 = truth[:, k_tplus1 - 1, :]
-        x_t = truth[:, k_tplus1, :]
-        alpha = torch.rand(1, generator=i).item()
+    for i, gen in enumerate(gens):
+        k_tplus1 = torch.randint(1, lead, (1,), generator=gen, dtype=torch.long).item()
+        x_tminus1 = truth[k_tplus1 - 1, :]
+        x_t = truth[k_tplus1, :]
+        alpha = torch.rand(1, generator=gen, device=device).item()
         init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
         mean_lag_days += float(k_tplus1 * dt)
     mean_lag_days /= N
