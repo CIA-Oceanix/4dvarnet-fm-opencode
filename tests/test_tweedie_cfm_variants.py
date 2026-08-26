@@ -17,7 +17,6 @@ def test_tweedie_cfm_init():
         sigma_prior=0.5,
         dropout=0.1,
         train_tau_0_only=False,
-        cond_extra_dim=0,
     )
     assert hasattr(model, "mean_estimator")
     assert hasattr(model, "velocity_unet")
@@ -119,7 +118,6 @@ def test_predict_state_cfm_init():
         dropout=0.1,
         train_tau_0_only=False,
         param_dim=0,
-        cond_extra_dim=0,
     )
     assert hasattr(model, "unet")
     assert hasattr(model, "interpolant")
@@ -130,12 +128,22 @@ def test_predict_state_cfm_init():
 def test_predict_state_cfm_forward():
     """Test forward pass produces correct shape."""
     x_t = torch.randn(2, 3000, 24)
-    obs = torch.randn(2, 3000, 24)
+    forcing = torch.randn(2, 3000)
+    params = torch.ones(2, 3000, 4)
+    true_params = torch.ones(2, 3000, 4)
+    batch = FlowMatchingBatch(
+        torch.randn(2, 3000, 24),
+        x_t,
+        torch.ones(2, 3000, dtype=torch.bool),
+        forcing,
+        params=params,
+        true_params=true_params,
+    )
     tau = torch.rand(2)
     model = PredictStateCFM(state_dim=24, hidden_channels=[64, 128, 256])
     model.eval()
     with torch.no_grad():
-        mu = model.forward(x_t, obs, tau)
+        mu = model.forward(x_t, batch, tau)
     assert mu.shape == (2, 3000, 24), f"Expected (2, 3000, 24), got {mu.shape}"
 
 

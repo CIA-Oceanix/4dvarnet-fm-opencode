@@ -74,11 +74,7 @@ class LitModel(pl.LightningModule):
 
     def _forward_and_loss(self, batch):
         if self.model_type == "tweedie_cfm":
-            if self.stage == 1:
-                pred = self.model.estimate_mean(batch.obs)
-            else:
-                pred = self.model(batch)
-            loss = self.loss_fn(pred, batch.states)
+            loss = self.model.compute_loss(batch)
         elif self.model_type == "tweedie":
             if self.stage == 1:
                 pred = self.model.estimate_mean(batch.obs)
@@ -99,25 +95,13 @@ class LitModel(pl.LightningModule):
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")
         return loss
-
-    def training_step(self, batch, batch_idx):
-        loss = self._forward_and_loss(batch)
-        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.batch_size)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        loss = self._forward_and_loss(batch)
-        self.log("val_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch.batch_size)
-        return loss
-
-    def forward(self, batch, **kwargs):
-        if self.model_type == "direct_unet":
-            return self.model(batch)
         if self.model_type == "tweedie_cfm":
             if self.stage == 1:
                 return self.model.estimate_mean(batch.obs)
             else:
-                return self.model(batch)
+                return self.model.sample(batch)
+        if self.model_type == "predict_state_cfm":
+            return self.model.sample(batch)
         return self.model(batch, **kwargs)
 
     def load_legacy_checkpoint(self, ckpt_path: str):

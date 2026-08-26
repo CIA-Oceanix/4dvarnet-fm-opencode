@@ -278,7 +278,6 @@ class TweedieCFM(nn.Module):
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
             use_obs=True,
-            cond_extra_dim=0,
             dropout=dropout,
         )
         self.velocity_unet = UNet1D(
