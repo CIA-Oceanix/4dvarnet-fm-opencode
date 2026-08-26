@@ -157,34 +157,37 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
                   "subspace, computed on the member-mean trajectory; ES is the proper N=30 "
                   "ensemble scoring rule.")
         md.append("")
-        md.append("| ID | S0 RMSE | S1 RMSE | S0 EV | S1 EV | S0 ES | S1 ES |")
+        md.append("| ID | S0 RMSE | S0 EV | S0 ES | S1 RMSE | S1 EV | S1 ES |")
         md.append("|---|---|---|---|---|---|---|")
         rows = []
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             data = find_ens_eval(edir, 30, k) if edir.is_dir() else None
+            if data is None:
+                rows.append((exp_name, [None] * 6))
+                continue
             cell_vals = []
             for case in CASES:
-                m = metrics_case(data, case) if data else None
+                m = metrics_case(data, case)
                 cell_vals.append(m["rmse"] if m else None)
                 cell_vals.append(m["ev"]["groups"]["all_obs"] if m else None)
                 cell_vals.append(m["es"]["groups"]["all_obs"] if m else None)
             rows.append((exp_name, cell_vals))
-        # best per column: lowest for RMSE (idx 0,3) and ES (idx 6,7); highest for EV (idx 2,5)
-        ncol = len(rows[0][1]) if rows else 7
+        # best per column: lowest RMSE (idx 0,3) and ES (idx 2,5); highest EV (idx 1,4)
+        ncol = 6
         best = {j: (None, None) for j in range(ncol)}
         for _, vals in rows:
             for j, v in enumerate(vals):
                 if not isinstance(v, float):
                     continue
                 best_val, _ = best[j]
-                lower_is_better = j in (0, 3, 6, 7)
+                lower_is_better = j in (0, 2, 3, 5)
                 if best_val is None or (v < best_val) == lower_is_better:
                     best[j] = (v, lower_is_better)
         for exp_name, vals in rows:
-            cells = [f"| {exp_name}"]
+            cells = [f"| {exp_name} |"]
             for j, v in enumerate(vals):
-                best_val, lower_is_better = best[j]
+                best_val, _ = best[j]
                 is_best = (isinstance(v, float) and v == best_val)
                 cells.append(f" {fmt_num(v)}{' **' if is_best else ''} |")
             md.append("".join(cells))
@@ -214,7 +217,7 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
                 md.append(f"| {exp_name} | " + " | ".join(["--"] * len(PARAM_LIST)) + " | -- |")
                 continue
             prmse = m.get("param_rmse", {})
-            cells = [f"| {exp_name}"]
+            cells = [f"| {exp_name} |"]
             for p in PARAM_LIST:
                 cells.append(f" {fmt_num(prmse.get(p), missing='--')} |")
             cells.append(f" {fmt_num(m.get('param_rmse_mean'), missing='--')} |")
