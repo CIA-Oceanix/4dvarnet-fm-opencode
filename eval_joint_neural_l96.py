@@ -17,7 +17,12 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from evaluation.estimate_metrics import evaluate_ensemble_estimates, evaluate_estimates
+from evaluation.estimate_metrics import (
+    evaluate_ensemble_estimates,
+    evaluate_estimates,
+    nrmse_param,
+    trajectory_forecast_skill,
+)
 from evaluation.metrics import param_rmse
 from evaluation.neural_inference import (
     L96_JOINT_PARAM_NAMES,
@@ -52,6 +57,9 @@ def main():
                         help="Random seed for torch")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="joint_neural_eval.json", help="Output JSON")
+    parser.add_argument("--n-compare-steps", type=int, default=300,
+                        help="Forecast horizon (steps) for the parameter-sensitivity "
+                             "trajectory metric (true vs estimated params, same x0/forcing)")
     args = parser.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -77,6 +85,15 @@ def main():
     logger.info(f"Dataset: {len(dataloaders['s0'].dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
+    # Truth L96 dynamics (full J=4) used for the parameter-sensitivity forecast
+    # metric: both the true-param and estimated-param rollouts use the SAME
+    # dynamics so the divergence isolates the effect of parameter error.
+    from models.lorenz96_dynamics import Lorenz96Dynamics
+    truth_dyn = Lorenz96Dynamics(
+        dt=0.001, coupling_exponent=1.6, NO=8, J=4,
+        h=1.0, hx=1.0, eps=0.1, fast_weights=[1.0, 1.0, 0.1, 0.1],
+    )
+
     torch.manual_seed(args.seed)
     n_outer = args.n_outer if args.n_outer is not None else getattr(model, "N_outer", 10)
     logger.info(f"Running joint inference (step 1): cases={args.cases} n_members={args.n_members} n_outer={n_outer}")
@@ -96,7 +113,9 @@ def main():
                                 members=est["members"],
                                 truth=est["truth"],
                                 params_pred=est["params_pred"],
-                                params_true=est["params_true"])
+                                params_true=est["params_true"],
+                                x0=est["x0"],
+                                forcing_true=est["forcing_true"])
             sm = evaluate_ensemble_estimates(est["members"], est["truth"])
         else:
             npz_path = output_path.parent / f"joint_estimates_{case}.npz"
@@ -104,10 +123,20 @@ def main():
                                 trajectories=est["trajectories"],
                                 truth=est["truth"],
                                 params_pred=est["params_pred"],
-                                params_true=est["params_true"])
+                                params_true=est["params_true"],
+                                x0=est["x0"],
+                                forcing_true=est["forcing_true"])
             sm = evaluate_estimates(est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         prmse = param_rmse(est["params_pred"], est["params_true"])
+        nrmse = nrmse_param(est["params_pred"], est["params_true"])
+        traj_skill = trajectory_forecast_skill(
+            truth_dyn,
+            est["x0"], est["forcing_true"],
+            est["params_true"], est["params_pred"],
+            n_steps=args.n_compare_steps,
+            obs_var_indices=obs_var_indices,
+        )
         metrics[case] = {
             "rmse": sm["rmse"],
             "groups": sm["groups"],
@@ -115,6 +144,15 @@ def main():
             "es": sm["es"],
             "param_rmse": {nm: float(prmse[i]) for i, nm in enumerate(L96_JOINT_PARAM_NAMES)},
             "param_rmse_mean": float(np.mean(prmse)),
+            "nrmse_param": {
+                nm: float(nrmse["per_param"][i]) for i, nm in enumerate(L96_JOINT_PARAM_NAMES)
+            },
+            "nrmse_param_mean": float(nrmse["mean"]),
+            "traj_forecast": {
+                "n_steps": traj_skill["n_steps"],
+                "rmse": traj_skill["rmse"],
+                "ev": traj_skill["ev"],
+            },
         }
         logger.info(f"Saved: {npz_path}")
 
@@ -148,7 +186,9 @@ def main():
         logger.info(f"[{case.upper()}] RMSE: {m['rmse']:.6f} | "
                     f"slow: {m['groups']['slow']:.6f} | obs_fast: {m['groups']['obs_fast']:.6f} | "
                     f"EV(all): {m['ev']['groups']['all_obs']:.6f} | ES(all): {m['es']['groups']['all_obs']:.6f} | "
-                    f"paramRMSE: {m['param_rmse_mean']:.6f}")
+                    f"paramRMSE: {m['param_rmse_mean']:.6f} | "
+                    f"nrmse: {m['nrmse_param_mean']:.4f} | "
+                    f"trajEV(all): {m['traj_forecast']['ev']['groups']['all_obs']:.4f}")
     logger.info(f"[DEGRADATION] S1/S0 RMSE: {metrics['degradation']:.6f}")
     logger.info("=" * 70)
 

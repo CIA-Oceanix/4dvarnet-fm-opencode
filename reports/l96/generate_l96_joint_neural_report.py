@@ -55,6 +55,7 @@ MODEL_DEFS = {
 CASES = ["s0", "s1"]
 ENS_K_STEPS = [1, 10]
 GROUPS = ("all_obs", "slow", "obs_fast")
+N_STEP_COMPARE = 300  # forecast horizon for the parameter-sensitivity metric
 
 
 def load_json(path: Path):
@@ -222,6 +223,147 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
                 cells.append(f" {fmt_num(prmse.get(p), missing='--')} |")
             cells.append(f" {fmt_num(m.get('param_rmse_mean'), missing='--')} |")
             md.append("".join(cells))
+        md.append("")
+        md.append("---")
+        md.append("")
+
+    # NRMSE (normalized parameter RMSE) tables
+    for case, label in (("s0", "S0"), ("s1", "S1")):
+        md.append(f"## Normalized parameter RMSE (NRMSE) — {label} (single-sample)")
+        md.append("")
+        md.append("Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes "
+                  "away the scale difference between parameters (e.g. F~8 vs eps~0.1) so each "
+                  "competes equally. Mean is across the 8 params; lower is better.")
+        md.append("")
+        header = "| ID | " + " | ".join(PARAM_LIST) + " | mean |"
+        sep = "|---|" + "---|" * len(PARAM_LIST) + "---|"
+        md.append(header)
+        md.append(sep)
+        rows = []
+        for exp_name in MODEL_DEFS:
+            edir = exp_dir / exp_name
+            data = find_single_eval(edir) if edir.is_dir() else None
+            m = metrics_case(data, case)
+            if m is None:
+                rows.append((exp_name, [None] * (len(PARAM_LIST) + 1)))
+                continue
+            nrmse = m.get("nrmse_param", {})
+            vals = [nrmse.get(p) for p in PARAM_LIST]
+            vals.append(m.get("nrmse_param_mean"))
+            rows.append((exp_name, vals))
+        best_idx = [
+            min((r[i] for _, r in rows if isinstance(r[i], float)), default=None)
+            for i in range(len(PARAM_LIST) + 1)
+        ]
+        for exp_name, vals in rows:
+            cells = [f"| {exp_name} |"]
+            for i, v in enumerate(vals):
+                best = best_idx[i]
+                cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == best) else ''} |")
+            md.append("".join(cells))
+        md.append("")
+        md.append("*Best per column (lowest NRMSE) is bolded.*")
+        md.append("")
+        md.append("---")
+        md.append("")
+
+    # Trajectory forecast skill tables (single-sample)
+    for case, label in (("s0", "S0"), ("s1", "S1")):
+        md.append(f"## Trajectory forecast skill — {label} (single-sample, {N_STEP_COMPARE}-step)")
+        md.append("")
+        md.append("State RMSE / EV between a short forecast rolled with the **estimated** "
+                  "parameters and one rolled with the **true** parameters, from the same initial "
+                  "state and forcing (L96 truth dynamics, {}-step horizon, observed subspace). "
+                  "This quantifies the sensitivity of short-term forecast quality to parameter "
+                  "estimation error; higher EV / lower RMSE is better.".format(N_STEP_COMPARE))
+        md.append("")
+        md.append("| ID | RMSE slow | RMSE obs_fast | RMSE all | EV slow | EV obs_fast | EV all |")
+        md.append("|---|---|---|---|---|---|---|")
+        rows = []
+        for exp_name in MODEL_DEFS:
+            edir = exp_dir / exp_name
+            data = find_single_eval(edir) if edir.is_dir() else None
+            m = metrics_case(data, case)
+            if m is None:
+                rows.append((exp_name, [None] * 6))
+                continue
+            tf = m.get("traj_forecast", {})
+            if not tf:
+                rows.append((exp_name, [None] * 6))
+                continue
+            rs = tf.get("rmse", {}).get("groups", {})
+            ev = tf.get("ev", {}).get("groups", {})
+            vals = [
+                rs.get("slow"), rs.get("obs_fast"), rs.get("all_obs"),
+                ev.get("slow"), ev.get("obs_fast"), ev.get("all_obs"),
+            ]
+            rows.append((exp_name, vals))
+        best = {j: (None, False) for j in range(6)}
+        for _, vals in rows:
+            for j, v in enumerate(vals):
+                if not isinstance(v, float):
+                    continue
+                lower = j < 3
+                bv, _ = best[j]
+                if bv is None or (v < bv) == lower:
+                    best[j] = (v, lower)
+        for exp_name, vals in rows:
+            cells = [f"| {exp_name} |"]
+            for j, v in enumerate(vals):
+                bv, _ = best[j]
+                cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
+            md.append("".join(cells))
+        md.append("")
+        md.append("*Best per column is bolded (lowest RMSE, highest EV).*")
+        md.append("")
+        md.append("---")
+        md.append("")
+
+    # Trajectory forecast skill tables (ens30)
+    for k in ENS_K_STEPS:
+        md.append(f"## Trajectory forecast skill — ens30 (n_members=30, k={k}, {N_STEP_COMPARE}-step)")
+        md.append("")
+        md.append("Same parameter-sensitivity metric computed on the **member-mean** parameter "
+                  "estimates from the {} ({}-step rollouts, observed subspace). Higher EV / lower "
+                  "RMSE is better.".format("ens30 ensemble", N_STEP_COMPARE))
+        md.append("")
+        md.append("| ID | S0 EV all | S0 RMSE all | S1 EV all | S1 RMSE all |")
+        md.append("|---|---|---|---|---|")
+        rows = []
+        for exp_name in MODEL_DEFS:
+            edir = exp_dir / exp_name
+            data = find_ens_eval(edir, 30, k) if edir.is_dir() else None
+            if data is None:
+                rows.append((exp_name, [None] * 4))
+                continue
+            vals = []
+            for case in CASES:
+                m = metrics_case(data, case)
+                if m is None or "traj_forecast" not in m:
+                    vals += [None, None]
+                    continue
+                ev = m["traj_forecast"]["ev"]["groups"].get("all_obs")
+                rmse = m["traj_forecast"]["rmse"]["groups"].get("all_obs")
+                vals += [ev, rmse]
+            rows.append((exp_name, vals))
+        best = {j: (None, False) for j in range(4)}
+        for _, vals in rows:
+            for j, v in enumerate(vals):
+                if not isinstance(v, float):
+                    continue
+                lower = j == 1 or j == 3
+                bv, _ = best[j]
+                if bv is None or (v < bv) == lower:
+                    best[j] = (v, lower)
+        for exp_name, vals in rows:
+            cells = [f"| {exp_name} |"]
+            for j, v in enumerate(vals):
+                bv, _ = best[j]
+                cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
+            md.append("".join(cells))
+        md.append("")
+        md.append("*Best per column is bolded (highest EV, lowest RMSE). L8 is deterministic and not "
+                  "run as an ensemble → --.*")
         md.append("")
         md.append("---")
         md.append("")

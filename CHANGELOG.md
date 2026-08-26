@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-08-26: L96 joint benchmark — NRMSE + trajectory-forecast metrics (PR #95)
+
+**Summary:** Added two parameter-estimation metrics to the L96 joint
+state-parameter neural benchmark: **NRMSE** (`param_RMSE / mean(|true_param|)`,
+normalizing away scale differences) and **trajectory forecast skill** (300-step
+RMSE/EV between rollouts with the true vs estimated parameters from the same
+x0/forcing, observed subspace). 300 steps chosen from an empirical divergence
+study (100 too short — EV near 1 even for poor params; 500 oversaturates).
+Threaded `forcing_true` + full initial state through `collate_joint_eval` /
+`_run_case_inference`; wired `--n-compare-steps` into `eval_joint_neural_l96.py`;
+added NRMSE + forecast-skill tables (single-sample + ens30) to the report.
+Headline: **L7 (τ=0) forecast EV is negative (−0.16/−0.17) despite state RMSE
+0.606** — its params are garbage (NRMSE 2.92, esp. eps/w3/w4) — while L9
+(ens30×10) has genuine forecast skill (EV 0.87/0.88, NRMSE 0.078/0.082). Work
+done in an isolated git worktree (`/tmp/opencode/l96-joint-additional-metrics`)
+after a shared-working-tree branch switch wiped uncommitted tracked edits.
+
+**Files modified:** `evaluation/estimate_metrics.py` — `nrmse_param`,
+`trajectory_forecast_skill`; `evaluation/neural_inference.py` — `forcing_true`/`x0`
+threading; `eval_joint_neural_l96.py` — `--n-compare-steps` + metric wiring +
+npz `x0`/`forcing_true`; `reports/l96/generate_l96_joint_neural_report.py` —
+NRMSE + trajectory-forecast tables (single-sample + ens30); `reports/l96/outputs/l96_joint_neural_benchmark.md` —
+regenerated; `tests/test_estimate_metrics.py` — new (8 tests); `.github/workflows/ci.yml` —
+added test file to pytest gate; `docs/joint_additional_metrics_plan.md` — new plan doc; `PLAN.md` — Step-2 pointer; `CHANGELOG.md` — this entry.
+
+**Rationale:** State RMSE hides parameter error (L7's state looks fine but its
+parameters are worthless). The forecast-skill metric reveals that only the
+multi-τ model (L9) yields forecast-usable parameters, directly answering
+whether joint neural estimation recovers params as the DA baselines do.
+
+**Verification:** `pytest tests/test_estimate_metrics.py tests/test_neural_inference.py tests/test_metrics.py -m "not slow"` — 31 passed. CPU smoke + full GPU single-sample (L7/L8/L9, ~20s) and ens30 (L7/L9 × {1,10}, ~12min) evals run on login **Quadro RTX 8000** (GPU free; first sbatch attempt failed because the `/tmp` worktree isn't visible to compute nodes — ran on login GPU instead). Report regenerated; all new tables populated. PR #95: pytest CI pass, approved by `rfablet-review`.
+
 ## 2026-08-26: L96 joint neural evaluation complete — L7/L8/L9 state+param benchmark (Phase C results)
 
 **Summary:** Completed the standalone **DA-parity evaluation** of the three L96 joint
