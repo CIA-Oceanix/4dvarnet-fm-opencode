@@ -216,10 +216,10 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
         lead = len(truth) - 1
     dt = float(init_lag_days / dt_steps)
     mean_lag_days = 0.0
-    gens = [torch.Generator().manual_seed(cfg.seed + 7 + i) for i in range(N)]
+    gens = [torch.Generator(device=device).manual_seed(cfg.seed + 7 + i) for i in range(N)]
     init_ensemble = torch.zeros(N, truth.shape[-1], device=device)
     for i, gen in enumerate(gens):
-        k_tplus1 = torch.randint(1, lead, (1,), generator=gen, dtype=torch.long).item()
+        k_tplus1 = torch.randint(1, lead, (1,), generator=gen, dtype=torch.long, device=device).item()
         x_tminus1 = truth[k_tplus1 - 1, :]
         x_t = truth[k_tplus1, :]
         alpha = torch.rand(1, generator=gen, device=device).item()
