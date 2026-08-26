@@ -29,7 +29,12 @@ class LitModel(pl.LightningModule):
         self._frozen = False
 
     def configure_optimizers(self):
-        if self.model_type == "tweedie":
+        if self.model_type == "tweedie_cfm":
+            if self.stage == 1:
+                params = self.model.mean_estimator.parameters()
+            else:
+                params = self.model.velocity_unet.parameters()
+        elif self.model_type == "tweedie":
             if self.stage == 1:
                 params = self.model.mean_estimator.parameters()
             else:
@@ -41,6 +46,19 @@ class LitModel(pl.LightningModule):
     def on_train_start(self):
         if self._frozen:
             return
+        if self.model_type == "tweedie_cfm":
+            if self.stage == 1:
+                for p in self.model.velocity_unet.parameters():
+                    p.requires_grad = False
+                for p in self.model.mean_estimator.parameters():
+                    p.requires_grad = True
+                self.model.set_stage(1)
+            else:
+                for p in self.model.mean_estimator.parameters():
+                    p.requires_grad = False
+                for p in self.model.velocity_unet.parameters():
+                    p.requires_grad = True
+                self.model.set_stage(2)
         if self.model_type == "tweedie":
             if self.stage == 1:
                 for p in self.model.non_gaussian.parameters():
@@ -55,7 +73,9 @@ class LitModel(pl.LightningModule):
         self._frozen = True
 
     def _forward_and_loss(self, batch):
-        if self.model_type == "tweedie":
+        if self.model_type == "tweedie_cfm":
+            loss = self.model.compute_loss(batch)
+        elif self.model_type == "tweedie":
             if self.stage == 1:
                 pred = self.model.estimate_mean(batch.obs)
             else:
@@ -87,6 +107,11 @@ class LitModel(pl.LightningModule):
         return loss
 
     def forward(self, batch, **kwargs):
+        if self.model_type == "tweedie_cfm":
+            if self.stage == 1:
+                return self.model.estimate_mean(batch.obs)
+            else:
+                return self.model.sample(batch)
         if self.model_type == "direct_unet":
             return self.model(batch)
         elif self.model_type == "predict_state_cfm":
