@@ -167,6 +167,8 @@ class PredictStateCFM(nn.Module):
         super().__init__()
         self.param_dim = param_dim
         self.cond_extra_dim = cond_extra_dim
+        self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
+        self.time_emb_dim = time_emb_dim
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=state_dim,
@@ -227,7 +229,7 @@ class PredictStateCFM(nn.Module):
         for step in range(N_outer):
             tau_step = torch.full((B,), step / N_outer, device=device)
             mu = self.forward(x, batch, tau_step)
-            v = (mu - x) / (1.0 - tau_step.clamp(max=0.999))
+            v = (mu - x) / (1.0 - tau_step.clamp(max=0.999).view(B, 1, 1).expand(-1, T, -1))
             x = x + dt * v
 
         return x
