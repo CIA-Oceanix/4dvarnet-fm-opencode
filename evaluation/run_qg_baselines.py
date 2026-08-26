@@ -300,7 +300,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             forcing = w["wind_state_corrupted"].to(device)
             init_ensemble = None
             init_lag_val = 0.0
-            if geometry == "lagged_init":
+            if init == "lagged":
                 init_ensemble, init_lag_val = _lagged_init_ensemble(
                     cfg, w, N_ensemble, init_lag_days, device)
                 spread_t0_list.append(float(init_ensemble.std()))
