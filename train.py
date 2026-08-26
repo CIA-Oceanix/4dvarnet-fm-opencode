@@ -140,15 +140,45 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=jc.train_tau_0_only,
         )
     elif model_type == "joint_direct_unet":
-        from models.direct_unet import JointDirectUNet
+        from models.direct_unet import JointDirectUnet
         jdu = cfg.model.joint_direct_unet
         dc = cfg.model.direct_unet
-        model = JointDirectUNet(
+        model = JointDirectUnet(
             state_dim=cfg.model.state_dim,
             param_dim=jdu.param_dim,
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
+        )
+    elif model_type == "predict_state_cfm":
+        from models.vanilla_cfm import PredictStateCFM
+        psc = cfg.model.predict_state_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = PredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=psc.hidden_channels,
+            time_emb_dim=psc.time_emb_dim,
+            N_outer=psc.N_outer,
+            sigma_prior=psc.sigma_prior,
+            dropout=psc.dropout,
+            train_tau_0_only=psc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            cond_extra_dim=psc.cond_extra_dim,
+        )
+    elif model_type == "tweedie_cfm":
+        from models.vanilla_cfm import TweedieCFM
+        tc = cfg.model.tweedie_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = TweedieCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=tc.hidden_channels,
+            time_emb_dim=tc.time_emb_dim,
+            K_inner=tc.K_inner,
+            N_outer=tc.N_outer,
+            sigma_prior=tc.sigma_prior,
+            dropout=tc.dropout,
+            train_tau_0_only=tc.get("train_tau_0_only", False),
+            cond_extra_dim=tc.cond_extra_dim,
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -198,6 +228,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
             true_param_list.append(np.array(tp))
+        elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -239,6 +271,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -405,6 +439,18 @@ def main(cfg: DictConfig):
             t0 = time.time()
             if model_type == "tweedie":
                 model = train_stage(model, loaders, cfg, stage=1, device=device)
+            elif model_type == "tweedie_cfm":
+                from training.lightning_module import LitModel
+                from training.pipeline import create_trainer
+                stage_cfg = cfg.training.stage1
+                lit = LitModel(model, model_type=model_type, stage=1,
+                               lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
+                               use_gradient_loss=cfg.training.loss.use_gradient,
+                               gradient_weight=cfg.training.loss.gradient_weight)
+                trainer = create_trainer(cfg, 1)
+                trainer.fit(lit, loaders["train"], loaders["val"])
+                path = cfg.paths.checkpoint_stage1
+                torch.save(lit.model.state_dict(), path)
             else:
                 stage_cfg = cfg.training.stage1
                 lit = LitModel(model, model_type=model_type, stage=1,

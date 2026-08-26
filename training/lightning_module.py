@@ -70,6 +70,8 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type == "joint_direct_unet":
             loss = self.model.compute_loss(batch)
+        elif self.model_type == "predict_state_cfm":
+            loss = self.model.compute_loss(batch)
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")
         return loss
@@ -87,6 +89,8 @@ class LitModel(pl.LightningModule):
     def forward(self, batch, **kwargs):
         if self.model_type == "direct_unet":
             return self.model(batch)
+        elif self.model_type == "predict_state_cfm":
+            return self.model.sample(batch)
         return self.model(batch, **kwargs)
 
     def load_legacy_checkpoint(self, ckpt_path: str):
