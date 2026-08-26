@@ -228,7 +228,7 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
         md.append("")
 
     # NRMSE (normalized parameter RMSE) tables
-    for _, label in (("s0", "S0"), ("s1", "S1")):
+    for case, label in (("s0", "S0"), ("s1", "S1")):
         md.append(f"## Normalized parameter RMSE (NRMSE) — {label} (single-sample)")
         md.append("")
         md.append("Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes "
@@ -243,7 +243,7 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             data = find_single_eval(edir) if edir.is_dir() else None
-            m = metrics_case(data, label)
+            m = metrics_case(data, case)
             if m is None:
                 rows.append((exp_name, [None] * (len(PARAM_LIST) + 1)))
                 continue
@@ -268,7 +268,7 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
         md.append("")
 
     # Trajectory forecast skill tables (single-sample)
-    for _, label in (("s0", "S0"), ("s1", "S1")):
+    for case, label in (("s0", "S0"), ("s1", "S1")):
         md.append(f"## Trajectory forecast skill — {label} (single-sample, {N_STEP_COMPARE}-step)")
         md.append("")
         md.append("State RMSE / EV between a short forecast rolled with the **estimated** "
@@ -283,7 +283,7 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             data = find_single_eval(edir) if edir.is_dir() else None
-            m = metrics_case(data, label)
+            m = metrics_case(data, case)
             if m is None:
                 rows.append((exp_name, [None] * 6))
                 continue
