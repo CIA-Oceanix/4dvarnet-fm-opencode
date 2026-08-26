@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--geometry", default="random_columns")
     ap.add_argument("--init-lag-days-list", default="2.0")
     ap.add_argument("--cols-per-day", type=int, default=3)
+    ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
     ap.add_argument("--scenarios", default="test_s0,test_s1a,test_s1b")
     ap.add_argument("--outdir", default="reports/outputs/figs")
     ap.add_argument("--device", default=None)
@@ -63,7 +64,8 @@ def main():
                     p = run(method, cfg, device=device, N_ensemble=args.ensemble,
                             inflation=infl, loc_radius=loc, init=args.init,
                             geometry=args.geometry, scenarios=scenarios,
-                            out_path=None, ds=ds, init_lag_days=float(lag))
+                            out_path=None, ds=ds, init_lag_days=float(lag),
+                            obs_var=args.obs_var)
                     dt = time.time() - t1
                     rows = " ".join(
                         f"{s}:{p['scenarios'][s]['expvar_full']:.3f}"
