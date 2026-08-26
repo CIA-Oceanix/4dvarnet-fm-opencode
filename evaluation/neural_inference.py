@@ -369,11 +369,11 @@ def _run_case_inference(
     ground-truth in ``"params_true"`` (W, P).
     """
     model.eval()
-    member_preds: list[list] = [[] for _ in range(n_members)]
-    all_true = []
-    param_preds = []
-    param_trues = []
     is_joint = isinstance(model, (JointCFM, JointDirectUNet))
+    member_preds: list[list] = [[] for _ in range(n_members)]
+    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint else None
+    all_true = []
+    param_trues = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -393,8 +393,8 @@ def _run_case_inference(
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
-                if isinstance(model, (JointCFM, JointDirectUNet)):
-                    param_preds.append(params.detach().float().cpu())
+                if is_joint:
+                    member_param_preds[m].append(params.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
@@ -425,7 +425,10 @@ def _run_case_inference(
         out["members"] = members
         out["trajectories"] = members.mean(axis=-1)
     if is_joint:
-        out["params_pred"] = torch.cat(param_preds, dim=0).numpy()
+        # Each member predicts a (W, P) param vector; stack+mean to get the
+        # per-window ensemble-mean params (W, P), matching params_true (W, P).
+        per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
+        out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
         out["params_true"] = torch.cat(param_trues, dim=0).numpy()
     return out
 
