@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-08-26: L96 joint neural evaluation complete — L7/L8/L9 state+param benchmark (Phase C results)
+
+**Summary:** Completed the standalone **DA-parity evaluation** of the three L96 joint
+state-parameter neural models (24D state + 8 params F/c1/hx/eps/w1..w4) on the shared
+cached S0/S1 test set (Obs30, 200 windows). Single-sample eval (job 49885, 3 tasks) and
+ens30 ensemble eval (job 49910, 4 tasks: L7/L9 × {1,10}; L8 deterministic, excluded)
+both completed. Fixed the evaluation chain: PR #85 (`collate_joint_eval` KeyError 'w1' —
+cached dataset uses pre-flattening `fast_weights` list, fixed with a `_window_param_vector`
+backward-compat helper), PR #89 (ens30 `params_pred` was `(W·M,P)` stacked across members
+vs `params_true` `(W,P)` → ValueError; now member-mean `(W,P)`), and PR #90 (report
+generator table column-order/separator/best-marking fixes + first report).
+
+**Result (cached S0/S1, Obs30, 200 windows):** **L9 multi-τ JointCFM at ens30×10 is the
+best joint estimator** (S0 RMSE **0.5251** / S1 **0.5308**, EV 0.893/0.890, degradation
+1.011, paramRMSE 0.058) — reproducing L3's multi-τ ODE-integration advantage on the joint
+problem (L9 k=1 0.601 → k=10 0.525). L7 τ=0 JointCFM recovers state (1-sample 0.606/0.662)
+but **fails to recover the 8 params (paramRMSE 1.212)**; L8 JointDirectUNet (deterministic)
+recovers params well (0.061) with state 0.610/0.661. L7 k=1 ≡ k=10 bitwise (τ=0 sampler
+shortcuts to one Euler step), confirming the multi-τ integration effect. Benchmark:
+`reports/l96/outputs/l96_joint_neural_benchmark.md`. Joint DA baselines not yet run (report rows `--`).
+
+**Files modified:** `evaluation/neural_inference.py` — `collate_joint_eval` legacy-`fast_weights`
+backward compat + ens30 `params_pred` member-mean; `reports/l96/generate_l96_joint_neural_report.py` —
+table column-order/separator/best-marking fixes; `reports/l96/outputs/l96_joint_neural_benchmark.md` —
+generated report; `PLAN.md` — Phase C status → results, L7/L8/L9 table rows + joint-results note; `CHANGELOG.md` — this entry.
+
+**Rationale:** Completes Phase C (training done 2026-08-25, eval now 2026-08-26) with the
+first apples-to-apples joint-neural state+param benchmark. Multi-τ CFM's integration
+advantage (seen on L63 and L3) transfers to joint state-parameter estimation, and — unlike
+τ=0 — the multi-τ model actually learns the parameters. This directly answers whether the
+joint neural estimators recover params as the DA baselines do.
+
+**Verification:** jobs 49885 (single-sample, 3×COMPLETED ~20 s) + 49910 (ens30, 4×COMPLETED
+~6-7 min) both exit 0; CPU ensemble smoke on local GPU (RTX 8000, L9 n_members=3) confirmed
+the `params_pred` fix (no ValueError, paramRMSE 0.066/0.070 consistent with single-sample).
+Report regenerated cleanly (py_compile OK). pytest CI passed on PRs #85/#89/#90; ruff
+informational only.
+
 ## 2026-08-25: L96 joint state-parameter neural estimation infrastructure (Phase C) + Phase B design doc
 
 **Summary:** Built the full L96 joint **neural** infrastructure (previously only joint
