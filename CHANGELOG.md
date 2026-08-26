@@ -917,3 +917,34 @@ that could not run the committed ensemble/seed sbatch or reproduce the swapped c
 - `tests/test_predict_state_cfm.py`: 8 unit tests (init parameters, forward shapes, loss, sampling, train_tau_0_only) — all pass
 - `.github/workflows/ci.yml`: Added test file and `feature/*` branch triggers
 - `PHASE2_L96_TWEEDIE_CFM_PLAN.md`: Comprehensive 9-step plan for V2 Twee...
+
+## 2026-08-26: V2 TweedieCFM port to clean branch
+
+**Summary:** Ported V2 TweedieCFM (two-stage CFM: mean estimator + velocity UNet) to the clean V3 branch with obs_dim fix applied. All files compiled, models imported successfully with fdv environment.
+
+**Changes:**
+- `models/vanilla_cfm.py`: Added TweedieCFM class (~98 lines) after PredictStateCFM
+  - Fixed obs_dim bug: `state_dim` → `2 * state_dim` (cond = cat([obs, mean]) gets 2D channels)
+  - Stage 1: MeanEstimatorCell estimate_mean
+  - Stage 2: velocity UNet on residual space (forward + compute_loss)
+  - Two-stage training via LitModel: freeze/unfreeze + set_stage
+- `train.py`: Complete two-stage dispatch
+  - Fixed `tc.get("train_tau_0_only")` → `tc.train_tau_0_only`
+  - Added stage 2 training for tweedie_cfm (inline LitModel construction)
+  - Added tweedie_cfm to evaluate_model and save_trajectories dispatches
+  - Added 'tweedie_cfm' to epochs count
+- `training/lightning_module.py`: Full tweedie_cfm dispatch
+  - configure_optimizers: stage1 → mean_estimator, stage2 → velocity_unet
+  - on_train_start: freeze/unfreeze + set_stage(1/2)
+  - _forward_and_loss: delegate to compute_loss
+  - forward: stage1 → estimate_mean, stage2 → sample
+- `config/experiment/V2_tweedie_cfm_l96.yaml`: New L96 config (24D, stage1=200+stage2=400, obs_j=2)
+- `batch/run_l96_cfm_variants_train.sbatch`: New sbatch (RTX8000 24h GPU job array)
+- `tests/test_tweedie_cfm_variants.py`: New test file (9 tests)
+- `CHANGELOG.md`: Entry (this)
+
+**Branch:** `feature/l96-predict-state-cfm-v2` → PR target `feature/l96-predict-state-cfm-clean`
+
+**Rationale:** V2 completes the CFM variant suite (V1 VanillaCFM, V3 PredictStateCFM, V2 TweedieCFM). The obs_dim fix propagates correctly through forward(): UNet obs input = cat([obs, mean]) = 2*D, ConditionEncoder.proj = D + 2D + 0 = 3D. The V2 class is ported from e0ee53c (which had the bug) with the fix applied.
+
+**Verification:** Python import verified with fdv environment: `from models.vanilla_cfm import TweedieCFM` passes. Shapes smoke needed (GPU) — job array pending.
