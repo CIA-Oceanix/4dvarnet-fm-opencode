@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
-from models.vanilla_cfm import VanillaCFM, JointCFM
+from models.vanilla_cfm import VanillaCFM, JointCFM, PredictStateCFM, TweedieCFM
 
 
 class BatchDict:
@@ -160,9 +160,9 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
 
 def resolve_model_class(cfg: Any) -> tuple:
     """Resolve model class from config."""
-    model_type = cfg.model.get("type", "DirectUNet")
+    model_type = cfg.model.get("type", "DirectUnet")
     
-    # Normalize model type (handle both "direct_unet" and "DirectUNet")
+    # Normalize model type (handle both "direct_unet" and "DirectUnet")
     model_type = model_type.replace("_", "").replace("-", "").upper()
     
     if model_type == "DIRECTUNET":
@@ -173,6 +173,10 @@ def resolve_model_class(cfg: Any) -> tuple:
         return JointDirectUNet, cfg
     elif model_type == "JOINTCFM":
         return JointCFM, cfg
+    elif model_type == "PREDICTSTATECFM":
+        return PredictStateCFM, cfg
+    elif model_type == "TWEEDIECFM":
+        return TweedieCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -220,6 +224,29 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+        )
+    elif model_class == PredictStateCFM:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 1),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+        )
+    elif model_class == TweedieCFM:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            K_inner=cfg.model.get("K_inner", 5),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")

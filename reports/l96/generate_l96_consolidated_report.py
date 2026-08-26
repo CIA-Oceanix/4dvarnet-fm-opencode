@@ -57,6 +57,8 @@ NEURAL_EXP_DIRS = [
     "L4_direct_unet_s0s1_small",
     "L5_vanilla_cfm_s0s1_small_tau0",
     "L6_vanilla_cfm_s0s1_forcing_cond",
+    "V2_tweedie_cfm_l96",
+    "V3_predict_state_cfm_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -65,7 +67,7 @@ NEURAL_EXP_DIRS = [
 # DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
 N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
-                 "L6_vanilla_cfm_s0s1_forcing_cond"}
+                 "L6_vanilla_cfm_s0s1_forcing_cond", "V2_tweedie_cfm_l96", "V3_predict_state_cfm_l96"}
 
 # L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES, per case.
 # S0 was the original ens30 study (dual-convention JSON); S1 the bug-fixed
@@ -109,6 +111,16 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
     ("L6_vanilla_cfm_s0s1_forcing_cond", "Neural (CFM, τ=0)",
      ("As L2b plus corrupted-forcing conditioning (`cond_extra_dim=1`); tests the robustness value of "
       "forcing input.")),
+    ("V2_tweedie_cfm_l96", "Neural (CFM, Tweedie-powered two-stage)",
+     ("Two-stage CFM: Stage 1 trains a mean estimator `μ(x0, y) ≈ E[x1|x0,y]`, Stage 2 trains a "
+      "velocity UNet on the Tweedie-residual `(x1 - μ)/K_inner - v`. Sampling integrates the ODE "
+      "`dx/dτ = v(x, τ)` across K_inner steps with deterministic τ-schedule (0 → 1). Hidden "
+      "[64,128,256], K_inner=5, 200+400 epochs.")),
+    ("V3_predict_state_cfm_l96", "Neural (CFM, PredictState)",
+     ("Single-stage CFM variant where the network directly predicts the final mean `μ = E[x1|x0, y]`. "
+      "Velocity field derived as `v = (μ - x) / (1 - τ)`, enabling backward drift. Sampling "
+      "integrates the ODE `dx/dτ = v(x, τ)` with deterministic τ-schedule (0 → 1). Hidden "
+      "[64,128,256], 400 epochs.")),
 ]
 
 
