@@ -64,11 +64,12 @@ def collate_joint_eval(batch):
     obs = torch.stack([b["obs"] for b in batch])
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
+    forcing_true = torch.stack([b["forcing_true"] for b in batch])
     params = torch.tensor([_window_param_vector(bd) for bd in batch])
     true_params = torch.tensor([_window_param_vector(bd, prefix="true_") for bd in batch])
     return {
         "true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing,
-        "params": params, "true_params": true_params,
+        "forcing_true": forcing_true, "params": params, "true_params": true_params,
     }
 
 
@@ -374,6 +375,8 @@ def _run_case_inference(
     member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint else None
     all_true = []
     param_trues = []
+    x0_all = []
+    forcing_true_all = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -398,6 +401,9 @@ def _run_case_inference(
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
+                # full initial state + clean forcing for the forecast-skill metric
+                x0_all.append(batch["true_state"][:, 0].detach().cpu())
+                forcing_true_all.append(batch["forcing_true"].detach().cpu())
 
     # Concatenate
     per_member = [torch.cat(mp, dim=0).numpy() for mp in member_preds]
@@ -430,6 +436,10 @@ def _run_case_inference(
         per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
         out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
         out["params_true"] = torch.cat(param_trues, dim=0).numpy()
+        # Full-state initial conditions + clean forcing for the forecast-skill
+        # metric (these must NOT be subsampled to the observed subspace).
+        out["x0"] = torch.cat(x0_all, dim=0).detach().cpu().numpy()
+        out["forcing_true"] = torch.cat(forcing_true_all, dim=0).detach().cpu().numpy()
     return out
 
 
