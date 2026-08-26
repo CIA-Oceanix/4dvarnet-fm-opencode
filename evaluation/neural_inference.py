@@ -91,14 +91,30 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         # Infer architecture parameters from state_dict
         inferred_params = {}
 
-        # enc_out.2 is Conv1d(in_c, output_dim, 3)
-        if "model.unet.enc_out.2.weight" in state_dict:
-            output_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
-
-        # proj_in = state_dim + 1 + output_dim for joint models
-        # proj_in = 2*state_dim for non-joint
-        if "model.unet.cond_encoder.proj.weight" in state_dict:
-            proj_in = state_dict["model.unet.cond_encoder.proj.weight"].shape[1]
+        # V2 TweedieCFM uses velocity_unet instead of unet
+        if "model.velocity_unet.enc_out.2.weight" in state_dict:
+            # V2 TweedieCFM: velocity_unet cond has obs_dim = 2*state_dim, cond_extra_dim = 0
+            # proj_in = state_dim + 2*state_dim + 0 = 3*state_dim
+            if "model.velocity_unet.cond_encoder.proj.weight" in state_dict:
+                proj_in = state_dict["model.velocity_unet.cond_encoder.proj.weight"].shape[1]
+                state_dim = proj_in // 3
+                param_dim = 0
+                cond_extra_dim = 0
+            else:
+                # Fallback: assume 24D L96, use defaults
+                state_dim = 24
+                output_dim = 24
+                proj_in = 72  # 3 * 24
+                param_dim = 0
+                cond_extra_dim = 0
+        else:
+            # Single-stage CFM and DirectUNet use model.unet
+            if "model.unet.enc_out.2.weight" in state_dict:
+                output_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
+                # proj_in = state_dim + 1 + output_dim for joint models
+                # proj_in = 2*state_dim for non-joint (obs_dim = state_dim)
+                if "model.unet.cond_encoder.proj.weight" in state_dict:
+                    proj_in = state_dict["model.unet.cond_encoder.proj.weight"].shape[1]
 
         if is_joint:
             # state_dim = proj_in - 1 - output_dim
@@ -233,6 +249,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             N_outer=cfg.model.get("N_outer", 10),
             sigma_prior=cfg.model.get("sigma_prior", 0.5),
             dropout=cfg.model.get("dropout", 0.1),
+            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             param_dim=cfg.model.get("param_dim", 1),
             cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )

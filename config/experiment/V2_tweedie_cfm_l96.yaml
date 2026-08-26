@@ -35,11 +35,4 @@ data:
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2
-  randomize:
-    fast_weights: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    F: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    c1: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    h: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    hx: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    eps: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
-    bias_max: 0.2
+

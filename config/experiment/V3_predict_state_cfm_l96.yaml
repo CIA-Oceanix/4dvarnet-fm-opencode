@@ -24,6 +24,3 @@ training:
     epochs: 0
     lr: 0.001
     gradient_clip_val: 1.0
-
-paths:
-  out_dir: "experiments/V3_predict_state_cfm_s0s1"
