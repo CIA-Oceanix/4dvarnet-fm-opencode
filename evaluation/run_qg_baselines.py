@@ -9,7 +9,13 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from data.qg import QGConfig, make_qg_s0_s1_datasets
-from evaluation.baselines import EnKF, ETKF, ObsOperator, _build_qg_loc_matrices, _build_qg_col_loc_matrices
+from evaluation.baselines import (
+    ETKF,
+    EnKF,
+    ObsOperator,
+    _build_qg_col_loc_matrices,
+    _build_qg_loc_matrices,
+)
 from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
@@ -72,26 +78,30 @@ def _upper_indices(cfg):
 
 def _q_alongtrack_obs(cfg, window, device):
     """Upper-layer PV-anomaly obs for either geometry.
-
-    Returns (obs, R_var, field_std).
+    
+    Returns (obs, R_var).
     """
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
     q1 = window["target_state_q"].reshape(T, ny, nx)
     field_std = float(q1.std())
     sigma = cfg.obs_noise_std_frac * field_std
-    rng = torch.Generator().manual_seed(cfg.seed + 8000)
-
+    
     if "track_x_index" in window:
         obs = torch.full((T, ny), float("nan"))
         track = window["track_x_index"]
-        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+        obs_mask = window["obs_mask"]
+        obs_steps = obs_mask.nonzero(as_tuple=False).flatten().tolist()
+        for t in obs_steps:
             x_col = int(track[t])
-            obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+            obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=torch.Generator().manual_seed(cfg.seed + 8000))
     elif "obs_columns" in window:
         cols_t = window["obs_columns"]
         C = cols_t.shape[1]
         obs = torch.full((T, C * ny), float("nan"))
-        for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+        obs_mask = window["obs_mask"]
+        obs_steps = obs_mask.nonzero(as_tuple=False).flatten().tolist()
+        rng = torch.Generator().manual_seed(cfg.seed + 8000)
+        for t in obs_steps:
             for ci, x_col in enumerate(cols_t[t].tolist()):
                 if 0 <= x_col < nx:
                     obs[t, ci * ny:(ci + 1) * ny] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
@@ -174,7 +184,7 @@ def _q_obs_indices_t(cfg, window):
 def _make_obs_system(cfg, window, device, obs_var, loc_radius):
     """Build ObsOperator with index or H-mode based on obs_var."""
     if obs_var == "q":
-        obs, r_var, field_std = _q_alongtrack_obs(cfg, window, device)
+        obs, r_var, _ = _q_alongtrack_obs(cfg, window, device)
         per_time = _q_obs_indices_t(cfg, window)
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
         return obs, r_var, obs_operator, _build_qg_loc_matrices
@@ -207,10 +217,9 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
         init_ensemble: (N, state_dim) tensor
         mean_lag_days: float
     """
-    truth = window["true_state"].float()
+    truth = window["init_lead_truth"].float()
     dt_steps = int(init_lag_days / cfg.dt)
-    if dt_steps < 1:
-        dt_steps = 1
+    dt_steps = max(dt_steps, 1)
     lead = dt_steps + 1
     if lead >= len(truth):
         lead = len(truth) - 1
@@ -218,11 +227,13 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
     mean_lag_days = 0.0
     gens = [torch.Generator(device=device).manual_seed(cfg.seed + 7 + i) for i in range(N)]
     init_ensemble = torch.zeros(N, truth.shape[-1], device=device)
-    for i, gen in enumerate(gens):
-        k_tplus1 = torch.randint(1, lead, (1,), generator=gen, dtype=torch.long, device=device).item()
+    r = torch.rand(N, generator=gens[0], device=device)
+    for i in range(N):
+        i_gen = gens[i]
+        k_tplus1 = int(r[i] * lead) + 1
         x_tminus1 = truth[k_tplus1 - 1, :]
         x_t = truth[k_tplus1, :]
-        alpha = torch.rand(1, generator=gen, device=device).item()
+        alpha = torch.rand(1, generator=i_gen, device=device).item()
         init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
         mean_lag_days += float(k_tplus1 * dt)
     mean_lag_days /= N
@@ -232,7 +243,7 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
 def _evaluate_window(cfg, window, method, device, obs=None, forcing=None,
                      init_ensemble=None, init_lag_days=None):
     if obs is None:
-        obs, r_var, _, _ = _q_alongtrack_obs(cfg, window, device)
+        obs, _ = _q_alongtrack_obs(cfg, window, device)
     mask = window["obs_mask"].to(device)
     truth = window["true_state"].to(device)
     if forcing is None:
@@ -253,7 +264,7 @@ def _pooled_expvar(analyses, refs):
 def _free_forecast_rmse(cfg, dyn, window, device, forcing):
     """RMSE of the no-obs model forecast (roll from init_state)."""
     truth = window["true_state"].float()
-    init_state = window["init_state"].to(device)
+    init_state = window["init_lead_truth"][0].to(device)
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
                                   - truth.numpy()) ** 2)))
@@ -293,7 +304,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         for i in range(len(d)):
             w = d[i]
             dyn = _build_dyn(cfg, w, device)
-            obs, r_var, obs_op, loc_matrix_builder = _make_obs_system(cfg, w,
+            obs, r_var, _, obs_op = _make_obs_system(cfg, w,
                                                                       device,
                                                                       obs_var,
                                                                       loc_radius)
@@ -327,7 +338,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
             res = _evaluate_window(cfg, w, method, device, obs=obs,
                                    forcing=forcing, init_ensemble=init_ensemble)
-            spread_final_list.append(float(0.0))
+            spread_final_list.append(0.0)
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
             analyses.append(res.trajectory)
@@ -370,7 +381,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--method", choices=["enkf", "etkf"], default="etkf")
+    ap.add_argument("--method-list", default="etkf")
     ap.add_argument("--nx", type=int, default=32)
     ap.add_argument("--num-windows", type=int, default=3)
     ap.add_argument("--window-days", type=float, default=30.0)
@@ -394,11 +405,12 @@ def main():
                    spinup_years=args.spinup_years, num_windows=args.num_windows,
                    obs_geometry="alongtrack", seed=7)
     print(f"device={device}")
-    run(args.method, cfg, device=device, N_ensemble=args.ensemble,
-        inflation=args.inflation, loc_radius=args.loc_radius,
-        scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
-        init=args.init, geometry=args.geometry, obs_var=args.obs_var,
-        init_lag_days=args.init_lag_days)
+    for method in args.method_list.split(","):
+        run(method, cfg, device=device, N_ensemble=args.ensemble,
+            inflation=args.inflation, loc_radius=args.loc_radius,
+            scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
+            init=args.init, geometry=args.geometry, obs_var=args.obs_var,
+            init_lag_days=args.init_lag_days)
 
 
 if __name__ == "__main__":

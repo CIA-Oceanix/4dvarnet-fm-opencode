@@ -28,6 +28,7 @@ class QGConfig:
     spinup_years: float = 2.0
     seed: int = 42
     obs_var_indices: tuple[int, ...] | None = None
+    init_lead_days: float = 10.0
 
     wind_amp: float = 1e-11
     wind_tau_days: float = 15.0
@@ -209,7 +210,9 @@ def _generate_random_column_observations(
     obs = torch.full((T, C * ny), float("nan"))
     obs_mask = torch.zeros(T, dtype=torch.bool)
     obs_cols = torch.full((T, C), -1, dtype=torch.long)
-    for t in range(0, T, steps_per_day):
+    r = torch.rand(T // steps_per_day, generator=rng)
+    for day in range(T // steps_per_day):
+        t = day * steps_per_day + int(r[day] * steps_per_day)
         cols = torch.randperm(nx, generator=rng)[:C]
         obs_cols[t] = cols
         obs_mask[t] = True
@@ -333,19 +336,20 @@ class QGS01Dataset:
                 wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=win_seed,
             )
             steps_per_day = round(86400.0 / cfg.dt)
-            lead = max(1, round(cfg.init_lag_days * steps_per_day)) + 1
+            lead = max(1, round(cfg.init_lead_days * steps_per_day)) + 1
             wind_full = dyn.generate_wind_state(lead + cfg.num_steps, seed=win_seed,
                                                 x0=x0, y0=y0)
             traj_full, _ = dyn.generate_full_trajectory(
                 num_steps=lead + cfg.num_steps, seed=cfg.seed + 3000 + i * 101,
                 spinup_steps=cfg.spinup_steps, wind_state=wind_full,
             )
+            init_lead_truth = traj_full[0:lead]
             traj = traj_full[lead:lead + cfg.num_steps]
             wind_true = wind_full[lead:lead + cfg.num_steps]
             rng_init = np.random.RandomState(cfg.init_seed + i * 17)
             lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
             lag_steps = lag_days * steps_per_day
-            kk = int(math.floor(lag_steps))
+            kk = math.floor(lag_steps)
             alpha = lag_steps - kk
             a = traj_full[lead - kk - 1]
             b = traj_full[lead - kk]
@@ -378,6 +382,7 @@ class QGS01Dataset:
                 "wind_amp": amp,
                 "init_state": init_state,
                 "init_dt_days": lag_days,
+                "init_lead_truth": init_lead_truth,
             }
             if obs_cols is None:
                 entry["track_x_index"] = track_idx
