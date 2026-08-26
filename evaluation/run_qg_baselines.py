@@ -218,24 +218,22 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
         mean_lag_days: float
     """
     truth = window["init_lead_truth"].float()
-    dt_steps = int(init_lag_days / cfg.dt)
-    dt_steps = max(dt_steps, 1)
-    lead = dt_steps + 1
-    if lead >= len(truth):
-        lead = len(truth) - 1
-    dt = float(init_lag_days / dt_steps)
+    steps_per_day = round(86400.0 / cfg.dt)
+    max_lag_steps = min(int(init_lag_days * steps_per_day), len(truth) - 2)
+    max_lag_steps = max(max_lag_steps, 1)
     mean_lag_days = 0.0
     gens = [torch.Generator(device=device).manual_seed(cfg.seed + 7 + i) for i in range(N)]
     init_ensemble = torch.zeros(N, truth.shape[-1], device=device)
     r = torch.rand(N, generator=gens[0], device=device)
     for i in range(N):
-        i_gen = gens[i]
-        k_tplus1 = int(r[i] * lead) + 1
-        x_tminus1 = truth[k_tplus1 - 1, :]
-        x_t = truth[k_tplus1, :]
-        alpha = torch.rand(1, generator=i_gen, device=device).item()
-        init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
-        mean_lag_days += float(k_tplus1 * dt)
+        lag_steps_i = float(r[i] * max_lag_steps)
+        kk = int(lag_steps_i)
+        alpha = lag_steps_i - kk
+        idx = max(len(truth) - 1 - kk, 1)
+        x_a = truth[idx - 1, :]
+        x_b = truth[idx, :]
+        init_ensemble[i] = (1 - alpha) * x_a + alpha * x_b
+        mean_lag_days += lag_steps_i / steps_per_day
     mean_lag_days /= N
     return init_ensemble, mean_lag_days
 
@@ -264,7 +262,7 @@ def _pooled_expvar(analyses, refs):
 def _free_forecast_rmse(cfg, dyn, window, device, forcing):
     """RMSE of the no-obs model forecast (roll from init_state)."""
     truth = window["true_state"].float()
-    init_state = window["init_lead_truth"][0].to(device)
+    init_state = window["init_state"].to(device)
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
                                   - truth.numpy()) ** 2)))

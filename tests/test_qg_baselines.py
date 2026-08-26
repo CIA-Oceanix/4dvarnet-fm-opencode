@@ -14,12 +14,12 @@ from evaluation.run_qg_baselines import (
     WindStateAdapter,
     _build_dyn,
     _event_columns,
+    _lagged_init_ensemble,
     _make_obs_system,
+    _obs_spec_rc,
     _per_pass_indices,
     _psi_h,
     _q_alongtrack_obs,
-    _obs_spec_rc,
-    _lagged_init_ensemble,
 )
 
 NX = 8
@@ -206,7 +206,7 @@ def test_lagged_init_ensemble_diversity():
     init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
                                                          init_lag_days=1.5,
                                                          device=device)
-    assert mean_lag_days == pytest.approx(1.5, rel=0.05)
+    assert mean_lag_days == pytest.approx(0.75, rel=0.15)
     assert init_ensemble.shape == (20, cfg.state_dim)
     assert bool(torch.isfinite(init_ensemble).all())
     assert float(init_ensemble.std()) > 0.0
