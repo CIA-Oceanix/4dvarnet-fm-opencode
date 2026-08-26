@@ -188,7 +188,7 @@ validity, multi-member sampling, single-sample vs ens30×10 bar). **V3 diffusion
 deferred** (no scaffolding exists). **No Phase B code implements these yet** — a
 future session must resolve the doc's open questions before implementing.
 
-### Phase C — L96 joint state-parameter neural estimation (infra done 2026-08-25; training pending)
+### Phase C — L96 joint state-parameter neural estimation (infra done 2026-08-25; training + eval done 2026-08-26)
 
 Extend the existing **L63 joint infrastructure** to L96. Currently only L96 **Joint DA
 baselines** exist; the L96 joint **neural** models were missing.
@@ -203,7 +203,19 @@ baselines** exist; the L96 joint **neural** models were missing.
   scalar keys; `train.py`/`lightning_module.py` dispatch; `eval_joint_neural_l96.py`
   (extended `evaluation/neural_inference.py` for joint types); 8 joint-neural tests
   + WP1 dataset-key tests; 2 sbatch (training 3-task array, eval). `param_dim=8`,
-  h fixed. Training (~5h GPU × 3) + eval + joint-neural-vs-joint-DA report remain.
+  h fixed. Training completed; standalone eval + ens30 completed (2026-08-26, below).
+- **Eval bugs fixed (2026-08-26):** PR #81 (`state_dim` inference, `obs_var_indices`,
+  member-param collection), #83 (ens30 sbatch IFS, ensemble evaluator, `N_outer`
+  passthrough), #85 (`collate_joint_eval` legacy-`fast_weights`-list support for the
+  pre-flattening cached dataset), #89 (ens30 `params_pred` member-mean shape fix),
+  #90 (report-generator table column-order/separator/best-marking fixes).
+- **Results (2026-08-26, cached S0/S1 test set, Obs30, 200 windows):** see the L96
+  joint neural benchmark at `reports/l96/outputs/l96_joint_neural_benchmark.md`.
+  Single-sample: L7 0.606/0.662, L8 0.610/0.661, L9 0.626/0.631 (S0/S1 state RMSE).
+  L9 ens30×10 is the best joint estimator (S0 **0.525**/S1 **0.531**), matching L3's
+  multi-τ integration advantage. **L9 recovers the 8 params (paramRMSE 0.058) while L7
+  τ=0 fails (1.21) despite matching state RMSE**; L8 deterministic recovers them well
+  (0.061). Joint DA baselines not yet run (report rows `--`).
 
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
@@ -257,14 +269,23 @@ The **L-series** (Lorenz-96) is listed separately below.
 | L4_direct_unet_s0s1_small | DirectUNet | [32,64,128] | 200 | n/a | done (Q2: best overall, 0.619/0.621) |
 | L5_vanilla_cfm_s0s1_small_tau0 | VanillaCFM | [32,64,128] | 400 | τ=0 | done (Q2: small hurts CFM, +4.3%) |
 | L6_vanilla_cfm_s0s1_forcing_cond | VanillaCFM | [64,128,256] | 400 | τ=0 + forcing cond | done (Q3: neutral vs obs-only) |
-| L7_joint_cfm_s0s1 | JointCFM | [64,128,256] | 400 | τ=0, joint 8-param | infra done; training pending (Phase C) |
-| L8_joint_direct_unet_s0s1 | JointDirectUNet | [64,128,256] | 200 | joint 8-param | infra done; training pending (Phase C) |
-| L9_joint_cfm_s0s1_multitau | JointCFM | [64,128,256] | 400 | multi-τ, joint 8-param | infra done; training pending (Phase C) |
+| L7_joint_cfm_s0s1 | JointCFM | [64,128,256] | 400 | τ=0, joint 8-param | done (state 0.606/0.662; paramRMSE 1.21 — τ=0 fails params) |
+| L8_joint_direct_unet_s0s1 | JointDirectUNet | [64,128,256] | 200 | joint 8-param | done (state 0.610/0.661; paramRMSE 0.061) |
+| L9_joint_cfm_s0s1_multitau | JointCFM | [64,128,256] | 400 | multi-τ, joint 8-param | done (ens30×10 best joint: state 0.525/0.531; paramRMSE 0.058) |
 
 **Standalone DA-parity results (cached test set, Obs30, 200 windows)** — S0/S1 RMSE
 (single-sample convention; L3's S0 ranking is superseded by the ens30 study above):
 L4 **0.619**/0.621 < L1b 0.622/0.625 < L2b 0.633/0.633 ≈ L6 0.639/0.638 < L5 0.660/0.660 < L3 0.688/0.690.
 All neural degradation ≈ 1.00; best DA (Strong-4DVar): 0.742/1.432.
+
+**L96 joint state-parameter estimation (Phase C, 2026-08-26)** — cached S0/S1, Obs30,
+200 windows; 24D state + 8 params (F, c1, hx, eps, w1..w4). Single-sample S0/S1 state
+RMSE: L7 0.606/0.662, L8 0.610/0.661, L9 0.626/0.631. Best joint = **L9 multi-τ at
+ens30×10: S0 0.525 / S1 0.531** (matches L3's multi-τ integration advantage). Param
+recovery is model-dependent: L9 recovers the 8 params (paramRMSE 0.058) as does L8
+JointDirectUNet (0.061), but **L7 τ=0 fails to recover params (1.21)** despite matching
+state RMSE. Full tables: `reports/l96/outputs/l96_joint_neural_benchmark.md`.
+Joint DA baselines not yet run (report rows `--`).
 
 ## Phases
 
