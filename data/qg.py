@@ -350,6 +350,7 @@ class QGS01Dataset:
             a = traj_full[lead - kk - 1]
             b = traj_full[lead - kk]
             init_state = (1.0 - alpha) * a + alpha * b
+            init_lead_truth = traj_full[0:lead]
             if cfg.obs_geometry == "random_columns":
                 obs, obs_mask, obs_cols = _generate_random_column_observations(
                     dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
@@ -378,6 +379,7 @@ class QGS01Dataset:
                 "wind_amp": amp,
                 "init_state": init_state,
                 "init_dt_days": lag_days,
+                "init_lead_truth": init_lead_truth,
             }
             if obs_cols is None:
                 entry["track_x_index"] = track_idx
