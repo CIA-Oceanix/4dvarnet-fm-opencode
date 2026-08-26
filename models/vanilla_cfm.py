@@ -233,3 +233,133 @@ class PredictStateCFM(nn.Module):
             x = x + dt * v
 
         return x
+class TweedieCFM(nn.Module):
+    """Two-stage CFM: MeanEstimatorCell (stage 1) + velocity UNet on residual (stage 2).
+
+    Architecture:
+        Stage 1: MeanEstimatorCell assumes obs-only (cond_extra_dim=0)
+            x_mean = estimate_mean(obs) = E[x1 | obs]
+
+        Stage 2: Velocity UNet operates in residual space:
+            v = E[(x1 - mean) - x0 | x_τ, obs, mean]
+
+        Sampling: mean + CFM_sample(residual)
+    """
+    def __init__(
+        self,
+        state_dim: int = 3,
+        hidden_channels: list = None,
+        time_emb_dim: int = 64,
+        K_inner: int = 5,
+        N_outer: int = 10,
+        sigma_prior: float = 0.5,
+        dropout: float = 0.1,
+        train_tau_0_only: bool = False,
+        cond_extra_dim: int = 0,
+    ):
+        super().__init__()
+        self.state_dim = state_dim
+        self.K_inner = K_inner
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = train_tau_0_only
+
+        from models.residual import MeanEstimatorCell
+        self.mean_estimator = MeanEstimatorCell(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            time_emb_dim=time_emb_dim,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.velocity_unet = UNet1D(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            obs_dim=2 * state_dim,
+            cond_extra_dim=cond_extra_dim,
+            time_emb_dim=time_emb_dim,
+            use_obs=True,
+            use_energy=False,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+
+    def estimate_mean(self, obs: torch.Tensor) -> torch.Tensor:
+        """Compute conditional mean E[x1 | obs] via K_inner iterative refinement."""
+        B, T, D = obs.shape
+        x = torch.zeros(B, D, T, device=obs.device)
+        for k in range(self.K_inner):
+            tau = torch.full((B,), k / (self.K_inner - 1), device=obs.device)
+            residual = self.mean_estimator(x, obs.transpose(1, 2), tau)
+            x = x + residual
+        return x.transpose(1, 2)
+
+    def forward(self, x_t, obs, mean, tau):
+        """Predict velocity in residual space.
+
+        Args:
+            x_t: Noised residual state (B, T, D)
+            obs: Observations (B, T, D)
+            mean: Mean estimate (B, T, D)
+            tau: Time points (B,) default τ=0 when train_tau_0_only
+
+        Returns:
+            v: Predicted velocity (B, T, D)
+        """
+        if self.train_tau_0_only:
+            tau = torch.zeros(obs.shape[0], device=obs.device)
+        cond = torch.cat([obs, mean], dim=-1)
+        v = self.velocity_unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
+        return v.transpose(1, 2)
+
+    def compute_loss(self, batch):
+        """Compute two-stage loss based on current training stage.
+
+        Stage 1: MSE(mean_estimate, x1)  (target = true state, not residual)
+        Stage 2: standard CFM loss in residual space
+        """
+        B = batch.obs.shape[0]
+        device = batch.obs.device
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        x0 = torch.randn_like(batch.states) * self.sigma_prior
+
+        if self.training and not getattr(self, '_stage', 1) == 1:
+            mean = self.estimate_mean(batch.obs)
+            x_residue = batch.states - mean
+            x_tau_residue = self.interpolant.mix(x0, x_residue, tau)
+            v_target = x_residue - x0
+            v_pred = self.forward(x_tau_residue, batch.obs, mean, tau)
+            return F.mse_loss(v_pred, v_target)
+        else:
+            mean = self.estimate_mean(batch.obs)
+            return F.mse_loss(mean, batch.states)
+
+    def sample(self, batch, N_outer=None):
+        """Sample trajectories via Euler integration in residual space.
+
+        Returns: mean + residual_sample
+        """
+        if N_outer is None:
+            N_outer = self.N_outer
+        obs = batch.obs
+        B, T, D = obs.shape
+        device = obs.device
+
+        mean = self.estimate_mean(obs)
+        x = torch.randn_like(obs) * self.sigma_prior
+
+        if self.train_tau_0_only:
+            v = self.forward(x, obs, mean, tau=torch.zeros(B, device=device))
+            x = x + v
+        else:
+            dt = 1.0 / N_outer
+            for step in range(N_outer):
+                tau = torch.full((B,), step / N_outer, device=device)
+                v = self.forward(x, obs, mean, tau)
+                x = x + dt * v
+
+        return mean + x
+
+    def set_stage(self, stage: int):
+        """Set the current training stage for compute_loss."""
+        self._stage = stage
