@@ -177,7 +177,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             N_outer=tc.N_outer,
             sigma_prior=tc.sigma_prior,
             dropout=tc.dropout,
-            train_tau_0_only=tc.get("train_tau_0_only", False),
+            train_tau_0_only=tc.train_tau_0_only,
             cond_extra_dim=tc.cond_extra_dim,
         )
     else:
@@ -230,6 +230,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             true_param_list.append(np.array(tp))
         elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -273,6 +275,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "joint_direct_unet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -469,6 +473,21 @@ def main(cfg: DictConfig):
             model = train_stage(model, loaders, cfg, stage=2, device=device)
             train_time += time.time() - t0
             print(f"    Stage 2 done in {time.time()-t0:.1f}s")
+        elif model_type == "tweedie_cfm" and epochs_s2 > 0:
+            t0 = time.time()
+            from training.lightning_module import LitModel
+            from training.pipeline import create_trainer
+            stage_cfg = cfg.training.stage2
+            lit = LitModel(model, model_type=model_type, stage=2,
+                           lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
+                           use_gradient_loss=cfg.training.loss.use_gradient,
+                           gradient_weight=cfg.training.loss.gradient_weight)
+            trainer = create_trainer(cfg, 2)
+            trainer.fit(lit, loaders["train"], loaders["val"])
+            path = cfg.paths.checkpoint_stage2
+            torch.save(lit.model.state_dict(), path)
+            train_time += time.time() - t0
+            print(f"    Stage 2 done in {train_time-t0:.1f}s")
     finally:
         os.chdir(orig_cwd)
     total_t = time.time() - total_t0
@@ -536,7 +555,7 @@ def main(cfg: DictConfig):
         "model_type": model_type,
         "config": {
             "hidden_channels": list(hc_src.hidden_channels) if hc_src is not None and "hidden_channels" in hc_src else list(cfg.model.hidden_channels),
-            "epochs": epochs_s1 + (epochs_s2 if model_type == "tweedie" else 0),
+            "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie", "tweedie_cfm") else 0),
             "train_mix": train_mix,
             "randomize_params": randomize_params,
             "data_setup": data_setup,

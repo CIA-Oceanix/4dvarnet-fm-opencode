@@ -56,5 +56,5 @@ jobs:
             tests/test_estimate_metrics.py \
             tests/test_joint_estimation_l96_neural.py \
             tests/test_predict_state_cfm.py \
-            tests/test_tweedie_cfm.py \
+            tests/test_tweedie_cfm_variants.py \
             -m "not slow" -q
