@@ -318,12 +318,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             if obs_var == "q":
                 if per_time is None:
                     per_time = _q_obs_indices_t(cfg, w)
+                obs, r_var, _ = _q_alongtrack_obs(cfg, w, device)
                 field_std = float(w["target_state_q"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None:
                     Lx_t, Ly_t = _build_qg_loc_matrices(
                         dyn.state_dim, per_time, 2, cfg.ny, cfg.nx,
                         loc_radius, device)
+                obs_op = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
                 if method_name == "enkf":
                     method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,

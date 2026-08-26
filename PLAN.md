@@ -192,13 +192,14 @@ VanillaCFM:
 ```
 
  ### Phase A.5b: DA baselines with lagged-truth first guess (feat/qg-da-baselines-rich-obs branch)
-- [x] `data/qg.py` — add `init_lag_days=2.0`/`init_seed=7001` to QGConfig; `_generate_truth` adds lead-in prefix and stores `init_state` (linearly interpolated truth at `t₀−dt`, dt~U(0,DT])` + `init_dt_days` per window, updates `window_days=30`
-- [x] `evaluation/run_qg_baselines.py` — refactor for lagged init + rich-obs H-mode support
-- [x] `evaluation/sweep_qg_baselines.py` — comprehensive inflation×loc×dt sweep driver
+- [x] `data/qg.py` — add `init_lead_days=10.0`/`init_seed=7001` to QGConfig; `_generate_truth` adds 10-day lead-in prefix, stores `init_lead_truth` (truth at `t₀-lead_days` components) + `init_state` (linearly interpolated at `t₀-dt` with `dt~U(0,DT])`)
+- [x] `evaluation/run_qg_baselines.py` — refactor for lagged init + rich-obs H-mode support (random sub-daily obs via `_generate_random_column_observations`, ensemble from lead-truth via `_lagged_init_ensemble`, ObsOperator for per-time obs indices)
+- [x] `evaluation/sweep_qg_baselines.py` — comprehensive inflation×loc×dt sweep driver with `--init-lag-days-list` support
 - [x] `tests/test_qg_baselines.py` — replace catalog tests with lagged-init and init_ensemble tests
-- [x] `_lagged_init_ensemble()` functions for x(t₀-progress dt) members with dt~U(0,DT]
+- [x] `_lagged_init_ensemble()` functions for x(t₀-progress dt) members with dt~U(0,DT] from `window["init_lead_truth"]` (10-day buffer)
 - [x] `_event_columns()` and `_psi_h()` helpers for case geometries
 - [x] L1/L2/CS1/CS2/CS3/CS4 supported via geometry and obs_var args
+- [x] Fix: CUDA RNG generator issue (torch.randint→int(r[i]*lead)+1), ObsOperator initialization for obs_var="q" (create obs_op before method)
 - [x] Updated PLAN.md CHANGELOG.md (pending commit)
 - [ ] CUDA cleanup to unblock pytest (environment blocked)
 - [ ] Fix H-function tensor indexing in `_psi_h()` for standalone mode
