@@ -4,10 +4,12 @@ on:
   pull_request:
     branches:
       - 'feat/l96-*'
+      - 'feature/*'
       - master
   push:
     branches:
       - 'feat/l96-*'
+      - 'feature/*'
 
 jobs:
   lint:
@@ -52,4 +54,6 @@ jobs:
             tests/test_baselines_hydra.py \
             tests/test_metrics.py \
             tests/test_joint_estimation_l96_neural.py \
+            tests/test_predict_state_cfm.py \
+            tests/test_tweedie_cfm.py \
             -m "not slow" -q
