@@ -55,7 +55,7 @@ def test_window_shapes():
         "obs_mask", "track_x_index", "obs_field", "wind_curl",
         "wind_state_true", "wind_state_corrupted", "true_params",
         "da_model", "da_params", "wind_seed", "wind_amp", "forcing_true",
-        "forcing_corrupted", "init_state", "init_dt_days"}
+        "forcing_corrupted", "init_state", "init_dt_days", "init_lead_truth"}
 
 
 def test_obs_nan_pattern_and_track_advance():
