@@ -902,3 +902,18 @@ that could not run the committed ensemble/seed sbatch or reproduce the swapped c
 **Rationale:** The user wants the neural evaluation to be truly standalone and comparable to the DA baselines, run on the identical test dataset and procedure (both S0 and S1), and decoupled from model internals by storing raw estimates for a generic shared evaluation step.
 
 **Verification:** `pytest tests/test_neural_inference.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_metrics.py tests/test_baselines_hydra.py -m "not slow"` — 79 passed. Ruff/mypy on changed files: no new errors (only pre-existing UP045/RUF059/TRY004/I001). L1/L2 evaluated on the cached DA-parity dataset: S0 all_obs RMSE 1.56 (slow 0.48 / obs_fast 2.10), S1 1.56, S1/S0 ≈ 1.00. Note: this DA-parity RMSE (1.56) differs from the training-time in-process `results.json` (~0.59) because the two evals run on different test windows; the standalone path is the comparable one.
+
+## 2026-08-26: V3 PredictStateCFM single-stage CFM variant implemented (ready for merge)
+
+**Summary:** Implemented **V3 PredictStateCFM**, a single-stage CFM variant where the network predicts the final mean state μ = E[x1|xt,y] directly rather than the velocity residual v = (x1-x0) / (1-τ). ODE formulation: v = (μ - x) / (1 - τ), enabling backward-drift toward the predicted final state. V3 is now tested, compiled, and ready for PR merge. Follow-on work on V2 (two-stage TweedieCFM) is planned via `PHASE2_L96_TWEEDIE_CFM_PLAN.md`.
+
+**Changes:**
+- `models/vanilla_cfm.py`: Added `PredictStateCFM` class (~79 lines) with `forward(x_t, batch, tau)`, `compute_loss(batch)`, `sample(batch, N_outer)` — trains and samples correctly
+- `conf/schema.py`: Added `PredictStateCFMConfig` (hidden_channels default [64,128,256], time_emb_dim=64, N_outer=10, sigma_...">
+- `train.py`: Added `predict_state_cfm` dispatch in `model_factory()`, `evaluate_model()`, `save_trajectories()`
+- `training/lightning_module.py`: Added `predict_state_cfm` branch with `_forward_and_loss` → `model.compute_loss(batch)` and `forward` → `model.sample(batch)`
+- `config/experiment/V3_predict_state_cfm_l96.yaml`: L96 24D training config (400 epochs, cond_extra_dim=0, obs_j=2, param_dim=0)
+- `batch/run_l96_cfm_v3_train.sbatch`: RTX8000 sbatch for L96 V3 training (single-stage)
+- `tests/test_predict_state_cfm.py`: 8 unit tests (init parameters, forward shapes, loss, sampling, train_tau_0_only) — all pass
+- `.github/workflows/ci.yml`: Added test file and `feature/*` branch triggers
+- `PHASE2_L96_TWEEDIE_CFM_PLAN.md`: Comprehensive 9-step plan for V2 Twee...
