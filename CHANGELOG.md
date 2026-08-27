@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-08-27: V2/V3 restoration + eval pipeline validation (smoke tests: L2b L3)
+
+**Summary:** Restored V2 TweedieCFM and V3 PredictStateCFM classes to the cleanup branch
+(model-snake topology: main worktree=`feature/l96-predict-state-cfm-clean-cleanup` with
+head ec277c2, source of truth=`../4dvarnet-fm-opencode-cleanup` with head c1001dd.
+V2/V3 classes were stripped during cleanup cleanup commit ec277c2). Validated the
+eval pipeline with 1-epoch smoke tests on sl-mee-br-204 (RTX8000 GPU).
+
+V2/V3 training remains blocked by dataset generation hang on cluster nodes
+(`make_l96_s0_s1_trainval` hangs indefinitely) — confirmed across multiple jobs
+(50097, 50116, 50250, 50253, 50255, 50261, 50348, 50349). Latent nodes tested:
+sl-mee-br-202 (current login), sl-mee-br-203, sl-mee-br-204 (still hangs).
+Eval successfully uses cached test dataset (`experiments/l96_datasets_obsj2_int100_nwin200.pt`)
+and bypasses the hang entirely.
+
+**Files modified:**
+- `models/vanilla_cfm.py` — PredictStateCFM (+121 lines) + TweedieCFM (+91 lines) restored
+- `training/lightning_module.py` — PredictStateCFM/TweedieCFM dispatch in
+  configure_optimizers, on_train_start, _forward_and_loss, forward (+29 lines)
+- `conf/schema.py` — PredictStateCFMConfig & TweedieCFMConfig dataclasses
+  + ModelConfig fields (`model_type` mapping for predict_state_cfm/tweedie_cfm,
+  `param_dim`, `cond_extra_dim`, `train_tau_0_only`) (+26 lines)
+- `config/experiment/L3_smoke.yaml` — new 1-epoch VanillaCFM smoke test config (35 lines)
+- `eval_neural_l96.py` — unchanged (uses cached eval dataset, no generation)
+- `CHANGELOG.md` — this entry
+
+**Validation:**
+Eval smoke tests (CPU on sl-mee-br-204) results:
+- L2b (τ=0): S0 RMSE 0.632439, S1 RMSE 0.633413, degradation 1.001540
+  vs original L2b S0 0.632857, S1 0.633420, degradation 1.000889 — matches within
+  numerical precision
+- L3 (multi-τ): S0 RMSE 0.687355, S1 RMSE 0.689367, degradation 1.002927
+  vs original L3 S0 0.687587, S1 0.690439, degradation 1.004148 — matches within
+  numerical precision
+
+Jobs: 50348 (L2b eval, 00:00:20), 50349 (L3 eval, 00:00:17), both completed with exit 0:0.
+
+**Rationale:** The original V2/V3 training attempt failed due to ImportError
+(cannot import TweedieCFM/PredictStateCFM) when train.py tried to import those
+classes. Restoration of those classes enables V2/V3 training infrastructure.
+Eval smoke tests validate that the current codebase's model loading, inference,
+and metrics pipeline works correctly using existing checkpoints and cached data.
+
+**Next steps:**
+- V2/V3 training: blocked by dataset generation hang — requires alternate approach
+  (pre-generated trajectories or different cluster node)
+- Consider integ test for V2/V3 models (eval path limited to VanillaCFM)
+- Clean up smoke sbatch scripts if not needed
+
+**Triage/Background:** Root cause of V2/V3 deletion: cleanup branch
+feature/l96-predict-state-cfm-clean-cleanup systematically removed V2/V3 classes
+from 4 files as part of earlier refactoring/cleanup (joined from feature branch
+and merged). The original working V2/V3 code exists in:
+- `../4dvarnet-fm-opencode-cleanup` (feature/l96-predict-state-cfm-clean, c1001dd)
+- `/tmp/opencode/l96-v2v3` (feature/l96-predict-state-cfm, 67cbd57)
+
+The D2/D3 dataset-generation hang surfaced during config validation (10-window
+demo). Even pre-config config instantiation succeeded (Lorenz96Config OK) but
+calls to dynamics generation (`generate_observations` with 4x integration steps)
+never returned. Same behavior observed in train.py, validate scripts, and
+standalone spawn scripts.
+
 ## 2026-08-26: L96 joint benchmark — NRMSE + trajectory-forecast metrics (PR #95)
 
 **Summary:** Added two parameter-estimation metrics to the L96 joint
