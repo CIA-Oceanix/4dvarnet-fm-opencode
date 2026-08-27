@@ -1,4 +1,23 @@
 # Changelog
+ 
+## 2026-08-27: Scoping fix + smoke-cached-data support for L3 training
+
+**Summary:** Fixed critical Python scoping bug in `train.py` that was blocking all VanillaCFM/DirectUNet training runs. Removed function-local imports of torch, LitModel, and create_trainer in `main()` that shadowed module-level names, causing UnboundLocalError: 'LitModel' referenced before assignment for L3 and other vanilla_cfm experiments. Also added smoke-cached-data support to bypass cluster dataset-generation hang during training validation.
+
+**Root cause:** Inside `main()` function, function-local imports like `import torch` (line 400) and `from training.lightning_module import LitModel` (lines 466, 497) mark those names as local across the entire function. For `model_type="vanilla_cfm"` (L3), the code takes the `else` branch and tries to use `LitModel` at line 472 before the re-import at line 466/497 executes, causing the UnboundLocalError. This blocked re-training L3 and any VanillaCFM or DirectUNet experiment.
+
+**Files modified:**
+- `train.py` — removed 6 problematic function-local imports: (1) `import torch` (line 400), (2) `from training.lightning_module import LitModel` + `from training.pipeline import create_trainer` (lines 466–467), (3) `from training.lightning_module import LitModel` + `from training.pipeline import create_trainer` (lines 497–498). Now relies exclusively on module-level imports at lines 15, 33, 34.
+- `conf/schema.py` — added `smoke_cached_data: Optional[str] = None` to DataConfig for temporary mitigation of dataset-generation hang.
+- `config/experiment/L3_smoke.yaml` — enabled smoke Cached data with `smoke_cached_data: experiments/l96_datasets_obsj2_int100_nwin200.pt`.
+
+**Verification:** 
+- `py_compile train.py` passes without error.
+- `grep -n 'import torch\|LitModel\|create_trainer' train.py` confirms only module-level imports remain (lines 15, 33-34) plus usages in the function (no function-local re-imports).
+
+g artifacts are properly committed for a clean run.
+
+**Next steps:** Submit L3 smoke test against committed commits to validate training passes with the scoping fix.
 
 ## 2026-08-28: L96 joint DA benchmark — Joint-EnKF runs + state-only inflation (stabilized)
 
