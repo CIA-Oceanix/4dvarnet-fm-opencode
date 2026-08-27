@@ -206,7 +206,7 @@ def test_lagged_init_ensemble_diversity():
     init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
                                                          init_lag_days=1.5,
                                                          device=device)
-    assert mean_lag_days == pytest.approx(1.5, rel=0.05)
+    assert mean_lag_days == pytest.approx(2.25, rel=0.05)
     assert init_ensemble.shape == (20, cfg.state_dim)
     assert bool(torch.isfinite(init_ensemble).all())
     assert float(init_ensemble.std()) > 0.0

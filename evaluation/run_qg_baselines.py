@@ -306,10 +306,10 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         for i in range(len(d)):
             w = d[i]
             dyn = _build_dyn(cfg, w, device)
-            obs, r_var, _, obs_op = _make_obs_system(cfg, w,
-                                                                      device,
-                                                                      obs_var,
-                                                                      loc_radius)
+            obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
+                                                               device,
+                                                               obs_var,
+                                                               loc_radius)
             forcing = w["wind_state_corrupted"].to(device)
             init_ensemble = None
             init_lag_val = 0.0
