@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-27: QG psi-obs observation operator fix + density sweep (PR #103)
+
+**Summary:** Fixed a tuple-unpacking bug in `evaluation/run_qg_baselines.py` that made the `obs_var='psi'` DA observation-operator path silently use the wrong object, and made `EnKF.assimilate` h-mode-aware so psi (streamfunction-column) observations assimilate correctly. Added `--obs-var` to the sweep driver plus the density-sweep and psi-obs sbatch scripts. Merged via PR #103 on top of the localization×lag sweep from PR #102.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — fix `obs, r_var, obs_op, _ = _make_obs_system(...)` (was `obs, r_var, _, obs_op`, assigning the loc-matrix builder function to `obs_op` instead of the `ObsOperator`, the root cause of `AttributeError: 'function' object has no attribute 'obs_dim'` when `obs_var='psi'`).
+- `evaluation/baselines.py` — `EnKF.assimilate` now checks `self.obs_operator.h_mode` before reading `H.obs_dim` (defensive, backward-compatible with index-mode).
+- `evaluation/sweep_qg_baselines.py` — added `--obs-var` (choices q|psi) forwarded to `run()`.
+- `tests/test_qg_baselines.py` — `test_psi_obs_run_smoke` now passes (end-to-end `obs_var='psi'`); updated `test_lagged_init_ensemble_diversity` expected mean lag `1.5 → 2.25` to match the corrected lagged-init implementation (`dt_steps=max(int(1.5/2),1)=1`, `dt=1.5`, `E[k_t+1]=1.5` ⇒ mean 2.25).
+- `batch/run_qg_density_sweep.sbatch` (from prior commit) — 3-task array, cols=4/6/12.
+- `batch/run_qg_psi_obs_test.sbatch` (from prior commit) — psi-obs test at cols=4, lag=0.5.
+- `PLAN.md` — (no change this turn).
+
+**Rationale:** The psi-obs (observe upper-layer streamfunction via spectral inversion rather than PV) path was added earlier but never exercised because the unpacking bug meant the h-mode `ObsOperator` was never actually wired into EnKF/ETKF. With the fix, the psi-obs smoke test exercises the full H-function inversion + column-localization + assimilation chain.
+
+**Verification:** `pytest tests/test_qg_baselines.py -v` — 15/15 pass (including `test_psi_obs_run_smoke`). `pytest tests/test_qg_baselines.py tests/test_qg_s0s1.py -m "not slow" -q` — 28/28 pass. `ruff check` on `run_qg_baselines.py` clean; no new dev-lint errors in `baselines.py`/`tests` (pre-existing debt unchanged, informational). pytest CI green on PR #103; approved by `rfablet-review`; squash-merged.
+
 ## 2026-08-25: QG DA baselines with lagged-truth first guess (A.5b-v2) - Complete Implementation
 
 **Summary:** Replaced degenerate catalog init with physically coherent lagged-truth background (`x(t₀−dt)` with `dt~U(0, DT]`) transforming S0 from EV≈−0.5 to non-trivial DA test. Full QG A.5b-v2 delivered (lagged init + rich-obs H-schema + comprehensive sweep driver). All 68 QG tests pass. Push blocked by repo rules (pytest CI gate) — ready to merge via PR workflow.
