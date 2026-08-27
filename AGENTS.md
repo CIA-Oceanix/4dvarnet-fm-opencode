@@ -9,6 +9,31 @@ Every opencode session in this repository MUST follow this workflow:
 3. **Verify** — Run the relevant test/lint commands (see below).
 4. **Log changes** — Append a dated entry to `CHANGELOG.md` describing what was implemented, why, and any notable design decisions.
 
+### Working tree selection (IMPORTANT)
+
+This project uses one physical worktree per topic branch:
+
+| Worktree dir | Branch | Topic |
+|---|---|---|
+| `/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode` | `master` | Integration / PR landing |
+| `.../4dvarnet-fm-opencode/4dvarnet-fm-joint-da` | `feature/l96-joint-da-benchmark` | Joint DA (ETKF) topic |
+| `.../4dvarnet-fm-opencode/4dvarnet-fm-cfm-v2v3` | `feature/l96-v2v3-pure` | V2/V3 (TweedieCFM + PredictStateCFM) topic |
+
+**Every opencode session MUST start in the appropriate working tree.** Branch-pinning guarantees you cannot work on the wrong branch, but this only works if you `cd` into the topic directory first:
+
+- **Joint-DA session**: `cd .../4dvarnet-fm-opencode/4dvarnet-fm-joint-da && opencode`
+- **V2/V3 session**: `cd .../4dvarnet-fm-opencode/4dvarnet-fm-cfm-v2v3 && opencode`
+- **Main repo changes**: `cd .../4dvarnet-fm-opencode && opencode`
+
+**Worktree bootstrap rule:** When starting a topic session, if `AGENTS.md`, `PLAN.md`, or `CHANGELOG.md` were last updated on the master branch **before the topic was forked** (check their timestamps), manually sync them from master first:
+
+```bash
+git pull origin master --dry-run  # fast check: origin/master newer?
+# If newer: git pull origin master    # sync merged docs first
+```
+
+Commit-before-switch rule: **Never leave uncommitted edits when switching worktrees.** Always commit or stash your unfinished work before checking out a different branch.
+
 ## Git / PR Workflow
 
 These general requirements apply to code changes in **every** session (not just L96).
@@ -108,3 +133,4 @@ Always run tests after making changes.
 - Ensure `LitModel` (in `training/lightning_module.py`) handles the new model type correctly
 - Add tests for any new model, loss, or dataset in `tests/`
 - Document the change in `CHANGELOG.md`
+
