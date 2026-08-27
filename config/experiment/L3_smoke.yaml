@@ -26,6 +26,8 @@ training:
   stage2:
     epochs: 0
 
+smoke_cached_data: experiments/l96_datasets_obsj2_int100_nwin200.pt
+
 data:
   data_setup: s0_s1
   bias_max: 0.2
