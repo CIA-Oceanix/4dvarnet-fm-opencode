@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Optional
 
 
 @dataclass
@@ -56,9 +56,10 @@ class DataConfig:
     fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
     obs_j: int = 2
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
-
-    # Device
-    device: str = "cpu"
+    smoke_cached_data: Optional[str] = None
+ 
+     # Device
+     device: str = "cpu"
 
     @property
     def num_steps(self) -> int:
