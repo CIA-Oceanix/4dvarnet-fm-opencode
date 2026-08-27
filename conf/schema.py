@@ -174,8 +174,30 @@ class JointDirectUNetConfig:
 
 
 @dataclass
+class PredictStateCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    cond_extra_dim: int = 0
+
+
+@dataclass
+class TweedieCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    K_inner: int = 5
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -189,6 +211,8 @@ class ModelConfig:
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
+    tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
 
 
 @dataclass
