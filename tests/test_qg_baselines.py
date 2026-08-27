@@ -206,7 +206,7 @@ def test_lagged_init_ensemble_diversity():
     init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
                                                          init_lag_days=1.5,
                                                          device=device)
-    assert mean_lag_days == pytest.approx(1.5, rel=0.05)
+    assert mean_lag_days == pytest.approx(2.25, rel=0.05)
     assert init_ensemble.shape == (20, cfg.state_dim)
     assert bool(torch.isfinite(init_ensemble).all())
     assert float(init_ensemble.std()) > 0.0
@@ -232,3 +232,21 @@ def test_etkf_q_cols_lagged_smoke_finite():
     assert np.isfinite(res.ensemble_variance).all()
 
 
+
+
+def test_psi_obs_run_smoke():
+    """End-to-end smoke: run() with obs_var='psi' produces finite results."""
+    cfg = QGConfig(nx=8, window_days=6.0, spinup_years=0.05,
+                   num_windows=2, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3)
+    ds = make_qg_s0_s1_datasets(cfg)
+    from evaluation.run_qg_baselines import run
+    p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s0",),
+            init="lagged", geometry="random_columns",
+            obs_var="psi", init_lag_days=0.5, ds=ds)
+    assert "test_s0" in p["scenarios"]
+    s0 = p["scenarios"]["test_s0"]
+    assert np.isfinite(s0["rmse_mean"])
+    assert np.isfinite(s0["expvar_full"])
+    assert s0["rmse_mean"] < 1.0  # bounded

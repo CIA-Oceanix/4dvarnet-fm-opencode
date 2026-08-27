@@ -1022,7 +1022,10 @@ class EnKF:
 
         num_steps = observations.shape[0]
         H = self.obs_operator
-        od = H.obs_dim
+        if self.obs_operator.h_mode:
+            od = self.obs_operator.obs_dim
+        else:
+            od = H.obs_dim
 
         if self.R_var_vec is not None:
             r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)

@@ -279,12 +279,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
     if ds is None:
         cfg = QGConfig(nx=cfg.nx, window_days=cfg.window_days,
                        spinup_years=cfg.spinup_years, num_windows=cfg.num_windows,
-                       obs_geometry=geometry, seed=7)
+                       obs_geometry=geometry, cols_per_day=cfg.cols_per_day,
+                       obs_field=cfg.obs_field, seed=7)
         ds = make_qg_s0_s1_datasets(cfg)
     else:
         cfg = QGConfig(nx=cfg.nx, window_days=cfg.window_days,
                        spinup_years=cfg.spinup_years, num_windows=cfg.num_windows,
-                       obs_geometry=geometry, seed=7)
+                       obs_geometry=geometry, cols_per_day=cfg.cols_per_day,
+                       obs_field=cfg.obs_field, seed=7)
 
     per_layer = cfg.ny * cfg.nx
     summary = {}
@@ -304,10 +306,10 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         for i in range(len(d)):
             w = d[i]
             dyn = _build_dyn(cfg, w, device)
-            obs, r_var, _, obs_op = _make_obs_system(cfg, w,
-                                                                      device,
-                                                                      obs_var,
-                                                                      loc_radius)
+            obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
+                                                               device,
+                                                               obs_var,
+                                                               loc_radius)
             forcing = w["wind_state_corrupted"].to(device)
             init_ensemble = None
             init_lag_val = 0.0
@@ -323,6 +325,26 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 if loc_radius is not None:
                     Lx_t, Ly_t = _build_qg_loc_matrices(
                         dyn.state_dim, per_time, 2, cfg.ny, cfg.nx,
+                        loc_radius, device)
+                if method_name == "enkf":
+                    method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
+                                  inflation=inflation, device=device, dynamics=dyn,
+                                  obs_operator=obs_op, loc_radius=loc_radius,
+                                  noise_init_std=field_std,
+                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
+                else:
+                    method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
+                                  inflation=inflation, device=device, dynamics=dyn,
+                                  obs_operator=obs_op, loc_radius=loc_radius,
+                                  noise_init_std=field_std,
+                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
+            else:  # obs_var == "psi"
+                field_std = float(w["target_state_psi"].std())
+                Lx_t = Ly_t = None
+                if loc_radius is not None:
+                    cols_t = _event_columns(cfg, w)
+                    Lx_t, Ly_t = _build_qg_col_loc_matrices(
+                        dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
                         loc_radius, device)
                 if method_name == "enkf":
                     method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
@@ -403,7 +425,8 @@ def main():
         "cuda" if torch.cuda.is_available() else "cpu")
     cfg = QGConfig(nx=args.nx, window_days=args.window_days,
                    spinup_years=args.spinup_years, num_windows=args.num_windows,
-                   obs_geometry="alongtrack", seed=7)
+                   obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
+                   seed=7)
     print(f"device={device}")
     for method in args.method_list.split(","):
         run(method, cfg, device=device, N_ensemble=args.ensemble,
