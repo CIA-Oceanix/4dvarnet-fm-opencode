@@ -108,3 +108,4 @@ Always run tests after making changes.
 - Ensure `LitModel` (in `training/lightning_module.py`) handles the new model type correctly
 - Add tests for any new model, loss, or dataset in `tests/`
 - Document the change in `CHANGELOG.md`
+
