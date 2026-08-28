@@ -316,7 +316,6 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         spread_final_list = []
         mean_init_lag_list = []
         method = None
-        per_time = None
         for i in range(len(d)):
             w = d[i]
             dyn = _build_dyn(cfg, w, device)
@@ -333,8 +332,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     disp_frac=disp_frac)
                 spread_t0_list.append(float(init_ensemble.std()))
             if obs_var == "q":
-                if per_time is None:
-                    per_time = _q_obs_indices_t(cfg, w)
+                per_time = _q_obs_indices_t(cfg, w)
                 field_std = float(w["target_state_q"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None:
