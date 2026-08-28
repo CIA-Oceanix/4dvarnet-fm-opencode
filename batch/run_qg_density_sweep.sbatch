@@ -14,7 +14,7 @@ C=${COLS[$SLURM_ARRAY_TASK_ID]}
 
 /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
-    --window-days 60 \
+    --window-days 30 \
     --num-windows 5 \
     --spinup-years 2.0 \
     --ensemble 80 \
@@ -26,6 +26,6 @@ C=${COLS[$SLURM_ARRAY_TASK_ID]}
     --cols-per-day ${C} \
     --init-lag-days-list 0.5 \
     --obs-var q \
-    --scenarios test_s0,test_s1a \
+    --scenarios test_s0 \
     --outdir reports/outputs/qg_density_sweep \
     --tag density_sweep_cols${C}

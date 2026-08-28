@@ -211,7 +211,9 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
         cfg: QGConfig
         window: dict per-window
         N: ensemble size
-        init_lag_days: float (mean lag)
+        init_lag_days: float, maximum lag (days) of members behind t0. Members
+            are sampled from the end of the init_lead_truth buffer so each is
+            x(t0 - dt_k) with dt_k ~ U(0, init_lag_days].
         device: torch device
         disp_frac: fraction of the state climatological std added as
             independent Gaussian dispersion to each member. The raw lagged
@@ -226,7 +228,8 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
         mean_lag_days: float
     """
     truth = window["init_lead_truth"].float()
-    dt_steps = int(init_lag_days / cfg.dt)
+    steps_per_day = round(86400.0 / cfg.dt)
+    dt_steps = int(init_lag_days * steps_per_day)
     dt_steps = max(dt_steps, 1)
     lead = dt_steps + 1
     if lead >= len(truth):
@@ -239,8 +242,10 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
     for i in range(N):
         i_gen = gens[i]
         k_tplus1 = int(r[i] * lead) + 1
-        x_tminus1 = truth[k_tplus1 - 1, :]
-        x_t = truth[k_tplus1, :]
+        # End-relative sampling: members at t0 - dt_k for dt_k ~ U(0, init_lag_days]
+        # (the init_lead_truth buffer spans [t0 - init_lead_days, t0 - dt]).
+        x_tminus1 = truth[len(truth) - k_tplus1 - 1, :]
+        x_t = truth[len(truth) - k_tplus1, :]
         alpha = torch.rand(1, generator=i_gen, device=device).item()
         init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
         mean_lag_days += float(k_tplus1 * dt)
@@ -278,7 +283,7 @@ def _pooled_expvar(analyses, refs):
 def _free_forecast_rmse(cfg, dyn, window, device, forcing):
     """RMSE of the no-obs model forecast (roll from init_state)."""
     truth = window["true_state"].float()
-    init_state = window["init_lead_truth"][0].to(device)
+    init_state = window["init_state"].to(device)
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
                                   - truth.numpy()) ** 2)))

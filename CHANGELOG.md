@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-28: QG lagged-init consistency fix + S0/30-day DA (PR #109)
+
+**Summary:** Root-caused why the S0/q-obs EV dropped from the PR #102 value (~0.69) to ~0.03 and fixed it. Two causes: (1) the production sweep ran `window_days=60` while the PR #102-JSONs used `window_days=30` (longer rollout ⇒ larger free-forecast error ⇒ EV≈0); (2) `_lagged_init_ensemble` had a **unit bug** `dt_steps = int(init_lag_days / cfg.dt)` dividing days by seconds (`cfg.dt=7200`), collapsing the lag sampling to a single step. Also the init was inconsistent: `init_state` was correctly near t₀ (t₀−U(0,cfg.init_lag_days)) but `_free_forecast_rmse` rolled `init_lead_truth[0]` (t₀−10d) and `_lagged_init_ensemble` sampled the buffer start (~t₀−10d). Fix: correct `dt_steps` to days×steps, sample the ensemble **end-relative** (members at t₀−U(0,init_lag_days]), roll the free forecast from `window["init_state"]`, and set `init_lag_days=0.5`. Scope to S0-only, `window_days=30`, for both q-obs and psi-obs (per user).
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_lagged_init_ensemble`: `dt_steps = int(init_lag_days * round(86400/cfg.dt))` (days→steps, fixes the days/seconds unit bug) + end-relative buffer sampling (`truth[len - k_tplus1]`) so members are at t₀−U(0,init_lag_days], not ~t₀−10d. `_free_forecast_rmse` now rolls `window["init_state"]` (t₀−U(0,cfg.init_lag_days)) instead of `init_lead_truth[0]` (t₀−10d).
+- `data/qg.py` — `init_lag_days` default `2.0 → 0.5` (init-state lag; per user, "smaller as a first step, 0.5").
+- `tests/test_qg_baselines.py` — `test_lagged_init_ensemble_diversity` corrected `mean_lag` expectation (buggy 2.25 → ~0.833 for `init_lag_days=1.5`) + new end-relative-location assertion (mean member near buffer end, `dist_end < 0.5·dist_start`).
+- `batch/run_qg_density_sweep.sbatch` — S0-only, `--window-days 30`.
+- `batch/run_qg_psi_obs_test.sbatch` — S0-only, `--window-days 30`.
+- `PLAN.md`/`CHANGELOG.md` — this entry.
+
+**Rationale:** The previous "way better" S0 EV came from a `window_days=30` run (and a correct days-aware lag formula) that the committed code/sbatch had drifted from. The user requested a cleaner first step: S0-only, 30-day assimilation window, 0.5-day init lag, for both obs configs. The init-state is drawn from the last part of the 10-day lead-in buffer at `t₀−U(0,0.5)d`; the ensemble and free-forecast reference are now consistent with it.
+
+**Verification:** Small-scale (nx=16, S0, 5 windows, 30d, lag 0.5): q-obs EV **+0.991**, psi-obs EV **+0.994**, `mean_init_lag=0.333` (≈U(0,0.5)/discrete), free-forecast rmse ~1.9e-9 (rolls from near-t₀ init_state). `tests/test_qg_baselines.py` 17/17; QG suite (baselines+s0s1+data+dynamics+qg1l) 75/75. Full fast suite: failure set byte-identical to base (24 pre-existing L63/baselines/joint-estimation/env), 0 new. `ruff check` clean on all touched; mypy 0 new.
+
 ## 2026-08-28: QG q-obs multi-window localization crash (loc_Lx=None on windows>0) (PR #108)
 
 **Summary:** The density-sweep re-run (post-PR #107) still crashed with `loc_Lx=None` at `baselines.py:783` — proving it was **not** a stale-code artifact. Root cause: `run()` built the per-time obs-index list `per_time` once (guarded by `if per_time is None`) from window[0] and reused it for all windows, so `_build_qg_loc_matrices` built `Lx_t`/`Ly_t` from window[0]'s obs timing. But each window has **seed-dependent obs timing** (the `r[day]` sub-daily draw), so windows ≥ 1 have `obs_mask` True at times where the reused `loc_Lx_t` is `None` → the localized ETKF crashed. Reproduced at nx=64/window_days=60/num_windows≥2. Fix: build `per_time` **per window** (drop the `None` guard), so loc matrices align with each window's obs_mask. Single-window tests never caught this.

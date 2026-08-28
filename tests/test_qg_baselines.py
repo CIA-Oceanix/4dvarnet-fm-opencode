@@ -206,12 +206,20 @@ def test_lagged_init_ensemble_diversity():
     init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
                                                          init_lag_days=1.5,
                                                          device=device)
-    assert mean_lag_days == pytest.approx(2.25, rel=0.05)
+    # dt_steps = 1.5 days * 12 steps/day = 18, mean member lag ~ 10/18 * 1.5 ~ 0.83
+    assert mean_lag_days == pytest.approx(0.833, rel=0.1)
     assert init_ensemble.shape == (20, cfg.state_dim)
     assert bool(torch.isfinite(init_ensemble).all())
     assert float(init_ensemble.std()) > 0.0
     q_std = float(w["target_state_q"].std()) + 1e-12
     assert float(init_ensemble.std()) > 0.1 * q_std
+    # End-relative sampling: members are near t0 (buffer end), ~1.6 days back,
+    # not the 10-day-lagged buffer start.
+    truth = w["init_lead_truth"].float()
+    mean_member = init_ensemble.mean(0)
+    dist_end = float((mean_member - truth[-1]).pow(2).mean().sqrt())
+    dist_start = float((mean_member - truth[0]).pow(2).mean().sqrt())
+    assert dist_end < 0.5 * dist_start
 
 
 def test_lagged_init_dispersion_proportional():

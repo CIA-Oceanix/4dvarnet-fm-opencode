@@ -10,7 +10,7 @@ set -e
 
 /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
-    --window-days 60 \
+    --window-days 30 \
     --num-windows 5 \
     --spinup-years 2.0 \
     --ensemble 80 \
@@ -22,6 +22,6 @@ set -e
     --cols-per-day 4 \
     --init-lag-days-list 0.5 \
     --obs-var psi \
-    --scenarios test_s0,test_s1a \
+    --scenarios test_s0 \
     --outdir reports/outputs/qg_psi_obs_test \
     --tag psi_obs_cols4_lag0.5
