@@ -20,6 +20,7 @@ from evaluation.run_qg_baselines import (
     _q_alongtrack_obs,
     _obs_spec_rc,
     _lagged_init_ensemble,
+    _free_forecast_init,
 )
 
 NX = 8
@@ -242,6 +243,23 @@ def test_lagged_init_dispersion_proportional():
     assert 1.2 * base_per < disp_per < 3.0 * base_per
     # dispersion adds zero-mean noise (same lagged centres)
     assert float(torch.mean(disp - base)) == pytest.approx(0.0, abs=0.1 * base_per)
+
+
+def test_free_forecast_init_lagconsistent():
+    """The free-forecast first guess must be at the SAME lag as the ensemble
+    (end-relative: near t0), and fall back to window init_state when no lag is
+    given."""
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    truth = w["init_lead_truth"].float()
+    # explicit lag -> samples end of buffer (near t0)
+    s = _free_forecast_init(cfg, w, 0.5, device)
+    dist_end = float((s - truth[-1]).pow(2).mean().sqrt())
+    dist_start = float((s - truth[0]).pow(2).mean().sqrt())
+    assert dist_end < 0.5 * dist_start
+    # None -> falls back to the stored init_state
+    s_none = _free_forecast_init(cfg, w, None, device)
+    assert torch.allclose(s_none, w["init_state"].to(device))
 
 
 def test_etkf_q_cols_lagged_smoke_finite():

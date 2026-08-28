@@ -288,10 +288,32 @@ def _pooled_expvar(analyses, refs):
     return 1.0 - np.mean(sq, axis=0) / var
 
 
-def _free_forecast_rmse(cfg, dyn, window, device, forcing):
-    """RMSE of the no-obs model forecast (roll from init_state)."""
+def _free_forecast_init(cfg, window, init_lag_days, device):
+    """Single t0 - U(0, init_lag_days] state from the init_lead_truth buffer.
+
+    Mirrors `_lagged_init_ensemble`'s end-relative sampling but uses the mean
+    member position as a deterministic representative, so the free-forecast
+    first guess is at the SAME lag as the ensemble being DA'd. Falls back to
+    the stored window['init_state'] (drawn at cfg.init_lag_days) when
+    init_lag_days is None.
+    """
+    truth = window["init_lead_truth"].float()
+    if init_lag_days is None:
+        return window["init_state"].to(device)
+    steps_per_day = round(86400.0 / cfg.dt)
+    dt_steps = max(int(init_lag_days * steps_per_day), 1)
+    lead = min(dt_steps + 1, len(truth) - 1)
+    k = int(lead / 2)  # mean member position in [1, lead]
+    x_tminus1 = truth[len(truth) - k - 1, :]
+    x_t = truth[len(truth) - k, :]
+    return (0.5 * x_tminus1 + 0.5 * x_t).to(device)
+
+
+def _free_forecast_rmse(cfg, dyn, window, device, forcing,
+                        init_lag_days=None):
+    """RMSE of the no-obs model forecast (roll from a lagged init state)."""
     truth = window["true_state"].float()
-    init_state = window["init_state"].to(device)
+    init_state = _free_forecast_init(cfg, window, init_lag_days, device)
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
                                   - truth.numpy()) ** 2)))
@@ -394,7 +416,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             rmse_list.append(float(np.sqrt(np.mean(
                 (res.trajectory - ref) ** 2))))
             fcast_rmse.append(_free_forecast_rmse(
-                cfg, dyn, w, device, forcing))
+                cfg, dyn, w, device, forcing, init_lag_days=init_lag_days))
         ev = _pooled_expvar(analyses, refs)
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],

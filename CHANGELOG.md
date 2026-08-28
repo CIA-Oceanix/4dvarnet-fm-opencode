@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28: QG lag-consistent free-forecast reference (PR #112)
+
+**Summary:** Made the free-forecast first-guess reference lag-consistent with the ensemble so `forecast_improvement` (the DA-vs-first-guess metric) is meaningful. Previously `_free_forecast_rmse` always rolled the fixed `window["init_state"]` (drawn at `cfg.init_lag_days=0.5`), regardless of the run's `init_lag_days` arg — so when the ensemble lag was swept (or set ≠ 0.5), the comparison compared DA against a near-perfect 0.5-day forecast, biasing `forecast_improvement` downward. Added `_free_forecast_init`, which samples a `t₀−U(0,init_lag_days)` state from the `init_lead_truth` buffer end-relative (mirroring `_lagged_init_ensemble`, mean-member position), and wired `init_lag_days` through `_free_forecast_rmse`. For the S0/30-day/lag-0.5 config (init_lag_days == cfg.init_lag_days) the reference is essentially unchanged.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — new `_free_forecast_init(cfg, window, init_lag_days, device)` (end-relative buffer sample or fallback to `init_state`); `_free_forecast_rmse` gains `init_lag_days` param, uses it; `run()` passes `init_lag_days` through.
+- `tests/test_qg_baselines.py` — import + `test_free_forecast_init_lagconsistent` (end-relative near t₀ for explicit lag; fallback to `init_state` for None).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The user asked whether DA improves over the first guess and its forecast. Answering correctly requires the free-forecast reference (first guess) to be at the same lag as the ensemble being assimilated; the previous fixed-0.5-day reference made the metric inconsistent for any other `init_lag_days`.
+
+**Verification:** `tests/test_qg_baselines.py` 18/18; QG suite (baselines+s0s1+data+dynamics+qg1l) 77/77. Small-scale lag sweep now shows `forecast_improvement` rising with lag (q-obs lag 2.0 → 0.89, psi lag 2.0 → 0.80) rather than pinned near the 0.5-day value. `ruff check` clean; mypy 0 new errors.
+
 ## 2026-08-28: QG dispersion over-scaling fix (bg-error-scaled, S0 EV restored) (PR #110)
 
 **Summary:** After PR #109 (correct 0.5-day lag), S0/q-obs EV at production fell from the PR #102 level and `forecast_improvement` was ~0.02 (DA worse than the free forecast). Root cause: `disp_frac` scaled dispersion to the **climatological state std** (`true_state.std() ≈ 2.3e-7`), but with the corrected short 0.5-day lag the actual background error is only ~5.5e-9 — the dispersion over-dispersed the ensemble by **~40×**. The ETKF then over-trusted the sparse obs, pulled the analysis off the near-perfect free forecast and collapsed spread to 0. Fix: scale dispersion to the **raw lagged per-point spread** (`sigma_raw = init_ensemble.std(0).mean()`), which tracks the lag-dependent background error (1.5e-9 at 0.5d, 5.9e-9 at 2d) — self-calibrating to the lag. Also fixed the `spread_t0_mean` metric (was the global state std ~2.3e-7, masking the per-point spread; now reports per-point ensemble spread).
