@@ -223,22 +223,25 @@ def test_lagged_init_ensemble_diversity():
 
 
 def test_lagged_init_dispersion_proportional():
-    """Setting disp_frac > 0 re-proportions the (severely under-dispersed)
-    lagged ensemble so its per-point spread is a material fraction of the
-    state variability (without it, the ETKF covariance collapses)."""
+    """Setting disp_frac > 0 adds dispersion proportional to the raw lagged
+    per-point spread (background-error-scaled), not the climatological state
+    std, which would over-disperse by ~40x at a 0.5-day lag."""
     cfg, w = _rc_window(window_days=6.0)
     device = torch.device("cpu")
-    sstd = float(w["true_state"].std())
     base, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
                                     device=device, disp_frac=0.0)
     disp, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
                                     device=device, disp_frac=1.0)
     base_per = float(base.std(0).mean())
     disp_per = float(disp.std(0).mean())
-    assert base_per < 0.1 * sstd          # raw lagged ensemble under-dispersed
-    assert disp_per > 0.3 * sstd          # dispersion restores physical spread
-    # the two share the same lagged centres (dispersion adds zero-mean noise)
-    assert float(torch.mean(disp - base)) == pytest.approx(0.0, abs=0.1 * sstd)
+    assert base_per > 0.0
+    # disp_frac=1.0 adds independent noise with std ~ base_per: the per-point
+    # spread roughly doubles. It must scale with the raw spread (a small
+    # multiple), never with the climatological state std (which would give a
+    # ~40x ratio), so bound it to a small multiple of base_per.
+    assert 1.2 * base_per < disp_per < 3.0 * base_per
+    # dispersion adds zero-mean noise (same lagged centres)
+    assert float(torch.mean(disp - base)) == pytest.approx(0.0, abs=0.1 * base_per)
 
 
 def test_etkf_q_cols_lagged_smoke_finite():
