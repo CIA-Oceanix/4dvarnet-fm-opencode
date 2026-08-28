@@ -272,3 +272,22 @@ def test_psi_obs_run_smoke():
     # Regression: without lagged-init dispersion psi-obs collapsed (spread->0,
     # EV ~ -1e3..-1e4). With dispersion the S0 analysis must be skilful.
     assert s0["expvar_full"] > 0.3
+
+
+def test_q_obs_multi_window_localized_run_no_crash():
+    """Regression: q-obs run() over multiple windows with localization must not
+    crash with `loc_Lx=None`. The per-time obs-index/localization lists were
+    built once from window[0] and reused, but each window has seed-dependent
+    obs timing, so later windows misaligned (a masked time had loc_Lx None)."""
+    cfg = QGConfig(nx=8, window_days=6.0, spinup_years=0.05,
+                   num_windows=3, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3)
+    ds = make_qg_s0_s1_datasets(cfg)
+    from evaluation.run_qg_baselines import run
+    p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s0", "test_s1a"),
+            init="lagged", geometry="random_columns", obs_var="q",
+            init_lag_days=0.5, ds=ds)
+    for s in ("test_s0", "test_s1a"):
+        assert s in p["scenarios"]
+        assert np.isfinite(p["scenarios"][s]["expvar_full"])

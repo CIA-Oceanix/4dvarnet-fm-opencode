@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28: QG q-obs multi-window localization crash (loc_Lx=None on windows>0) (PR #108)
+
+**Summary:** The density-sweep re-run (post-PR #107) still crashed with `loc_Lx=None` at `baselines.py:783` — proving it was **not** a stale-code artifact. Root cause: `run()` built the per-time obs-index list `per_time` once (guarded by `if per_time is None`) from window[0] and reused it for all windows, so `_build_qg_loc_matrices` built `Lx_t`/`Ly_t` from window[0]'s obs timing. But each window has **seed-dependent obs timing** (the `r[day]` sub-daily draw), so windows ≥ 1 have `obs_mask` True at times where the reused `loc_Lx_t` is `None` → the localized ETKF crashed. Reproduced at nx=64/window_days=60/num_windows≥2. Fix: build `per_time` **per window** (drop the `None` guard), so loc matrices align with each window's obs_mask. Single-window tests never caught this.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — remove the `if per_time is None` guard so `per_time = _q_obs_indices_t(cfg, w)` (and thus `Lx_t`/`Ly_t`) is rebuilt for **every** window; drop the pre-loop `per_time = None` init.
+- `tests/test_qg_baselines.py` — new `test_q_obs_multi_window_localized_run_no_crash` (3 windows, q-obs, loc_radius set) that reproduces the multi-window loc crash.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The psi-obs path (covered by PR #107) already built obs columns per-window via `_event_columns`, so it never hit this; only the q-obs path reused `per_time` across windows. This is why both prior PR #102/#103 density/psi-obs jobs and this re-run failed on the multi-window density configuration.
+
+**Verification:** nx=64/window_days=60/num_windows=3 q-obs ETKF (which crashed before) now runs cleanly. `tests/test_qg_baselines.py` 17/17 pass (incl. new regression); QG suite (baselines+s0s1+data) 44/44 pass. `ruff check` clean on both touched files; mypy 0 new errors.
+
 ## 2026-08-28: QG lagged-init under-dispersion fix (psi-obs DA collapse) (PR #105)
 
 **Summary:** Root-caused the psi-obs DA collapse (ensembles collapsed to zero spread with EV −1e3…−1e4): the lagged-truth initialization is severely **under-dispersed** — per-member ensemble spread is ~1% of the field std (q-spread ~6e-10 vs q-std ~2.3e-7) while the ensemble-mean forecast error reaches ~full field std — so the ETKF/EnKF covariance (and therefore gain) is ~100–300× too small to correct the background error. `psi` observations expose this because the background error in ψ is O(ψ-std), whereas q-obs "worked" only because its S0 background error happened to be near-perfect. Fix: add `disp_frac` state-space Gaussian dispersion (scaled to the climatological state std) to each lagged member in `_lagged_init_ensemble`, defaulting to 1.0. This re-proportions the filter covariance to the background error and, at nx=64, converts psi-obs S0 from EV **−5544 → +0.934** while leaving q-obs essentially unchanged (+0.891 → +0.894).
