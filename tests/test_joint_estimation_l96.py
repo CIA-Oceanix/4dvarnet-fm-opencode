@@ -51,6 +51,125 @@ class TestJointEnKFL96:
         assert prmse.shape == (8,)
         assert np.all(np.isfinite(prmse))
 
+    def test_es_finite_shape(self, l96_ctx, device):
+        m = JointEnKFL96(N_ensemble=6, dt=0.001, device=device,
+                         dynamics=l96_ctx["dyn"], obs_operator=l96_ctx["op"], NO=8, J=4)
+        r = m.assimilate(l96_ctx["obs"], l96_ctx["mask"], l96_ctx["force"],
+                         true_state=l96_ctx["truth"], F=8.0, c1=1.0,
+                         hx=1.0, eps=0.1, fast_weights=[1, 1, 0.1, 0.1])
+        assert r.es is not None
+        assert r.es.shape == (40,)
+        assert np.all(np.isfinite(r.es))
+
+    def test_state_only_inflation(self, device):
+        """Inflation must apply only to the state block, not the param block."""
+        import torch
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        from evaluation.baselines import ObsOperator
+        torch.manual_seed(0)
+        dyn = Lorenz96Dynamics(dt=0.001, coupling_exponent=1.6)
+        op = ObsOperator(40, list(range(24)))
+        m = JointEnKFL96(N_ensemble=8, dt=0.001, device=device, inflation=2.0,
+                         dynamics=dyn, obs_operator=op, NO=8, J=4)
+        T = 40
+        obs = torch.randn(T, 24, device=device)
+        mask = torch.zeros(T, dtype=torch.bool, device=device)
+        mask[::5] = True
+        force = torch.zeros(T, device=device)
+        truth = torch.randn(T, 40, device=device)
+        r = m.assimilate(obs, mask, force, true_state=truth, F=8.0, c1=1.0,
+                         h=1.0, hx=1.0, eps=0.1, fast_weights=[1.0, 1.0, 0.1, 0.1])
+        # With state-only inflation, per-step param columns (e.g. c1, w1) are held
+        # at the analysis mean (tiny spread), while the state RMSE is finite.
+        assert np.all(np.isfinite(r.trajectory))
+        assert np.all(np.isfinite(r.params))
+
+    def _seq_vs_batch(self, device, J):
+        import torch
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        from evaluation.baselines import ObsOperator
+        torch.manual_seed(7)
+        dyn = Lorenz96Dynamics(dt=0.001, NO=8, J=J, h=1.0, hx=1.0, eps=0.1,
+                               coupling_exponent=1.0)
+        op = ObsOperator(24, list(range(24)))
+        m = JointEnKFL96(N_ensemble=6, dt=0.001, device=device,
+                         dynamics=dyn, obs_operator=op, NO=8, J=J)
+        T = 40
+        obs = torch.randn(T, 24, device=device)
+        mask = torch.zeros(T, dtype=torch.bool, device=device)
+        mask[::5] = True
+        force = torch.zeros(T, device=device)
+        truth = torch.randn(T, 24, device=device)
+
+        def run_seq():
+            torch.manual_seed(11)
+            return m.assimilate(obs, mask, force, true_state=truth,
+                                F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1,
+                                fast_weights=[1.0, 1.0, 0.1, 0.1])
+
+        def run_batch():
+            torch.manual_seed(11)
+            F = torch.full((1,), 8.0, device=device)
+            c1 = torch.full((1,), 1.0, device=device)
+            hx = torch.full((1,), 1.0, device=device)
+            eps = torch.full((1,), 0.1, device=device)
+            fw = torch.tensor([[1.0, 1.0] if J == 2 else [1.0, 1.0, 0.1, 0.1]], device=device)
+            return m.assimilate_batch(
+                obs.unsqueeze(0), mask.unsqueeze(0), force.unsqueeze(0),
+                true_state=truth.unsqueeze(0), F=F, c1=c1, hx=hx, eps=eps,
+                fast_weights=fw)[0]
+
+        r1 = run_seq()
+        r2 = run_batch()
+        np.testing.assert_allclose(r2.trajectory, r1.trajectory, atol=1e-6)
+        np.testing.assert_allclose(r2.params, r1.params, atol=1e-6)
+        np.testing.assert_allclose(r2.es, r1.es, atol=1e-6)
+
+    def test_batch_matches_sequential_s1(self, device):
+        self._seq_vs_batch(device, J=2)
+
+    def test_batch_matches_sequential_s0(self, device):
+        import torch
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        from evaluation.baselines import ObsOperator
+        from evaluation.run_l96 import make_obs_j_indices
+        torch.manual_seed(7)
+        ovi = make_obs_j_indices(8, 4, 2)
+        dyn = Lorenz96Dynamics(dt=0.001, coupling_exponent=1.6)
+        op = ObsOperator(40, ovi)
+        m = JointEnKFL96(N_ensemble=6, dt=0.001, device=device,
+                         dynamics=dyn, obs_operator=op, NO=8, J=4)
+        T = 40
+        obs = torch.randn(T, 24, device=device)
+        mask = torch.zeros(T, dtype=torch.bool, device=device)
+        mask[::5] = True
+        force = torch.zeros(T, device=device)
+        truth = torch.randn(T, 40, device=device)
+
+        def run_seq():
+            torch.manual_seed(11)
+            return m.assimilate(obs, mask, force, true_state=truth,
+                                F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1,
+                                fast_weights=[1.0, 1.0, 0.1, 0.1])
+
+        def run_batch():
+            torch.manual_seed(11)
+            F = torch.full((1,), 8.0, device=device)
+            c1 = torch.full((1,), 1.0, device=device)
+            hx = torch.full((1,), 1.0, device=device)
+            eps = torch.full((1,), 0.1, device=device)
+            fw = torch.tensor([[1.0, 1.0, 0.1, 0.1]], device=device)
+            return m.assimilate_batch(
+                obs.unsqueeze(0), mask.unsqueeze(0), force.unsqueeze(0),
+                true_state=truth.unsqueeze(0), F=F, c1=c1, hx=hx, eps=eps,
+                fast_weights=fw)[0]
+
+        r1 = run_seq()
+        r2 = run_batch()
+        np.testing.assert_allclose(r2.trajectory, r1.trajectory, atol=1e-6)
+        np.testing.assert_allclose(r2.params, r1.params, atol=1e-6)
+        np.testing.assert_allclose(r2.es, r1.es, atol=1e-6)
+
 
 class TestJointETKFL96:
     def test_shapes(self, l96_ctx, device):
