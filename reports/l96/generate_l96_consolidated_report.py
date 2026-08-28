@@ -67,14 +67,18 @@ NEURAL_EXP_DIRS = [
 # DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
 N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
-                 "L6_vanilla_cfm_s0s1_forcing_cond", "V2_tweedie_cfm_l96"}
+                 "L6_vanilla_cfm_s0s1_forcing_cond"}
 
 # Methods evaluated as N=30 ensembles (proper ensemble ES, not the N=1 MAE
-# proxy). L3 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
+# proxy). L3, V2 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
 ENS30_DIRS = {
     "L3_vanilla_cfm_s0s1": {
         "s0": "L3_vanilla_cfm_s0s1/ens30_no10",
         "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
+    },
+    "V2_tweedie_cfm_l96": {
+        "s0": "V2_tweedie_cfm_l96/ens30_no10",
+        "s1": "V2_tweedie_cfm_l96/ens30_no10",
     },
     "V3_predict_state_cfm_l96": {
         "s0": "V3_predict_state_cfm_l96/ens30_no10",
@@ -123,7 +127,8 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "forcing input.")),
     ("V2_tweedie_cfm_l96", "Neural (TweedieCFM)",
      ("Two-stage Tweedie CFM: stage-1 MeanEstimatorCell (obs → mean), stage-2 residual velocity UNet; "
-      "hidden [64,128,256]; 100+400 epochs; multi-τ, K_inner=5, N_outer=10.")),
+      "hidden [64,128,256]; 100+400 epochs; multi-τ, K_inner=5; evaluated as a 30-member ensemble "
+      "with 10 Euler steps (`ens30×10`, N=30); N_outer=10.")),
     ("V3_predict_state_cfm_l96", "Neural (PredictStateCFM)",
      ("Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; "
       "400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); "

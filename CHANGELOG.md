@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-28: V2 standalone eval (single-sample + ens30×10) + report — V2 new best on RMSE
+
+**Summary:** Ran the full V2 (`TweedieCFM`) standalone eval (job 50730, task 1, exit 0, ~8.7 min) — both the N=1 single-sample pass (root `neural_eval.json`) and the **ens30×10** ensemble pass (`ens30_no10/`). V2's `stage2_best.ckpt` (all 176 weights finite — the NaN fix held through the full two-stage 100+400-epoch run). Updated the consolidated report so V2's row now sources its RMSE/EV/ES from the ens30 subdir (proper N=30 ensemble ES) via the `ENS30_DIRS` mechanism. **Headline: V2 ens30×10 S0 RMSE 0.5157 / S1 0.5171 (EV 0.897/0.896) is now the best neural scheme on S0/S1**, edging out L3 (0.5645) and V3 (0.5716); ESens 0.2664/0.2681 (≈ L3's 0.2649/0.2671), with the largest member spread (0.497) of any scheme.
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` — add `V2_tweedie_cfm_l96` to `ENS30_DIRS`; remove V2 from `N1_ES_METHODS` (now proper N=30 ES); V2 scheme description notes `ens30×10`. Applied to worktree + master copies.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** V2's two-stage Tweedie decomposition (mean-estimator + residual velocity UNet) yields genuinely diverse members (spread 0.497, ~2× L3/V3) whose mean is the most accurate on S0/S1 — closing/completing the phase-B V1/V2 comparison against L3. With V2 now ens30-evaluated, the report row uses the proper N=30 convention.
+
+**Verification:** V2 eval job 50730_1 COMPLETED (exit 0, 8:40); members arrays (200,3000,24,30) all finite; ens30 JSON ESens 0.2664/0.2681. Report regenerated on master: both consistency checks PASS (DA max Δ 2.12e-4, neural truth 0.0); RMSE table shows V2 bold-best S0 0.5157 / S1 0.5171; ES table V2 0.2664/0.2681 (no `*`), V3 0.2762. `py_compile` clean both copies; worktree+master generators identical. V2/V3 eval npz copied into master `experiments/` (gitignored).
+
 ## 2026-08-28: V3 standalone eval (single-sample + ens30×10) + consolidated report update
 
 **Summary:** Ran the full V3 (`PredictStateCFM`) standalone eval (job 50723, task 0) and updated the consolidated L96 benchmark. The eval ran both passes: the N=1 single-sample DA-parity run (root `neural_eval.json`, the training-script convention) and the **ens30×10** ensemble run (`ens30_no10/`, apples-to-apples with L3's best). Regenerated the consolidated report with V3's rows now sourced from its ens30 subdir (proper N=30 ensemble ES), via a generalized `ENS30_DIRS` mechanism (previously hardcoded to L3). V3's headline: **ens30×10 S0 RMSE 0.5716 / S1 0.5729** (degradation 1.002), **proper ensemble ES 0.2762/0.2766** — the second-best neural scheme after L3 (0.5645) and ahead of L2b/L4 and all DA baselines. V2's rows show `—` (training still in progress).
