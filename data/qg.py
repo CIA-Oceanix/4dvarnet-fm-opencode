@@ -53,7 +53,7 @@ class QGConfig:
     s1_loc_sigma_frac: float = 0.25
     s1_tau_days: float = 10.0
     s1_sigma_eta_frac: float = 0.3
-    init_lag_days: float = 2.0
+    init_lag_days: float = 0.5
     init_seed: int = 7001
 
     @property
