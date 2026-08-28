@@ -2180,7 +2180,7 @@ class JointETKFL96(ETKF):
             if obs_mask[t]:
                 ensemble = self._analysis(ensemble, observations[t], idx, H)
                 mu = torch.mean(ensemble, dim=0)
-                ensemble = mu + self.inflation * (ensemble - mu)
+                ensemble[:, :sd] = mu[:sd] + self.inflation * (ensemble[:, :sd] - mu[:sd])
                 ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
                 nan_mask = torch.isnan(ensemble).any(dim=-1)
                 if nan_mask.any():
@@ -2284,7 +2284,7 @@ class JointETKFL96(ETKF):
                     y_t = observations[b, t]
                     new_ens = self._analysis(ensemble[b], y_t, idx, H)
                     mu = torch.mean(new_ens, dim=0)
-                    new_ens = mu + self.inflation * (new_ens - mu)
+                    new_ens[:, :sd] = mu[:sd] + self.inflation * (new_ens[:, :sd] - mu[:sd])
                     new_ens[:, sd:] = new_ens[:, sd:].clamp(min=1e-6)
                     ensemble[b] = new_ens
 

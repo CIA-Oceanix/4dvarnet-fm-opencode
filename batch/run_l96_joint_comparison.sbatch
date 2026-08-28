@@ -11,7 +11,9 @@
 
 set -euo pipefail
 
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+# Work from this script's repo root (works in any worktree, before/after merge).
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mkdir -p sbatch_logs
 
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export PYTHONUNBUFFERED=1

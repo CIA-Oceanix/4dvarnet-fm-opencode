@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-08-28: L96 joint DA benchmark — Joint-ETKF runs + S1 divergence fix (stabilized)
+
+**Summary:** Delivered the first L96 joint state-parameter **DA baseline** (Job 50577,
+200 shared cached S0/S1 windows, Obs30): redesigned-`JointETKFL96` (from 2026-08-26)
+vs vanilla `ETKF`, writing `experiments/l96_joint_comparison.json` +
+`reports/l96/outputs/l96_joint_da_benchmark.md`. During a CPU smoke the joint filter
+**diverged on S1** (RMSE 9.66, EV −33, reproducible at 3/8/20 windows while S0 was fine).
+Root cause: (1) the ETKF analysis inflated the **whole augmented state including the
+unobserved param block** by 1.6 every step, growing param spread without bound
+(`baselines.py` `assimilate`/`assimilate_batch`); and (2) the S1 reduced J=2 dynamics
+amplify per-member param spread over the 100-step forecast (fewer fast d.o.f. to absorb
+it). Fixed by **state-only inflation** (params stay at the analysis mean) + tighter
+joint-filter tuning (`param_noise=0.03`, `etkf_ridge=0.05`) in the comparator. Result:
+S1 fully stabilized and S0 improved.
+
+**Results (pooled, 200 windows):** **S0** Joint-ETKF RMSE **0.633** / EV 0.82 / ES 0.298
+vs vanilla 0.878/0.70/0.45, paramRMSE mean **0.053** (F 0.13, w1/w2 0.12, rest <0.03).
+**S1** Joint-ETKF RMSE **1.497** / EV 0.18 / ES 0.937 vs vanilla 1.554/0.12/0.999,
+paramRMSE mean **0.128** (F 0.61, w1/w2 0.12†, w3/w4=0† default). vs the L9 neural
+(single-sample) baseline: **S0 at parity** (state 0.633 vs 0.626, param 0.053 vs 0.059);
+**S1 neural ahead** (0.631 vs 1.497) — the forward-model DA matches the best neural joint
+estimator only on the no-bias case; the neural models' ≈1.00 S1 robustness keeps them
+ahead under parameter bias.
+
+**Files modified:** `evaluation/baselines.py` — `JointETKFL96` state-only inflation in
+`assimilate` + `assimilate_batch`; `eval_joint_comparison_l96.py` — `param_noise=0.03`,
+`etkf_ridge=0.05` to the Joint-ETKF factory; `batch/run_l96_joint_comparison.sbatch` —
+`cd` into the joint-DA worktree + `mkdir -p sbatch_logs`; `reports/l96/outputs/l96_joint_da_benchmark.md` — new generated report (state RMSE/ES, per-param RMSE on S0+S1 with `†` for S1 w3/w4, L9 context anchors).
+
+**Rationale:** The joint DA baselines had been coded (PRs 2026-08-26) but never run; the
+report's DA rows and the joint-DA-vs-joint-neural question were unanswered. The S1
+divergence was a genuine filter instability (param-inflation feedback on the reduced
+dynamics), not a shape bug — fixed at the source instead of force-tuning around it.
+
+**Verification:** `pytest tests/test_joint_estimation_l96.py tests/test_joint_estimation_l96_neural.py tests/test_energy_score.py tests/test_baselines_hydra.py -m "not slow"` — 38 passed. CPU smokes (3/8 windows) + full GPU 200-window run all COMPLETE. Report regenerated; consistency note validated. Ruff: no new errors on touched lines (pre-existing `EXE001` shebang + `JointStrong4DVarL96` `__init__` PLR0913 debt only).
+
 ## 2026-08-26: L96 joint benchmark — NRMSE + trajectory-forecast metrics (PR #95)
 
 **Summary:** Added two parameter-estimation metrics to the L96 joint

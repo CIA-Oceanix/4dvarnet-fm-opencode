@@ -96,7 +96,8 @@ def main():
                                          N_ensemble=30, inflation=args.etkf_inflation),
         "Joint-ETKF": lambda dyn, op, J: JointETKFL96(dt=0.001, device=device, coupling_exponent=1.6,
                                                        dynamics=dyn, obs_operator=op, NO=NO, J=J,
-                                                       N_ensemble=30, inflation=args.etkf_inflation),
+                                                       N_ensemble=30, inflation=args.etkf_inflation,
+                                                       param_noise=0.03, etkf_ridge=0.05),
     }
 
     from models.lorenz96_dynamics import Lorenz96Dynamics
