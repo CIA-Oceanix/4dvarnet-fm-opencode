@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-cfm-v2v3
 
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export CONDA_DEFAULT_ENV=fdv
@@ -46,7 +46,7 @@ case "${SLURM_ARRAY_TASK_ID}" in
     echo "============================================"
     echo " L96 CFM Variants: TweedieCFM (V2) SMOKE | $(date)"
     echo "  Task: 1 / Experiment: ${EXPERIMENT}"
-    echo "  Config: 1-epoch smoke test (full: 200+400 epochs)"
+    echo "  Config: 1-epoch smoke test (full: 100+400 epochs)"
     echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
     echo "============================================"
     echo

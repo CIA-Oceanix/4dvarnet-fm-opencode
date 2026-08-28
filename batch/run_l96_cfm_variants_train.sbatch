@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-cfm-v2v3
 
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export CONDA_DEFAULT_ENV=fdv
@@ -47,7 +47,7 @@ case "${SLURM_ARRAY_TASK_ID}" in
     echo "============================================"
     echo " L96 CFM Variants: TweedieCFM (V2) | $(date)"
     echo "  Task: 1 / Experiment: ${EXPERIMENT}"
-    echo "  Config: 24D state, 200-stage1 + 400-stage2 epochs, two-stage CFM"
+    echo "  Config: 24D state, 100-stage1 + 400-stage2 epochs, two-stage CFM"
     echo "   - Stage 1: MeanEstimator (trained on obs → mean(x1|x0,y))"
     echo "   - Stage 2: velocity_unet (trained on (x1 - μ)/K_inner - v)"
     echo "   - ODE sampling: integrate v(x, τ) across K_inner steps"

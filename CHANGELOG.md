@@ -1,5 +1,20 @@
 # Changelog
-  
+
+## 2026-08-28: V2/V3 rebase onto master + resolve compile blockers (B1/B1b) + integration fixes
+
+**Summary:** Rebased `feature/l96-v2v3-pure` onto `origin/master` (now carrying PR #105 batched L96 datagen + PR #106 L96 joint DA ETKF), then fixed the two pre-existing compile blockers that prevented V2/V3 training: B1 (unterminated `train.py` conflict markers + broken 6-space indent on the `smoke_cached_data` branch) and B1b (`conf/schema.py` 5-space `device` indent + trailing-space line). Also surfaced and fixed three rebase-integration defects: a missing `logger` in `train.py` (the `smoke_cached_data` branch called `logger.info` but `logger` was never defined → `NameError`), a `JointDirectUnet`→`JointDirectUNet` casing mismatch (`train.py:146,149` vs master's `models/direct_unet.py:47`), and the V2/V3 sbatch scripts `cd`-ing to the master root instead of the worktree. Applied the locked decisions: V2 stage-1 budget 200→100, added `train_tau_0_only` to `PredictStateCFMConfig`.
+
+**Files modified:**
+- `train.py` — resolved B1 conflict markers (kept `smoke_cached_data` path, 4-space indent); added `import logging` + module `logger`; fixed `JointDirectUnet`→`JointDirectUNet` casing
+- `conf/schema.py` — fixed `device` indentation + trailing whitespace; added `train_tau_0_only: bool = False` to `PredictStateCFMConfig`
+- `config/experiment/V2_tweedie_cfm_l96.yaml` — `stage1.epochs: 200 → 100`
+- `batch/run_l96_cfm_variants_{train,smoke}.sbatch` — `cd` → worktree; updated V2 echo to 100+400
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The V2/V3 branch was forked before master gained PR #105/#106 and carried uncommitted merge-conflict damage in `train.py` (B1) plus a schema indentation bug (B1b) that blocked Python compilation entirely — V3 training could not even start. Rebasing onto the updated master and clearing the blockers + the rebase-surfaced integration defects (casing, logger) makes both models trainable end-to-end.
+
+**Verification:** `pytest tests/{hydra_config,baselines_hydra,lorenz96_training,neural_inference,metrics,energy_score,joint_estimation_l96,joint_estimation_l96_neural,direct_unet,vanilla_cfm}.py -m "not slow"` — **127 passed, 1 deselected**. `py_compile` on `train.py`/`conf/schema.py` OK; Hydra compose + `model_factory` + forward/sample/compute_loss smoke for both V2 `TweedieCFM` (loss 1.09) and V3 `PredictStateCFM` (loss 1.01) on 24D L96-shaped batches OK; `bash -n` on both sbatch OK.
+
 ## 2026-08-27: V2/V3 design review — record blockers + resolved decisions
 
 **Summary:** Reviewed the restored V2 `TweedieCFM` / V3 `PredictStateCFM` code

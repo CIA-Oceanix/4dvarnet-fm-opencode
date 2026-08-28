@@ -57,9 +57,9 @@ class DataConfig:
     obs_j: int = 2
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
- 
-     # Device
-     device: str = "cpu"
+
+    # Device
+    device: str = "cpu"
 
     @property
     def num_steps(self) -> int:
@@ -181,6 +181,7 @@ class PredictStateCFMConfig:
     N_outer: int = 10
     sigma_prior: float = 0.5
     dropout: float = 0.1
+    train_tau_0_only: bool = False
     cond_extra_dim: int = 0
 
 

@@ -19,7 +19,7 @@ model:
 
 training:
   stage1:
-    epochs: 200
+    epochs: 100
     lr: 0.001
     gradient_clip_val: 10.0
   stage2:

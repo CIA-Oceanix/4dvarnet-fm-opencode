@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import time
+import logging
 import torch
 import numpy as np
 import hydra
@@ -18,6 +19,8 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 torch.set_float32_matmul_precision('medium')
+
+logger = logging.getLogger(__name__)
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
 from data.random_param_dataset import RandomParamLorenz63Dataset
@@ -140,10 +143,10 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=jc.train_tau_0_only,
         )
     elif model_type == "joint_direct_unet":
-        from models.direct_unet import JointDirectUnet
+        from models.direct_unet import JointDirectUNet
         jdu = cfg.model.joint_direct_unet
         dc = cfg.model.direct_unet
-        model = JointDirectUnet(
+        model = JointDirectUNet(
             state_dim=cfg.model.state_dim,
             param_dim=jdu.param_dim,
             hidden_channels=dc.hidden_channels,
@@ -355,45 +358,28 @@ def main(cfg: DictConfig):
             fast_weights=list(dc.get("fast_weights", [1.0, 1.0, 0.1, 0.1])),
             randomize=dict(dc.get("randomize", {})),
             obs_var_indices=obs_var_indices,
-<<<<<<< HEAD
         )
         if data_setup == "s0_s1":
-            datasets = make_l96_s0_s1_trainval(
-                base_cfg,
-                num_train_windows=dc.get("num_train_windows", 1000),
-                num_val_windows=dc.get("num_val_windows", 100),
-                num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
-                bias_range=(0.0, dc.get("bias_max", 0.2)),
-            )
-            test_keys = ["test_s0", "test_s1"]
+            smoke_cached_data = dc.get("smoke_cached_data", None)
+            if smoke_cached_data is not None:
+                logger.info(f"Loading cached data from: {smoke_cached_data}")
+                cached = torch.load(smoke_cached_data, weights_only=False)
+                datasets = cached
+                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
+                test_keys = ["test_s0", "test_s1"]
+            else:
+                datasets = make_l96_s0_s1_trainval(
+                    base_cfg,
+                    num_train_windows=dc.get("num_train_windows", 1000),
+                    num_val_windows=dc.get("num_val_windows", 100),
+                    num_test_windows=dc.get("num_test_windows", 200),
+                    param_noise=dc.get("test_param_noise", 0.2),
+                    bias_range=(0.0, dc.get("bias_max", 0.2)),
+                )
+                test_keys = ["test_s0", "test_s1"]
         else:
             datasets = make_l96_datasets(base_cfg)
             test_keys = ["test_cs1", "test_cs2"]
-=======
-         )  
-         if data_setup == "s0_s1":
-             smoke_cached_data = dc.get("smoke_cached_data", None)
-             if smoke_cached_data is not None:
-                 logger.info(f"Loading cached data from: {smoke_cached_data}")
-                 cached = torch.load(smoke_cached_data, weights_only=False)
-                 datasets = cached
-                 logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
-                 test_keys = ["test_s0", "test_s1"]
-             else:
-                 datasets = make_l96_s0_s1_trainval(
-                     base_cfg,
-                     num_train_windows=dc.get("num_train_windows", 1000),
-                     num_val_windows=dc.get("num_val_windows", 100),
-                     num_test_windows=dc.get("num_test_windows", 200),
-                     param_noise=dc.get("test_param_noise", 0.2),
-                     bias_range=(0.0, dc.get("bias_max", 0.2)),
-                 )
-                 test_keys = ["test_s0", "test_s1"]
-         else:
-             datasets = make_l96_datasets(base_cfg)
-             test_keys = ["test_cs1", "test_cs2"]
->>>>>>> f7749a9 (fix: add smoke_cached_data extraction from DataConfig)
     else:
         base_cfg = Lorenz63Config(
             dt=dc.dt, T_max=dc.T_max, obs_interval=dc.obs_interval,
@@ -407,19 +393,26 @@ def main(cfg: DictConfig):
             param_bias=dc.get("param_bias", 0.0),
             forcing_state_bias=dc.get("forcing_state_bias", 0.0),
             forcing_coupling=dc.get("forcing_coupling", "linear"),
-<<<<<<< HEAD
         )
         if data_setup == "s0_s1":
-            bias_max = dc.get("bias_max", 0.2)
-            datasets = make_s0_s1_trainval(
-                base_cfg,
-                num_train_windows=dc.get("num_train_windows", 1000),
-                num_val_windows=dc.get("num_val_windows", 100),
-                num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
-                bias_range=(0.0, bias_max),
-            )
-            test_keys = ["test_s0", "test_s1"]
+            smoke_cached_data = dc.get("smoke_cached_data", None)
+            if smoke_cached_data is not None:
+                logger.info(f"Loading cached data from: {smoke_cached_data}")
+                cached = torch.load(smoke_cached_data, weights_only=False)
+                datasets = cached
+                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
+                test_keys = ["test_s0", "test_s1"]
+            else:
+                bias_max = dc.get("bias_max", 0.2)
+                datasets = make_s0_s1_trainval(
+                    base_cfg,
+                    num_train_windows=dc.get("num_train_windows", 1000),
+                    num_val_windows=dc.get("num_val_windows", 100),
+                    num_test_windows=dc.get("num_test_windows", 200),
+                    param_noise=dc.get("test_param_noise", 0.2),
+                    bias_range=(0.0, bias_max),
+                )
+                test_keys = ["test_s0", "test_s1"]
         else:
             datasets = make_mixed_datasets(
                 base_cfg,
@@ -430,38 +423,6 @@ def main(cfg: DictConfig):
                 param_noise=dc.get("test_param_noise", 0.2),
             )
             test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
-=======
-             )  
-         if data_setup == "s0_s1":
-             smoke_cached_data = dc.get("smoke_cached_data", None)
-             if smoke_cached_data is not None:
-                 logger.info(f"Loading cached data from: {smoke_cached_data}")
-                 cached = torch.load(smoke_cached_data, weights_only=False)
-                 datasets = cached
-                 logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
-                 test_keys = ["test_s0", "test_s1"]
-             else:
-                 bias_max = dc.get("bias_max", 0.2)
-                 datasets = make_s0_s1_trainval(
-                     base_cfg,
-                     num_train_windows=dc.get("num_train_windows", 1000),
-                     num_val_windows=dc.get("num_val_windows", 100),
-                     num_test_windows=dc.get("num_test_windows", 200),
-                     param_noise=dc.get("test_param_noise", 0.2),
-                     bias_range=(0.0, bias_max),
-                 )
-                 test_keys = ["test_s0", "test_s1"]
-         else:
-             datasets = make_mixed_datasets(
-                 base_cfg,
-                 num_train_windows=dc.get("num_train_windows", 1000),
-                 num_val_windows=dc.get("num_val_windows", 100),
-                 num_test_windows=dc.get("num_test_windows", 200),
-                 include_randparam_test=dc.get("test_randparam", True),
-                 param_noise=dc.get("test_param_noise", 0.2),
-             )
-             test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
->>>>>>> f7749a9 (fix: add smoke_cached_data extraction from DataConfig)
     if system == "lorenz96":
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
