@@ -53,4 +53,5 @@ jobs:
             tests/test_metrics.py \
             tests/test_estimate_metrics.py \
             tests/test_joint_estimation_l96_neural.py \
+            tests/test_joint_estimation_l96.py \
             -m "not slow" -q

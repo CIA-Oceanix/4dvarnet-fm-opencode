@@ -15,10 +15,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval
-from evaluation.baselines import (
-    EnKF, ETKF, Strong4DVar,
-    JointEnKFL96, JointETKFL96, JointStrong4DVarL96,
-)
+from evaluation.baselines import ETKF, JointETKFL96
 from evaluation.metrics import param_rmse
 from evaluation.run_l96 import evaluate_baseline, make_obs_j_indices
 
@@ -26,6 +23,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")
 
 _L96_ESTIMATED = ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]
+_REF_FAST_WEIGHTS = [1.0, 1.0, 0.1, 0.1]  # w3/w4 default on S1 (J=2), matching JointETKFL96._ref_fw
 
 
 def _true_param_vector(w, J):
@@ -36,7 +34,10 @@ def _true_param_vector(w, J):
     fw = list(w["true_fast_weights"])
     if J < len(fw):
         fw = fw[:J]
-    return np.array([F, c1, hx, eps] + list(fw))
+    vec = [F, c1, hx, eps] + list(fw)
+    while len(vec) < len(_L96_ESTIMATED):
+        vec.append(_REF_FAST_WEIGHTS[len(vec) - 4])
+    return np.array(vec)
 
 
 def main():
@@ -88,26 +89,15 @@ def main():
 
     cases = [("S0", "test_s0", 1.6, 4), ("S1", "test_s1", 1.0, args.obs_j)]
 
+    # ETKF-only scope this session (Joint-EnKF / Joint-Strong-4DVar deferred).
     method_factories = {
-        "EnKF": lambda dyn, op, J: EnKF(dt=0.001, device=device, coupling_exponent=1.6,
-                                         dynamics=dyn, obs_operator=op, NO=NO, J=J,
-                                         N_ensemble=30, inflation=args.enkf_inflation),
-        "Joint-EnKF": lambda dyn, op, J: JointEnKFL96(dt=0.001, device=device, coupling_exponent=1.6,
-                                                       dynamics=dyn, obs_operator=op, NO=NO, J=J,
-                                                       N_ensemble=30, inflation=args.enkf_inflation),
         "ETKF": lambda dyn, op, J: ETKF(dt=0.001, device=device, coupling_exponent=1.6,
                                          dynamics=dyn, obs_operator=op, NO=NO, J=J,
                                          N_ensemble=30, inflation=args.etkf_inflation),
         "Joint-ETKF": lambda dyn, op, J: JointETKFL96(dt=0.001, device=device, coupling_exponent=1.6,
                                                        dynamics=dyn, obs_operator=op, NO=NO, J=J,
-                                                       N_ensemble=30, inflation=args.etkf_inflation),
-        "Strong-4DVar": lambda dyn, op, J: Strong4DVar(dt=0.001, da_window_steps=args.da_window_steps,
-                                                        device=device, coupling_exponent=1.6,
-                                                        dynamics=dyn, obs_operator=op, max_iter=40),
-        "Joint-Strong-4DVar": lambda dyn, op, J: JointStrong4DVarL96(dt=0.001, da_window_steps=args.da_window_steps,
-                                                                     device=device, coupling_exponent=1.6,
-                                                                     dynamics=dyn, obs_operator=op, max_iter=40,
-                                                                     J=J),
+                                                       N_ensemble=30, inflation=args.etkf_inflation,
+                                                       param_noise=0.03, etkf_ridge=0.05),
     }
 
     from models.lorenz96_dynamics import Lorenz96Dynamics
@@ -144,14 +134,6 @@ def main():
         case_results = {}
         for method_name, factory in method_factories.items():
             method = factory(dyn, op, J)
-            for w in ds:
-                w["_pw"] = {
-                    "F": w.get("F_da", w["true_F"]),
-                    "c1": w.get("c1_da", w["true_c1"]),
-                    "hx": w.get("hx_da", w["true_hx"]),
-                    "eps": w.get("eps_da", w["true_eps"]),
-                    "fast_weights": w.get("fast_weights_da", w["true_fast_weights"]),
-                }
             (rmse_stats, expvar_stats, es_stats), bl_results = evaluate_baseline(
                 method, ds, cfg, device, return_trajs=True, batch_size=args.batch_size, da_J=da_J)
             mean_rmse = rmse_stats[0]

@@ -215,7 +215,10 @@ baselines** exist; the L96 joint **neural** models were missing.
   L9 ens30×10 is the best joint estimator (S0 **0.525**/S1 **0.531**), matching L3's
   multi-τ integration advantage. **L9 recovers the 8 params (paramRMSE 0.058) while L7
   τ=0 fails (1.21) despite matching state RMSE**; L8 deterministic recovers them well
-  (0.061). Joint DA baselines not yet run (report rows `--`).
+  (0.061). **Joint ETKF DA baseline run (2026-08-28, Job 50577)** — see
+  `l96_joint_da_benchmark.md`: S0 Joint-ETKF 0.633/param 0.053 (≈ L9 parity); S1 1.497/
+  param 0.128 after the inflation/stability fix (see "L96 joint state-parameter DA
+  baseline" under Experiments). Joint-EnKF / Joint-Strong-4DVar still not run (`--`).
 
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
@@ -285,7 +288,16 @@ ens30×10: S0 0.525 / S1 0.531** (matches L3's multi-τ integration advantage). 
 recovery is model-dependent: L9 recovers the 8 params (paramRMSE 0.058) as does L8
 JointDirectUNet (0.061), but **L7 τ=0 fails to recover params (1.21)** despite matching
 state RMSE. Full tables: `reports/l96/outputs/l96_joint_neural_benchmark.md`.
-Joint DA baselines not yet run (report rows `--`).
+
+**L96 joint state-parameter DA baseline (2026-08-28, ETKF only)** — see
+`reports/l96/outputs/l96_joint_da_benchmark.md`. Joint-ETKF vs vanilla ETKF on the
+cached S0/S1 set (200 windows): **S0** Joint-ETKF state RMSE **0.633** (EV 0.82, ES 0.30)
+vs vanilla 0.878; paramRMSE mean **0.053** — **at parity with the L9 neural model**
+(state 0.626 / param 0.059 single-sample). **S1** Joint-ETKF 1.497 (EV 0.18) vs vanilla
+1.554, paramRMSE 0.128 — stabilized by the state-only-inflation fix (RC: the ETKF was
+inflating the unobserved param block, growing spread into the reduced J=2 forecast).
+Neural (L9) still clearly ahead on S1 (0.631) via its ≈1.00 bias robustness. Joint-EnKF /
+Joint-Strong-4DVar not yet run.
 
 ## Phases
 
