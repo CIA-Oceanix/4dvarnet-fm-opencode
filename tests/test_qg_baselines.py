@@ -214,6 +214,25 @@ def test_lagged_init_ensemble_diversity():
     assert float(init_ensemble.std()) > 0.1 * q_std
 
 
+def test_lagged_init_dispersion_proportional():
+    """Setting disp_frac > 0 re-proportions the (severely under-dispersed)
+    lagged ensemble so its per-point spread is a material fraction of the
+    state variability (without it, the ETKF covariance collapses)."""
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    sstd = float(w["true_state"].std())
+    base, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
+                                    device=device, disp_frac=0.0)
+    disp, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
+                                    device=device, disp_frac=1.0)
+    base_per = float(base.std(0).mean())
+    disp_per = float(disp.std(0).mean())
+    assert base_per < 0.1 * sstd          # raw lagged ensemble under-dispersed
+    assert disp_per > 0.3 * sstd          # dispersion restores physical spread
+    # the two share the same lagged centres (dispersion adds zero-mean noise)
+    assert float(torch.mean(disp - base)) == pytest.approx(0.0, abs=0.1 * sstd)
+
+
 def test_etkf_q_cols_lagged_smoke_finite():
     cfg, w = _rc_window(window_days=6.0)
     device = torch.device("cpu")
@@ -250,3 +269,6 @@ def test_psi_obs_run_smoke():
     assert np.isfinite(s0["rmse_mean"])
     assert np.isfinite(s0["expvar_full"])
     assert s0["rmse_mean"] < 1.0  # bounded
+    # Regression: without lagged-init dispersion psi-obs collapsed (spread->0,
+    # EV ~ -1e3..-1e4). With dispersion the S0 analysis must be skilful.
+    assert s0["expvar_full"] > 0.3
