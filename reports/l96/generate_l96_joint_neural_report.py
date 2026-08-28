@@ -90,7 +90,7 @@ def metrics_case(data, case):
     return metrics.get(case)
 
 
-def write_report(exp_dir: Path, output_path: Path) -> None:
+def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> None:
     md = []
 
     md.append("# L96 Joint State-Parameter Neural Estimation Benchmark")
@@ -371,15 +371,38 @@ def write_report(exp_dir: Path, output_path: Path) -> None:
     # DA placeholder
     md.append("## DA baselines (joint)")
     md.append("")
-    md.append("| Method | S0 RMSE | S1 RMSE |")
-    md.append("|---|---|---|")
-    md.append("| Joint-EnKF | -- | -- |")
-    md.append("| Joint-ETKF | -- | -- |")
-    md.append("| Joint-Strong-4DVar | -- | -- |")
+    md.append("Joint augmented-state DA filters (state **and** 8 params) benchmarked on the same "
+              "cached S0/S1 test set, vs the best neural joint estimator (L9 single-sample). "
+              "Rows are read from `experiments/l96_joint_comparison.json`; missing methods "
+              "render as --.")
     md.append("")
-    md.append("*Joint DA baselines have not been run successfully for this benchmark; their rows "
-              "are deferred and shown as --. Once the joint DA regeneration completes, this report "
-              "should add them apples-to-apples against the neural rows.*")
+    md.append("| Method | S0 RMSE | S0 ES | S1 RMSE | S1 ES |")
+    md.append("|---|---|---|---|---|")
+    da_case = load_json(comparison_json)
+    joint_da_names = []
+    if da_case:
+        seen = set()
+        for c in ("S0", "S1"):
+            for m in (da_case.get(c) or {}):
+                if "Joint" in m and m not in seen:
+                    seen.add(m)
+                    joint_da_names.append(m)
+    joint_da_names = sorted(joint_da_names) if joint_da_names else []
+    if joint_da_names:
+        for m in joint_da_names:
+            cells = [f"| {m} |"]
+            for case in ("S0", "S1"):
+                e = (da_case.get(case) or {}).get(m) or {}
+                rmse = (e.get("state_rmse") or {}).get("mean")
+                es = (e.get("es") or {}).get("mean")
+                cells.append(f" {fmt_num(rmse)} | {fmt_num(es)} |")
+            md.append("".join(cells))
+    else:
+        md.append("| (no joint DA results yet) | -- | -- | -- | -- |")
+    md.append("")
+    md.append("*ES is the N=30 ensemble Energy Score; lower is better for both RMSE and ES. "
+              "Joint-Strong-4DVar is deferred; Joint-EnKF / Joint-ETKF rows appear once the "
+              "comparator writes them into `l96_joint_comparison.json`.*")
     md.append("")
     md.append("---")
     md.append("")
@@ -407,6 +430,9 @@ def main():
     parser.add_argument("--output", type=str,
                         default=str(ROOT / "reports/l96/outputs/l96_joint_neural_benchmark.md"),
                         help="Output markdown report path")
+    parser.add_argument("--comparison-json", type=str,
+                        default=str(ROOT / "experiments/l96_joint_comparison.json"),
+                        help="Path to the joint DA comparator JSON (for the DA baselines table)")
     args = parser.parse_args()
 
     exp_dir = Path(args.exp_dir)
@@ -417,7 +443,7 @@ def main():
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    write_report(exp_dir, output_path)
+    write_report(exp_dir, output_path, Path(args.comparison_json))
 
 
 if __name__ == "__main__":

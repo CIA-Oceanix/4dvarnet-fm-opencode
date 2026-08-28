@@ -1918,23 +1918,37 @@ def _l96_joint_obs_op(obs_operator, sd):
 
 
 class JointEnKFL96(EnKF):
-    """Joint EnKF for L96 estimating F, c1, hx, eps and fast_weights (h fixed)."""
+    """Joint EnKF for L96 estimating F, c1, hx, eps and fast_weights (h fixed).
+
+    Augmented state layout: ``[state(sd), F, c1, hx, eps, w1..wJ]`` where ``J`` is
+    the number of active fast weights (4 for the S0 full 40D dynamics, 2 for the S1
+    reduced 24D dynamics). The reported param vector is always 8-wide; on S1 the
+    unestimated ``w3,w4`` default to the reference prior ``[1.0, 0.1]``.
+    """
 
     def __init__(self, N_ensemble=30, R_var=0.5, inflation=1.0, dt=0.001,
                  device=torch.device("cpu"), coupling_exponent=1.0,
                  dynamics=None, obs_operator=None, NO=8, J=4,
                  noise_init_std=1.5, param_noise=0.1,
-                 h=None, fast_weights=None):
+                 h=None, fast_weights=None,
+                 etkf_ridge=0.0, loc_radius=None):
         super().__init__(N_ensemble=N_ensemble, R_var=R_var, inflation=inflation,
                          dt=dt, device=device, coupling_exponent=coupling_exponent,
                          dynamics=dynamics, obs_operator=obs_operator,
-                         NO=NO, J=J, noise_init_std=noise_init_std)
+                         NO=NO, J=J, noise_init_std=noise_init_std,
+                         loc_radius=loc_radius)
         self.J = J
         self.param_noise = param_noise
+        self.etkf_ridge = etkf_ridge
         self._fixed_h = 1.0 if h is None else h
         self._init_fw = [1.0, 1.0, 0.1, 0.1] if fast_weights is None else list(fast_weights)
         self._sd = self.state_dim
         self.param_dim = _L96_JOINT_PARAM_DIM
+        self._n_scl = 4  # (F, c1, hx, eps)
+        self._n_active_fw = J
+        self._n_est = self._n_scl + J
+        self._aug_dim = self._sd + self._n_est
+        self._ref_fw = [1.0, 1.0, 0.1, 0.1]
 
     def _init_ensemble(self, obs0, params):
         N = self.N_ensemble
@@ -1947,14 +1961,60 @@ class JointEnKFL96(EnKF):
         c1s = torch.full((N, 1), p["c1"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
         hxs = torch.full((N, 1), p["hx"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
         epss = torch.full((N, 1), p["eps"], device=self.device) * (1 + rn(N, 1, device=self.device) * self.param_noise)
-        fw0 = torch.tensor(p["fast_weights"], dtype=torch.float32, device=self.device)
+        fw_full = p["fast_weights"]
+        if len(fw_full) > self.J:
+            fw_full = fw_full[:self.J]
+        fw0 = torch.tensor(fw_full, dtype=torch.float32, device=self.device)
         fws = fw0.unsqueeze(0).repeat(N, 1) * (1 + rn(N, fw0.shape[0], device=self.device) * self.param_noise)
         return torch.cat([state, Fs, c1s, hxs, epss, fws], dim=1)
 
-    def _obs_gain_len(self):
+    def _obs_idx(self):
         if self.obs_operator.indices is None:
-            return self._sd
-        return self.obs_operator.indices.shape[0]
+            return list(range(self._sd))
+        return self.obs_operator.indices.tolist()
+
+    def _mk_Hstate(self, idx, sd, N_dim):
+        H = torch.zeros(len(idx), N_dim, device=self.device)
+        for i, j in enumerate(idx):
+            H[i, j] = 1.0
+        return H
+
+    def _params_to_report(self, mean_est, num_steps):
+        """Return the 8-wide per-step param array (F,c1,hx,eps,w1..w4)."""
+        arr = np.zeros((num_steps, self.param_dim))
+        arr[:, :self._n_est] = mean_est
+        for k in range(self._n_est, self.param_dim):
+            arr[:, k] = self._ref_fw[k - self._n_scl]
+        return arr
+
+    def _forecast(self, ensemble, W):
+        """Advance only the state block of the augmented ensemble to the next step."""
+        N = ensemble.shape[0]
+        sd = self._sd
+        F_e, c1_e, hx_e, eps_e, fw = _l96_joint_split(ensemble, sd, self.J)
+        h_e = _l96_h_fixed(N, self.device) if self._fixed_h == 1.0 \
+            else torch.full((N,), self._fixed_h, device=self.device)
+        next_state = self.dynamics.step(ensemble[:, :sd], W.expand(N),
+                                        F=F_e, c1=c1_e, h=h_e, hx=hx_e, eps=eps_e,
+                                        fast_weights=fw)
+        return torch.cat([next_state, ensemble[:, sd:]], dim=1)
+
+    def _analysis(self, ensemble, y_t, idx, H):
+        N = ensemble.shape[0]
+        N1 = N - 1
+        mu = torch.mean(ensemble, dim=0)
+        A = ensemble - mu
+        HA = A @ H.T
+        dy = y_t - mu[idx]
+        R_inv = 1.0 / self.R_var
+        Y = HA * np.sqrt(R_inv)
+        U, s, _ = torch.linalg.svd(Y, full_matrices=False)
+        s2 = s ** 2
+        d = s2 + N1 + self.etkf_ridge * s2.max()
+        Pw = U @ torch.diag(1.0 / d) @ U.T
+        T = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+        w = (dy * R_inv) @ HA.T @ Pw
+        return mu + w @ A + T @ A
 
     def assimilate(self, observations, obs_mask, forcing, true_state=None, F=8.0,
                    c1=1.0, h=1.0, hx=1.0, eps=0.1, fast_weights=None, **kwargs):
@@ -1964,73 +2024,165 @@ class JointEnKFL96(EnKF):
         num_steps = observations.shape[0]
         N = self.N_ensemble
         sd = self._sd
-        J = self.J
-        od = self._obs_gain_len()
-        N1 = N - 1
-        r_sqrt = np.sqrt(self.R_var)
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
-        grid = self.obs_operator.indices.cpu().numpy() if self.obs_operator.indices is not None else None
-        if grid is not None:
+        if self.obs_operator.indices is not None:
             full0 = self.obs_operator.expand_to_state(interp_obs[0], sd)
-            ensemble = self._init_ensemble(full0, params)
         else:
-            ensemble = self._init_ensemble(interp_obs[0], params)
+            full0 = interp_obs[0]
+        ensemble = self._init_ensemble(full0, params)
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
-        param_arr = np.zeros((num_steps, self.param_dim))
+        param_arr = np.zeros((num_steps, self._n_est))
         analysis[0] = torch.mean(ensemble[:, :sd], dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble[:, :sd], dim=0).cpu().numpy()
         param_arr[0] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
 
-        idx, _ = _l96_joint_obs_op(self.obs_operator, sd)
+        idx = self._obs_idx()
+        H = self._mk_Hstate(idx, sd, self._aug_dim)
+
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+        es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
-            F_e, c1_e, hx_e, eps_e, fw = _l96_joint_split(ensemble, sd, J)
-            h_e = _l96_h_fixed(N, self.device)
-            ensemble[:, :sd] = self.dynamics.step(
-                ensemble[:, :sd], W.expand(N), F=F_e, c1=c1_e, h=h_e, hx=hx_e, eps=eps_e,
-                fast_weights=fw)
+            ensemble = self._forecast(ensemble, W)
 
             if obs_mask[t]:
-                y_t = observations[t]
+                ensemble = self._analysis(ensemble, observations[t], idx, H)
                 mu = torch.mean(ensemble, dim=0)
-                A = ensemble - mu
-                dy = y_t - mu[idx]
-                HA = A[:, idx]
-                HA_w = torch.nan_to_num(HA / r_sqrt)
-                try:
-                    U, s, Vt = torch.linalg.svd(HA_w, full_matrices=False)
-                except RuntimeError:
-                    U, s, Vt = torch.linalg.svd(HA_w.cpu(), full_matrices=False)
-                    U, s, Vt = U.to(HA_w.device), s.to(HA_w.device), Vt.to(HA_w.device)
-                s2 = s ** 2
-                d = s2 + N1 + getattr(self, "etkf_ridge", 0.0) * s2.max()
-                Pw = U @ torch.diag(1.0 / d) @ U.T
-                Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
-                w = (dy * (1.0 / self.R_var)) @ HA.T @ Pw
-                ensemble = mu + w @ A + Tmat @ A
+                ensemble[:, :sd] = mu[:sd] + self.inflation * (ensemble[:, :sd] - mu[:sd])
+                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
                 nan_mask = torch.isnan(ensemble).any(dim=-1)
                 if nan_mask.any():
                     ensemble = torch.nan_to_num(ensemble)
                     mu_fix = torch.mean(ensemble, dim=0)
                     ensemble[nan_mask] = mu_fix
-                mu = torch.mean(ensemble, dim=0)
-                ensemble = mu + self.inflation * (ensemble - mu)
-                ensemble[:, sd:] = ensemble[:, sd:].clamp(min=1e-6)
+
+            if es_acc is not None:
+                es_acc.step(ensemble[:, :sd], ref_full[t])
 
             analysis[t] = torch.mean(ensemble[:, :sd], dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble[:, :sd], dim=0).detach().cpu().numpy()
             param_arr[t] = torch.mean(ensemble[:, sd:], dim=0).detach().cpu().numpy()
+        param_arr = self._params_to_report(param_arr, num_steps)
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, "obs_operator", None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
         return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
                               ensemble=np.zeros((N, num_steps, sd)),
-                              ensemble_variance=ens_var)
+                              ensemble_variance=ens_var,
+                              es=(es_acc.es() if es_acc is not None else None))
+
+    def assimilate_batch(self, observations, obs_mask, forcing, true_state=None,
+                         F=None, c1=None, hx=None, eps=None, fast_weights=None, **kwargs):
+        """Vectorized-batch joint EnKF over the augmented state.
+
+        ``F``/``c1``/``hx``/``eps`` are ``[B]`` tensors and ``fast_weights`` is
+        ``[B, da_J]`` (one per window, already sliced by the caller).
+        """
+        B, num_steps, _ = observations.shape
+        N = self.N_ensemble
+        sd = self._sd
+        n_est = self._n_est
+        device = self.device
+
+        if F is None:
+            F = torch.full((B,), 8.0, device=device)
+        if c1 is None:
+            c1 = torch.full((B,), 1.0, device=device)
+        if hx is None:
+            hx = torch.full((B,), 1.0, device=device)
+        if eps is None:
+            eps = torch.full((B,), 0.1, device=device)
+        if fast_weights is None:
+            fast_weights = torch.tensor([self._init_fw] * B, device=device)
+        if fast_weights.shape[-1] > self.J:
+            fast_weights = fast_weights[:, :self.J]
+
+        interp_obs = _interp_observations(observations, obs_mask)
+        full0 = interp_obs[:, 0]
+        if self.obs_operator.indices is not None:
+            full0 = self.obs_operator.expand_to_state(full0, sd)
+        ensemble = full0.unsqueeze(1).repeat(1, N, 1)
+        ensemble = ensemble + torch.randn_like(ensemble) * self.noise_init_std
+        rn = torch.randn
+        Fs = F.unsqueeze(1).repeat(1, N) * (1 + rn(B, N, device=device) * self.param_noise)
+        c1s = c1.unsqueeze(1).repeat(1, N) * (1 + rn(B, N, device=device) * self.param_noise)
+        hxs = hx.unsqueeze(1).repeat(1, N) * (1 + rn(B, N, device=device) * self.param_noise)
+        epss = eps.unsqueeze(1).repeat(1, N) * (1 + rn(B, N, device=device) * self.param_noise)
+        fw0 = fast_weights.unsqueeze(1).repeat(1, N, 1)
+        fws = fw0 * (1 + rn(B, N, self.J, device=device) * self.param_noise)
+        ensemble = torch.cat([
+            ensemble,
+            Fs.unsqueeze(-1), c1s.unsqueeze(-1), hxs.unsqueeze(-1), epss.unsqueeze(-1),
+            fws,
+        ], dim=-1)  # [B, N, sd + 4 + J]
+
+        analysis = np.zeros((B, num_steps, sd))
+        ens_var = np.zeros((B, num_steps, sd))
+        param_arr = np.zeros((B, num_steps, n_est))
+        analysis[:, 0] = torch.mean(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        ens_var[:, 0] = torch.var(ensemble[:, :, :sd], dim=1).cpu().numpy()
+        param_arr[:, 0, :n_est] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
+
+        idx = self._obs_idx()
+        H = self._mk_Hstate(idx, sd, self._aug_dim)
+
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+        es_accs = (
+            [None] * B if ref_full is None
+            else [_ESAccumulator(num_steps, sd, N) for _ in range(B)]
+        )
+
+        for t in range(1, num_steps):
+            W = forcing[:, t - 1]  # [B]
+            for b in range(B):
+                ensemble[b] = self._forecast(ensemble[b], W[b])
+            nan_mask = torch.isnan(ensemble).any(dim=-1)
+            if nan_mask.any():
+                ensemble = torch.nan_to_num(ensemble)
+                mu_nan = torch.mean(ensemble, dim=1)
+                for b in range(B):
+                    if nan_mask[b].any():
+                        ensemble[b, nan_mask[b]] = mu_nan[b]
+
+            for b in range(B):
+                if obs_mask[b, t]:
+                    y_t = observations[b, t]
+                    new_ens = self._analysis(ensemble[b], y_t, idx, H)
+                    mu = torch.mean(new_ens, dim=0)
+                    new_ens[:, :sd] = mu[:sd] + self.inflation * (new_ens[:, :sd] - mu[:sd])
+                    new_ens[:, sd:] = new_ens[:, sd:].clamp(min=1e-6)
+                    ensemble[b] = new_ens
+
+            for b in range(B):
+                if es_accs[b] is not None:
+                    es_accs[b].step(ensemble[b, :, :sd], ref_full[b, t])
+
+            analysis[:, t] = torch.mean(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            ens_var[:, t] = torch.var(ensemble[:, :, :sd], dim=1).detach().cpu().numpy()
+            param_arr[:, t, :n_est] = torch.mean(ensemble[:, :, sd:], dim=1).detach().cpu().numpy()
+
+        results = []
+        for b in range(B):
+            ref = observations[b].cpu().numpy() if true_state is None else true_state[b].cpu().numpy()
+            ref = _safe_ref(ref, analysis[b], getattr(self, "obs_operator", None))
+            rmse_b = np.sqrt(np.mean((analysis[b] - ref) ** 2, axis=0))
+            prms = self._params_to_report(param_arr[b], num_steps)
+            results.append(BaselineResult(
+                trajectory=analysis[b], rmse=rmse_b, params=prms,
+                ensemble=np.zeros((N, num_steps, sd)),
+                ensemble_variance=ens_var[b],
+                es=(es_accs[b].es() if es_accs[b] is not None else None),
+            ))
+        return results
 
 
 class JointETKFL96(ETKF):

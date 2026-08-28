@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-28: L96 joint DA benchmark — Joint-EnKF runs + state-only inflation (stabilized)
+
+**Summary:** Added the **Joint-EnKF** leg of the L96 joint state-parameter DA benchmark
+(Job 50655, 200 shared cached S0/S1 windows, Obs30) and delivered the fixes it needed.
+`JointEnKFL96` was rewritten so the **state-only-inflation** fix (ported from the ETKF
+work — RC: the old filter inflated the whole augmented state including the unobserved
+param block, growing param spread into the reduced J=2 S1 forecast) is applied in a
+dedicated `_analysis`, and a joint `assimilate_batch` was added (the inherited parent
+batch silently dropped params). Both sequential and batch paths now wire the Energy
+Score via `_ESAccumulator`, report an always-8-wide param vector (w3/w4 default to the
+reference prior on S1), and match each other bitwise-consistently.
+
+**Results (pooled, 200 windows):** **S0** Joint-EnKF RMSE **0.726** / EV 0.77 / ES 0.371
+vs vanilla EnKF 0.891 — beats the vanilla filter but is worse than Joint-ETKF (0.633).
+**S1** Joint-EnKF RMSE **1.459** / EV 0.23 / ES 0.843 is the **best DA row** (ahead of
+Joint-ETKF 1.497 & vanilla EnKF 1.505/ETKF 1.554), stable after the state-only-inflation
+fix. paramRMSE mean S0 0.057 / S1 0.148. Neural (L9) still clearly ahead on S1 (0.631)
+via its ≈1.00 bias robustness. Joint-Strong-4DVar still not run (`--`).
+
+**Files modified:** `evaluation/baselines.py` — `JointEnKFL96` rewritten: helper methods
+(`_obs_idx`, `_mk_Hstate`, `_params_to_report`, `_forecast`, `_analysis`), state-only
+inflation, new `assimilate_batch`, ES wiring, `es` on `BaselineResult`; `eval_joint_comparison_l96.py` —
+EnKF/Joint-EnKF/Strong-4DVar factories + `--methods`/`--cases` subset + JSON merge (preserves ETKF rows);
+`batch/run_l96_joint_comparison.sbatch` — retargeted to EnKF + `--methods EnKF,Joint-EnKF` + hardcoded repo root
+(the old `BASH_SOURCE`-based cd breaks because slurm relocates the script into the spool dir);
+`reports/l96/generate_l96_joint_da_report.py` — generalized for multiple methods + EV table;
+`reports/l96/generate_l96_joint_neural_report.py` — DA-baselines table read from the comparator JSON;
+`reports/l96/outputs/{l96_joint_da_benchmark,l96_joint_neural_benchmark}.md` — regenerated;
+`tests/test_joint_estimation_l96.py` — 5 new tests (ES shape/finiteness, state-only inflation,
+batch≡sequential for S0 & S1); `PLAN.md` — Joint-EnKF results; `CHANGELOG.md` — this entry.
+
+**Rationale:** Completes the Joint-EnKF row of the joint DA vs joint neural comparison,
+answering whether the sequential-batch / EnKF-vs-ETKF variants behave consistently and
+stay stable on S1. The `assimilate_batch` write is required because the inherited batch
+path otherwise drops the parameter block; the state-only-inflation fix is the same root
+cause as the ETKF S1 divergence.
+
+**Verification:** `pytest tests/test_joint_estimation_l96.py -m "not slow"` — 14 passed
+(5 new). Broader gate `pytest tests/test_joint_estimation_l96.py tests/test_joint_estimation_l96_neural.py tests/test_energy_score.py tests/test_baselines_hydra.py tests/test_lorenz96_training.py tests/test_neural_inference.py -m "not slow"` — 102 passed. `bash -n` on the sbatch OK; all touched .py `py_compile` OK. Ruff on touched files: only 3 new auto-fixable `I001` import-sorting nits in the test file (informational; ruff is `continue-on-error` in CI).
+
 ## 2026-08-28: L96 joint DA benchmark — Joint-ETKF runs + S1 divergence fix (stabilized)
 
 **Summary:** Delivered the first L96 joint state-parameter **DA baseline** (Job 50577,

@@ -185,8 +185,24 @@ obs-only, `use_energy=false`, 2-stage) and V2 (CFM + Tweedie residual hybrid)
 precisely with reference bars vs L2b/L3/L4 and the open design questions to
 resolve (cond_extra_dim plumbing, energy flag, stage-1 budget, 24D cell
 validity, multi-member sampling, single-sample vs ens30×10 bar). **V3 diffusion
-deferred** (no scaffolding exists). **No Phase B code implements these yet** — a
-future session must resolve the doc's open questions before implementing.
+  deferred** (no scaffolding exists). **No Phase B code implements these yet** — a
+  future session must resolve the doc's open questions before implementing.
+
+**V2/V3 worktree state (checked 2026-08-28) — for the Phase B session:**
+The V2/V3 topic worktree (`4dvarnet-fm-cfm-v2v3`, branch `feature/l96-v2v3-pure`)
+is separate from master and **not yet trainable**:
+- Its `train.py` still has **unresolved git merge-conflict markers** (B1 blocker;
+  `py_compile` fails with `SyntaxError: unmatched ')'`) from commit `f7749a9`,
+  so no training/eval can run from that branch as-is.
+- It does **not** carry the vectorized data-gen fix merged to master as PR #105
+  (`data/lorenz96.py` there has no `fast_generation` path). When the Phase B
+  session resumes it should re-sync master first (which includes both #105 and the
+  joint-DA work).
+- The **parallel-merge CHANGELOG conflict** on master (joint-DA 2026-08-28 entry vs
+  the V2/V3-sourced #105 2026-08-27 data-gen entry) is already **resolved cleanly**
+  on `origin/master` — no markers remain. The V2/V3 tree did NOT contribute the
+  fix to master (it merged independently); only its own branch needs the sync.
+
 
 ### Phase C — L96 joint state-parameter neural estimation (infra done 2026-08-25; training + eval done 2026-08-26)
 
@@ -218,7 +234,12 @@ baselines** exist; the L96 joint **neural** models were missing.
   (0.061). **Joint ETKF DA baseline run (2026-08-28, Job 50577)** — see
   `l96_joint_da_benchmark.md`: S0 Joint-ETKF 0.633/param 0.053 (≈ L9 parity); S1 1.497/
   param 0.128 after the inflation/stability fix (see "L96 joint state-parameter DA
-  baseline" under Experiments). Joint-EnKF / Joint-Strong-4DVar still not run (`--`).
+  baseline" under Experiments). **Joint-EnKF added 2026-08-28 (job 50655)** — the
+  state-only-inflation fix was ported to `JointEnKFL96` (RC: it inflated the whole
+  augmented state like the old ETKF, risking the same S1 divergence) and a joint
+  `assimilate_batch` was added (the inherited parent batch silently dropped params);
+  S0 0.726/param 0.057, S1 **1.459**/param 0.148 (S1 is the best DA row, stable after
+  the fix). Joint-Strong-4DVar still not run (`--`).
 
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
@@ -289,15 +310,17 @@ recovery is model-dependent: L9 recovers the 8 params (paramRMSE 0.058) as does 
 JointDirectUNet (0.061), but **L7 τ=0 fails to recover params (1.21)** despite matching
 state RMSE. Full tables: `reports/l96/outputs/l96_joint_neural_benchmark.md`.
 
-**L96 joint state-parameter DA baseline (2026-08-28, ETKF only)** — see
-`reports/l96/outputs/l96_joint_da_benchmark.md`. Joint-ETKF vs vanilla ETKF on the
-cached S0/S1 set (200 windows): **S0** Joint-ETKF state RMSE **0.633** (EV 0.82, ES 0.30)
-vs vanilla 0.878; paramRMSE mean **0.053** — **at parity with the L9 neural model**
-(state 0.626 / param 0.059 single-sample). **S1** Joint-ETKF 1.497 (EV 0.18) vs vanilla
-1.554, paramRMSE 0.128 — stabilized by the state-only-inflation fix (RC: the ETKF was
-inflating the unobserved param block, growing spread into the reduced J=2 forecast).
-Neural (L9) still clearly ahead on S1 (0.631) via its ≈1.00 bias robustness. Joint-EnKF /
-Joint-Strong-4DVar not yet run.
+**L96 joint state-parameter DA baseline (2026-08-28, ETKF + EnKF)** — see
+`reports/l96/outputs/l96_joint_da_benchmark.md`. Joint-ETKF vs vanilla ETKF, and
+Joint-EnKF vs vanilla EnKF, on the cached S0/S1 set (200 windows). **S0** Joint-ETKF
+state RMSE **0.633** (EV 0.82, ES 0.30) vs vanilla 0.878; paramRMSE mean **0.053** —
+**at parity with the L9 neural model** (state 0.626 / param 0.059 single-sample).
+Joint-EnKF S0 0.726 (EV 0.77, ES 0.37) beats vanilla EnKF 0.891 but is worse than
+Joint-ETKF. **S1** Joint-EnKF **1.459** (EV 0.23, ES 0.84) is the best DA row, ahead of
+Joint-ETKF 1.497 & vanilla EnKF 1.505 / ETKF 1.554 — both joint filters stabilized by
+the state-only-inflation fix (RC: the filters were inflating the unobserved param
+block, growing spread into the reduced J=2 forecast). Neural (L9) still clearly ahead
+on S1 (0.631) via its ≈1.00 bias robustness. Joint-Strong-4DVar not yet run.
 
 ## Phases
 
