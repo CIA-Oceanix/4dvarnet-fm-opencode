@@ -215,13 +215,15 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
             are sampled from the end of the init_lead_truth buffer so each is
             x(t0 - dt_k) with dt_k ~ U(0, init_lag_days].
         device: torch device
-        disp_frac: fraction of the state climatological std added as
+        disp_frac: fraction of the raw lagged per-point spread added as
             independent Gaussian dispersion to each member. The raw lagged
-            members are severely under-dispersed (per-member spread ~1% of the
-            field std while the ensemble-mean forecast error reaches ~full
-            field std), which collapses the ETKF/EnKF covariance and gain.
-            Dispersion re-proportions the filter covariance to the background
-            error; 1.0 is a sensible default for both q- and psi-obs.
+            members are mildly under-dispersed relative to their background
+            error; dispersion re-proportions the filter covariance to the
+            background error. The dispersion std is scaled to the raw lagged
+            per-point spread (which tracks the lag-dependent background error,
+            ~1.5e-9 at a 0.5-day lag) rather than the climatological state std
+            (~1e-7), which would over-disperse by ~40x at short lags. 1.0 is a
+            sensible default for both q- and psi-obs.
 
     Returns:
         init_ensemble: (N, state_dim) tensor
@@ -250,7 +252,13 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
         init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
         mean_lag_days += float(k_tplus1 * dt)
     if disp_frac > 0.0:
-        disp_std = disp_frac * float(window["true_state"].std())
+        # Scale dispersion to the raw lagged per-point spread (which tracks the
+        # background error: it grows with init_lag_days), not the climatological
+        # state std. With the short 0.5-day lag the bg error is O(1e-9) while
+        # the state std is O(1e-7); scaling to the latter over-dispersed the
+        # ensemble ~40x and made DA worse than the free forecast.
+        sigma_raw = float(init_ensemble.std(0).mean())
+        disp_std = disp_frac * sigma_raw
         disp = torch.Generator(device=device).manual_seed(cfg.seed + 9000 + N)
         init_ensemble = init_ensemble + disp_std * torch.randn(
             init_ensemble.shape, generator=disp, device=device)
@@ -335,7 +343,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 init_ensemble, init_lag_val = _lagged_init_ensemble(
                     cfg, w, N_ensemble, init_lag_days, device,
                     disp_frac=disp_frac)
-                spread_t0_list.append(float(init_ensemble.std()))
+                spread_t0_list.append(float(init_ensemble.std(0).mean()))
             if obs_var == "q":
                 per_time = _q_obs_indices_t(cfg, w)
                 field_std = float(w["target_state_q"].std())

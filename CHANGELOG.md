@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28: QG dispersion over-scaling fix (bg-error-scaled, S0 EV restored) (PR #110)
+
+**Summary:** After PR #109 (correct 0.5-day lag), S0/q-obs EV at production fell from the PR #102 level and `forecast_improvement` was ~0.02 (DA worse than the free forecast). Root cause: `disp_frac` scaled dispersion to the **climatological state std** (`true_state.std() ≈ 2.3e-7`), but with the corrected short 0.5-day lag the actual background error is only ~5.5e-9 — the dispersion over-dispersed the ensemble by **~40×**. The ETKF then over-trusted the sparse obs, pulled the analysis off the near-perfect free forecast and collapsed spread to 0. Fix: scale dispersion to the **raw lagged per-point spread** (`sigma_raw = init_ensemble.std(0).mean()`), which tracks the lag-dependent background error (1.5e-9 at 0.5d, 5.9e-9 at 2d) — self-calibrating to the lag. Also fixed the `spread_t0_mean` metric (was the global state std ~2.3e-7, masking the per-point spread; now reports per-point ensemble spread).
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_lagged_init_ensemble`: `disp_std = disp_frac * sigma_raw` (raw per-point spread) instead of `disp_frac * true_state.std()`. `run()`: `spread_t0_list` records `init_ensemble.std(0).mean()` (per-point) instead of `init_ensemble.std()` (global).
+- `tests/test_qg_baselines.py` — `test_lagged_init_dispersion_proportional` rewritten: asserts `1.2·base_per < disp_per < 3.0·base_per` (dispersion scales with raw spread, a small multiple) + zero-mean dispersion; the old `>0.3·sstd` assertion (which matched the state-std scaling) removed.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The PR #107 dispersion was calibrated for the old 10-day-lagged background (~field std) and became a ~40× over-dispersion once PR #109 fixed the lag to the user's requested 0.5 day. Tying the dispersion scale to the raw lagged spread makes it automatically match the lag-dependent background error, so `disp_frac=1.0` is well-proportioned for both q-obs and psi-obs at any lag.
+
+**Verification:** Small-scale S0 (nx=16, 30d, lag 0.5): q-obs EV +1.000 (rmse 3.33e-9, improv 0.56 vs 0.02 before), psi-obs EV +1.000 (rmse 5.14e-9, improv 0.36); `spread_t0` now reports per-point ~2.6e-9. `tests/test_qg_baselines.py` 17/17; QG suite (baselines+s0s1+data) 44/44. Full fast suite: failure set byte-identical to base (24 pre-existing), 0 new. `ruff check` clean; mypy 0 new errors.
+
 ## 2026-08-28: QG lagged-init consistency fix + S0/30-day DA (PR #109)
 
 **Summary:** Root-caused why the S0/q-obs EV dropped from the PR #102 value (~0.69) to ~0.03 and fixed it. Two causes: (1) the production sweep ran `window_days=60` while the PR #102-JSONs used `window_days=30` (longer rollout ⇒ larger free-forecast error ⇒ EV≈0); (2) `_lagged_init_ensemble` had a **unit bug** `dt_steps = int(init_lag_days / cfg.dt)` dividing days by seconds (`cfg.dt=7200`), collapsing the lag sampling to a single step. Also the init was inconsistent: `init_state` was correctly near t₀ (t₀−U(0,cfg.init_lag_days)) but `_free_forecast_rmse` rolled `init_lead_truth[0]` (t₀−10d) and `_lagged_init_ensemble` sampled the buffer start (~t₀−10d). Fix: correct `dt_steps` to days×steps, sample the ensemble **end-relative** (members at t₀−U(0,init_lag_days]), roll the free forecast from `window["init_state"]`, and set `init_lag_days=0.5`. Scope to S0-only, `window_days=30`, for both q-obs and psi-obs (per user).
