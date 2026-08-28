@@ -197,6 +197,7 @@ VanillaCFM:
 - [x] `evaluation/sweep_qg_baselines.py` — comprehensive inflation×loc×dt sweep driver
 - [x] `tests/test_qg_baselines.py` — replace catalog tests with lagged-init and init_ensemble tests
 - [x] `_lagged_init_ensemble()` functions for x(t₀-progress dt) members with dt~U(0,DT]
+- [x] **Under-dispersion fix (PR #105)**: `_lagged_init_ensemble` adds `disp_frac` state-space Gaussian dispersion (default 1.0, scaled to climatological state std) — the raw lagged members had spread ~1% of field std while the mean error reached ~full std, collapsing the ETKF/EnKF covariance and gain. Restores psi-obs S0 EV −5544 → +0.934 (q-obs unchanged +0.891→+0.894). Exposed via `run(disp_frac=…)` / sweep `--disp-frac`.
 - [x] `_event_columns()` and `_psi_h()` helpers for case geometries
 - [x] L1/L2/CS1/CS2/CS3/CS4 supported via geometry and obs_var args
 - [x] Updated PLAN.md CHANGELOG.md (pending commit)

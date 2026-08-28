@@ -203,7 +203,8 @@ def _obs_spec_rc(cfg, window, device):
     return obs, r_var, od
 
 
-def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
+def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
+                          disp_frac: float = 1.0):
     """Lagged-truth ensemble: members = x(t0 - dt_k), dt_k ~ U(0,DT].
 
     Args:
@@ -212,6 +213,13 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
         N: ensemble size
         init_lag_days: float (mean lag)
         device: torch device
+        disp_frac: fraction of the state climatological std added as
+            independent Gaussian dispersion to each member. The raw lagged
+            members are severely under-dispersed (per-member spread ~1% of the
+            field std while the ensemble-mean forecast error reaches ~full
+            field std), which collapses the ETKF/EnKF covariance and gain.
+            Dispersion re-proportions the filter covariance to the background
+            error; 1.0 is a sensible default for both q- and psi-obs.
 
     Returns:
         init_ensemble: (N, state_dim) tensor
@@ -236,8 +244,14 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device):
         alpha = torch.rand(1, generator=i_gen, device=device).item()
         init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
         mean_lag_days += float(k_tplus1 * dt)
+    if disp_frac > 0.0:
+        disp_std = disp_frac * float(window["true_state"].std())
+        disp = torch.Generator(device=device).manual_seed(cfg.seed + 9000 + N)
+        init_ensemble = init_ensemble + disp_std * torch.randn(
+            init_ensemble.shape, generator=disp, device=device)
     mean_lag_days /= N
     return init_ensemble, mean_lag_days
+
 
 
 def _evaluate_window(cfg, window, method, device, obs=None, forcing=None,
@@ -273,7 +287,7 @@ def _free_forecast_rmse(cfg, dyn, window, device, forcing):
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         loc_radius=None, scenarios=("test_s0", "test_s1a", "test_s1b"),
         out_path=None, init="lagged", geometry="random_columns",
-        obs_var="q", init_lag_days=None, ds=None):
+        obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -315,7 +329,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             init_lag_val = 0.0
             if init == "lagged":
                 init_ensemble, init_lag_val = _lagged_init_ensemble(
-                    cfg, w, N_ensemble, init_lag_days, device)
+                    cfg, w, N_ensemble, init_lag_days, device,
+                    disp_frac=disp_frac)
                 spread_t0_list.append(float(init_ensemble.std()))
             if obs_var == "q":
                 if per_time is None:

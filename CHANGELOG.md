@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-28: QG lagged-init under-dispersion fix (psi-obs DA collapse) (PR #105)
+
+**Summary:** Root-caused the psi-obs DA collapse (ensembles collapsed to zero spread with EV −1e3…−1e4): the lagged-truth initialization is severely **under-dispersed** — per-member ensemble spread is ~1% of the field std (q-spread ~6e-10 vs q-std ~2.3e-7) while the ensemble-mean forecast error reaches ~full field std — so the ETKF/EnKF covariance (and therefore gain) is ~100–300× too small to correct the background error. `psi` observations expose this because the background error in ψ is O(ψ-std), whereas q-obs "worked" only because its S0 background error happened to be near-perfect. Fix: add `disp_frac` state-space Gaussian dispersion (scaled to the climatological state std) to each lagged member in `_lagged_init_ensemble`, defaulting to 1.0. This re-proportions the filter covariance to the background error and, at nx=64, converts psi-obs S0 from EV **−5544 → +0.934** while leaving q-obs essentially unchanged (+0.891 → +0.894).
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_lagged_init_ensemble` gains `disp_frac` (default 1.0): adds `disp_frac·std(true_state)·randn(N, D)` to each member with a dedicated seeded generator (zero-mean, conserves the lagged centres). `run()` gains `disp_frac` (default 1.0) wired through to the ensemble build.
+- `evaluation/sweep_qg_baselines.py` — new `--disp-frac` CLI (default 1.0) forwarded to `run()`.
+- `tests/test_qg_baselines.py` — new `test_lagged_init_dispersion_proportional` (raw lagged init per-point spread < 0.1·state-std, dispersed > 0.3·state-std, zero-mean dispersion); `test_psi_obs_run_smoke` now asserts S0 `expvar_full > 0.3` (was finiteness-only, which passed even during collapse).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The underlying defect is the under-dispersed ensemble initialization (spread ≪ error), not the psi-obs operator (H correctly reproduces the generated ψ obs under S0, diff ≈ obs noise). Dispersion is the standard background-error-covariance re-proportioning and is applied at the shared root so both q-obs and psi-obs benefit consistently.
+
+**Verification:** Full fast suite: 188 passed / 24 failed, and the 24 failures are **byte-identical** to the base commit `c830363` (pre-existing L63/baselines/joint-estimation/env issues) — zero new failures, one new passing test. The 75-test QG suite (test_qg_baselines/S0S1/data/dynamics/qg1l) passes. `ruff check` clean on all 3 touched files; mypy: zero new errors in the 3 touched files (55 pre-existing debt in `baselines.py` unchanged). Empirical: nx=64 psi-obs S0 EV −5544 → +0.934 at `disp_frac=1.0` (S1a +0.921); q-obs S0 +0.891 → +0.894.
+
 ## 2026-08-27: QG psi-obs observation operator fix + density sweep (PR #103)
 
 **Summary:** Fixed a tuple-unpacking bug in `evaluation/run_qg_baselines.py` that made the `obs_var='psi'` DA observation-operator path silently use the wrong object, and made `EnKF.assimilate` h-mode-aware so psi (streamfunction-column) observations assimilate correctly. Added `--obs-var` to the sweep driver plus the density-sweep and psi-obs sbatch scripts. Merged via PR #103 on top of the localization×lag sweep from PR #102.
