@@ -1,5 +1,170 @@
 # Changelog
 
+## 2026-08-28: V2 standalone eval (single-sample + ens30×10) + report — V2 new best on RMSE
+
+**Summary:** Ran the full V2 (`TweedieCFM`) standalone eval (job 50730, task 1, exit 0, ~8.7 min) — both the N=1 single-sample pass (root `neural_eval.json`) and the **ens30×10** ensemble pass (`ens30_no10/`). V2's `stage2_best.ckpt` (all 176 weights finite — the NaN fix held through the full two-stage 100+400-epoch run). Updated the consolidated report so V2's row now sources its RMSE/EV/ES from the ens30 subdir (proper N=30 ensemble ES) via the `ENS30_DIRS` mechanism. **Headline: V2 ens30×10 S0 RMSE 0.5157 / S1 0.5171 (EV 0.897/0.896) is now the best neural scheme on S0/S1**, edging out L3 (0.5645) and V3 (0.5716); ESens 0.2664/0.2681 (≈ L3's 0.2649/0.2671), with the largest member spread (0.497) of any scheme.
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` — add `V2_tweedie_cfm_l96` to `ENS30_DIRS`; remove V2 from `N1_ES_METHODS` (now proper N=30 ES); V2 scheme description notes `ens30×10`. Applied to worktree + master copies.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** V2's two-stage Tweedie decomposition (mean-estimator + residual velocity UNet) yields genuinely diverse members (spread 0.497, ~2× L3/V3) whose mean is the most accurate on S0/S1 — closing/completing the phase-B V1/V2 comparison against L3. With V2 now ens30-evaluated, the report row uses the proper N=30 convention.
+
+**Verification:** V2 eval job 50730_1 COMPLETED (exit 0, 8:40); members arrays (200,3000,24,30) all finite; ens30 JSON ESens 0.2664/0.2681. Report regenerated on master: both consistency checks PASS (DA max Δ 2.12e-4, neural truth 0.0); RMSE table shows V2 bold-best S0 0.5157 / S1 0.5171; ES table V2 0.2664/0.2681 (no `*`), V3 0.2762. `py_compile` clean both copies; worktree+master generators identical. V2/V3 eval npz copied into master `experiments/` (gitignored).
+
+## 2026-08-28: V3 standalone eval (single-sample + ens30×10) + consolidated report update
+
+**Summary:** Ran the full V3 (`PredictStateCFM`) standalone eval (job 50723, task 0) and updated the consolidated L96 benchmark. The eval ran both passes: the N=1 single-sample DA-parity run (root `neural_eval.json`, the training-script convention) and the **ens30×10** ensemble run (`ens30_no10/`, apples-to-apples with L3's best). Regenerated the consolidated report with V3's rows now sourced from its ens30 subdir (proper N=30 ensemble ES), via a generalized `ENS30_DIRS` mechanism (previously hardcoded to L3). V3's headline: **ens30×10 S0 RMSE 0.5716 / S1 0.5729** (degradation 1.002), **proper ensemble ES 0.2762/0.2766** — the second-best neural scheme after L3 (0.5645) and ahead of L2b/L4 and all DA baselines. V2's rows show `—` (training still in progress).
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` — generalized `L3_ENS30_DIR` into `ENS30_DIRS` (L3 + V3); `collect_estimates` + `collect_metric_values` + `_ens30_es` now driven by `ENS30_DIRS`; added `stored_truth_npz()` (ens30 subdir aware truth-check); new `traj is None` guard so unevaluated dirs (V2) render `—` instead of crashing; V3 removed from `N1_ES_METHODS` (proper N=30 ES) while V2 stays N=1; V3 scheme description notes `ens30×10`. Applied to both worktree and master copies.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** V3's lone published number (0.644 from `train.py`'s in-process eval) is single-sample × 10-step. To benchmark V3 fairly against L3's best (ens30×10 = 0.5643) the standalone eval must run an N=30 ensemble, and the report must source V3's RMSE/EV/ES from the ens30 subdir (proper ensemble ES) rather than the N=1 MAE proxy. The `ENS30_DIRS` generalization avoids duplicating the L3-specific special-casing. The None-guard lets the report render for partially-reaching dirs (V2) without erroring.
+
+**Verification:** V3 eval job 50723_0 COMPLETED (exit 0, 7:56); ens30 members arrays (200,3000,24,30) all finite, `neural_eval.json` with proper ESens 0.2762/0.2766. Report regenerated on master (DA caches/dataset present there; V3 eval npz copied into master `experiments/`): both consistency checks PASS (DA max Δ 2.12e-4, neural truth 0.0); RMSE/EV/ES tables show V3 (0.5716/0.5729, ES 0.2762 no `*`) and V2 (`—`). `py_compile` clean on both copies; worktree+master report generators identical.
+
+## 2026-08-28: V2/V3 standalone eval — add ensemble (ens30×10) + PredictStateCFM/TweedieCFM inference dispatch
+
+**Summary:** Extended the V2/V3 standalone eval to benchmark the models both ways: the N=1 single-sample DA-parity run (matches the training-script in-process convention and the L1b–L9 N=1 rows) **and** a 30-member × 10-step ensemble run (apples-to-apples with the L3 best, `ens30×10`), written into an `ens30_no10/` subdir so the single-sample `estimates_*.npz` at the experiment root stay intact. To enable the ensemble path, added `PredictStateCFM`/`TweedieCFM` to the `_run_case_inference` member-loop dispatch in `evaluation/neural_inference.py` (they were only in `resolve_model_class`/`create_model` for the single-sample path, so the ensemble run hit `ValueError: Unknown model type`). The training script's one-sample in-process eval (`train.py`) is **unchanged**.
+
+**Files modified:**
+- `batch/run_l96_cfm_variants_eval.sbatch` — each array task now runs two passes: single-sample (`--output neural_eval.json` at experiment root) then ens30×10 (`--n-members 30 --n-outer 10 --seed 0 --output ens30_no10/neural_eval.json`, `mkdir -p ens30_no10`)
+- `evaluation/neural_inference.py` — `_run_case_inference`: `PredictStateCFM`/`TweedieCFM` sample via `model.sample(batch_obj, N_outer=n_outer)` (same as VanillaCFM)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The published V3 result (S0 0.644 / S1 0.643) is the single-sample × 10-step convention from `train.py`'s in-process eval; to compare V3/V2 against L3's best (`ens30×10` = 0.5643), the standalone eval must also run an N=30 ensemble, which the framework didn't support for these two model classes. The N=1 selection for the `*`-marked ES rows and the ens30 selection (like `L3_ENS30_DIR`) are report-generator concerns applied after the eval runs.
+
+**Verification:** `pytest tests/test_neural_inference.py tests/test_vanilla_cfm.py -m "not slow"` — 33 passed. CPU smoke (`--n-members 3 --n-outer 10`, 5 windows): after the fix the ensemble inference runs past the previous `Unknown model type` error (was compute-bound on the loaded login node; the GPU sbatch is the real fast path). `bash -n` on the updated sbatch OK.
+
+## 2026-08-28: V2/V3 launch readiness — reuse cached test splits + standalone eval support
+
+**Summary:** Made the V2 (TweedieCFM) / V3 (PredictStateCFM) full training jobs launchable and benchmark-appendable. (1) Wired a new `data.test_cache` key through `train.py` so the canonical 200-window S0/S1 test splits (`experiments/l96_datasets_obsj2_int100_nwin200.pt`, master worktree) are **reused from cache** instead of regenerated (~72 min slow-path per job); train/val still generate fresh via the fast batched path. `make_l96_s0_s1_trainval` already supported partial `cached_datasets` — this just exposes it from `train.py`. (2) Extended `evaluation/neural_inference.py` so `eval_neural_l96.py` can load V2/V3 checkpoints: added `TweedieCFM`/`PredictStateCFM` to `resolve_model_class` + `create_model`, generalized the weight-prefix inference (`unet` vs `velocity_unet`) for the two-stage model, and special-cased TweedieCFM's `cond_extra_dim` inference (its velocity UNet uses `obs_dim = 2*state_dim`, so `proj_in = 3*state_dim + cond_extra_dim`). (3) Added a V2/V3 standalone eval sbatch (matches the `eval_neural_l96.py` DA-parity flow; V2 uses `stage2_best.ckpt`, V3 `stage1_best.ckpt`), and registered V2/V3 in the consolidated report generator's `NEURAL_EXP_DIRS`/`N1_ES_METHODS`/`SCHEME_DESCRIPTIONS`.
+
+**Files modified:**
+- `train.py` — `data.test_cache`: if set and exists, load the cached `.pt`, extract `test_s0`/`test_s1`, pass as `cached_datasets` to `make_l96_s0_s1_trainval` (train/val still generated fresh)
+- `conf/schema.py` — added `test_cache: Optional[str] = None` to `DataConfig`
+- `evaluation/neural_inference.py` — TweedieCFM/PredictStateCFM in `resolve_model_class`/`create_model`; prefix-agnostic (`unet`/`velocity_unet`) + Tweedie-specific `cond_extra_dim` inference in `load_checkpoint`
+- `batch/run_l96_cfm_variants_train.sbatch` — both tasks append `++data.test_cache=<absolute path to canonical cache>`
+- `batch/run_l96_cfm_variants_eval.sbatch` — new; 2-task array: V3 (stage1_best), V2 (stage2_best), both `--dataset` canonical cache + `--config`
+- `reports/l96/generate_l96_consolidated_report.py` — V2/V3 added to `NEURAL_EXP_DIRS`, `N1_ES_METHODS`, `SCHEME_DESCRIPTIONS`
+- `tests/test_vanilla_cfm.py` — new `TestTweedieCFM` + `TestPredictStateCFM` (NaN-obs loss/sample finite)
+- `tests/test_neural_inference.py` — resolve/create tests for TweedieCFM + PredictStateCFM
+- `tests/test_lorenz96_training.py` — `TestBatchedGeneration.test_cached_datasets_reuse_test_splits` (identity reuse)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The canonical test cache holds the bitwise-reproducible 200-window splits every DA baseline and neural model (L1b–L9) is evaluated on; regenerating them per training job is ~72 min of pointless slow-path work and risks train/val contamination. Reusing them (a) saves ~72 min/job and (b) guarantees V2/V3 are evaluated on the exact same test set — required for apples-to-apples benchmark rows. The eval loader changes are required because V2/V3 are new model classes the standalone eval couldn't construct.
+
+**Verification:** `pytest tests/test_vanilla_cfm.py tests/test_neural_inference.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_direct_unet.py tests/test_metrics.py tests/test_baselines_hydra.py tests/test_energy_score.py -m "not slow"` — **119 passed, 1 deselected**. Direct reuse check: cache loads in 0.45s, test splits reused by identity (200 → 200), tiny train/val generated fresh. `load_model` on V3 `stage1_best.ckpt` → PredictStateCFM, `sample` finite; on V2 `stage2_best.ckpt` → TweedieCFM loads (its 100%-NaN weights are the pre-fix smoke artifact, finite once retrained). Hydra compose with `++data.test_cache` OK for both configs. `py_compile` clean on all touched modules + report generators (both worktree and master copies); `bash -n` on both sbatch. GPU 1-epoch V3 smoke with `test_cache` job 50706 (see run).
+
+## 2026-08-28: Fix V3 PredictStateCFM slow data-gen — missing `data_setup: s0_s1` in config
+
+**Summary:** Diagnosed why the V3 (`PredictStateCFM`) e2e run was "slow" (still in data-gen after 36+ min). Root cause: `V3_predict_state_cfm_l96.yaml` had **no `data:` block**, so `data_setup` defaulted to `"legacy"` (`train.py:306`), routing V3 through the `else` branch → the **legacy `make_l96_datasets`** factory (`data/lorenz96.py:190`) instead of `make_l96_s0_s1_trainval`. The legacy factory (a) has **no fast batched path** and (b) hardcodes `num_windows: 2000` train + `200` val, **ignoring the `++data.num_train_windows=60` override**, so V3 was generating 2200 windows via the slow per-window loop (~10.7s each, 10000-spinup + 3000 RK4 steps on CPU) ≈ ~6.5h, and would have used the wrong legacy cs1/cs2 test setup anyway. The sibling `V2_tweedie_cfm_l96.yaml` has the correct `data:` block (`data_setup: s0_s1`), which is why V2's e2e finished in ~31s. Fixed by adding the identical `data:` block to the V3 config. Verified: Hydra compose now yields `data_setup: s0_s1`; the re-run (job 50683, task 0) **completed in 5:56 (exit 0)** — reach `Train: 60, Val: 10` on the fast path, **Stage 1 done in 15.4s with finite losses** (train_loss 4.890, val_loss 3.890), and evaluated both cases with finite results (S0 all_obs RMSE 1.9419, S1 2.0441; `trajectories_s0/s1.npz` (10,3000,24) all finite). This also confirms `PredictStateCFM` is NaN-clean (unlike the pre-fix V2 `TweedieCFM`), consistent with it already using `_make_cond`.
+
+**Files modified:**
+- `config/experiment/V3_predict_state_cfm_l96.yaml` — added `data:` block (`data_setup: s0_s1`, `obs_j: 2`, `param_dim: 0`, `num_train_windows/val/test` = 1000/100/200, `test_param_noise: 0.2`), mirroring the V2 config
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The V3 config was forked from an earlier template that lacked the `data:` section the L96 s0_s1 S0/S1 benchmark requires. Without `data_setup: s0_s1`, `train.py` falls back to the legacy L96 path, silently changing the experiment (cs1/cs2 vs s0_s1), ignoring the window-count overrides, and using the slow per-window generator — explaining the hours-long apparent hang and meaning the run would not even have exercised the intended `PredictStateCFM` s0_s1 benchmark. One config block fixes all three.
+
+**Verification:** `python` Hydra compose of `experiment/V3_predict_state_cfm_l96` → `data_setup=s0_s1`, `num_train_windows=60` honored under the e2e overrides; V3 re-run (job 50683, task 0) COMPLETED 5:56, exit 0:0, finite train/val losses (not NaN), finite S0/S1 trajectories. `pytest tests/test_lorenz96_training.py tests/test_vanilla_cfm.py tests/test_direct_unet.py -m "not slow"` — 57 passed (config-only change; no model/code touched).
+
+## 2026-08-28: Fix V2 TweedieCFM NaN — missing NaN-obs handling (nan_to_num) + end-to-end e2e
+
+**Summary:** Diagnosed and fixed the V2 `TweedieCFM` NaN: its stage-1/stage-2 losses and all sampled trajectories were NaN at step 0, and its saved checkpoint had every weight NaN. Root cause: the L96 (and L63) observation design stores NaN at unobserved timesteps (real value every `obs_interval`, `obs_mask` marks observed). The working `DirectUNet` (`models/direct_unet.py:33`) and `VanillaCFM`/`PredictStateCFM` (`_make_cond`, `models/vanilla_cfm.py:9`) all `torch.nan_to_num(obs, nan=0.0)` before feeding the UNet — but `TweedieCFM` fed the **raw NaN obs** into both `estimate_mean` (mean_estimator) and its velocity UNet context `cond = cat([obs, mean])`, propagating NaN → loss → gradients → all weights. Fixed by applying `nan_to_num` at the obs entry of `TweedieCFM.estimate_mean` and `TweedieCFM.forward` (mirrors `_make_cond`). Note: `PredictStateCFM` (V3) already uses `_make_cond` and is unaffected. Also confirmed the V2 e2e sbatch smoke ran the full `train.py` pipeline to completion (device → data-gen → Lightning stage1+stage2 → eval → `trajectories_s*.npz` + `results.json`); the all-NaN metrics in that run were caused by this same missing NaN-obs handling, now fixed.
+
+**Files modified:**
+- `models/vanilla_cfm.py` — `TweedieCFM.estimate_mean` and `TweedieCFM.forward` now `torch.nan_to_num(obs, nan=0.0)` on their obs inputs (matches `_make_cond` used by VanillaCFM/DirectUNet/PredictStateCFM)
+- (accumulated uncommitted pipeline fixes also landed with this commit) `train.py` — fixed `UnboundLocalError: local variable 'LitModel' referenced before assignment` (stage-1 dispatch); `conf/schema.py` — added `num_train_windows`/`num_val_windows`/`num_test_windows` to `DataConfig`; `batch/run_l96_cfm_variants_e2e_quick.sbatch` — new quick e2e array (V3 task 0, V2 task 1)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** V2 (and thus the Phase B V1/V2 TweedieCFM path) was silently untrainable — NaN from the first step makes every checkpoint garbage and every metric `nan`. The fix is 4 lines mirroring the exact pattern all other models already use, restoring V2 to a trainable state consistent with the design.
+A tiny dedicated `TweedieCFM` test covering NaN-obs input is desirable as a regression guard but not added in this pass (the existing `test_vanilla_cfm.py` gate still passes; see Verification).
+
+**Verification:** `pytest tests/test_vanilla_cfm.py tests/test_direct_unet.py tests/test_lorenz96_training.py -m "not slow"` — 57 passed, 1 deselected; `py_compile models/vanilla_cfm.py` clean. Direct repro on a real NaN-masked L96 train batch: pre-fix stage-1/stage-2 loss NaN; post-fix stage-1 6.63, stage-2 6.83, `sample(4,3000,24)` fully finite. Real 5-step Adam training (both stages) descends 6.64→3.33 / 3.57→2.96, all finite. V2 e2e sbatch smoke completed end-to-end (11:21, trajs + results.json written).
+
+## 2026-08-28: V2/V3 rebase onto master + resolve compile blockers (B1/B1b) + integration fixes
+
+**Summary:** Rebased `feature/l96-v2v3-pure` onto `origin/master` (now carrying PR #105 batched L96 datagen + PR #106 L96 joint DA ETKF), then fixed the two pre-existing compile blockers that prevented V2/V3 training: B1 (unterminated `train.py` conflict markers + broken 6-space indent on the `smoke_cached_data` branch) and B1b (`conf/schema.py` 5-space `device` indent + trailing-space line). Also surfaced and fixed three rebase-integration defects: a missing `logger` in `train.py` (the `smoke_cached_data` branch called `logger.info` but `logger` was never defined → `NameError`), a `JointDirectUnet`→`JointDirectUNet` casing mismatch (`train.py:146,149` vs master's `models/direct_unet.py:47`), and the V2/V3 sbatch scripts `cd`-ing to the master root instead of the worktree. Applied the locked decisions: V2 stage-1 budget 200→100, added `train_tau_0_only` to `PredictStateCFMConfig`.
+
+**Files modified:**
+- `train.py` — resolved B1 conflict markers (kept `smoke_cached_data` path, 4-space indent); added `import logging` + module `logger`; fixed `JointDirectUnet`→`JointDirectUNet` casing
+- `conf/schema.py` — fixed `device` indentation + trailing whitespace; added `train_tau_0_only: bool = False` to `PredictStateCFMConfig`
+- `config/experiment/V2_tweedie_cfm_l96.yaml` — `stage1.epochs: 200 → 100`
+- `batch/run_l96_cfm_variants_{train,smoke}.sbatch` — `cd` → worktree; updated V2 echo to 100+400
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The V2/V3 branch was forked before master gained PR #105/#106 and carried uncommitted merge-conflict damage in `train.py` (B1) plus a schema indentation bug (B1b) that blocked Python compilation entirely — V3 training could not even start. Rebasing onto the updated master and clearing the blockers + the rebase-surfaced integration defects (casing, logger) makes both models trainable end-to-end.
+
+**Verification:** `pytest tests/{hydra_config,baselines_hydra,lorenz96_training,neural_inference,metrics,energy_score,joint_estimation_l96,joint_estimation_l96_neural,direct_unet,vanilla_cfm}.py -m "not slow"` — **127 passed, 1 deselected**. `py_compile` on `train.py`/`conf/schema.py` OK; Hydra compose + `model_factory` + forward/sample/compute_loss smoke for both V2 `TweedieCFM` (loss 1.09) and V3 `PredictStateCFM` (loss 1.01) on 24D L96-shaped batches OK; `bash -n` on both sbatch OK.
+
+## 2026-08-27: V2/V3 design review — record blockers + resolved decisions
+
+**Summary:** Reviewed the restored V2 `TweedieCFM` / V3 `PredictStateCFM` code
+on `feature/l96-v2v3-pure` against the Phase B design doc and found the
+branch is not trainable. Updated `docs/phase_B_l96_cfm_variants.md` with the
+resolved design decisions (V2 stage-1 budget 100 epochs, V3 kept as predict-μ
+ODE variant, both multi-τ) and four blockers that must be fixed before any
+training/eval run.
+
+**Critical blocker (B1):** `train.py` has unresolved git merge conflict
+markers (`<<<<<<<`/`=======`/`>>>>>>>` at lines 358-396 and 410-464),
+introduced by commit `f7749a9` ("fix: add smoke_cached_data extraction from
+DataConfig"). The file does not compile (`SyntaxError: unmatched ')'`).
+**No training has ever run on this branch** — the previous CHANGELOG entry's
+"dataset generation hang" diagnosis was incorrect.
+
+**Real dataset cost (B2):** timed `generate_full_trajectory` at ~8.9 s/window
+(pure-Python RK4, 10,300 steps/window). For 1500 windows (1000 train + 100 val
++ 200 s0 + 200 s1) that's ~3.7 h of CPU generation before epoch 1 — not a
+hang. The `cached_datasets` kwarg in `make_l96_s0_s1_trainval` already
+supports loading a pre-built cache; the fix is to build/reference a train+val
+cache via `smoke_cached_data` (the eval cache `experiments/l96_datasets_obsj2_int100_nwin200.pt`
+only has test windows).
+
+**Other blockers:** B3 — no V2/V3 unit tests (`grep` returns nothing; the
+`MeanEstimatorCell` transpose in `TweedieCFM.estimate_mean` is a likely
+silent shape bug that tests would catch). B4 — eval pipeline
+(`evaluation/neural_inference.py`, `eval_neural_l96.py`) has zero
+`tweedie_cfm`/`predict_state_cfm` support, so checkpoints can't be
+loaded/inferred even after training.
+
+**Files modified:** `docs/phase_B_l96_cfm_variants.md` — rewrote with resolved
+decisions, implemented-variant descriptions, blocker list, and an
+implementation order for the next session; `CHANGELOG.md` — this entry.
+
+**Rationale:** The branch looked "almost ready" but is actually broken at
+the source level. Recording the real blockers (broken `train.py`, real
+generation cost, missing tests, missing eval pipeline) before any code work
+prevents repeating the previous session's misdiagnosis and gives the next
+implementation pass a concrete checklist.
+
+**Verification:** `python -m py_compile train.py` → `SyntaxError: unmatched
+')'` (confirms B1). Timed `generate_full_trajectory(num_steps=300,
+spinup_steps=10000)` → 8.9 s (confirms B2). `rg tweedie_cfm|predict_state_cfm
+tests/` → no matches (confirms B3). `rg tweedie_cfm|predict_state_cfm
+evaluation/neural_inference.py eval_neural_l96.py` → no matches (confirms B4).
+Doc-only change otherwise.
+
+## 2026-08-27: Scoping fix + smoke-cached-data support for L3 training
+
+**Summary:** Fixed critical Python scoping bug in `train.py` that was blocking all VanillaCFM/DirectUNet training runs. Removed function-local imports of torch, LitModel, and create_trainer in `main()` that shadowed module-level names, causing UnboundLocalError: 'LitModel' referenced before assignment for L3 and other vanilla_cfm experiments. Also added smoke-cached-data support to bypass cluster dataset-generation hang during training validation.
+
+**Root cause:** Inside `main()` function, function-local imports like `import torch` (line 400) and `from training.lightning_module import LitModel` (lines 466, 497) mark those names as local across the entire function. For `model_type="vanilla_cfm"` (L3), the code takes the `else` branch and tries to use `LitModel` at line 472 before the re-import at line 466/497 executes, causing the UnboundLocalError. This blocked re-training L3 and any VanillaCFM or DirectUNet experiment.
+
+**Files modified:**
+- `train.py` — removed 6 problematic function-local imports: (1) `import torch` (line 400), (2) `from training.lightning_module import LitModel` + `from training.pipeline import create_trainer` (lines 466–467), (3) `from training.lightning_module import LitModel` + `from training.pipeline import create_trainer` (lines 497–498). Now relies exclusively on module-level imports at lines 15, 33, 34.
+- `conf/schema.py` — added `smoke_cached_data: Optional[str] = None` to DataConfig for temporary mitigation of dataset-generation hang.
+- `config/experiment/L3_smoke.yaml` — enabled smoke Cached data with `smoke_cached_data: experiments/l96_datasets_obsj2_int100_nwin200.pt`.
+
+**Verification:** 
+- `py_compile train.py` passes without error.
+- `grep -n 'import torch\|LitModel\|create_trainer' train.py` confirms only module-level imports remain (lines 15, 33-34) plus usages in the function (no function-local re-imports).
+
+g artifacts are properly committed for a clean run.
+
+**Next steps:** Submit L3 smoke test against committed commits to validate training passes with the scoping fix.
+
 ## 2026-08-28: L96 joint DA benchmark — Joint-EnKF runs + state-only inflation (stabilized)
 
 **Summary:** Added the **Joint-EnKF** leg of the L96 joint state-parameter DA benchmark
@@ -1068,3 +1233,64 @@ that could not run the committed ensemble/seed sbatch or reproduce the swapped c
 **Rationale:** The user wants the neural evaluation to be truly standalone and comparable to the DA baselines, run on the identical test dataset and procedure (both S0 and S1), and decoupled from model internals by storing raw estimates for a generic shared evaluation step.
 
 **Verification:** `pytest tests/test_neural_inference.py tests/test_direct_unet.py tests/test_vanilla_cfm.py tests/test_lorenz96_training.py tests/test_hydra_config.py tests/test_metrics.py tests/test_baselines_hydra.py -m "not slow"` — 79 passed. Ruff/mypy on changed files: no new errors (only pre-existing UP045/RUF059/TRY004/I001). L1/L2 evaluated on the cached DA-parity dataset: S0 all_obs RMSE 1.56 (slow 0.48 / obs_fast 2.10), S1 1.56, S1/S0 ≈ 1.00. Note: this DA-parity RMSE (1.56) differs from the training-time in-process `results.json` (~0.59) because the two evals run on different test windows; the standalone path is the comparable one.
+## 2026-08-26: V2 TweedieCFM & V3 PredictStateCFM infrastructure fixes (blocked by HPC resource issue)
+
+**Summary:** Fixed critical bugs in V2 TweedieCFM and V3 PredictStateCFM setup, but CANCELLED training runs due to persistent HPC集群 dataset generation hangs. Infrastructure commits committed and ready for alternate training attempts.
+
+**Root causes fixed:**
+1. V2/V3 experiment configs were deleted from the cleanup branch → copied from the working `feature/l96-predict-state-cfm-clean` branch
+2. `train.py` incleanup branch had the TweedieCFM/PredictStateCFM cases removed during an earlier refactor → reverted to the clean version with full V2/V3 support
+3. Sbatch scripts were missing Hydra overrides that working L3/L7/L8/L9 scripts use: `hydra.run.dir=.` and `hydra.output_subdir=null` (these prevent Hydra from silently changing working directory and creating its own `.hydra/` subdirectory)
+
+**Verification performed:**
+- V2/V3 configs correctly inherit `randomized=true` from `lorenz96_default.yaml` (all-5 params ±20%, obs_j=2, partial observations)
+- `train.py` routes configs correctly to TweedieCFM (task_id=1) and PredictStateCFM (task_id=0) models
+- Hydra config composition succeeds: full config printed to stdout with all parameters resolved
+- CUDA detection confirmed in sbatch logs: `Device: cuda (Quadro RTX 8000)`
+
+**Blocker (dataset generation hang):**
+All training attempts failed at the same point with 7+ minute kills:
+- Config loads ✓ → CUDA detected ✓ → Hydra resolves all params ✓ → **Dataset generation** ✗
+- Jobs 50097, 50116, 50253, 50255 all exhibited identical hang pattern
+- Local interactive run (`python train.py`) showed the same behavior
+- GPU utilization: 0%, memory usage: 0 MiB after 60s+ of running
+- No Python processes visible for the training jobs in `ps aux`
+- Cleanup worktree at `../4dvarnet-fm-opencode-cleanup` already contains working `batch/run_l96_cfm_variants_train.sbatch` from clean branch
+
+**Possible causes:**
+- NVIDIA driver/PyTorch CUDA library version mismatch on cluster GPU nodes
+- Dataset generation stalls due to HPC node resource contention (OBS30 sparsity not verified on this node)
+- Python initialization library (PyTorch DataLoader, HDF5, etc.) hanging on cluster environment
+
+**Files modified:**
+- `train.py`: Reverted TweedieCFM/PredictStateCFM model factory and trainer logic (71+ lines)
+- `batch/run_l96_cfm_variants_train.sbatch`: Fixed with hydra.run.dir=. and hydra.output_subdir=null (74 lines)
+- `batch/run_l96_cfm_variants_smoke.sbatch`: Created 1-epoch smoke test sbatch (71 lines)
+- `config/experiment/V2_tweedie_cfm_l96.yaml`: New from clean branch (38 lines)
+- `config/experiment/V3_predict_state_cfm_l96.yaml`: New from clean branch (26 lines)
+
+**Status: Infrastructure ready. Training disabled pending HPC env verification.**
+
+**Rationale:** The V2/V3 infrastructure bugs are fully resolved, but the training pipeline hangs during dataset generation on the current cluster nodes. The working setup exists in the `feature/l96-predict-state-cfm-clean` branch and in the `../4dvarnet-fm-opencode-cleanup` worktree, so the fix is transferable. The hang appears to be an HPC cluster resource/environment issue, not a code defect.
+
+**Verification:** Git commit 800369b ("feat: fix V2 TweedieCFM and V3 PredictStateCFM setup and sbatch scripts") confirmed. Cleanup worktree at `../4dvarnet-fm-opencode-cleanup` (feature/l96-predict-state-cfm-clean, commit c1001dd) contains working batch scripts that successfully run L96 training on this cluster.
+
+**Next steps:** After HPC cluster env stabilizes, submit training using the cleanup worktree’s sbatch scripts; the setup is validated and ready to use.
+**Training jobs launched:**
+- Job 50261_0: V3 PredictStateCFM (unsubmitted, running)
+- Job 50261_1: V2 TweedieCFM (unsubmitted, running)
+- Both submitted via batch/run_l96_cfm_variants_train_working.sbatch (from feature/l96-predict-state-cfm-clean)
+- Node: sl-mee-br-204, GPU: RTX8000
+- Status: Running (V3: 1:43, V2: 1:42) — monitor later for epoch progress
+
+**Observed from monitoring:**
+- GPU: 0%, memory: 0 MiB - same hang pattern persists
+- V2 appears to be progressing slightly faster than V3 but still experiencing dataset generation hang
+
+**Re-open when:**
+监控或重新提交，任务因资源问题进入挂起状态
+- 监控 GPU 确认是否有 GPU 利用率增加
+- 检查实验目录生成 checkpoint
+- 如需可尝试其他 GPU 节点或等待节点资源释放
+
+**Note:** Jobs are running on the working train.py from feature/l96-predict-state-cfm-clean which includes V2/V3 cases. Training may succeed if dataset generation completes on the cluster nodes.

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Optional
 
 
 @dataclass
@@ -22,6 +22,9 @@ class DataConfig:
     window_spacing: int = 2000
     spinup_steps: int = 10000
     seed: int = 42
+    num_train_windows: int = 1000
+    num_val_windows: int = 100
+    num_test_windows: int = 200
     sigma_true: float = 10.0
     rho_true: float = 28.0
     beta_true: float = 8 / 3
@@ -56,6 +59,8 @@ class DataConfig:
     fast_weights: List[float] = field(default_factory=lambda: [1.0, 1.0, 0.1, 0.1])
     obs_j: int = 2
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
+    smoke_cached_data: Optional[str] = None
+    test_cache: Optional[str] = None
 
     # Device
     device: str = "cpu"
@@ -174,8 +179,31 @@ class JointDirectUNetConfig:
 
 
 @dataclass
+class PredictStateCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
+
+
+@dataclass
+class TweedieCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    K_inner: int = 5
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    cond_extra_dim: int = 0
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -189,6 +217,8 @@ class ModelConfig:
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
+    tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
 
 
 @dataclass

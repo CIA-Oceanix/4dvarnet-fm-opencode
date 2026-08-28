@@ -57,6 +57,8 @@ NEURAL_EXP_DIRS = [
     "L4_direct_unet_s0s1_small",
     "L5_vanilla_cfm_s0s1_small_tau0",
     "L6_vanilla_cfm_s0s1_forcing_cond",
+    "V2_tweedie_cfm_l96",
+    "V3_predict_state_cfm_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -67,13 +69,27 @@ N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
                  "L6_vanilla_cfm_s0s1_forcing_cond"}
 
+# Methods evaluated as N=30 ensembles (proper ensemble ES, not the N=1 MAE
+# proxy). L3, V2 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
+ENS30_DIRS = {
+    "L3_vanilla_cfm_s0s1": {
+        "s0": "L3_vanilla_cfm_s0s1/ens30_no10",
+        "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
+    },
+    "V2_tweedie_cfm_l96": {
+        "s0": "V2_tweedie_cfm_l96/ens30_no10",
+        "s1": "V2_tweedie_cfm_l96/ens30_no10",
+    },
+    "V3_predict_state_cfm_l96": {
+        "s0": "V3_predict_state_cfm_l96/ens30_no10",
+        "s1": "V3_predict_state_cfm_l96/ens30_no10",
+    },
+}
+
 # L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES, per case.
 # S0 was the original ens30 study (dual-convention JSON); S1 the bug-fixed
 # single-ES follow-up (see PLAN.md "L3 ens30 on S1").
-L3_ENS30_DIR = {
-    "s0": "L3_vanilla_cfm_s0s1/ens30_no10",
-    "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
-}
+L3_ENS30_DIR = ENS30_DIRS["L3_vanilla_cfm_s0s1"]
 DEFAULT_FIGURE_METHODS = [
     "Strong-4DVar",
     "EnKF",
@@ -109,6 +125,14 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
     ("L6_vanilla_cfm_s0s1_forcing_cond", "Neural (CFM, τ=0)",
      ("As L2b plus corrupted-forcing conditioning (`cond_extra_dim=1`); tests the robustness value of "
       "forcing input.")),
+    ("V2_tweedie_cfm_l96", "Neural (TweedieCFM)",
+     ("Two-stage Tweedie CFM: stage-1 MeanEstimatorCell (obs → mean), stage-2 residual velocity UNet; "
+      "hidden [64,128,256]; 100+400 epochs; multi-τ, K_inner=5; evaluated as a 30-member ensemble "
+      "with 10 Euler steps (`ens30×10`, N=30); N_outer=10.")),
+    ("V3_predict_state_cfm_l96", "Neural (PredictStateCFM)",
+     ("Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; "
+      "400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); "
+      "N_outer=10.")),
 ]
 
 
@@ -153,6 +177,15 @@ def load_neural_trajectories(exp_dir: Path, case: str) -> np.ndarray | None:
     return np.load(npz_path)["trajectories"].astype(np.float64)
 
 
+def stored_truth_npz(name: str, case: str) -> Path:
+    """Resolve the estimates_*.npz path (ens30 subdir for ens30 methods) that
+    carries the stored truth, so the truth-consistency check reads from the
+    same directory the trajectories came from."""
+    if name in ENS30_DIRS:
+        return ROOT / "experiments" / ENS30_DIRS[name][case] / f"estimates_{case}.npz"
+    return ROOT / "experiments" / name / f"estimates_{case}.npz"
+
+
 def collect_estimates(
     da_traj_path: Path,
     obs_idx: np.ndarray,
@@ -162,11 +195,11 @@ def collect_estimates(
     for method in DA_METHODS:
         est[method] = {case: load_da_trajectories(da_traj_path, case, method, obs_idx) for case in CASES}
     for dirname in neural_dirs:
-        if dirname == "L3_vanilla_cfm_s0s1":
+        if dirname in ENS30_DIRS:
             regular_dir = ROOT / "experiments" / dirname
             est[dirname] = {}
             for case in CASES:
-                ens30_dir = ROOT / "experiments" / L3_ENS30_DIR[case]
+                ens30_dir = ROOT / "experiments" / ENS30_DIRS[dirname][case]
                 ens30_est = load_neural_trajectories(ens30_dir, case)
                 est[dirname][case] = ens30_est if ens30_est is not None else load_neural_trajectories(regular_dir, case)
         else:
@@ -256,7 +289,7 @@ def check_neural_truth(
             if traj.shape != expected.shape:
                 problems.append(f"{name}/{case}: estimates shape {traj.shape} != truth shape {expected.shape}")
                 continue
-            stored_truth = np.load(ROOT / "experiments" / name / f"estimates_{case}.npz")["truth"].astype(np.float64)
+            stored_truth = np.load(stored_truth_npz(name, case))["truth"].astype(np.float64)
             max_diff = max(max_diff, float(np.max(np.abs(stored_truth - expected))))
     return max_diff, problems
 
@@ -268,19 +301,18 @@ def collect_metric_values(
     da_json_path: Path,
 ) -> dict[str, dict[tuple[str, str], dict[str, float | None]]]:
     """Compute RMSE/EV from trajectories for all methods; ES from JSON for DA
-    ensembles + L3-ens30, from trajectories (MAE) for deterministic methods."""
+    ensembles + ens30 methods (L3, V3), from trajectories (MAE) for the rest."""
     values: dict[str, dict[tuple[str, str], dict[str, float | None]]] = {"rmse": {}, "ev": {}, "es": {}}
     da_cache = json.load(open(da_json_path))
-    l3_n1_cells: set[tuple[str, str]] = set()
+    n1_cells: set[tuple[str, str]] = set()
 
-    def _l3_ens30_es(case: str) -> dict[str, float] | None:
-        """Proper (N=30, textbook) ensemble ES for L3 from the ens30 JSON.
-
-        Handles both stored schemas: the S0 study's dual-convention JSON
-        (``ensemble.es_textbook``) and the S1 study's single-convention JSON
+    def _ens30_es(row: str, case: str) -> dict[str, float] | None:
+        """Proper (N=30, textbook) ensemble ES for an ens30 method from its
+        ens30 JSON. Handles the S0 study's dual-convention schema
+        (``ensemble.es_textbook``) and the single-convention schema
         (``ensemble.es``). Returns None when the JSON / block is unavailable.
         """
-        ens30_json = ROOT / "experiments" / L3_ENS30_DIR[case] / "neural_eval.json"
+        ens30_json = ROOT / "experiments" / ENS30_DIRS[row][case] / "neural_eval.json"
         if not ens30_json.exists():
             return None
         blk = json.load(open(ens30_json)).get("metrics", {}).get(case, {}).get("ensemble", {})
@@ -292,7 +324,14 @@ def collect_metric_values(
 
     for row in row_order:
         for case in CASES:
-            m = evaluate_estimates(est[row][case], truth[case])
+            traj = est[row][case]
+            if traj is None:
+                none_groups = {g: None for g in GROUPS}
+                values["rmse"][(row, case)] = dict(none_groups)
+                values["ev"][(row, case)] = dict(none_groups)
+                values["es"][(row, case)] = dict(none_groups)
+                continue
+            m = evaluate_estimates(traj, truth[case])
             values["rmse"][(row, case)] = m["groups"]
             values["ev"][(row, case)] = m["ev"]["groups"]
             if row in DA_METHODS:
@@ -302,16 +341,16 @@ def collect_metric_values(
                     values["es"][(row, case)] = es_blk["groups"]
                 else:
                     values["es"][(row, case)] = {g: None for g in GROUPS}
-            elif row == "L3_vanilla_cfm_s0s1":
-                ens_es = _l3_ens30_es(case)
+            elif row in ENS30_DIRS:
+                ens_es = _ens30_es(row, case)
                 if ens_es:
                     values["es"][(row, case)] = ens_es
                 else:
                     values["es"][(row, case)] = m["es"]["groups"]
-                    l3_n1_cells.add((row, case))
+                    n1_cells.add((row, case))
             else:
                 values["es"][(row, case)] = m["es"]["groups"]
-    return values, l3_n1_cells
+    return values, n1_cells
 
 
 def fmt_block_table(
@@ -479,7 +518,7 @@ def main() -> None:
     figure_methods = resolve_figure_methods(args.methods, est)
     table_rows = DA_METHODS + NEURAL_EXP_DIRS
 
-    values, l3_n1_cells = collect_metric_values(est, truth, table_rows, da_json_path)
+    values, n1_cells = collect_metric_values(est, truth, table_rows, da_json_path)
     with open(da_json_path) as f:
         cfg = json.load(f)["config"]
 
@@ -533,7 +572,7 @@ def main() -> None:
         "## Energy Score (lower is better)",
         "",
         fmt_block_table("ES by variable group", values["es"], table_rows, False, False,
-                        n1_methods=N1_ES_METHODS, n1_cells=l3_n1_cells, is_es=True),
+                        n1_methods=N1_ES_METHODS, n1_cells=n1_cells, is_es=True),
         (
             "`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). "
             "Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). "

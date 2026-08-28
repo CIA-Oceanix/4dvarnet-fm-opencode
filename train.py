@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import time
+import logging
 import torch
 import numpy as np
 import hydra
@@ -18,6 +19,8 @@ from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 torch.set_float32_matmul_precision('medium')
+
+logger = logging.getLogger(__name__)
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
 from data.random_param_dataset import RandomParamLorenz63Dataset
@@ -150,6 +153,36 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
         )
+    elif model_type == "predict_state_cfm":
+        from models.vanilla_cfm import PredictStateCFM
+        psc = cfg.model.predict_state_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = PredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=psc.hidden_channels,
+            time_emb_dim=psc.time_emb_dim,
+            N_outer=psc.N_outer,
+            sigma_prior=psc.sigma_prior,
+            dropout=psc.dropout,
+            train_tau_0_only=psc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            cond_extra_dim=psc.cond_extra_dim,
+        )
+    elif model_type == "tweedie_cfm":
+        from models.vanilla_cfm import TweedieCFM
+        tc = cfg.model.tweedie_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = TweedieCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=tc.hidden_channels,
+            time_emb_dim=tc.time_emb_dim,
+            K_inner=tc.K_inner,
+            N_outer=tc.N_outer,
+            sigma_prior=tc.sigma_prior,
+            dropout=tc.dropout,
+            train_tau_0_only=tc.train_tau_0_only,
+            cond_extra_dim=tc.cond_extra_dim,
+        )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     return model.to(device)
@@ -198,6 +231,10 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
             true_param_list.append(np.array(tp))
+        elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -239,6 +276,10 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "predict_state_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -319,15 +360,31 @@ def main(cfg: DictConfig):
             obs_var_indices=obs_var_indices,
         )
         if data_setup == "s0_s1":
-            datasets = make_l96_s0_s1_trainval(
-                base_cfg,
-                num_train_windows=dc.get("num_train_windows", 1000),
-                num_val_windows=dc.get("num_val_windows", 100),
-                num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
-                bias_range=(0.0, dc.get("bias_max", 0.2)),
-            )
-            test_keys = ["test_s0", "test_s1"]
+            smoke_cached_data = dc.get("smoke_cached_data", None)
+            if smoke_cached_data is not None:
+                logger.info(f"Loading cached data from: {smoke_cached_data}")
+                cached = torch.load(smoke_cached_data, weights_only=False)
+                datasets = cached
+                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
+                test_keys = ["test_s0", "test_s1"]
+            else:
+                test_cache_path = dc.get("test_cache", None)
+                cached_test = None
+                if test_cache_path and os.path.exists(test_cache_path):
+                    logger.info(f"Reusing cached test splits from {test_cache_path}")
+                    cached_full = torch.load(test_cache_path, weights_only=False)
+                    cached_test = {k: cached_full[k] for k in ("test_s0", "test_s1")
+                                   if k in cached_full}
+                datasets = make_l96_s0_s1_trainval(
+                    base_cfg,
+                    num_train_windows=dc.get("num_train_windows", 1000),
+                    num_val_windows=dc.get("num_val_windows", 100),
+                    num_test_windows=dc.get("num_test_windows", 200),
+                    param_noise=dc.get("test_param_noise", 0.2),
+                    bias_range=(0.0, dc.get("bias_max", 0.2)),
+                    cached_datasets=cached_test,
+                )
+                test_keys = ["test_s0", "test_s1"]
         else:
             datasets = make_l96_datasets(base_cfg)
             test_keys = ["test_cs1", "test_cs2"]
@@ -346,16 +403,24 @@ def main(cfg: DictConfig):
             forcing_coupling=dc.get("forcing_coupling", "linear"),
         )
         if data_setup == "s0_s1":
-            bias_max = dc.get("bias_max", 0.2)
-            datasets = make_s0_s1_trainval(
-                base_cfg,
-                num_train_windows=dc.get("num_train_windows", 1000),
-                num_val_windows=dc.get("num_val_windows", 100),
-                num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
-                bias_range=(0.0, bias_max),
-            )
-            test_keys = ["test_s0", "test_s1"]
+            smoke_cached_data = dc.get("smoke_cached_data", None)
+            if smoke_cached_data is not None:
+                logger.info(f"Loading cached data from: {smoke_cached_data}")
+                cached = torch.load(smoke_cached_data, weights_only=False)
+                datasets = cached
+                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
+                test_keys = ["test_s0", "test_s1"]
+            else:
+                bias_max = dc.get("bias_max", 0.2)
+                datasets = make_s0_s1_trainval(
+                    base_cfg,
+                    num_train_windows=dc.get("num_train_windows", 1000),
+                    num_val_windows=dc.get("num_val_windows", 100),
+                    num_test_windows=dc.get("num_test_windows", 200),
+                    param_noise=dc.get("test_param_noise", 0.2),
+                    bias_range=(0.0, bias_max),
+                )
+                test_keys = ["test_s0", "test_s1"]
         else:
             datasets = make_mixed_datasets(
                 base_cfg,
@@ -423,6 +488,19 @@ def main(cfg: DictConfig):
             model = train_stage(model, loaders, cfg, stage=2, device=device)
             train_time += time.time() - t0
             print(f"    Stage 2 done in {time.time()-t0:.1f}s")
+        elif model_type == "tweedie_cfm" and epochs_s2 > 0:
+            t0 = time.time()
+            stage_cfg = cfg.training.stage2
+            lit = LitModel(model, model_type=model_type, stage=2,
+                           lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
+                           use_gradient_loss=cfg.training.loss.use_gradient,
+                           gradient_weight=cfg.training.loss.gradient_weight)
+            trainer = create_trainer(cfg, 2)
+            trainer.fit(lit, loaders["train"], loaders["val"])
+            path = cfg.paths.checkpoint_stage2
+            torch.save(lit.model.state_dict(), path)
+            train_time += time.time() - t0
+            print(f"    Stage 2 done in {train_time-t0:.1f}s")
     finally:
         os.chdir(orig_cwd)
     total_t = time.time() - total_t0
@@ -490,7 +568,7 @@ def main(cfg: DictConfig):
         "model_type": model_type,
         "config": {
             "hidden_channels": list(hc_src.hidden_channels) if hc_src is not None and "hidden_channels" in hc_src else list(cfg.model.hidden_channels),
-            "epochs": epochs_s1 + (epochs_s2 if model_type == "tweedie" else 0),
+            "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie", "tweedie_cfm") else 0),
             "train_mix": train_mix,
             "randomize_params": randomize_params,
             "data_setup": data_setup,
