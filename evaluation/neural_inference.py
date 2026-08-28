@@ -434,6 +434,8 @@ def _run_case_inference(
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
                     pred = model.sample(batch_obj, N_outer=n_outer)
+                elif isinstance(model, (PredictStateCFM, TweedieCFM)):
+                    pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())

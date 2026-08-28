@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-28: V2/V3 standalone eval — add ensemble (ens30×10) + PredictStateCFM/TweedieCFM inference dispatch
+
+**Summary:** Extended the V2/V3 standalone eval to benchmark the models both ways: the N=1 single-sample DA-parity run (matches the training-script in-process convention and the L1b–L9 N=1 rows) **and** a 30-member × 10-step ensemble run (apples-to-apples with the L3 best, `ens30×10`), written into an `ens30_no10/` subdir so the single-sample `estimates_*.npz` at the experiment root stay intact. To enable the ensemble path, added `PredictStateCFM`/`TweedieCFM` to the `_run_case_inference` member-loop dispatch in `evaluation/neural_inference.py` (they were only in `resolve_model_class`/`create_model` for the single-sample path, so the ensemble run hit `ValueError: Unknown model type`). The training script's one-sample in-process eval (`train.py`) is **unchanged**.
+
+**Files modified:**
+- `batch/run_l96_cfm_variants_eval.sbatch` — each array task now runs two passes: single-sample (`--output neural_eval.json` at experiment root) then ens30×10 (`--n-members 30 --n-outer 10 --seed 0 --output ens30_no10/neural_eval.json`, `mkdir -p ens30_no10`)
+- `evaluation/neural_inference.py` — `_run_case_inference`: `PredictStateCFM`/`TweedieCFM` sample via `model.sample(batch_obj, N_outer=n_outer)` (same as VanillaCFM)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The published V3 result (S0 0.644 / S1 0.643) is the single-sample × 10-step convention from `train.py`'s in-process eval; to compare V3/V2 against L3's best (`ens30×10` = 0.5643), the standalone eval must also run an N=30 ensemble, which the framework didn't support for these two model classes. The N=1 selection for the `*`-marked ES rows and the ens30 selection (like `L3_ENS30_DIR`) are report-generator concerns applied after the eval runs.
+
+**Verification:** `pytest tests/test_neural_inference.py tests/test_vanilla_cfm.py -m "not slow"` — 33 passed. CPU smoke (`--n-members 3 --n-outer 10`, 5 windows): after the fix the ensemble inference runs past the previous `Unknown model type` error (was compute-bound on the loaded login node; the GPU sbatch is the real fast path). `bash -n` on the updated sbatch OK.
+
 ## 2026-08-28: V2/V3 launch readiness — reuse cached test splits + standalone eval support
 
 **Summary:** Made the V2 (TweedieCFM) / V3 (PredictStateCFM) full training jobs launchable and benchmark-appendable. (1) Wired a new `data.test_cache` key through `train.py` so the canonical 200-window S0/S1 test splits (`experiments/l96_datasets_obsj2_int100_nwin200.pt`, master worktree) are **reused from cache** instead of regenerated (~72 min slow-path per job); train/val still generate fresh via the fast batched path. `make_l96_s0_s1_trainval` already supported partial `cached_datasets` — this just exposes it from `train.py`. (2) Extended `evaluation/neural_inference.py` so `eval_neural_l96.py` can load V2/V3 checkpoints: added `TweedieCFM`/`PredictStateCFM` to `resolve_model_class` + `create_model`, generalized the weight-prefix inference (`unet` vs `velocity_unet`) for the two-stage model, and special-cased TweedieCFM's `cond_extra_dim` inference (its velocity UNet uses `obs_dim = 2*state_dim`, so `proj_in = 3*state_dim + cond_extra_dim`). (3) Added a V2/V3 standalone eval sbatch (matches the `eval_neural_l96.py` DA-parity flow; V2 uses `stage2_best.ckpt`, V3 `stage1_best.ckpt`), and registered V2/V3 in the consolidated report generator's `NEURAL_EXP_DIRS`/`N1_ES_METHODS`/`SCHEME_DESCRIPTIONS`.
