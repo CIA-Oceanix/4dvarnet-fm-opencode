@@ -600,6 +600,32 @@ class TestBatchedGeneration:
             for i in range(2):
                 assert fast[case][i]["true_state"].shape == slow[case][i]["true_state"].shape
 
+    def test_cached_datasets_reuse_test_splits(self, batch_cfg):
+        """cached_datasets with test_s0/test_s1 reuses the supplied windows
+        (by identity) while train/val are generated fresh."""
+        from evaluation.run_l96 import make_obs_j_indices
+        ov = make_obs_j_indices(8, 4, 2)
+        cfg = Lorenz96Config(
+            T_max=0.3, dt=0.001, obs_interval=100, num_windows=4,
+            spinup_steps=1000, obs_var_indices=ov,
+        )
+        # Build a reference with tiny test splits, then reuse their windows.
+        ref = make_l96_s0_s1_trainval(
+            cfg, num_train_windows=4, num_val_windows=2, num_test_windows=2,
+        )
+        cached_test = {k: ref[k] for k in ("test_s0", "test_s1")}
+        ds = make_l96_s0_s1_trainval(
+            cfg, num_train_windows=4, num_val_windows=2, num_test_windows=2,
+            cached_datasets=cached_test,
+        )
+        for case in ("test_s0", "test_s1"):
+            assert len(ds[case]) == 2
+            for i in range(2):
+                assert ds[case][i] is ref[case][i], f"{case}[{i}] not reused from cache"
+        # train/val are freshly generated (own objects, correct sizes)
+        assert len(ds["train"]) == 4 and len(ds["val"]) == 2
+        assert ds["train"][0] is not ref["train"][0]
+
     @pytest.mark.slow
     def test_fast_path_1000_windows_under_10min(self):
         """Performance: 1000 train windows generate in under 10 minutes (vs ~4.5h

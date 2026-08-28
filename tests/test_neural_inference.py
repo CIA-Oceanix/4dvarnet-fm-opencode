@@ -17,7 +17,7 @@ from evaluation.neural_inference import (
 )
 from evaluation.estimate_metrics import evaluate_estimates, evaluate_npz
 from models.direct_unet import DirectUNet
-from models.vanilla_cfm import VanillaCFM
+from models.vanilla_cfm import VanillaCFM, TweedieCFM, PredictStateCFM
 
 
 class _DictBatch:
@@ -63,6 +63,42 @@ class TestNeuralInference:
         cfg.model = {"type": "VanillaCFM"}
         model_class, cfg_model = resolve_model_class(cfg)
         assert model_class == VanillaCFM
+
+    def test_resolve_model_class_tweedie_cfm(self):
+        """Test model class resolution for TweedieCFM (V2)."""
+        cfg = Mock()
+        cfg.model = {"type": "tweedie_cfm"}
+        model_class, cfg_model = resolve_model_class(cfg)
+        assert model_class == TweedieCFM
+
+    def test_resolve_model_class_predict_state_cfm(self):
+        """Test model class resolution for PredictStateCFM (V3)."""
+        cfg = Mock()
+        cfg.model = {"type": "predict_state_cfm"}
+        model_class, cfg_model = resolve_model_class(cfg)
+        assert model_class == PredictStateCFM
+
+    def test_create_model_tweedie_cfm(self):
+        """Test TweedieCFM construction from cfg (obs-only, cond_extra_dim=0)."""
+        cfg = OmegaConf.create({
+            "model": {"state_dim": 3, "hidden_channels": [4, 8],
+                      "time_emb_dim": 16, "K_inner": 3, "N_outer": 5,
+                      "sigma_prior": 0.5, "cond_extra_dim": 0},
+        })
+        model = create_model(TweedieCFM, cfg)
+        assert isinstance(model, TweedieCFM)
+        assert model.K_inner == 3 and model.N_outer == 5
+
+    def test_create_model_predict_state_cfm(self):
+        """Test PredictStateCFM construction from cfg (obs-only)."""
+        cfg = OmegaConf.create({
+            "model": {"state_dim": 3, "hidden_channels": [4, 8],
+                      "time_emb_dim": 16, "N_outer": 5, "sigma_prior": 0.5,
+                      "param_dim": 0, "cond_extra_dim": 0},
+        })
+        model = create_model(PredictStateCFM, cfg)
+        assert isinstance(model, PredictStateCFM)
+        assert model.N_outer == 5
 
     def test_resolve_model_class_unknown_type(self):
         """Test unknown model type raises error."""

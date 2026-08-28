@@ -60,6 +60,7 @@ class DataConfig:
     obs_j: int = 2
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
+    test_cache: Optional[str] = None
 
     # Device
     device: str = "cpu"

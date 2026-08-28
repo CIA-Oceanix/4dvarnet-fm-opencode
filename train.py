@@ -368,6 +368,13 @@ def main(cfg: DictConfig):
                 logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
                 test_keys = ["test_s0", "test_s1"]
             else:
+                test_cache_path = dc.get("test_cache", None)
+                cached_test = None
+                if test_cache_path and os.path.exists(test_cache_path):
+                    logger.info(f"Reusing cached test splits from {test_cache_path}")
+                    cached_full = torch.load(test_cache_path, weights_only=False)
+                    cached_test = {k: cached_full[k] for k in ("test_s0", "test_s1")
+                                   if k in cached_full}
                 datasets = make_l96_s0_s1_trainval(
                     base_cfg,
                     num_train_windows=dc.get("num_train_windows", 1000),
@@ -375,6 +382,7 @@ def main(cfg: DictConfig):
                     num_test_windows=dc.get("num_test_windows", 200),
                     param_noise=dc.get("test_param_noise", 0.2),
                     bias_range=(0.0, dc.get("bias_max", 0.2)),
+                    cached_datasets=cached_test,
                 )
                 test_keys = ["test_s0", "test_s1"]
         else:

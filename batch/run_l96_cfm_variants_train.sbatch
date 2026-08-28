@@ -21,6 +21,12 @@ export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 
 mkdir -p "$MPLCONFIGDIR"
 
+# Reuse the canonical 200-window S0/S1 test splits instead of regenerating
+# them (~72 min slow-path per training job). Absolute path to the master
+# worktree cache (shared filesystem; both worktrees see it).
+TEST_CACHE="/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt"
+TEST_CACHE_OPTS="++data.test_cache=${TEST_CACHE}"
+
 case "${SLURM_ARRAY_TASK_ID}" in
   0)
     EXPERIMENT="V3_predict_state_cfm_l96"
@@ -38,7 +44,8 @@ case "${SLURM_ARRAY_TASK_ID}" in
     python train.py \
       --config-name experiment/${EXPERIMENT} \
       hydra.run.dir=. \
-      hydra.output_subdir=null
+      hydra.output_subdir=null \
+      ${TEST_CACHE_OPTS}
 
     ;;
 
@@ -59,7 +66,8 @@ case "${SLURM_ARRAY_TASK_ID}" in
     python train.py \
       --config-name experiment/${EXPERIMENT} \
       hydra.run.dir=. \
-      hydra.output_subdir=null
+      hydra.output_subdir=null \
+      ${TEST_CACHE_OPTS}
 
     ;;
 

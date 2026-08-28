@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
-from models.vanilla_cfm import VanillaCFM, JointCFM
+from models.vanilla_cfm import JointCFM, PredictStateCFM, TweedieCFM, VanillaCFM
 
 
 class BatchDict:
@@ -91,14 +91,22 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         # Infer architecture parameters from state_dict
         inferred_params = {}
 
+        # The state/output UNet appears as `model.unet` for DirectUNet,
+        # VanillaCFM, JointCFM, JointDirectUNet, PredictStateCFM and as
+        # `model.velocity_unet` for the two-stage TweedieCFM.
+        unet_key = "unet" if "model.unet.enc_out.2.weight" in state_dict else "velocity_unet"
+        enc_out_key = f"model.{unet_key}.enc_out.2.weight"
+        proj_key = f"model.{unet_key}.cond_encoder.proj.weight"
+        downs_key = f"model.{unet_key}.downs."
+
         # enc_out.2 is Conv1d(in_c, output_dim, 3)
-        if "model.unet.enc_out.2.weight" in state_dict:
-            output_dim = state_dict["model.unet.enc_out.2.weight"].shape[0]
+        if enc_out_key in state_dict:
+            output_dim = state_dict[enc_out_key].shape[0]
 
         # proj_in = state_dim + 1 + output_dim for joint models
         # proj_in = 2*state_dim for non-joint
-        if "model.unet.cond_encoder.proj.weight" in state_dict:
-            proj_in = state_dict["model.unet.cond_encoder.proj.weight"].shape[1]
+        if proj_key in state_dict:
+            proj_in = state_dict[proj_key].shape[1]
 
         if is_joint:
             # state_dim = proj_in - 1 - output_dim
@@ -111,8 +119,13 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             # Non-joint: output_dim = state_dim
             state_dim = output_dim
             param_dim = 0
-            # cond_extra_dim = proj_in - 2*state_dim
-            cond_extra_dim = proj_in - 2 * state_dim
+            if model_type == "tweedie_cfm":
+                # TweedieCFM's velocity UNet uses obs_dim = 2*state_dim
+                # (context = cat([obs_clean, mean])); proj_in = state_dim + 2*state_dim + cond_extra_dim.
+                cond_extra_dim = proj_in - 3 * state_dim
+            else:
+                # cond_extra_dim = proj_in - 2*state_dim for obs_dim = state_dim
+                cond_extra_dim = proj_in - 2 * state_dim
 
         inferred_params["state_dim"] = state_dim
         inferred_params["param_dim"] = param_dim
@@ -122,11 +135,11 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
         # the full triple is recovered for any depth-3 UNet (small nets included;
         # hardcoding the last channel as 256 broke [32,64,128] architectures).
-        if "model.unet.downs.1.block.conv1.weight" in state_dict:
-            conv1 = state_dict["model.unet.downs.1.block.conv1.weight"]
+        if f"{downs_key}1.block.conv1.weight" in state_dict:
+            conv1 = state_dict[f"{downs_key}1.block.conv1.weight"]
             hidden = [conv1.shape[1], conv1.shape[0]]
-            if "model.unet.downs.2.block.conv1.weight" in state_dict:
-                hidden.append(state_dict["model.unet.downs.2.block.conv1.weight"].shape[0])
+            if f"{downs_key}2.block.conv1.weight" in state_dict:
+                hidden.append(state_dict[f"{downs_key}2.block.conv1.weight"].shape[0])
             else:
                 hidden.append(256)
             inferred_params["hidden_channels"] = hidden
@@ -173,6 +186,10 @@ def resolve_model_class(cfg: Any) -> tuple:
         return JointDirectUNet, cfg
     elif model_type == "JOINTCFM":
         return JointCFM, cfg
+    elif model_type == "TWEEDIECFM":
+        return TweedieCFM, cfg
+    elif model_type == "PREDICTSTATECFM":
+        return PredictStateCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -220,6 +237,30 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+        )
+    elif model_class == TweedieCFM:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            K_inner=cfg.model.get("K_inner", 5),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+        )
+    elif model_class == PredictStateCFM:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 0),
+            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")

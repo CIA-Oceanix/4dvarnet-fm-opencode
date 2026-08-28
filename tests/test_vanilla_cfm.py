@@ -1,5 +1,6 @@
 import torch
-from models.vanilla_cfm import VanillaCFM
+
+from models.vanilla_cfm import PredictStateCFM, TweedieCFM, VanillaCFM
 
 
 class _MockBatch:
@@ -67,3 +68,54 @@ class TestVanillaCFM:
         batch = _MockBatch(B=B, T=T, D=D)
         v = model(torch.randn(B, T, D), batch, torch.rand(B))
         assert v.shape == (B, T, D)
+
+
+class TestTweedieCFM:
+    def test_construct_and_nan_obs_safe(self):
+        model = TweedieCFM(state_dim=3, hidden_channels=[4, 8], K_inner=3,
+                           N_outer=3, cond_extra_dim=0)
+        batch = _MockBatch(B=2, T=50, D=3)
+        # Stage 1: mean estimator, NaN-masked obs (unobserved steps NaN)
+        batch.obs[0, ::2] = float('nan')
+        mean = model.estimate_mean(batch.obs)
+        assert mean.shape == (2, 50, 3)
+        assert torch.isfinite(mean).all(), "estimate_mean produced NaN from NaN obs"
+
+    def test_loss_finite_with_nan_obs(self):
+        model = TweedieCFM(state_dim=3, hidden_channels=[4, 8], K_inner=3, N_outer=3)
+        model.set_stage(2)
+        batch = _MockBatch(B=2, T=50, D=3)
+        batch.obs[0, ::2] = float('nan')
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss), "V2 stage-2 loss not finite with NaN obs"
+
+    def test_sample_finite_with_nan_obs(self):
+        model = TweedieCFM(state_dim=3, hidden_channels=[4, 8], K_inner=3, N_outer=3)
+        model.eval()
+        batch = _MockBatch(B=1, T=50, D=3)
+        batch.obs[0, ::2] = float('nan')
+        with torch.no_grad():
+            samples = model.sample(batch, N_outer=3)
+        assert samples.shape == (1, 50, 3)
+        assert torch.isfinite(samples).all(), "V2 sample produced NaN/Inf"
+
+
+class TestPredictStateCFM:
+    def test_loss_finite_with_nan_obs(self):
+        model = PredictStateCFM(state_dim=3, hidden_channels=[4, 8], N_outer=3,
+                                param_dim=0, cond_extra_dim=0)
+        batch = _MockBatch(B=2, T=50, D=3)
+        batch.obs[0, ::2] = float('nan')
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss), "V3 loss not finite with NaN obs"
+
+    def test_sample_finite_with_nan_obs(self):
+        model = PredictStateCFM(state_dim=3, hidden_channels=[4, 8], N_outer=3,
+                                param_dim=0, cond_extra_dim=0)
+        model.eval()
+        batch = _MockBatch(B=1, T=50, D=3)
+        batch.obs[0, ::2] = float('nan')
+        with torch.no_grad():
+            samples = model.sample(batch, N_outer=3)
+        assert samples.shape == (1, 50, 3)
+        assert torch.isfinite(samples).all(), "V3 sample produced NaN/Inf"
