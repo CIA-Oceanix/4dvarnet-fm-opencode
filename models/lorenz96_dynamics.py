@@ -239,6 +239,76 @@ class Lorenz96Dynamics(DynamicsBase):
         forcing_t = W_t[-num_steps:].expand(B, -1)
         return traj, forcing_t
 
+    def generate_batch_trajectories_seeded(
+        self,
+        num_steps: int,
+        seeds: list,
+        F_values: torch.Tensor,
+        c1_values: torch.Tensor = None,
+        h_values: torch.Tensor = None,
+        hx_values: torch.Tensor = None,
+        eps_values: torch.Tensor = None,
+        fast_weights_values: torch.Tensor = None,
+        spinup_steps: int = 10000,
+        coupling_exponent: float = 1.6,
+        device=None,
+    ) -> tuple:
+        """Vectorized batched trajectory generation with per-window seeding.
+
+        Mirrors `generate_full_trajectory` per window but advances all windows
+        in parallel. Each window i uses `seeds[i]` to build its own forcing
+        series (via `_build_forcing`) and its own initial condition
+        (`RandomState(seed+1)`), exactly matching the per-window path. Per-window
+        params (F, c1, h, hx, eps, fast_weights) are passed as `(B,)` /
+        `(B, J)` tensors.
+
+        Returns (traj (B, num_steps, state_dim), forcing (B, num_steps)).
+        """
+        if device is None:
+            device = torch.device("cpu")
+        NO, J = self.NO, self.J
+        B = len(seeds)
+        total = num_steps + spinup_steps
+        c1 = torch.full((B,), self.c1, device=device) if c1_values is None else c1_values
+        h = torch.full((B,), self.h, device=device) if h_values is None else h_values
+        hx = torch.full((B,), self.hx, device=device) if hx_values is None else hx_values
+        eps = torch.full((B,), self.eps, device=device) if eps_values is None else eps_values
+        if fast_weights_values is None:
+            fw = self.fast_weights.to(device) if self.fast_weights is not None else None
+        elif isinstance(fast_weights_values, torch.Tensor):
+            fw = fast_weights_values.clone().detach().to(device)
+        else:
+            fw = torch.tensor(fast_weights_values, dtype=torch.float32).to(device)
+
+        W_all = np.zeros((B, total), dtype=np.float32)
+        s0_all = torch.zeros((B, NO + NO * J), dtype=torch.float32, device=device)
+        for j, seed in enumerate(seeds):
+            W_all[j] = self._build_forcing(
+                total, seed, self.c1, self.c2, self.gamma,
+                self.W_L_bar, self.sigma_0, self.sigma_L, coupling_exponent,
+            )
+            rng_ic = np.random.RandomState(seed + 1)
+            s0_all[j] = torch.tensor(
+                np.concatenate([rng_ic.randn(NO) * 0.01, rng_ic.randn(NO * J) * 0.01]),
+                dtype=torch.float32, device=device,
+            )
+        W_t = torch.tensor(W_all, dtype=torch.float32, device=device)
+
+        s = s0_all
+        for i in range(spinup_steps):
+            s = self._rk4_step(s, W_t[:, i], F_values, self.dt,
+                               c1=c1, h=h, hx=hx, eps=eps, fast_weights=fw)
+
+        traj_list = [s.clone()]
+        for i in range(spinup_steps, total - 1):
+            s = self._rk4_step(s, W_t[:, i], F_values, self.dt,
+                               c1=c1, h=h, hx=hx, eps=eps, fast_weights=fw)
+            traj_list.append(s.clone())
+
+        traj = torch.stack(traj_list, dim=1)
+        forcing_t = W_t[:, -num_steps:]
+        return traj, forcing_t
+
     def rollout_with_q(self, x0: torch.Tensor, q: torch.Tensor,
                         forcing: torch.Tensor, steps: int,
                         **kwargs) -> torch.Tensor:

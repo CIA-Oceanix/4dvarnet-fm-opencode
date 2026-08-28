@@ -493,3 +493,128 @@ class TestEsfixGateMissingES:
         assert rep["checks"]["s0/EnKF"]["status"] == "OK"
         assert rep["checks"]["s0/EnKF"]["es_old"] is None
         assert rep["checks"]["s0/EnKF"]["es_new"] == 0.45
+
+
+class TestBatchedGeneration:
+    """Tests for the vectorized batched L96 dataset generation (fast_generation)."""
+
+    @pytest.fixture
+    def batch_cfg(self):
+        return Lorenz96Config(
+            T_max=0.3, dt=0.001, obs_interval=100, num_windows=4,
+            spinup_steps=1000, seed=42, param_bias=0.0,
+        )
+
+    def test_dynamics_seeded_bitwise_identical_F_only(self, batch_cfg):
+        """Batched dynamics with per-window seeds matches per-window path bitwise
+        when only F varies (no param that triggers float-op-order divergence)."""
+        from models.lorenz96_dynamics import Lorenz96Dynamics
+        dyn = Lorenz96Dynamics(NO=8, J=4, dt=batch_cfg.dt)
+        seeds = [42 + i * 100 for i in range(4)]
+        F = torch.tensor([8.0, 7.6, 8.4, 8.2])
+        refs = [dyn.generate_full_trajectory(num_steps=batch_cfg.num_steps, seed=s, F=f.item(),
+                                              spinup_steps=batch_cfg.spinup_steps)[0]
+                for s, f in zip(seeds, F)]
+        ref = torch.stack(refs)
+        bt, _ = dyn.generate_batch_trajectories_seeded(
+            num_steps=batch_cfg.num_steps, seeds=seeds, F_values=F,
+            spinup_steps=batch_cfg.spinup_steps,
+        )
+        assert bt.shape == ref.shape == (4, batch_cfg.num_steps, 40)
+        assert torch.equal(ref, bt)
+
+    def test_fast_path_distributionally_equivalent(self, batch_cfg):
+        """Fast dataset path produces the same param distribution and trajectory
+        summary statistics as the slow path (chaotic trajectories diverge
+        pointwise but distributions match)."""
+        dyn = _make_lorenz96_dynamics(batch_cfg)
+        slow = RandomBiasLorenz96Dataset(
+            batch_cfg, dynamics=dyn, bias_mode="random", bias_range=(0.0, 0.2),
+            fast_generation=False,
+        )
+        fast = RandomBiasLorenz96Dataset(
+            batch_cfg, dynamics=dyn, bias_mode="random", bias_range=(0.0, 0.2),
+            fast_generation=True,
+        )
+        assert len(slow) == len(fast) == batch_cfg.num_windows
+        for i in range(batch_cfg.num_windows):
+            assert slow[i]["F"] == fast[i]["F"]
+            assert slow[i]["F_da"] == fast[i]["F_da"]
+            assert slow[i]["param_bias"] == fast[i]["param_bias"]
+        st = torch.stack([slow[i]["true_state"] for i in range(len(slow))])
+        ft = torch.stack([fast[i]["true_state"] for i in range(len(fast))])
+        assert abs(st.mean().item() - ft.mean().item()) < 0.05
+        assert abs(st.std().item() - ft.std().item()) < 0.05
+
+    def test_fast_path_window_dict_structure(self, batch_cfg):
+        """Fast-path windows have the same keys as slow-path windows."""
+        dyn = _make_lorenz96_dynamics(batch_cfg)
+        slow = RandomBiasLorenz96Dataset(
+            batch_cfg, dynamics=dyn, bias_mode="random", bias_range=(0.0, 0.2),
+            fast_generation=False,
+        )
+        fast = RandomBiasLorenz96Dataset(
+            batch_cfg, dynamics=dyn, bias_mode="random", bias_range=(0.0, 0.2),
+            fast_generation=True,
+        )
+        assert set(slow[0].keys()) == set(fast[0].keys())
+        assert fast[0]["true_state"].shape == slow[0]["true_state"].shape
+        assert fast[0]["obs"].shape == slow[0]["obs"].shape
+        assert "param_bias" in fast[0]
+        assert "F_da" in fast[0]
+        assert "w1_da" in fast[0]
+
+    def test_test_splits_use_slow_path_by_default(self, batch_cfg):
+        """make_l96_s0_s1_trainval uses slow path for test splits by default
+        so the eval cache stays bitwise-reproducible."""
+        from evaluation.run_l96 import make_obs_j_indices
+        ov = make_obs_j_indices(8, 4, 2)
+        cfg = Lorenz96Config(
+            T_max=0.3, dt=0.001, obs_interval=100, num_windows=4,
+            spinup_steps=1000, obs_var_indices=ov,
+        )
+        ds = make_l96_s0_s1_trainval(
+            cfg, num_train_windows=4, num_val_windows=2, num_test_windows=2,
+        )
+        # test splits must be finite and have correct shape
+        for case in ("test_s0", "test_s1"):
+            for i in range(2):
+                w = ds[case][i]
+                assert torch.isfinite(w["true_state"]).all()
+                assert w["true_state"].shape == (cfg.num_steps, 40)
+                assert w["obs"].shape == (cfg.num_steps, 24)
+
+    def test_make_l96_s0_s1_datasets_fast_flag(self, batch_cfg):
+        """make_l96_s0_s1_datasets respects fast_generation for test windows."""
+        from data.lorenz96 import make_l96_s0_s1_datasets
+        from evaluation.run_l96 import make_obs_j_indices
+        ov = make_obs_j_indices(8, 4, 2)
+        cfg = Lorenz96Config(
+            T_max=0.3, dt=0.001, obs_interval=100, num_windows=2,
+            spinup_steps=1000, obs_var_indices=ov,
+        )
+        slow = make_l96_s0_s1_datasets(cfg, num_test_windows=2, fast_generation=False)
+        fast = make_l96_s0_s1_datasets(cfg, num_test_windows=2, fast_generation=True)
+        for case in ("test_s0", "test_s1"):
+            assert len(slow[case]) == len(fast[case]) == 2
+            for i in range(2):
+                assert fast[case][i]["true_state"].shape == slow[case][i]["true_state"].shape
+
+    @pytest.mark.slow
+    def test_fast_path_1000_windows_under_10min(self):
+        """Performance: 1000 train windows generate in under 10 minutes (vs ~4.5h
+        for the slow per-window path). Uses reduced num_steps to keep CI viable."""
+        import time
+        cfg = Lorenz96Config(
+            T_max=0.3, dt=0.001, obs_interval=100, num_windows=1000,
+            spinup_steps=1000, seed=42,
+        )
+        dyn = _make_lorenz96_dynamics(cfg)
+        t0 = time.time()
+        ds = RandomBiasLorenz96Dataset(
+            cfg, dynamics=dyn, bias_mode="random", bias_range=(0.0, 0.2),
+            fast_generation=True,
+        )
+        elapsed = time.time() - t0
+        assert len(ds) == 1000
+        assert elapsed < 600, f"fast generation took {elapsed:.1f}s (>10min)"

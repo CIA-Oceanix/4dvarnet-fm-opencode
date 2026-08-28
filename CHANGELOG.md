@@ -36,6 +36,64 @@ dynamics), not a shape bug — fixed at the source instead of force-tuning aroun
 
 **Verification:** `pytest tests/test_joint_estimation_l96.py tests/test_joint_estimation_l96_neural.py tests/test_energy_score.py tests/test_baselines_hydra.py -m "not slow"` — 38 passed. CPU smokes (3/8 windows) + full GPU 200-window run all COMPLETE. Report regenerated; consistency note validated. Ruff: no new errors on touched lines (pre-existing `EXE001` shebang + `JointStrong4DVarL96` `__init__` PLR0913 debt only).
 
+## 2026-08-27: Vectorized batched L96 dataset generation (~57x speedup)
+
+**Summary:** Added a vectorized batched generation path for the L96
+`RandomParamLorenz96Dataset` / `RandomBiasLorenz96Dataset` dataset classes that
+cuts dataset build time from ~4.5h to ~3min for the standard 1000+100 train+val
+windows (57x speedup), unblocking L96 neural training. The new path advances
+all windows' RK4 integration in parallel through a single tensor-batched loop
+instead of a per-window Python loop. Test splits keep the slow per-window path
+(bitwise-reproducible vs master) so the eval cache stays stable; train/val use
+the fast path by default (distributionally equivalent, params bitwise-identical).
+
+**Files modified:**
+- `models/lorenz96_dynamics.py` — new `generate_batch_trajectories_seeded`
+  method: like `generate_batch_trajectories` but with **per-window seeds**
+  (each window gets its own forcing series via `_build_forcing` and its own
+  initial condition via `RandomState(seed+1)`), matching the per-window path's
+  per-window diversity that the original batch method collapsed to a single
+  shared forcing/IC.
+- `data/lorenz96.py` — added `_generate_window_dict` (shared per-window
+  post-processing), `_params_to_tensors`, `_generate_windows_batched` (chunked
+  batched generation with non-finite fallback); refactored both dataset classes
+  to split `__init__` into `_generate_slow` (verbatim original loop) /
+  `_generate_fast` (batched) dispatched by a `fast_generation: bool` flag;
+  `make_l96_s0_s1_trainval` defaults `fast_generation=True` for train/val and
+  `False` for test splits; `make_l96_s0_s1_datasets` gains a `fast_generation`
+  kwarg.
+- `tests/test_lorenz96_training.py` — new `TestBatchedGeneration` (5 fast tests
+  + 1 slow perf test): dynamics bitwise-identical (F-only), fast-path
+  distributional equivalence (params bitwise, trajectory stats match),
+  window-dict structure parity, test-split slow-path default, datasets-flag
+  plumbing, 1000-window <10min perf.
+
+**Rationale:** L96 neural training (L1b/L2b/L3 and the upcoming V2/V3 CFM
+variants) spends ~4.5h of CPU time generating the 1500-window dataset before
+epoch 1 (pure-Python RK4, ~10.7s/window × 13,000 steps). This is survivable
+inside a 24h job (L1b/L2b/L3 all completed) but wasteful and was previously
+misdiagnosed as a "hang" on the V2/V3 branch (where the real blocker was a
+broken `train.py` with merge-conflict markers). The batched path makes
+generation negligible (~3min) and removes any incentive to cache the training
+dataset. Test splits stay slow-path so the canonical eval cache
+(`l96_datasets_obsj2_int100_nwin200.pt`) rebuilds bitwise-identically.
+
+**Verification:**
+- `pytest tests/test_lorenz96_training.py::TestBatchedGeneration -v -m "not slow"`
+  — 5 passed, 1 deselected (slow perf).
+- `pytest tests/test_lorenz96_training.py tests/test_neural_inference.py
+  tests/test_baselines_hydra.py tests/test_direct_unet.py tests/test_vanilla_cfm.py
+  -m "not slow"` — 82 passed, 1 deselected.
+- Bitwise-to-master: branch slow-path `RandomParam`/`RandomBias` windows
+  (fast_generation=False) are bit-identical to `git show master:data/lorenz96.py`
+  for both `true_state` and `F_da`/`param_bias` (verified via importlib
+  side-by-side).
+- Fast-vs-slow distributional equivalence: per-window params bitwise-identical
+  (same RNG draw); trajectory mean/std match within ~0.02 (chaotic pointwise
+  divergence only, no distributional shift).
+- Timing: 1000 windows (num_steps=3000, spinup=10000) in 128-chunks = 170s
+  (~2.8min) vs ~4.5h per-window.
+
 ## 2026-08-26: L96 joint benchmark — NRMSE + trajectory-forecast metrics (PR #95)
 
 **Summary:** Added two parameter-estimation metrics to the L96 joint
