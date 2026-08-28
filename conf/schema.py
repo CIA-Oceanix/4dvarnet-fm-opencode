@@ -22,6 +22,9 @@ class DataConfig:
     window_spacing: int = 2000
     spinup_steps: int = 10000
     seed: int = 42
+    num_train_windows: int = 1000
+    num_val_windows: int = 100
+    num_test_windows: int = 200
     sigma_true: float = 10.0
     rho_true: float = 28.0
     beta_true: float = 8 / 3

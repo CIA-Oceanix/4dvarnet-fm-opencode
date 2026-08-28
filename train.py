@@ -462,18 +462,6 @@ def main(cfg: DictConfig):
             t0 = time.time()
             if model_type == "tweedie":
                 model = train_stage(model, loaders, cfg, stage=1, device=device)
-            elif model_type == "tweedie_cfm":
-                from training.lightning_module import LitModel
-                from training.pipeline import create_trainer
-                stage_cfg = cfg.training.stage1
-                lit = LitModel(model, model_type=model_type, stage=1,
-                               lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
-                               use_gradient_loss=cfg.training.loss.use_gradient,
-                               gradient_weight=cfg.training.loss.gradient_weight)
-                trainer = create_trainer(cfg, 1)
-                trainer.fit(lit, loaders["train"], loaders["val"])
-                path = cfg.paths.checkpoint_stage1
-                torch.save(lit.model.state_dict(), path)
             else:
                 stage_cfg = cfg.training.stage1
                 lit = LitModel(model, model_type=model_type, stage=1,
@@ -494,8 +482,6 @@ def main(cfg: DictConfig):
             print(f"    Stage 2 done in {time.time()-t0:.1f}s")
         elif model_type == "tweedie_cfm" and epochs_s2 > 0:
             t0 = time.time()
-            from training.lightning_module import LitModel
-            from training.pipeline import create_trainer
             stage_cfg = cfg.training.stage2
             lit = LitModel(model, model_type=model_type, stage=2,
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,

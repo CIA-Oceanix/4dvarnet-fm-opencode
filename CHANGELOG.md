@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-28: Fix V2 TweedieCFM NaN — missing NaN-obs handling (nan_to_num) + end-to-end e2e
+
+**Summary:** Diagnosed and fixed the V2 `TweedieCFM` NaN: its stage-1/stage-2 losses and all sampled trajectories were NaN at step 0, and its saved checkpoint had every weight NaN. Root cause: the L96 (and L63) observation design stores NaN at unobserved timesteps (real value every `obs_interval`, `obs_mask` marks observed). The working `DirectUNet` (`models/direct_unet.py:33`) and `VanillaCFM`/`PredictStateCFM` (`_make_cond`, `models/vanilla_cfm.py:9`) all `torch.nan_to_num(obs, nan=0.0)` before feeding the UNet — but `TweedieCFM` fed the **raw NaN obs** into both `estimate_mean` (mean_estimator) and its velocity UNet context `cond = cat([obs, mean])`, propagating NaN → loss → gradients → all weights. Fixed by applying `nan_to_num` at the obs entry of `TweedieCFM.estimate_mean` and `TweedieCFM.forward` (mirrors `_make_cond`). Note: `PredictStateCFM` (V3) already uses `_make_cond` and is unaffected. Also confirmed the V2 e2e sbatch smoke ran the full `train.py` pipeline to completion (device → data-gen → Lightning stage1+stage2 → eval → `trajectories_s*.npz` + `results.json`); the all-NaN metrics in that run were caused by this same missing NaN-obs handling, now fixed.
+
+**Files modified:**
+- `models/vanilla_cfm.py` — `TweedieCFM.estimate_mean` and `TweedieCFM.forward` now `torch.nan_to_num(obs, nan=0.0)` on their obs inputs (matches `_make_cond` used by VanillaCFM/DirectUNet/PredictStateCFM)
+- (accumulated uncommitted pipeline fixes also landed with this commit) `train.py` — fixed `UnboundLocalError: local variable 'LitModel' referenced before assignment` (stage-1 dispatch); `conf/schema.py` — added `num_train_windows`/`num_val_windows`/`num_test_windows` to `DataConfig`; `batch/run_l96_cfm_variants_e2e_quick.sbatch` — new quick e2e array (V3 task 0, V2 task 1)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** V2 (and thus the Phase B V1/V2 TweedieCFM path) was silently untrainable — NaN from the first step makes every checkpoint garbage and every metric `nan`. The fix is 4 lines mirroring the exact pattern all other models already use, restoring V2 to a trainable state consistent with the design.
+A tiny dedicated `TweedieCFM` test covering NaN-obs input is desirable as a regression guard but not added in this pass (the existing `test_vanilla_cfm.py` gate still passes; see Verification).
+
+**Verification:** `pytest tests/test_vanilla_cfm.py tests/test_direct_unet.py tests/test_lorenz96_training.py -m "not slow"` — 57 passed, 1 deselected; `py_compile models/vanilla_cfm.py` clean. Direct repro on a real NaN-masked L96 train batch: pre-fix stage-1/stage-2 loss NaN; post-fix stage-1 6.63, stage-2 6.83, `sample(4,3000,24)` fully finite. Real 5-step Adam training (both stages) descends 6.64→3.33 / 3.57→2.96, all finite. V2 e2e sbatch smoke completed end-to-end (11:21, trajs + results.json written).
+
 ## 2026-08-28: V2/V3 rebase onto master + resolve compile blockers (B1/B1b) + integration fixes
 
 **Summary:** Rebased `feature/l96-v2v3-pure` onto `origin/master` (now carrying PR #105 batched L96 datagen + PR #106 L96 joint DA ETKF), then fixed the two pre-existing compile blockers that prevented V2/V3 training: B1 (unterminated `train.py` conflict markers + broken 6-space indent on the `smoke_cached_data` branch) and B1b (`conf/schema.py` 5-space `device` indent + trailing-space line). Also surfaced and fixed three rebase-integration defects: a missing `logger` in `train.py` (the `smoke_cached_data` branch called `logger.info` but `logger` was never defined → `NameError`), a `JointDirectUnet`→`JointDirectUNet` casing mismatch (`train.py:146,149` vs master's `models/direct_unet.py:47`), and the V2/V3 sbatch scripts `cd`-ing to the master root instead of the worktree. Applied the locked decisions: V2 stage-1 budget 200→100, added `train_tau_0_only` to `PredictStateCFMConfig`.

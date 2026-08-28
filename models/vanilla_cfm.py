@@ -287,10 +287,11 @@ class TweedieCFM(nn.Module):
     def estimate_mean(self, obs: torch.Tensor) -> torch.Tensor:
         """Compute conditional mean E[x1 | obs] via K_inner iterative refinement."""
         B, T, D = obs.shape
+        obs_clean = torch.nan_to_num(obs, nan=0.0)
         x = torch.zeros(B, D, T, device=obs.device)
         for k in range(self.K_inner):
             tau = torch.full((B,), k / (self.K_inner - 1), device=obs.device)
-            residual = self.mean_estimator(x, obs.transpose(1, 2), tau)
+            residual = self.mean_estimator(x, obs_clean.transpose(1, 2), tau)
             x = x + residual
         return x.transpose(1, 2)
 
@@ -308,7 +309,7 @@ class TweedieCFM(nn.Module):
         """
         if self.train_tau_0_only:
             tau = torch.zeros(obs.shape[0], device=obs.device)
-        cond = torch.cat([obs, mean], dim=-1)
+        cond = torch.cat([torch.nan_to_num(obs, nan=0.0), mean], dim=-1)
         v = self.velocity_unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return v.transpose(1, 2)
 
