@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-28: V3 standalone eval (single-sample + ens30×10) + consolidated report update
+
+**Summary:** Ran the full V3 (`PredictStateCFM`) standalone eval (job 50723, task 0) and updated the consolidated L96 benchmark. The eval ran both passes: the N=1 single-sample DA-parity run (root `neural_eval.json`, the training-script convention) and the **ens30×10** ensemble run (`ens30_no10/`, apples-to-apples with L3's best). Regenerated the consolidated report with V3's rows now sourced from its ens30 subdir (proper N=30 ensemble ES), via a generalized `ENS30_DIRS` mechanism (previously hardcoded to L3). V3's headline: **ens30×10 S0 RMSE 0.5716 / S1 0.5729** (degradation 1.002), **proper ensemble ES 0.2762/0.2766** — the second-best neural scheme after L3 (0.5645) and ahead of L2b/L4 and all DA baselines. V2's rows show `—` (training still in progress).
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` — generalized `L3_ENS30_DIR` into `ENS30_DIRS` (L3 + V3); `collect_estimates` + `collect_metric_values` + `_ens30_es` now driven by `ENS30_DIRS`; added `stored_truth_npz()` (ens30 subdir aware truth-check); new `traj is None` guard so unevaluated dirs (V2) render `—` instead of crashing; V3 removed from `N1_ES_METHODS` (proper N=30 ES) while V2 stays N=1; V3 scheme description notes `ens30×10`. Applied to both worktree and master copies.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** V3's lone published number (0.644 from `train.py`'s in-process eval) is single-sample × 10-step. To benchmark V3 fairly against L3's best (ens30×10 = 0.5643) the standalone eval must run an N=30 ensemble, and the report must source V3's RMSE/EV/ES from the ens30 subdir (proper ensemble ES) rather than the N=1 MAE proxy. The `ENS30_DIRS` generalization avoids duplicating the L3-specific special-casing. The None-guard lets the report render for partially-reaching dirs (V2) without erroring.
+
+**Verification:** V3 eval job 50723_0 COMPLETED (exit 0, 7:56); ens30 members arrays (200,3000,24,30) all finite, `neural_eval.json` with proper ESens 0.2762/0.2766. Report regenerated on master (DA caches/dataset present there; V3 eval npz copied into master `experiments/`): both consistency checks PASS (DA max Δ 2.12e-4, neural truth 0.0); RMSE/EV/ES tables show V3 (0.5716/0.5729, ES 0.2762 no `*`) and V2 (`—`). `py_compile` clean on both copies; worktree+master report generators identical.
+
 ## 2026-08-28: V2/V3 standalone eval — add ensemble (ens30×10) + PredictStateCFM/TweedieCFM inference dispatch
 
 **Summary:** Extended the V2/V3 standalone eval to benchmark the models both ways: the N=1 single-sample DA-parity run (matches the training-script in-process convention and the L1b–L9 N=1 rows) **and** a 30-member × 10-step ensemble run (apples-to-apples with the L3 best, `ens30×10`), written into an `ens30_no10/` subdir so the single-sample `estimates_*.npz` at the experiment root stay intact. To enable the ensemble path, added `PredictStateCFM`/`TweedieCFM` to the `_run_case_inference` member-loop dispatch in `evaluation/neural_inference.py` (they were only in `resolve_model_class`/`create_model` for the single-sample path, so the ensemble run hit `ValueError: Unknown model type`). The training script's one-sample in-process eval (`train.py`) is **unchanged**.
