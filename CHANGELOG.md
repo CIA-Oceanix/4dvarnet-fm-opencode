@@ -1,5 +1,53 @@
 # Changelog
- 
+  
+## 2026-08-27: V2/V3 design review — record blockers + resolved decisions
+
+**Summary:** Reviewed the restored V2 `TweedieCFM` / V3 `PredictStateCFM` code
+on `feature/l96-v2v3-pure` against the Phase B design doc and found the
+branch is not trainable. Updated `docs/phase_B_l96_cfm_variants.md` with the
+resolved design decisions (V2 stage-1 budget 100 epochs, V3 kept as predict-μ
+ODE variant, both multi-τ) and four blockers that must be fixed before any
+training/eval run.
+
+**Critical blocker (B1):** `train.py` has unresolved git merge conflict
+markers (`<<<<<<<`/`=======`/`>>>>>>>` at lines 358-396 and 410-464),
+introduced by commit `f7749a9` ("fix: add smoke_cached_data extraction from
+DataConfig"). The file does not compile (`SyntaxError: unmatched ')'`).
+**No training has ever run on this branch** — the previous CHANGELOG entry's
+"dataset generation hang" diagnosis was incorrect.
+
+**Real dataset cost (B2):** timed `generate_full_trajectory` at ~8.9 s/window
+(pure-Python RK4, 10,300 steps/window). For 1500 windows (1000 train + 100 val
++ 200 s0 + 200 s1) that's ~3.7 h of CPU generation before epoch 1 — not a
+hang. The `cached_datasets` kwarg in `make_l96_s0_s1_trainval` already
+supports loading a pre-built cache; the fix is to build/reference a train+val
+cache via `smoke_cached_data` (the eval cache `experiments/l96_datasets_obsj2_int100_nwin200.pt`
+only has test windows).
+
+**Other blockers:** B3 — no V2/V3 unit tests (`grep` returns nothing; the
+`MeanEstimatorCell` transpose in `TweedieCFM.estimate_mean` is a likely
+silent shape bug that tests would catch). B4 — eval pipeline
+(`evaluation/neural_inference.py`, `eval_neural_l96.py`) has zero
+`tweedie_cfm`/`predict_state_cfm` support, so checkpoints can't be
+loaded/inferred even after training.
+
+**Files modified:** `docs/phase_B_l96_cfm_variants.md` — rewrote with resolved
+decisions, implemented-variant descriptions, blocker list, and an
+implementation order for the next session; `CHANGELOG.md` — this entry.
+
+**Rationale:** The branch looked "almost ready" but is actually broken at
+the source level. Recording the real blockers (broken `train.py`, real
+generation cost, missing tests, missing eval pipeline) before any code work
+prevents repeating the previous session's misdiagnosis and gives the next
+implementation pass a concrete checklist.
+
+**Verification:** `python -m py_compile train.py` → `SyntaxError: unmatched
+')'` (confirms B1). Timed `generate_full_trajectory(num_steps=300,
+spinup_steps=10000)` → 8.9 s (confirms B2). `rg tweedie_cfm|predict_state_cfm
+tests/` → no matches (confirms B3). `rg tweedie_cfm|predict_state_cfm
+evaluation/neural_inference.py eval_neural_l96.py` → no matches (confirms B4).
+Doc-only change otherwise.
+
 ## 2026-08-27: Scoping fix + smoke-cached-data support for L3 training
 
 **Summary:** Fixed critical Python scoping bug in `train.py` that was blocking all VanillaCFM/DirectUNet training runs. Removed function-local imports of torch, LitModel, and create_trainer in `main()` that shadowed module-level names, causing UnboundLocalError: 'LitModel' referenced before assignment for L3 and other vanilla_cfm experiments. Also added smoke-cached-data support to bypass cluster dataset-generation hang during training validation.
