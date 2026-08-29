@@ -408,3 +408,43 @@ def test_run_preserves_obs_noise_std_frac():
                 init_lag_days=0.5, ds=ds)
     assert "test_s0" in p_low["scenarios"]
     assert np.isfinite(p_low["scenarios"]["test_s0"]["expvar_full"])
+
+
+def test_localized_etkf_r_sensitive_analysis():
+    """Regression: the localized-ETKF analysis must depend on the obs-error R.
+
+    The default ridge was a hardcoded absolute `1e-4` in the localized gain,
+    which (at QG scales where HPH ~1e-14 and R ~1e-16) dwarfed the covariance
+    and drove the Kalman gain to ~0. The analysis was then invariant to a 50x
+    change in observation noise. The gain must be scale-relative so lowering R
+    (cleaner obs) changes the analysis."""
+    cfg = QGConfig(nx=16, window_days=30.0, spinup_years=0.1, num_windows=1,
+                   obs_geometry="random_columns", cols_per_day=4, seed=7,
+                   obs_noise_std_frac=0.05)
+    ds = make_qg_s0_s1_datasets(cfg)
+    w = ds["test_s0"][0]
+    device = torch.device("cpu")
+    dyn = _build_dyn(cfg, w, device)
+    obs, base_r_var, obs_op, _ = _make_obs_system(cfg, w, device, "q", None)
+    forcing = w["wind_state_corrupted"].to(device)
+    truth = w["true_state"]
+    per_time = _q_obs_indices_t(cfg, w)
+    Lx, Ly = _build_qg_loc_matrices(dyn.state_dim, per_time, 2, cfg.ny,
+                                    cfg.nx, 6, device)
+    si, _ = _sample_init_state(cfg, w, 1.0, 0.25, device)
+    sigma_raw = float(w["init_lead_truth"].std(0).mean())
+    ens = _ensemble_from_init(si, sigma_raw, 40, 1.0, device, cfg)
+
+    def analysis_rmse(r_var):
+        filt = ETKF(N_ensemble=40, R_var=r_var, inflation=1.0, device=device,
+                    dynamics=dyn, obs_operator=obs_op, loc_radius=6,
+                    noise_init_std=float(w["target_state_q"].std()),
+                    loc_Lx_t=Lx, loc_Ly_t=Ly)
+        filt.init_ensemble = ens.clone()
+        res = filt.assimilate(obs, w["obs_mask"].to(device), forcing,
+                              true_state=truth)
+        return float(np.sqrt(np.mean((res.trajectory - truth.numpy()) ** 2)))
+
+    rmse_hi = analysis_rmse(base_r_var)
+    rmse_lo = analysis_rmse(base_r_var * 1e-4)
+    assert abs(rmse_hi - rmse_lo) > 1e-10
