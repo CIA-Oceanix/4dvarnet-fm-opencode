@@ -786,7 +786,7 @@ class ETKF:
                         R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
                     else:
                         R_obs = torch.eye(od_t, device=self.device) * self.R_var
-                    ridge = 1e-4 + self.etkf_ridge * loc_H_Pf_Ht.max() if self.etkf_ridge > 0.0 else 1e-4
+                    ridge = (1e-4 if self.etkf_ridge <= 0.0 else self.etkf_ridge) * loc_H_Pf_Ht.max()
                     Ph = loc_H_Pf_Ht + R_obs + ridge * torch.eye(od_t, device=self.device)
                     K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                     mu = mu + K @ dy
