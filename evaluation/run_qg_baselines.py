@@ -333,16 +333,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
-        cfg = QGConfig(nx=cfg.nx, window_days=cfg.window_days,
-                       spinup_years=cfg.spinup_years, num_windows=cfg.num_windows,
-                       obs_geometry=geometry, cols_per_day=cfg.cols_per_day,
-                       obs_field=cfg.obs_field, seed=7)
         ds = make_qg_s0_s1_datasets(cfg)
-    else:
-        cfg = QGConfig(nx=cfg.nx, window_days=cfg.window_days,
-                       spinup_years=cfg.spinup_years, num_windows=cfg.num_windows,
-                       obs_geometry=geometry, cols_per_day=cfg.cols_per_day,
-                       obs_field=cfg.obs_field, seed=7)
 
     per_layer = cfg.ny * cfg.nx
     summary = {}
