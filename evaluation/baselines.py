@@ -786,7 +786,8 @@ class ETKF:
                         R_obs = torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
                     else:
                         R_obs = torch.eye(od_t, device=self.device) * self.R_var
-                    Ph = loc_H_Pf_Ht + R_obs + 1e-4 * torch.eye(od_t, device=self.device)
+                    ridge = 1e-4 + self.etkf_ridge * loc_H_Pf_Ht.max() if self.etkf_ridge > 0.0 else 1e-4
+                    Ph = loc_H_Pf_Ht + R_obs + ridge * torch.eye(od_t, device=self.device)
                     K = torch.linalg.lstsq(Ph, loc_Pf_Ht.T).solution.T
                     mu = mu + K @ dy
                     if self.loc_mode == "square_root":
@@ -795,6 +796,8 @@ class ETKF:
                         for n in range(N):
                             perturbed = y_t + torch.randn(od_t, device=self.device) * r_sqrt
                             ensemble[n] += K @ (perturbed - H(ensemble[n], index=t))
+                    if self.etkf_additive > 0.0:
+                        ensemble = ensemble + torch.randn_like(ensemble) * self.etkf_additive
                 else:
                     HA_w = torch.nan_to_num(HA / r_sqrt)
                     try:

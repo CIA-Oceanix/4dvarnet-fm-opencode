@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -203,67 +204,79 @@ def _obs_spec_rc(cfg, window, device):
     return obs, r_var, od
 
 
-def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
-                          disp_frac: float = 1.0):
-    """Lagged-truth ensemble: members = x(t0 - dt_k), dt_k ~ U(0,DT].
+def _sample_init_state(cfg, window, lag_param, band_half, device):
+    """Sample ONE shared initial state at a band-centered lag.
+
+    With the band-centered scheme, `lag_param` is the physical lag in days at
+    the center of the sampling band; a single lag `dt* ~ U[lag-0.25, lag+0.25]`
+    is drawn and the initial state `x(t0 - dt*)` is obtained by linear
+    interpolation of the `init_lead_truth` buffer (which spans
+    [t0 - init_lead_days, t0]). The SAME state is used both as the free-
+    forecast first guess and as the anchor of the DA ensemble, so the DA-vs-
+    free-forecast comparison is apples-to-apples (identical initial condition;
+    only assimilated observations differ).
 
     Args:
         cfg: QGConfig
-        window: dict per-window
-        N: ensemble size
-        init_lag_days: float, maximum lag (days) of members behind t0. Members
-            are sampled from the end of the init_lead_truth buffer so each is
-            x(t0 - dt_k) with dt_k ~ U(0, init_lag_days].
+        window: per-window dict
+        lag_param: nominal (center) lag in days
+        band_half: half-width of the lag sampling band in days
         device: torch device
-        disp_frac: fraction of the raw lagged per-point spread added as
-            independent Gaussian dispersion to each member. The raw lagged
-            members are mildly under-dispersed relative to their background
-            error; dispersion re-proportions the filter covariance to the
-            background error. The dispersion std is scaled to the raw lagged
-            per-point spread (which tracks the lag-dependent background error,
-            ~1.5e-9 at a 0.5-day lag) rather than the climatological state std
-            (~1e-7), which would over-disperse by ~40x at short lags. 1.0 is a
-            sensible default for both q- and psi-obs.
 
     Returns:
-        init_ensemble: (N, state_dim) tensor
-        mean_lag_days: float
+        init_state: (state_dim,) tensor on `device`
+        init_lag_days: the sampled lag in days (for reporting)
     """
     truth = window["init_lead_truth"].float()
     steps_per_day = round(86400.0 / cfg.dt)
-    dt_steps = int(init_lag_days * steps_per_day)
-    dt_steps = max(dt_steps, 1)
-    lead = dt_steps + 1
-    if lead >= len(truth):
-        lead = len(truth) - 1
-    dt = float(init_lag_days / dt_steps)
-    mean_lag_days = 0.0
-    gens = [torch.Generator(device=device).manual_seed(cfg.seed + 7 + i) for i in range(N)]
-    init_ensemble = torch.zeros(N, truth.shape[-1], device=device)
-    r = torch.rand(N, generator=gens[0], device=device)
-    for i in range(N):
-        i_gen = gens[i]
-        k_tplus1 = int(r[i] * lead) + 1
-        # End-relative sampling: members at t0 - dt_k for dt_k ~ U(0, init_lag_days]
-        # (the init_lead_truth buffer spans [t0 - init_lead_days, t0 - dt]).
-        x_tminus1 = truth[len(truth) - k_tplus1 - 1, :]
-        x_t = truth[len(truth) - k_tplus1, :]
-        alpha = torch.rand(1, generator=i_gen, device=device).item()
-        init_ensemble[i] = (1 - alpha) * x_tminus1 + alpha * x_t
-        mean_lag_days += float(k_tplus1 * dt)
+    max_lag_days = max(0.0, (len(truth) - 2) / steps_per_day)
+    lo = max(0.0, lag_param - band_half)
+    hi = min(max_lag_days, lag_param + band_half)
+    gen = torch.Generator(device=device).manual_seed(
+        cfg.seed + 7000 + int(lag_param * 10))
+    lag_days = float(lo + (hi - lo) * torch.rand(1, generator=gen, device=device).item())
+    lag_steps = lag_days * steps_per_day
+    kk = math.floor(lag_steps)
+    kk = min(kk, len(truth) - 2)
+    alpha = lag_steps - kk
+    a = truth[len(truth) - kk - 1, :]
+    b = truth[len(truth) - kk, :]
+    return ((1.0 - alpha) * a + alpha * b).to(device), lag_days
+
+
+def _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg):
+    """DA ensemble anchored at the shared init state (all members + dispersion).
+
+    All ensemble members start from the SAME init_state (the one shared with
+    the free-forecast reference); spread comes from independent Gaussian
+    dispersion scaled to the raw per-point spread, consistent with the
+    PR #105/#110 background-error re-proportioning.
+
+    Returns:
+        init_ensemble: (N, state_dim) tensor
+    """
+    init_ensemble = init_state.unsqueeze(0).expand(N, -1).clone()
     if disp_frac > 0.0:
-        # Scale dispersion to the raw lagged per-point spread (which tracks the
-        # background error: it grows with init_lag_days), not the climatological
-        # state std. With the short 0.5-day lag the bg error is O(1e-9) while
-        # the state std is O(1e-7); scaling to the latter over-dispersed the
-        # ensemble ~40x and made DA worse than the free forecast.
-        sigma_raw = float(init_ensemble.std(0).mean())
         disp_std = disp_frac * sigma_raw
         disp = torch.Generator(device=device).manual_seed(cfg.seed + 9000 + N)
         init_ensemble = init_ensemble + disp_std * torch.randn(
             init_ensemble.shape, generator=disp, device=device)
-    mean_lag_days /= N
-    return init_ensemble, mean_lag_days
+    return init_ensemble
+
+
+def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
+                          disp_frac: float = 1.0):
+    """Single-init ensemble helper (kept for tests/back-compat).
+
+    Samples a single shared init state at a band-centered lag around
+    `init_lag_days` (band half-width 0.25 d) and builds the ensemble by adding
+    dispersion to that shared state. Returns (ensemble, sampled_lag).
+    """
+    init_state, lag_days = _sample_init_state(
+        cfg, window, init_lag_days, 0.25, device)
+    truth = window["init_lead_truth"].float()
+    sigma_raw = float(truth.std(0).mean())
+    return _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg), lag_days
 
 
 
@@ -289,31 +302,24 @@ def _pooled_expvar(analyses, refs):
 
 
 def _free_forecast_init(cfg, window, init_lag_days, device):
-    """Single t0 - U(0, init_lag_days] state from the init_lead_truth buffer.
+    """Sample a single band-centered init state (test/back-compat helper).
 
-    Mirrors `_lagged_init_ensemble`'s end-relative sampling but uses the mean
-    member position as a deterministic representative, so the free-forecast
-    first guess is at the SAME lag as the ensemble being DA'd. Falls back to
-    the stored window['init_state'] (drawn at cfg.init_lag_days) when
-    init_lag_days is None.
+    Delegates to `_sample_init_state` with a 0.25-day band half-width so the
+    reference sits at the same physical lag as the ensemble being DA'd. In
+    `run()` the free forecast instead reuses the exact shared `init_state`; the
+    helper is kept for the standalone test path.
     """
-    truth = window["init_lead_truth"].float()
-    if init_lag_days is None:
-        return window["init_state"].to(device)
-    steps_per_day = round(86400.0 / cfg.dt)
-    dt_steps = max(int(init_lag_days * steps_per_day), 1)
-    lead = min(dt_steps + 1, len(truth) - 1)
-    k = int(lead / 2)  # mean member position in [1, lead]
-    x_tminus1 = truth[len(truth) - k - 1, :]
-    x_t = truth[len(truth) - k, :]
-    return (0.5 * x_tminus1 + 0.5 * x_t).to(device)
+    return _sample_init_state(cfg, window, init_lag_days, 0.25, device)
 
 
-def _free_forecast_rmse(cfg, dyn, window, device, forcing,
-                        init_lag_days=None):
-    """RMSE of the no-obs model forecast (roll from a lagged init state)."""
+def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state):
+    """RMSE of the no-obs model forecast rolled from a shared init state.
+
+    `init_state` is the SAME initial condition used to seed the DA ensemble, so
+    the free-forecast and DA results are compared apples-to-apples (identical
+    initial state; only assimilated observations differ).
+    """
     truth = window["true_state"].float()
-    init_state = _free_forecast_init(cfg, window, init_lag_days, device)
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
                                   - truth.numpy()) ** 2)))
@@ -322,7 +328,8 @@ def _free_forecast_rmse(cfg, dyn, window, device, forcing,
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         loc_radius=None, scenarios=("test_s0", "test_s1a", "test_s1b"),
         out_path=None, init="lagged", geometry="random_columns",
-        obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0):
+        obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
+        etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -348,8 +355,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         refs = []
         d = ds[scen]
         spread_t0_list = []
-        spread_final_list = []
         mean_init_lag_list = []
+        free_ra = []
         method = None
         for i in range(len(d)):
             w = d[i]
@@ -361,10 +368,16 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             forcing = w["wind_state_corrupted"].to(device)
             init_ensemble = None
             init_lag_val = 0.0
+            shared_init = None
             if init == "lagged":
-                init_ensemble, init_lag_val = _lagged_init_ensemble(
-                    cfg, w, N_ensemble, init_lag_days, device,
-                    disp_frac=disp_frac)
+                # ONE shared initial state per window, reused by BOTH the
+                # DA ensemble and the free-forecast reference so the comparison
+                # is apples-to-apples (identical initial condition).
+                shared_init, init_lag_val = _sample_init_state(
+                    cfg, w, init_lag_days, band_half, device)
+                sigma_raw = float(w["init_lead_truth"].std(0).mean())
+                init_ensemble = _ensemble_from_init(
+                    shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
             if obs_var == "q":
                 per_time = _q_obs_indices_t(cfg, w)
@@ -385,7 +398,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
-                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
+                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
+                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
             else:  # obs_var == "psi"
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
@@ -405,10 +419,10 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
-                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
+                                  loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
+                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
             res = _evaluate_window(cfg, w, method, device, obs=obs,
                                    forcing=forcing, init_ensemble=init_ensemble)
-            spread_final_list.append(0.0)
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
             analyses.append(res.trajectory)
@@ -416,13 +430,20 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             rmse_list.append(float(np.sqrt(np.mean(
                 (res.trajectory - ref) ** 2))))
             fcast_rmse.append(_free_forecast_rmse(
-                cfg, dyn, w, device, forcing, init_lag_days=init_lag_days))
+                cfg, dyn, w, device, forcing, shared_init))
+            if shared_init is not None:
+                free_roll = dyn.rollout_trajectory(
+                    shared_init, cfg.num_steps - 1, wind_state=forcing)
+                free_ra.append(free_roll.detach().cpu().numpy())
         ev = _pooled_expvar(analyses, refs)
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],
             [r[:, :per_layer] for r in refs])
         da_r = float(np.mean(rmse_list))
         fc_r = float(np.mean(fcast_rmse))
+        ev_free = None
+        if free_ra:
+            ev_free = float(np.mean(_pooled_expvar(free_ra, refs)))
         summary[scen] = {
             "rmse_mean": da_r,
             "rmse_list": rmse_list,
@@ -430,13 +451,18 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "forecast_improvement": fc_r / max(da_r, 1e-30),
             "expvar_full": float(np.mean(ev)),
             "expvar_upper_q": float(np.mean(ev_upper)),
+            "expvar_free": ev_free,
             "mean_init_lag_days": float(np.mean(mean_init_lag_list)) if mean_init_lag_list else None,
             "spread_t0_mean": float(np.mean(spread_t0_list)) if spread_t0_list else None,
-            "spread_final_mean": 0.0,
         }
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
-              f"ev_full={summary[scen]['expvar_full']:.3f}")
+              f"ev_full={summary[scen]['expvar_full']:.3f} "
+              f"ev_free={summary[scen]['expvar_free']:.3f}")
+
+    payload = {"method": method_name, "nx": cfg.nx,
+               "N_ensemble": N_ensemble, "inflation": inflation,
+               "loc_radius": loc_radius, "scenarios": summary}
 
     payload = {"method": method_name, "nx": cfg.nx,
                "N_ensemble": N_ensemble, "inflation": inflation,
@@ -466,6 +492,7 @@ def main():
     ap.add_argument("--geometry", choices=["alongtrack", "random_columns"], default="alongtrack")
     ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
     ap.add_argument("--init-lag-days", type=float, default=2.0)
+    ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     args = ap.parse_args()
 
@@ -481,7 +508,7 @@ def main():
             inflation=args.inflation, loc_radius=args.loc_radius,
             scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
             init=args.init, geometry=args.geometry, obs_var=args.obs_var,
-            init_lag_days=args.init_lag_days)
+            init_lag_days=args.init_lag_days, band_half=args.band_half)
 
 
 if __name__ == "__main__":

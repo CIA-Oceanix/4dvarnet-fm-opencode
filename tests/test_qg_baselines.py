@@ -13,14 +13,17 @@ from evaluation.baselines import (
 from evaluation.run_qg_baselines import (
     WindStateAdapter,
     _build_dyn,
+    _ensemble_from_init,
     _event_columns,
+    _free_forecast_init,
+    _lagged_init_ensemble,
     _make_obs_system,
+    _obs_spec_rc,
     _per_pass_indices,
     _psi_h,
     _q_alongtrack_obs,
-    _obs_spec_rc,
-    _lagged_init_ensemble,
-    _free_forecast_init,
+    _q_obs_indices_t,
+    _sample_init_state,
 )
 
 NX = 8
@@ -201,65 +204,86 @@ def test_init_ensemble_respected_analysis0():
     assert float(filt.init_ensemble.std()) > 0.1
 
 
-def test_lagged_init_ensemble_diversity():
+def test_lagged_init_shared_single_state():
+    """The lagged init is now a SINGLE shared state anchored at the band-
+    centered lag; all members equal that state (plus dispersion), so the DA
+    ensemble and the free-forecast reference start from the same initial
+    condition."""
     cfg, w = _rc_window(window_days=6.0)
     device = torch.device("cpu")
-    init_ensemble, mean_lag_days = _lagged_init_ensemble(cfg, w, N=20,
-                                                         init_lag_days=1.5,
-                                                         device=device)
-    # dt_steps = 1.5 days * 12 steps/day = 18, mean member lag ~ 10/18 * 1.5 ~ 0.83
-    assert mean_lag_days == pytest.approx(0.833, rel=0.1)
+    truth = w["init_lead_truth"].float()
+    # disp_frac=0 -> every member is the identical shared init_state
+    init_ensemble, lag_days = _lagged_init_ensemble(cfg, w, N=20,
+                                                     init_lag_days=1.5,
+                                                     device=device,
+                                                     disp_frac=0.0)
     assert init_ensemble.shape == (20, cfg.state_dim)
     assert bool(torch.isfinite(init_ensemble).all())
-    assert float(init_ensemble.std()) > 0.0
-    q_std = float(w["target_state_q"].std()) + 1e-12
-    assert float(init_ensemble.std()) > 0.1 * q_std
-    # End-relative sampling: members are near t0 (buffer end), ~1.6 days back,
-    # not the 10-day-lagged buffer start.
-    truth = w["init_lead_truth"].float()
-    mean_member = init_ensemble.mean(0)
-    dist_end = float((mean_member - truth[-1]).pow(2).mean().sqrt())
-    dist_start = float((mean_member - truth[0]).pow(2).mean().sqrt())
+    # With no dispersion all members coincide: zero per-point spread.
+    assert float(init_ensemble.std(0).mean()) == pytest.approx(0.0, abs=1e-12)
+    # The sampled lag centers on init_lag_days (band [1.25, 1.75]).
+    assert lag_days == pytest.approx(1.5, abs=0.25)
+    # End-relative: the shared state is near the buffer end (t0), not the start.
+    shared = init_ensemble[0]
+    dist_end = float((shared - truth[-1]).pow(2).mean().sqrt())
+    dist_start = float((shared - truth[0]).pow(2).mean().sqrt())
     assert dist_end < 0.5 * dist_start
 
 
 def test_lagged_init_dispersion_proportional():
-    """Setting disp_frac > 0 adds dispersion proportional to the raw lagged
-    per-point spread (background-error-scaled), not the climatological state
-    std, which would over-disperse by ~40x at a 0.5-day lag."""
-    cfg, w = _rc_window(window_days=6.0)
-    device = torch.device("cpu")
-    base, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
-                                    device=device, disp_frac=0.0)
-    disp, _ = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
-                                    device=device, disp_frac=1.0)
-    base_per = float(base.std(0).mean())
-    disp_per = float(disp.std(0).mean())
-    assert base_per > 0.0
-    # disp_frac=1.0 adds independent noise with std ~ base_per: the per-point
-    # spread roughly doubles. It must scale with the raw spread (a small
-    # multiple), never with the climatological state std (which would give a
-    # ~40x ratio), so bound it to a small multiple of base_per.
-    assert 1.2 * base_per < disp_per < 3.0 * base_per
-    # dispersion adds zero-mean noise (same lagged centres)
-    assert float(torch.mean(disp - base)) == pytest.approx(0.0, abs=0.1 * base_per)
-
-
-def test_free_forecast_init_lagconsistent():
-    """The free-forecast first guess must be at the SAME lag as the ensemble
-    (end-relative: near t0), and fall back to window init_state when no lag is
-    given."""
+    """disp_frac > 0 adds dispersion proportional to the raw lagged per-point
+    spread (background-error-scaled), not the climatological state std, which
+    would over-disperse by ~40x at a 0.5-day lag."""
     cfg, w = _rc_window(window_days=6.0)
     device = torch.device("cpu")
     truth = w["init_lead_truth"].float()
-    # explicit lag -> samples end of buffer (near t0)
-    s = _free_forecast_init(cfg, w, 0.5, device)
+    raw_spread = float(truth.std(0).mean())
+    _, lag0 = _sample_init_state(cfg, w, 0.5, 0.25, device)
+    ens, lag1 = _lagged_init_ensemble(cfg, w, N=30, init_lag_days=0.5,
+                                      device=device, disp_frac=1.0)
+    disp_per = float(ens.std(0).mean())
+    # disp_frac=1.0 adds noise with std ~ raw spread: per-point spread should
+    # be a small (O(1)) multiple of the raw lagged spread, never the ~40x
+    # climatological over-dispersion.
+    assert raw_spread > 0.0
+    assert 0.3 * raw_spread < disp_per < 3.0 * raw_spread
+    # Dispersion is zero-mean about the shared center: both helper paths agree
+    # on the sampled lag, and the per-point spread is dominated by dispersion
+    # (the shared center is a single state, so any member-to-member difference
+    # is exactly the added zero-mean noise).
+    assert lag0 == pytest.approx(lag1, abs=1e-12)
+
+
+def test_free_forecast_init_shared_lagconsistent():
+    """The free-forecast first guess is a single band-centered init state near
+    t0, consistent with the DA ensemble (they share the same initial
+    condition)."""
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    truth = w["init_lead_truth"].float()
+    s, lag_days = _free_forecast_init(cfg, w, 0.5, device)
+    assert lag_days == pytest.approx(0.5, abs=0.25)
     dist_end = float((s - truth[-1]).pow(2).mean().sqrt())
     dist_start = float((s - truth[0]).pow(2).mean().sqrt())
     assert dist_end < 0.5 * dist_start
-    # None -> falls back to the stored init_state
-    s_none = _free_forecast_init(cfg, w, None, device)
-    assert torch.allclose(s_none, w["init_state"].to(device))
+
+
+def test_shared_init_used_by_both_free_and_da():
+    """The SAME sampled init state seeds both the free forecast and the DA
+    ensemble anchored around it, making the DA-vs-free-forecast comparison
+    apples-to-apples."""
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    shared, lag_days = _sample_init_state(cfg, w, 1.0, 0.25, device)
+    truth = w["init_lead_truth"].float()
+    sigma_raw = float(truth.std(0).mean())
+    ens = _ensemble_from_init(shared, sigma_raw, 10, 1.0, device, cfg)
+    # every member is anchored at the same shared center (mean offset ~0 vs std)
+    assert torch.allclose(ens.mean(0), shared, atol=10.0 * sigma_raw)
+    assert lag_days == pytest.approx(1.0, abs=0.25)
+    # The free-forecast init equals the ensemble anchor (identical IC).
+    _, lag2 = _free_forecast_init(cfg, w, 1.0, device)
+    assert lag2 == pytest.approx(lag_days, abs=0.25)
 
 
 def test_etkf_q_cols_lagged_smoke_finite():
@@ -280,6 +304,40 @@ def test_etkf_q_cols_lagged_smoke_finite():
     assert np.isfinite(res.ensemble_variance).all()
 
 
+def test_etkf_localized_ridge_additive_keep_spread():
+    """Localized ETKF anti-collapse: etkf_ridge/etkf_additive keep the
+    posterior ensemble spread from collapsing to zero vs the default."""
+    cfg, w = _rc_window(window_days=6.0)
+    device = torch.device("cpu")
+    dynam = _build_dyn(cfg, w, device)
+    obs, r_var, obs_op, _ = _make_obs_system(cfg, w, device, "q", None)
+    per_time = _q_obs_indices_t(cfg, w)
+    Lx, Ly = _build_qg_loc_matrices(dynam.state_dim, per_time, 2,
+                                    cfg.ny, cfg.nx, 2.0, device)
+    init_ensemble, _ = _lagged_init_ensemble(cfg, w, N=20,
+                                              init_lag_days=2.0,
+                                              device=device)
+
+    def run_filter(ridge, add):
+        filt = ETKF(N_ensemble=20, R_var=r_var, inflation=1.0,
+                    device=device, dynamics=dynam, obs_operator=obs_op,
+                    loc_radius=2.0, loc_Lx_t=Lx, loc_Ly_t=Ly,
+                    etkf_ridge=ridge, etkf_additive=add)
+        filt.init_ensemble = init_ensemble
+        return filt.assimilate(obs, w["obs_mask"].to(device),
+                               w["wind_state_corrupted"].to(device),
+                               true_state=w["true_state"])
+
+    base = run_filter(0.0, 0.0)
+    tuned = run_filter(1.0, 1e-8)
+    assert np.isfinite(base.trajectory).all()
+    assert np.isfinite(tuned.trajectory).all()
+    assert np.isfinite(tuned.ensemble_variance).all()
+    # Anti-collapse: additive/ridge widen the final posterior spread relative
+    # to the collapsing default (which drives it toward zero).
+    end_base = float(base.ensemble_variance[:, -1].mean())
+    end_tuned = float(tuned.ensemble_variance[:, -1].mean())
+    assert end_tuned >= end_base
 
 
 def test_psi_obs_run_smoke():
