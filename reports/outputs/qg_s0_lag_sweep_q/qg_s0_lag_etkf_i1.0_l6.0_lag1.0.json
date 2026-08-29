@@ -1,0 +1,26 @@
+{
+  "method": "etkf",
+  "nx": 64,
+  "N_ensemble": 80,
+  "inflation": 1.0,
+  "loc_radius": 6.0,
+  "scenarios": {
+    "test_s0": {
+      "rmse_mean": 6.3807385408654e-06,
+      "rmse_list": [
+        1.7911071414562707e-06,
+        3.1230372810510287e-06,
+        3.4044115151446816e-06,
+        1.6474499061553247e-05,
+        7.1106377051217746e-06
+      ],
+      "forecast_rmse_mean": 5.2789032679356754e-06,
+      "forecast_improvement": 0.8273185359542586,
+      "expvar_full": 0.7999911603107035,
+      "expvar_upper_q": 0.791925372596611,
+      "mean_init_lag_days": 0.6510416666666665,
+      "spread_t0_mean": 1.6974096979538444e-06,
+      "spread_final_mean": 0.0
+    }
+  }
+}

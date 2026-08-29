@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-29: QG S0 EV-vs-init-lag production sweep (ETKF, nx=64)
+
+**Summary:** Completed the production S0 EV-vs-init-lag sweep over `init_lag_days ∈ {0.5, 1.0, 2.0, 4.0, 6.0}` for both obs configs (q-obs PV q₁ and psi-obs streamfunction), ETKF, N=80, inflation 1.0, loc 6, 5 windows, 30-day window, nx=64. Monotone finding: S0 EV falls with lag (q: +0.890 → +0.370; psi: +0.734 → +0.553) because the lagged free forecast itself degrades, while `forecast_improvement` (DA-vs-free-forecast) rises monotonically, crossing >1 (DA beats the free forecast) between lag 2–4 d (q: 0.73 → 1.16; psi: 0.48 → 1.58). So 0.5-day lag maximizes S0 EV (q +0.890, ~0.9 target; psi +0.734), and the crossover confirms genuine latent DA skill that is masked at short lag by the near-perfect free forecast (the "perfect-init trap"). q-obs beats psi-obs at every lag (ψ needs a nonlocal spectral inversion). This settles the prior open question about whether to push S0 EV above 0.9 by increasing lag — it would require *decreasing* lag (approaching the degenerate exact-IC limit), not increasing it.
+
+**Files modified:**
+- `batch/run_qg_s0_lag_sweep.sbatch` — new: 2-task array (q/psi) A40, lags {0.5,1,2,4,6}, S0-only, `--outdir reports/outputs/qg_s0_lag_sweep_{q,psi}`.
+- `reports/outputs/qg_s0_lag_sweep_{q,psi}/qg_s0_lag_etkf_i1.0_l6.0_lag{0.5,1.0,2.0,4.0,6.0}.json` — 10 result JSONs (job 50817, COMPLETED 07:06/07:36).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The user asked for a production-scale EV-vs-lag assessment to characterize how init lag trades S0 EV against DA-vs-forecast skill, and whether longer lag raises EV toward/above 0.9. It does not — EV is maximized at the shortest tested lag (0.5 d); the physical reading is that S0's error-free model makes the near-t₀ free forecast near-perfect, so shorter lag keeps the forecast (and DA) closest to truth.
+
+**Verification:** Job 50817 run on GPU (A40). Full q-obs lag table: lag 0.5 EV +0.890/DA 4.41e-6/improv 0.73; 1.0 +0.800/6.38e-6/0.83; 2.0 +0.666/8.94e-6/0.96; 4.0 +0.485/1.18e-5/1.08; 6.0 +0.370/1.33e-5/1.16. psi-obs: 0.5 +0.734/0.48; 1.0 +0.660/0.65; 2.0 +0.643/0.98; 4.0 +0.589/1.35; 6.0 +0.553/1.58. No source-code change; QG test suite unaffected.
+
 ## 2026-08-28: QG lag-consistent free-forecast reference (PR #112)
 
 **Summary:** Made the free-forecast first-guess reference lag-consistent with the ensemble so `forecast_improvement` (the DA-vs-first-guess metric) is meaningful. Previously `_free_forecast_rmse` always rolled the fixed `window["init_state"]` (drawn at `cfg.init_lag_days=0.5`), regardless of the run's `init_lag_days` arg — so when the ensemble lag was swept (or set ≠ 0.5), the comparison compared DA against a near-perfect 0.5-day forecast, biasing `forecast_improvement` downward. Added `_free_forecast_init`, which samples a `t₀−U(0,init_lag_days)` state from the `init_lead_truth` buffer end-relative (mirroring `_lagged_init_ensemble`, mean-member position), and wired `init_lag_days` through `_free_forecast_rmse`. For the S0/30-day/lag-0.5 config (init_lag_days == cfg.init_lag_days) the reference is essentially unchanged.
