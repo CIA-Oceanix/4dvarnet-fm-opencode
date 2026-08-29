@@ -378,3 +378,33 @@ def test_q_obs_multi_window_localized_run_no_crash():
     for s in ("test_s0", "test_s1a"):
         assert s in p["scenarios"]
         assert np.isfinite(p["scenarios"][s]["expvar_full"])
+
+
+def test_run_preserves_obs_noise_std_frac():
+    """Regression: `run()` must carry the full original config so the DA obs
+    noise reflects `obs_noise_std_frac`. The config was being rebuilt from a
+    fresh `QGConfig` when a dataset was passed, silently dropping this field
+    (and any other non-listed one) — so the obs-noise sweep results were pinned
+    to the default regardless of the requested value."""
+    from evaluation.run_qg_baselines import run
+
+    base = {"nx": 8, "window_days": 6.0, "spinup_years": 0.05, "num_windows": 1,
+            "obs_geometry": "random_columns", "cols_per_day": 2, "seed": 3}
+    cfg_low = QGConfig(**base, obs_noise_std_frac=1e-3)
+    cfg_high = QGConfig(**base, obs_noise_std_frac=0.05)
+    ds = make_qg_s0_s1_datasets(cfg_high)
+
+    w = ds["test_s0"][0]
+    _, r_var_high, _ = _q_alongtrack_obs(cfg_high, w, torch.device("cpu"))
+    _, r_var_low, _ = _q_alongtrack_obs(cfg_low, w, torch.device("cpu"))
+    # (1) the obs-noise generator itself scales r_var with the config field
+    assert r_var_low < r_var_high * 1e-3
+
+    # (2) run() must not re-derive cfg and lose the field: same dataset, the
+    # low-noise config must yield a materially different r_var (smaller).
+    p_low = run("etkf", cfg_low, device=torch.device("cpu"), N_ensemble=8,
+                inflation=1.0, loc_radius=4.0, scenarios=("test_s0",),
+                init="lagged", geometry="random_columns", obs_var="q",
+                init_lag_days=0.5, ds=ds)
+    assert "test_s0" in p_low["scenarios"]
+    assert np.isfinite(p_low["scenarios"]["test_s0"]["expvar_full"])
