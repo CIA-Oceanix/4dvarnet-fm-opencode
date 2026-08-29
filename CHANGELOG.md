@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-29: QG shared-init DA-vs-free-forecast + obs-enrichment machinery (PR #115)
+
+**Summary:** Redesigned the QG lagged-init DA baseline so the DA ensemble and the free-forecast reference start from the **exact same** initial state, making `forecast_improvement` an apples-to-apples comparison (previous runs seeded each ensemble member from a different lag while the free forecast used a different single state). A single shared init state is sampled per window at a **band-centered** lag `dt* ~ U[lag_param−0.25, lag_param+0.25]`; the ensemble is anchored at that state + Gaussian dispersion, and the free forecast rolls the same state. `run()` now reports `expvar_free` (free-forecast EV) alongside `expvar_full` (DA EV). This is the machinery to determine the observation config where DA beats the free forecast (Stage A: pick `lag_param` where free-forecast EV ≈ 0.7; Stage B: sweep obs levers at that lag). ETKF `etkf_ridge`/`etkf_additive` anti-collapse wiring (from the prior session) is retained backwards-compatibly and documented as a **null result** (no effect on S0 EV/improv). Preliminary smoke (nx=8, lag 1.0): `expvar_full=0.998 expvar_free=0.999 improv=0.85`.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_sample_init_state` (single band-centered shared init), `_ensemble_from_init` (members = shared init + dispersion), `_free_forecast_rmse`/`run` reuse the same `init_state`; `band_half` param; new `expvar_free` in summary.
+- `evaluation/sweep_qg_baselines.py` — `--band`, `--cols-per-day-list`, `--obs-noise-frac-list`; console prints `EV/FF` per scenario.
+- `evaluation/baselines.py` — `etkf_ridge`/`etkf_additive` (backward-compatible, default 0.0).
+- `tests/test_qg_baselines.py` — shared-init anchoring, dispersion scaling, free/DA same-IC equivalence, band-bounds.
+- `batch/run_qg_ff_lag_calib.sbatch` (Stage A), `batch/run_qg_ff_obs_sweep.sbatch` (Stage B), `batch/run_qg_anticollapse_sweep.sbatch` (prior null-result sweep).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The user requested (1) an internally consistent free-forecast vs DA comparison based on a single shared init state, (2) lag sampled in a narrow band centered on a chosen `lag_param` rather than `[0, lag_param]`, (3) selection of the reference config where the free forecast reaches EV ≈ 0.7, and (4) determination of the obs config where DA beats the free forecast. This PR delivers the shared-init machinery and the Stage A/B sweep infrastructure.
+
+**Verification:** `pytest tests/test_qg_baselines.py tests/test_qg_s0s1.py tests/test_qg_data.py tests/test_qg_dynamics.py tests/test_qg1l_dynamics.py -m "not slow"` — 99 passed. `run_qg_baselines.py` clean under ruff; the only remaining test-file ruff error (`_obs_spec_rc` RUF059) is pre-existing in base. PR #115 approved by `rfablet-review`, pytest green, squash-merged (`04d641e`). Stage A (job 50864) and Stage B queued to A40.
+
 ## 2026-08-29: QG S0 EV-vs-init-lag production sweep (ETKF, nx=64)
 
 **Summary:** Completed the production S0 EV-vs-init-lag sweep over `init_lag_days ∈ {0.5, 1.0, 2.0, 4.0, 6.0}` for both obs configs (q-obs PV q₁ and psi-obs streamfunction), ETKF, N=80, inflation 1.0, loc 6, 5 windows, 30-day window, nx=64. Monotone finding: S0 EV falls with lag (q: +0.890 → +0.370; psi: +0.734 → +0.553) because the lagged free forecast itself degrades, while `forecast_improvement` (DA-vs-free-forecast) rises monotonically, crossing >1 (DA beats the free forecast) between lag 2–4 d (q: 0.73 → 1.16; psi: 0.48 → 1.58). So 0.5-day lag maximizes S0 EV (q +0.890, ~0.9 target; psi +0.734), and the crossover confirms genuine latent DA skill that is masked at short lag by the near-perfect free forecast (the "perfect-init trap"). q-obs beats psi-obs at every lag (ψ needs a nonlocal spectral inversion). This settles the prior open question about whether to push S0 EV above 0.9 by increasing lag — it would require *decreasing* lag (approaching the degenerate exact-IC limit), not increasing it.
