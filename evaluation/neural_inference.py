@@ -109,12 +109,25 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             proj_in = state_dict[proj_key].shape[1]
 
         if is_joint:
-            # state_dim = proj_in - 1 - output_dim
-            # param_dim = output_dim - state_dim
-            # cond_extra_dim = 1 + param_dim
-            state_dim = proj_in - 1 - output_dim
-            param_dim = output_dim - state_dim
-            cond_extra_dim = 1 + param_dim
+            # JointCFM (refactored): a single state UNet (output_dim = state_dim,
+            # cond_extra_dim = 1 for [obs, forcing]) plus a separate param-flow
+            # CNN (param_dim read from its head output channels). JointDirectUNet
+            # follows the older dual-head layout (see below).
+            param_flow_key = "model.param_flow.head.0.weight"
+            if param_flow_key in state_dict:
+                # state UNet: cond_extra_dim = proj_in - 2*state_dim, output_dim = state_dim
+                cond_extra_dim = proj_in - 2 * output_dim
+                state_dim = output_dim
+                param_dim = state_dict[param_flow_key].shape[0]
+            else:
+                # Legacy JointDirectUNet / old joint dual-head layout:
+                # state_dim = proj_in - 1 - output_dim, cond_extra_dim = 1 + param_dim
+                state_dim = proj_in - 1 - output_dim
+                param_dim = output_dim - state_dim
+                cond_extra_dim = 1 + param_dim
+            inferred_params["state_dim"] = state_dim
+            inferred_params["param_dim"] = param_dim
+            inferred_params["cond_extra_dim"] = cond_extra_dim
         else:
             # Non-joint: output_dim = state_dim
             state_dim = output_dim
@@ -127,9 +140,16 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 # cond_extra_dim = proj_in - 2*state_dim for obs_dim = state_dim
                 cond_extra_dim = proj_in - 2 * state_dim
 
-        inferred_params["state_dim"] = state_dim
-        inferred_params["param_dim"] = param_dim
-        inferred_params["cond_extra_dim"] = cond_extra_dim
+            inferred_params["state_dim"] = state_dim
+            inferred_params["param_dim"] = param_dim
+            inferred_params["cond_extra_dim"] = cond_extra_dim
+
+        # Infer the param-flow CNN hidden channels for JointCFM from its conv
+        # blocks (param_flow.blocks.N.conv1.weight: [out, in, 3]).
+        if "model.param_flow.blocks.1.conv1.weight" in state_dict:
+            pf_conv1 = state_dict["model.param_flow.blocks.0.conv1.weight"]
+            pf_conv2 = state_dict["model.param_flow.blocks.1.conv1.weight"]
+            inferred_params["param_flow_channels"] = [pf_conv1.shape[0], pf_conv2.shape[0]]
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
@@ -153,6 +173,7 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "time_emb_dim": 64,
                 "param_dim": param_dim,  # 0 for obs-only; >0 for joint models
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
+                "param_flow_channels": inferred_params.get("param_flow_channels", None),
                 "device": "cpu",
             },
             "deterministic": False,
@@ -249,6 +270,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+            param_flow_channels=cfg.model.get("param_flow_channels", None),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
         )
     elif model_class == JointDirectUNet:
