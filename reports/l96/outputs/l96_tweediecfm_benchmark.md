@@ -49,7 +49,7 @@ Single-sample (N=1) metrics are read from each experiment's root `neural_eval.js
 | Method | S0 | S1 | S1/S0 |
 |---|---|---|---|
 | V2 | 0.5156 | 0.5170 | 1.003 |
-| V2rerun | 0.4736 | 0.4703 | 0.993 |
+| V2rerun | 0.4693 | 0.4665 | 0.994 |
 | V2s0p2 | 0.4728 | 0.4707 | 0.996 |
 | V2kinner1 | 0.5097 | 0.5152 | 1.011 |
 | V3 | 0.5715 | 0.5728 | 1.002 |
@@ -61,7 +61,7 @@ Single-sample (N=1) metrics are read from each experiment's root `neural_eval.js
 | Method | S0 | S1 |
 |---|---|---|
 | V2 | 0.8974 | 0.8962 |
-| V2rerun | 0.9106 | 0.9115 |
+| V2rerun | 0.9132 | 0.9133 |
 | V2s0p2 | 0.9117 | 0.9118 |
 | V2kinner1 | 0.8976 | 0.8944 |
 | V3 | 0.8765 | 0.8749 |
@@ -73,7 +73,7 @@ Single-sample (N=1) metrics are read from each experiment's root `neural_eval.js
 | Method | S0 | S1 |
 |---|---|---|
 | V2 | 0.2664 | 0.2681 |
-| V2rerun | 0.2255 | 0.2249 |
+| V2rerun | 0.2222 | 0.2208 |
 | V2s0p2 | 0.2332 | 0.2337 |
 | V2kinner1 | 0.2438 | 0.2471 |
 | V3 | 0.2762 | 0.2766 |
@@ -85,7 +85,7 @@ Single-sample (N=1) metrics are read from each experiment's root `neural_eval.js
 | Method | S0 | S1 |
 |---|---|---|
 | V2 | 0.4971 | 0.4972 |
-| V2rerun | 0.1693 | 0.1693 |
+| V2rerun | 0.1833 | 0.1832 |
 | V2s0p2 | 0.1385 | 0.1386 |
 | V2kinner1 | 0.2017 | 0.2018 |
 | V3 | 0.2484 | 0.2499 |
@@ -94,9 +94,9 @@ Single-sample (N=1) metrics are read from each experiment's root `neural_eval.js
 
 ## Findings
 
-- **Group A fix materially improves V2**: the post-fix rerun (K_inner=5, σ_prior=0.5) at ens30×10 S0/S1 0.4736/0.4703 beats the pre-fix published V2 (0.5156/0.5170), because the correct stage-2 checkpoint selection yields a genuinely better model. Both runs use identical config.
-- **σ_prior=0.2 (#7) is neutral-to-marginal**: essentially ties the rerun on RMSE (S0 0.4728 vs 0.4736) with a tighter ensemble (spread 0.139 vs 0.169) but a marginally higher ES.
-- **K_inner=1 (#4) is clearly worse**: S0 0.5097 vs rerun 0.4736 (+7.6%), higher spread — iterative mean refinement (K_inner=5) matters.
+- **Group A fix materially improves V2**: the post-fix rerun (K_inner=5, σ_prior=0.5) at ens30×10 S0/S1 0.4693/0.4665 beats the pre-fix published V2 (0.5156/0.5170), because the correct stage-2 checkpoint selection yields a genuinely better model. Both runs use identical config.
+- **σ_prior=0.2 (#7) is neutral-to-marginal**: essentially ties the rerun on RMSE (S0 0.4728 vs 0.4693) with a tighter ensemble (spread 0.139 vs 0.183) but a marginally higher ES.
+- **K_inner=1 (#4) is clearly worse**: S0 0.5097 vs rerun 0.4693 (+8.6%), higher spread — iterative mean refinement (K_inner=5) matters.
 - **TweedieCFM beats vanilla CFM at ens30×10**: the best TweedieCFM (rerun/s0p2, S0 0.4728) is below the vanilla τ=0 CFM L2b (0.6290) and multi-τ L3 (0.5643), and V3 PredictStateCFM (0.5715).
 
 ## Consistency check

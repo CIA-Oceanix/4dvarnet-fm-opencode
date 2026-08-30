@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-30: Refresh V2rerun ens30 row in the TweedieCFM report + update master with the master-code reproduction
+
+**Summary:** Refreshed the dedicated TweedieCFM report's `V2rerun` **ens30×10** row using the fresh master-code reproduction of published V2 (a retrain of the `V2_tweedie_cfm_l96_rerun` config on master, job 50964), which is now the current best-in-family V2 (S0 **0.4693** / S1 **0.4665**, EV 0.913/0.913, degradation 0.994). Updated master's `experiments/V2_tweedie_cfm_l96_rerun/` with the fresh retrained checkpoints, ens30 eval outputs (`estimates_*.npz`, `members_*.npz`, `neural_eval.json`), `results.json` and `trajectories_*.npz` (PR-branch originals preserved as `.bak`). Per the confirmed scope: only the **ens30** row updates (the N=1 row and the consolidated report's V2 = **kinner1** row are intentionally unchanged). The consolidated report was regenerated and confirmed bit-identical (kinner1 untouched; consistency checks PASS in both reports).
+
+**Files modified:**
+- `reports/l96/outputs/l96_tweediecfm_benchmark.md` — regenerated: V2rerun ens30 row → S0 0.4693 / S1 0.4665 (was 0.4736/0.4703); Findings text recomputed from fresh data; N=1 row unchanged; consistency check PASS
+- `CHANGELOG.md` — this entry
+- `experiments/V2_tweedie_cfm_l96_rerun/**` (gitignored) — fresh checkpoints, ens30 eval, results.json, trajectories copied into master; PR-branch originals kept as `.bak`
+
+**Rationale:** The previously-published V2 numbers and the rerun ens30 artifacts originated on the PR branch; the master-code retrain (Group-A-fixed) lands slightly better (S0 −0.9%, S1 −0.8% vs the PR rerun) and is reproducible directly on master. Making master's rerun artifacts + report reflect that fresh run gives a single source of truth for the current best TweedieCFM result.
+
+**Verification:** `python reports/l96/generate_l96_tweediecfm_report.py` → V2rerun ens30 RMSE 0.4693/0.4665 (EV 0.9132/0.9133, ES 0.2222/0.2208, spread 0.1833/0.1832), consistency check max |Δ| = 0.00e+00 PASS. Consolidated report regenerated → **zero diff**, V2 row stays kinner1 0.5098/0.5154, both consistency checks PASS. Fresh ckpt md5 matches training-repro source. Only tracked change = the one dedicated-report .md (7 line-pairs).
+
 ## 2026-08-29: V2 TweedieCFM delta over PR #112 — Group A stage fix, K_inner=1 guard, 3 ablations, dedicated report (kinner1 row)
 
 **Summary:** Delivered the V2/V3 **delta** that a parallel session's PR #112 merged without: (1) the **Group A stage-dispatch fix** in `TweedieCFM.compute_loss` (now `if self._stage == 2:` with `self._stage = 1` initialized in `__init__`, replacing the old `if self.training and not getattr(self, '_stage', 1) == 1:` — the bug that computed the stage-1 mean MSE as the stage-2 validation loss); (2) the **K_inner=1 div-by-zero guard** in `TweedieCFM`/`TweedieSolver.estimate_mean` (`denom = 1 if K_inner == 1 else K_inner - 1`); (3) eval plumbing so `load_checkpoint`/`create_model` read the `tweedie_cfm` sampling params (K_inner/sigma_prior/N_outer) from the source training YAML via `--config` instead of silently defaulting (required for ablation evals); (4) 3 **V2 ablation configs + sbatch** (`V2_tweedie_cfm_l96_{rerun,kinner1,s0p2}.yaml` + `run_l96_v2_ablation_{train,eval,smoke}.sbatch`); and (5) a **dedicated TweedieCFM report** (`reports/l96/generate_l96_tweediecfm_report.py` → `l96_tweediecfm_benchmark.md`) covering all 4 V2 variants + V3 + vanilla CFM (L2b/L3).
