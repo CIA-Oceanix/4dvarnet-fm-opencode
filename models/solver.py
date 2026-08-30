@@ -44,7 +44,8 @@ class TweedieSolver(nn.Module):
         B, T, D = obs.shape
         x = torch.zeros(B, D, T, device=obs.device)
         for k in range(self.K_inner):
-            tau = torch.full((B,), k / (self.K_inner - 1), device=obs.device)
+            denom = 1 if self.K_inner == 1 else self.K_inner - 1
+            tau = torch.full((B,), k / denom, device=obs.device)
             residual = self.mean_estimator(x, obs.transpose(1, 2), tau)
             x = x + residual
         return x.transpose(1, 2)

@@ -280,6 +280,56 @@ class TestNeuralInference:
         assert m_tau0.train_tau_0_only
         assert cfg.model.train_tau_0_only
 
+    def test_load_model_tweedie_cfm_reads_config_yaml(self, tmp_path):
+        """TweedieCFM sampling params (K_inner/sigma_prior) must come from the
+        training YAML via --config, not the silently-applied defaults.
+
+        The bug: Lightning checkpoints do not store the model config
+        (save_hyperparameters ignores `model`), so an ablation checkpoint
+        trained with K_inner=1 / sigma_prior=0.2 was loaded and sampled with
+        the create_model defaults (5 / 0.5) unless the source YAML hookup was
+        present.
+        """
+        model = TweedieCFM(state_dim=24, hidden_channels=[32, 64, 128],
+                           K_inner=1, N_outer=10, sigma_prior=0.2)
+        path = self._save_lightning_ckpt(tmp_path, model, "tweedie_cfm")
+        cfg_path = tmp_path / "exp.yaml"
+        cfg_path.write_text(
+            "model:\n"
+            "  model_type: tweedie_cfm\n"
+            "  state_dim: 24\n"
+            "  tweedie_cfm:\n"
+            "    hidden_channels: [32, 64, 128]\n"
+            "    K_inner: 1\n"
+            "    N_outer: 10\n"
+            "    sigma_prior: 0.2\n"
+            "    train_tau_0_only: false\n"
+        )
+        m, cfg = load_model(path, config_path=str(cfg_path))
+        assert isinstance(m, TweedieCFM)
+        assert m.K_inner == 1
+        assert m.sigma_prior == pytest.approx(0.2)
+        assert cfg.model.K_inner == 1
+        assert cfg.model.sigma_prior == pytest.approx(0.2)
+
+    def test_create_model_tweedie_cfm_uses_subkey(self):
+        """create_model must read K_inner/sigma_prior from the tweedie_cfm
+        subkey (matching train.py's model_factory), falling back to flat keys.
+        """
+        cfg = OmegaConf.create({
+            "model": {
+                "type": "tweedie_cfm",
+                "state_dim": 24,
+                "hidden_channels": [32, 64, 128],
+                "tweedie_cfm": {"K_inner": 1, "sigma_prior": 0.2, "N_outer": 10},
+            },
+            "deterministic": False,
+        })
+        m = create_model(TweedieCFM, cfg)
+        assert m.K_inner == 1
+        assert m.sigma_prior == pytest.approx(0.2)
+        assert m.N_outer == 10
+
     def test_evaluate_npz_roundtrip(self, tmp_path):
         """evaluate_npz loads stored .npz and returns metrics."""
         from evaluation.estimate_metrics import save_estimates

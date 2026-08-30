@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-29: V2 TweedieCFM delta over PR #112 — Group A stage fix, K_inner=1 guard, 3 ablations, dedicated report (kinner1 row)
+
+**Summary:** Delivered the V2/V3 **delta** that a parallel session's PR #112 merged without: (1) the **Group A stage-dispatch fix** in `TweedieCFM.compute_loss` (now `if self._stage == 2:` with `self._stage = 1` initialized in `__init__`, replacing the old `if self.training and not getattr(self, '_stage', 1) == 1:` — the bug that computed the stage-1 mean MSE as the stage-2 validation loss); (2) the **K_inner=1 div-by-zero guard** in `TweedieCFM`/`TweedieSolver.estimate_mean` (`denom = 1 if K_inner == 1 else K_inner - 1`); (3) eval plumbing so `load_checkpoint`/`create_model` read the `tweedie_cfm` sampling params (K_inner/sigma_prior/N_outer) from the source training YAML via `--config` instead of silently defaulting (required for ablation evals); (4) 3 **V2 ablation configs + sbatch** (`V2_tweedie_cfm_l96_{rerun,kinner1,s0p2}.yaml` + `run_l96_v2_ablation_{train,eval,smoke}.sbatch`); and (5) a **dedicated TweedieCFM report** (`reports/l96/generate_l96_tweediecfm_report.py` → `l96_tweediecfm_benchmark.md`) covering all 4 V2 variants + V3 + vanilla CFM (L2b/L3).
+
+**General consolidated report:** per user decision, V2's row now reports the **K_inner=1 (kinner1) ablation** — `ENS30_DIRS["V2_tweedie_cfm_l96"]` → `V2_tweedie_cfm_l96_kinner1/ens30_no10` — with exactly one V2 row (the rerun/s0p2/kinner1 rows are removed from `NEURAL_EXP_DIRS`/`ENS30_DIRS`/`SCHEME_DESCRIPTIONS`) and a `**K_inner=1 (kinner1 variant)**` note in the scheme description pointing at the dedicated report. V3 keeps its published 0.5716/0.5729 row. **Doc-consistency note:** master's #112 CHANGELOG/phase-B doc describe V2 as published 0.5157/0.5171 "new best"; the consolidated row now intentionally reports the kinner1 ablation (S0 0.5098 / S1 0.5154) per the user's decision — the dedicated report retains the full V2 family for provenance.
+
+**Files modified:**
+- `models/vanilla_cfm.py` — `TweedieCFM` Group A stage fix (`self._stage = 1`, `if self._stage == 2`) + K_inner=1 guard
+- `models/solver.py` — `TweedieSolver.estimate_mean` K_inner=1 guard
+- `evaluation/neural_inference.py` — `load_checkpoint` reads `tweedie_cfm` subkey from `--config`; `create_model` resolves sampling params via subkey-with-flat-fallback helper
+- `tests/test_vanilla_cfm.py` — `TestTweedieCFMStageDispatch` (5 tests: default stage 1, stage-1 MSE, stage-2 residual CFM, stage-2 val loss not mean MSE, mean estimator frozen in stage 2) + `kinner1_no_div_by_zero`
+- `tests/test_neural_inference.py` — 2 new tests (config-YAML read-back; subkey fallback)
+- `tests/test_solver.py` — `kinner1_no_div_by_zero`
+- `config/experiment/V2_tweedie_cfm_l96_{rerun,kinner1,s0p2}.yaml` — 3 new ablation configs
+- `batch/run_l96_v2_ablation_{train,eval,smoke}.sbatch` — 3 new ablation sbatch
+- `reports/l96/generate_l96_consolidated_report.py` — remove 3 ablation rows; V2 → kinner1 ens30; V2 SCHEME_DESCRIPTION note
+- `reports/l96/generate_l96_tweediecfm_report.py` — new dedicated report generator
+- `reports/l96/outputs/l96_tweediecfm_benchmark.md`, `reports/l96/outputs/l96_consolidated_benchmark.md` — regenerated
+- `CHANGELOG.md` — this entry
+
+**Rationale:** PR #112 landed the V2/V3 infrastructure + consolidated rows but from a divergent "cleanup" branch that missed the stage-dispatch correctness fix (which the published evals were actually run with, per the ablation work), the K_inner=1 guard, and all ablation/report artifacts. This PR is the additive delta: it applies the correctness fixes onto master's version, adds the ablations + dedicated report, and repoints the consolidated V2 row to the kinner1 ablation per the user's explicit scope decision.
+
+**Verification:** fast-gate `pytest tests/{vanilla_cfm,solver,neural_inference,lorenz96_training}.py -m "not slow"`; `py_compile` both report generators; `ruff` informational; `bash -n` on the 3 new sbatch. Report generators run in the master worktree (has the cached dataset + DA cache + all 5 ens30 outputs) and outputs copied to the PR branch.
+
 ## 2026-08-28: V2 standalone eval (single-sample + ens30×10) + report — V2 new best on RMSE
 
 **Summary:** Ran the full V2 (`TweedieCFM`) standalone eval (job 50730, task 1, exit 0, ~8.7 min) — both the N=1 single-sample pass (root `neural_eval.json`) and the **ens30×10** ensemble pass (`ens30_no10/`). V2's `stage2_best.ckpt` (all 176 weights finite — the NaN fix held through the full two-stage 100+400-epoch run). Updated the consolidated report so V2's row now sources its RMSE/EV/ES from the ens30 subdir (proper N=30 ensemble ES) via the `ENS30_DIRS` mechanism. **Headline: V2 ens30×10 S0 RMSE 0.5157 / S1 0.5171 (EV 0.897/0.896) is now the best neural scheme on S0/S1**, edging out L3 (0.5645) and V3 (0.5716); ESens 0.2664/0.2681 (≈ L3's 0.2649/0.2671), with the largest member spread (0.497) of any scheme.

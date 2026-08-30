@@ -283,6 +283,7 @@ class TweedieCFM(nn.Module):
             dropout=dropout,
         )
         self.interpolant = LinearInterpolant(nu=1.0)
+        self._stage = 1
 
     def estimate_mean(self, obs: torch.Tensor) -> torch.Tensor:
         """Compute conditional mean E[x1 | obs] via K_inner iterative refinement."""
@@ -290,7 +291,8 @@ class TweedieCFM(nn.Module):
         obs_clean = torch.nan_to_num(obs, nan=0.0)
         x = torch.zeros(B, D, T, device=obs.device)
         for k in range(self.K_inner):
-            tau = torch.full((B,), k / (self.K_inner - 1), device=obs.device)
+            denom = 1 if self.K_inner == 1 else self.K_inner - 1
+            tau = torch.full((B,), k / denom, device=obs.device)
             residual = self.mean_estimator(x, obs_clean.transpose(1, 2), tau)
             x = x + residual
         return x.transpose(1, 2)
@@ -323,17 +325,15 @@ class TweedieCFM(nn.Module):
         device = batch.obs.device
         tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
+        mean = self.estimate_mean(batch.obs)
 
-        if self.training and not getattr(self, '_stage', 1) == 1:
-            mean = self.estimate_mean(batch.obs)
+        if self._stage == 2:
             x_residue = batch.states - mean
             x_tau_residue = self.interpolant.mix(x0, x_residue, tau)
             v_target = x_residue - x0
             v_pred = self.forward(x_tau_residue, batch.obs, mean, tau)
             return F.mse_loss(v_pred, v_target)
-        else:
-            mean = self.estimate_mean(batch.obs)
-            return F.mse_loss(mean, batch.states)
+        return F.mse_loss(mean, batch.states)
 
     def sample(self, batch, N_outer=None):
         """Sample trajectories via Euler integration in residual space.

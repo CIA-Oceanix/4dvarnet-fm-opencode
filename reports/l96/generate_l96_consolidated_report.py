@@ -77,8 +77,8 @@ ENS30_DIRS = {
         "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
     },
     "V2_tweedie_cfm_l96": {
-        "s0": "V2_tweedie_cfm_l96/ens30_no10",
-        "s1": "V2_tweedie_cfm_l96/ens30_no10",
+        "s0": "V2_tweedie_cfm_l96_kinner1/ens30_no10",
+        "s1": "V2_tweedie_cfm_l96_kinner1/ens30_no10",
     },
     "V3_predict_state_cfm_l96": {
         "s0": "V3_predict_state_cfm_l96/ens30_no10",
@@ -127,8 +127,9 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "forcing input.")),
     ("V2_tweedie_cfm_l96", "Neural (TweedieCFM)",
      ("Two-stage Tweedie CFM: stage-1 MeanEstimatorCell (obs → mean), stage-2 residual velocity UNet; "
-      "hidden [64,128,256]; 100+400 epochs; multi-τ, K_inner=5; evaluated as a 30-member ensemble "
-      "with 10 Euler steps (`ens30×10`, N=30); N_outer=10.")),
+      "hidden [64,128,256]; 100+400 epochs; multi-τ, **K_inner=1 (kinner1 variant)**; evaluated as a "
+      "30-member ensemble with 10 Euler steps (`ens30×10`, N=30); N_outer=10. The V2 row reports the "
+      "**K_inner=1 ablation** (see the dedicated `l96_tweediecfm_benchmark.md` for the full V2 family).")),
     ("V3_predict_state_cfm_l96", "Neural (PredictStateCFM)",
      ("Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; "
       "400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); "
@@ -151,6 +152,11 @@ def _first_existing(patterns: list[str]) -> Path:
 
 
 def short_name(name: str) -> str:
+    if name.startswith("V2_"):
+        variant = name.replace("V2_tweedie_cfm_l96", "")
+        if variant:
+            return "V2" + variant.replace("_", "-").strip("-")
+        return "V2"
     return name.split("_")[0] if "_" in name else name
 
 
