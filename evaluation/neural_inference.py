@@ -167,7 +167,28 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         else:
             cfg_dict["model"]["device"] = cfg_dict.get("device", "cpu")
             cfg = OmegaConf.create(cfg_dict)
-    
+
+    # Recover tunable sampling params from a source training YAML when supplied.
+    # Lightning checkpoints do not store the model config (LitModel saves
+    # hyper_parameters with `ignore=["model"]`), so K_inner/sigma_prior/N_outer
+    # must be read back from the experiment YAML via --config, else create_model
+    # silently uses defaults and ablation evals (K_inner=1, sigma_prior=0.2)
+    # sample with the wrong values.
+    if config_path:
+        try:
+            yaml_cfg = OmegaConf.load(config_path)
+            tc = yaml_cfg.model.get("tweedie_cfm", {})
+            if hasattr(tc, "get"):
+                m = cfg.model
+                for key in ("K_inner", "N_outer", "sigma_prior", "train_tau_0_only",
+                            "cond_extra_dim", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in tc:
+                        m[key] = tc[key]
+                if len(tc) > 0:
+                    m.tweedie_cfm = tc
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not merge tweedie_cfm from {config_path}: {e}")
+
     return state_dict, cfg
 
 
@@ -239,16 +260,25 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
         )
     elif model_class == TweedieCFM:
+        tc = cfg.model.get("tweedie_cfm", {})
+        tc_get = tc.get if hasattr(tc, "get") else None
+
+        def _tc(key, default):
+            val = tc_get(key) if tc_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
         model = model_class(
             state_dim=cfg.model.state_dim,
             hidden_channels=hidden,
-            time_emb_dim=cfg.model.get("time_emb_dim", 64),
-            K_inner=cfg.model.get("K_inner", 5),
-            N_outer=cfg.model.get("N_outer", 10),
-            sigma_prior=cfg.model.get("sigma_prior", 0.5),
-            dropout=cfg.model.get("dropout", 0.1),
-            train_tau_0_only=cfg.model.get("train_tau_0_only", False),
-            cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+            time_emb_dim=_tc("time_emb_dim", 64),
+            K_inner=_tc("K_inner", 5),
+            N_outer=_tc("N_outer", 10),
+            sigma_prior=_tc("sigma_prior", 0.5),
+            dropout=_tc("dropout", 0.1),
+            train_tau_0_only=_tc("train_tau_0_only", False),
+            cond_extra_dim=_tc("cond_extra_dim", 0),
         )
     elif model_class == PredictStateCFM:
         model = model_class(

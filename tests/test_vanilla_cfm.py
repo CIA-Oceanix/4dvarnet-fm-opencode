@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 from models.vanilla_cfm import PredictStateCFM, TweedieCFM, VanillaCFM
 
@@ -98,6 +99,77 @@ class TestTweedieCFM:
             samples = model.sample(batch, N_outer=3)
         assert samples.shape == (1, 50, 3)
         assert torch.isfinite(samples).all(), "V2 sample produced NaN/Inf"
+
+    def test_estimate_mean_kinner1_no_div_by_zero(self):
+        # K_inner=1 must not divide by (K_inner - 1) = 0 in estimate_mean.
+        model = TweedieCFM(state_dim=3, hidden_channels=[4, 8], K_inner=1, N_outer=3)
+        batch = _MockBatch(B=2, T=50, D=3)
+        mean = model.estimate_mean(batch.obs)
+        assert mean.shape == (2, 50, 3)
+        assert torch.isfinite(mean).all()
+
+
+class TestTweedieCFMStageDispatch:
+    def _model(self, B=2, T=50, D=3):
+        return TweedieCFM(state_dim=D, hidden_channels=[4, 8], K_inner=3, N_outer=3)
+
+    def test_default_stage_is_1(self):
+        model = self._model()
+        assert model._stage == 1
+        batch = _MockBatch(B=2, T=50, D=3)
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss), "compute_loss should run without set_stage (regression: no AttributeError)"
+
+    def test_stage1_loss_is_mean_mse(self):
+        model = self._model()
+        model.set_stage(1)
+        model.eval()
+        batch = _MockBatch(B=2, T=50, D=3)
+        with torch.no_grad():
+            loss = model.compute_loss(batch)
+            mean = model.estimate_mean(batch.obs)
+            expected = F.mse_loss(mean, batch.states)
+        assert torch.allclose(loss, expected, atol=1e-6), "stage-1 loss should equal MSE(mean, states)"
+
+    def test_stage2_loss_is_residual_cfm(self):
+        model = self._model()
+        batch = _MockBatch(B=2, T=50, D=3)
+        model.set_stage(1)
+        model.eval()
+        loss1 = model.compute_loss(batch)
+        model.set_stage(2)
+        loss2 = model.compute_loss(batch)
+        assert torch.isfinite(loss2)
+        assert not torch.allclose(loss1, loss2, atol=1e-5), "stage-2 should compute the residual CFM loss, not the mean MSE"
+
+    def test_stage2_val_loss_not_mean_mse(self):
+        model = self._model()
+        model.set_stage(2)
+        model.eval()
+        batch = _MockBatch(B=2, T=50, D=3)
+        with torch.no_grad():
+            loss_val = model.compute_loss(batch)
+            mean = model.estimate_mean(batch.obs)
+            mean_mse = F.mse_loss(mean, batch.states)
+        assert torch.isfinite(loss_val)
+        assert not torch.allclose(loss_val, mean_mse, atol=1e-5), \
+            "stage-2 validation loss must NOT be the stage-1 mean MSE (the bug being fixed)"
+
+    def test_mean_estimator_frozen_in_stage2(self):
+        model = self._model()
+        model.set_stage(2)
+        model.train()
+        # Mirror LitModel.on_train_start's stage-2 freeze of the mean estimator
+        for p in model.mean_estimator.parameters():
+            p.requires_grad = False
+        batch = _MockBatch(B=2, T=50, D=3)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        for name, p in model.mean_estimator.named_parameters():
+            assert p.grad is None, f"mean_estimator param '{name}' received gradient during stage 2 (should be frozen)"
+        assert any(p.grad is not None and not torch.allclose(p.grad, torch.zeros_like(p.grad))
+                   for _, p in model.velocity_unet.named_parameters()), \
+            "velocity_unet received no gradient during stage 2"
 
 
 class TestPredictStateCFM:
