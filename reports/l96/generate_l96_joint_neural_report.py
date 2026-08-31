@@ -400,9 +400,10 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     else:
         md.append("| (no joint DA results yet) | -- | -- | -- | -- |")
     md.append("")
-    md.append("*ES is the N=30 ensemble Energy Score; lower is better for both RMSE and ES. "
-              "Joint-Strong-4DVar is deferred; Joint-EnKF / Joint-ETKF rows appear once the "
-              "comparator writes them into `l96_joint_comparison.json`.*")
+    md.append("*ES is the N=30 ensemble Energy Score for the filters; Joint-Strong-4DVar is a "
+              "deterministic solve so its ES is the N=1 MAE proxy (marked per the DA report). "
+              "Lower is better for RMSE and ES. Rows are read from "
+              "`experiments/l96_joint_comparison.json`.*")
     md.append("")
     md.append("---")
     md.append("")

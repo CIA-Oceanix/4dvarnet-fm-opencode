@@ -124,10 +124,10 @@ def main():
                                                        param_noise=0.03, etkf_ridge=0.05),
         "Strong-4DVar": lambda dyn, op, J: Strong4DVar(dt=0.001, da_window_steps=args.da_window_steps,
                                                         device=device, coupling_exponent=1.6,
-                                                        dynamics=dyn, obs_operator=op, max_iter=40),
+                                                        dynamics=dyn, obs_operator=op, max_iter=10, lr=0.2),
         "Joint-Strong-4DVar": lambda dyn, op, J: JointStrong4DVarL96(dt=0.001, da_window_steps=args.da_window_steps,
                                                                      device=device, coupling_exponent=1.6,
-                                                                     dynamics=dyn, obs_operator=op, max_iter=40,
+                                                                     dynamics=dyn, obs_operator=op, max_iter=10, lr=0.2,
                                                                      J=J),
     }
     if args.methods:
@@ -173,6 +173,7 @@ def main():
             method = factory(dyn, op, J)
             (rmse_stats, expvar_stats, es_stats), bl_results = evaluate_baseline(
                 method, ds, cfg, device, return_trajs=True, batch_size=args.batch_size, da_J=da_J)
+            print(f"  [{method_name}] finite windows: {len(bl_results)}/{len(ds)}")
             mean_rmse = rmse_stats[0]
             ev_arr = expvar_stats[0]
             es_arr = es_stats[0]

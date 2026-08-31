@@ -159,7 +159,7 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             return es[..., obs_var_indices]
         return es[..., :analysis_eval.shape[-1]]
 
-    if batch_size > 1 and hasattr(method, 'assimilate_batch'):
+    if batch_size > 1 and callable(getattr(method, 'assimilate_batch', None)):
         for i in range(0, len(dataset), batch_size):
             batch = [dataset[j] for j in range(i, min(i + batch_size, len(dataset)))]
             obs = torch.stack([w["obs"].to(device) for w in batch], dim=0)
@@ -181,6 +181,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                     analysis_eval = analysis
                     if analysis_eval.shape[-1] != ref.shape[-1]:
                         ref = ref[..., :analysis_eval.shape[-1]]
+                if not np.isfinite(analysis_eval).all():
+                    continue
                 result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
                 es_s = _subsample_es(getattr(result, "es", None), analysis_eval)
                 if es_s is not None:
@@ -210,6 +212,8 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
                 analysis_eval = analysis
                 if analysis_eval.shape[-1] != ref.shape[-1]:
                     ref = ref[..., :analysis_eval.shape[-1]]
+            if not np.isfinite(analysis_eval).all():
+                continue
             result.rmse = np.sqrt(np.mean((analysis_eval - ref) ** 2, axis=0))
             es_s = _subsample_es(getattr(result, "es", None), analysis_eval)
             if es_s is not None:

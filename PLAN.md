@@ -239,7 +239,12 @@ baselines** exist; the L96 joint **neural** models were missing.
   augmented state like the old ETKF, risking the same S1 divergence) and a joint
   `assimilate_batch` was added (the inherited parent batch silently dropped params);
   S0 0.726/param 0.057, S1 **1.459**/param 0.148 (S1 is the best DA row, stable after
-  the fix). Joint-Strong-4DVar still not run (`--`).
+  the fix). **Joint-Strong-4DVar run (2026-08-31, Job 51000)** — batched pure-gradient
+  Adam solve (no LBFGS) over all 200 windows: S0 0.712/param 0.226, S1 **1.200**/param
+  0.299. Joint-Strong-4DVar is now the **best DA row on S1** (beats Joint-EnKF 1.459 /
+  Joint-ETKF 1.497 / vanilla Strong-4DVar 1.432) and close to Joint-ETKF on S0; its
+  param recovery (esp. F 0.85) is weaker than the filters, but its S1 state skill is
+  the joint-DA best.
 
 ### Phase C-adjacent (blocked, unblocks DA-parity ES): L96 DA cache ES regeneration
 
@@ -320,7 +325,11 @@ Joint-ETKF. **S1** Joint-EnKF **1.459** (EV 0.23, ES 0.84) is the best DA row, a
 Joint-ETKF 1.497 & vanilla EnKF 1.505 / ETKF 1.554 — both joint filters stabilized by
 the state-only-inflation fix (RC: the filters were inflating the unobserved param
 block, growing spread into the reduced J=2 forecast). Neural (L9) still clearly ahead
-on S1 (0.631) via its ≈1.00 bias robustness. Joint-Strong-4DVar not yet run.
+on S1 (0.631) via its ≈1.00 bias robustness. **Joint-Strong-4DVar run 2026-08-31**
+(job 51000, batched Adam over 200 windows): S0 state RMSE **0.712** / S1 **1.200** —
+beats vanilla Strong-4DVar (0.750/1.432) on both cases and is the **best DA row on S1**
+(ahead of Joint-EnKF 1.459 / Joint-ETKF 1.497); param RMSE mean 0.226 (S0) / 0.299
+(S1), weaker than the filters (F 0.85 dominates).
 
 ## Phases
 
