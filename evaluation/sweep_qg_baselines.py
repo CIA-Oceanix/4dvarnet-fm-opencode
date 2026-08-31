@@ -51,6 +51,10 @@ def main():
     ap.add_argument("--etkf-additive-list", default=None)
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--save-traj", action="store_true")
+    ap.add_argument("--s1-param-bias", type=float, default=0.15)
+    ap.add_argument("--s1-amp-bias", type=float, default=0.15)
+    ap.add_argument("--s1-loc-sigma-frac", type=float, default=0.25)
+    ap.add_argument("--s1-sigma-eta-frac", type=float, default=0.3)
     args = ap.parse_args()
 
     device = _device(args.device)
@@ -80,13 +84,19 @@ def main():
                     nx=args.nx, window_days=args.window_days,
                     spinup_years=args.spinup_years, num_windows=args.num_windows,
                     obs_geometry=args.geometry, cols_per_day=cols, seed=7,
-                    da_nx=args.da_nx)
+                    da_nx=args.da_nx,
+                    s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
+                    s1_loc_sigma_frac=args.s1_loc_sigma_frac,
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
             else:
                 cfg = QGConfig(
                     nx=args.nx, window_days=args.window_days,
                     spinup_years=args.spinup_years, num_windows=args.num_windows,
                     obs_geometry=args.geometry, cols_per_day=cols,
-                    obs_noise_std_frac=noise, seed=7, da_nx=args.da_nx)
+                    obs_noise_std_frac=noise, seed=7, da_nx=args.da_nx,
+                    s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
+                    s1_loc_sigma_frac=args.s1_loc_sigma_frac,
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
             print(f"device={device} building dataset (cols={cols},"
                   f"noise={noise}) once", flush=True)
             t0 = time.time()

@@ -139,6 +139,37 @@ def test_s1_share_corrupted_wind_across_windows():
         assert torch.isfinite(w["wind_state_corrupted"]).all()
 
 
+def test_s1_ablation_component_neutralization():
+    """Each S1 ablation should remove exactly one model-error component.
+
+    No-param (s1_param_bias=0): da_params == true_params (but wind corrupt).
+    No-wind (s1_amp/loc/eta=0): corrupted wind == true wind (but param bias on).
+    No-res (da_nx=truth nx): da_nx == cfg.nx (but param bias + wind corrupt on).
+    """
+    cfg = _tiny_cfg(da_nx=16)
+    b = cfg.s1_param_bias
+
+    no_param = _tiny_cfg(da_nx=16, s1_param_bias=0.0)
+    ds = make_qg_s0_s1_datasets(no_param)
+    for w in ds["test_s1"]:
+        assert w["da_params"]["rd"] == w["true_params"]["rd"]
+        assert w["da_params"]["rek"] == w["true_params"]["rek"]
+        assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+
+    no_wind = _tiny_cfg(da_nx=16, s1_amp_bias=0.0, s1_loc_sigma_frac=0.0,
+                        s1_sigma_eta_frac=0.0)
+    ds = make_qg_s0_s1_datasets(no_wind)
+    for w in ds["test_s1"]:
+        assert math.isclose(w["da_params"]["rd"], w["true_params"]["rd"] * (1 - b))
+        assert torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+
+    no_res = _tiny_cfg(da_nx=None)
+    ds = make_qg_s0_s1_datasets(no_res)
+    for w in ds["test_s1"]:
+        assert w["da_nx"] == ds["test_s0"].cfg.nx
+        assert math.isclose(w["da_params"]["rd"], w["true_params"]["rd"] * (1 - b))
+        assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+
 
 @pytest.mark.slow
 def test_s1_corrupted_wind_stats():
