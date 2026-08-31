@@ -3,6 +3,7 @@
 #SBATCH --partition=Odyssey_GPU
 #SBATCH --gres=gpu:a40:1
 #SBATCH --time=04:00:00
+#SBATCH --array=0-1
 #SBATCH --output=%A_%a.out
 #SBATCH --error=%A_%a.err
 
