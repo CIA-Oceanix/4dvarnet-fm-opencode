@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-08-31: QG S1 model-error sensitivity study (component ablations, lag 1.0)
+
+**Summary:** Assessed the S1 DA configuration's sensitivity to each of its three model-error components, using **da_nx=32 as the reference**. Added 4 CLI flags to `sweep_qg_baselines.py` (`--s1-param-bias`, `--s1-amp-bias`, `--s1-loc-sigma-frac`, `--s1-sigma-eta-frac`, all defaulting to the existing values = backward compatible) and ran three single-component ablations at lag=1.0 (psi-obs, cols=4, 1% noise, truth 64×64, ETKF N=80), reusing the reference `run_qg_s1_da32.sbatch` pattern:
+- **Ablation A `s1_noparam`** (no param corruption, `--s1-param-bias 0`): EV_full +0.513, improv 1.54 — biggest single improvement, especially ψ (ψ₁ improv 2.06, ψ₂ 1.97).
+- **Ablation C `s1_nores`** (no resolution mismatch, `--da-nx 64`): best overall improv (1.55) and q₁ improv (1.60); `da_model` stays `qg2l_lores` (label-only; `_build_dyn` treats it as 2-layer QG at nx_da, so at da_nx=64 it is functionally full-res).
+- **Ablation B `s1_nowind`** (no wind corruption, all three wind flags 0): least benefit by improv (1.39, below reference) — the forcing error contributes least to the DA challenge.
+- **Reference** (all-on): EV_full +0.340, improv 1.48. **S0 anchor** (all-off): EV_full +0.752 (ceiling). Conclusion: resolution mismatch and param bias are the dominant model-error terms DA recovers; forcing (wind) corruption contributes least.
+
+**Files modified:**
+- `evaluation/sweep_qg_baselines.py` — 4 new CLI flags (`--s1-param-bias`, `--s1-amp-bias`, `--s1-loc-sigma-frac`, `--s1-sigma-eta-frac`), forwarded to `QGConfig`.
+- `batch/run_qg_s1_{noparam,nowind,nores}.sbatch` — new: single-task (lag 1.0) ablation scripts.
+- `tests/test_qg_s0s1.py` — new `test_s1_ablation_component_neutralization` (each ablation removes exactly one component).
+- `reports/outputs/qg_s1_{noparam,nowind,nores}_lag1p0/*.json` — 3 result JSONs (jobs 51087/51088/51089, A40).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** Determine which of the S1 model-error components (param corruption, forcing noise, resolution mismatch) dominates the DA-vs-free-forecast challenge, to guide future S1 tuning and inform where model-error mitigation matters most.
+
+**Verification:** `pytest tests/test_qg_baselines.py tests/test_qg_s0s1.py -m "not slow"` — 41 passed (incl. new ablation test). All 3 jobs COMPLETED (no tracebacks). ruff clean on all touched code files.
+
 ## 2026-08-31: QG S1 CUDA crash fix + relaunch (PR #126, job 51069)
 
 **Summary:** The first S1 production run (job 51064) **failed both tasks** with `TypeError: cannot convert cuda:0 device type tensor to numpy` at `_resize_state_layers`. `spectral_resize_2d` moves its input to the target device (cuda), but the numpy-input branch of `_resize_state_layers` called `.numpy()` without moving back to CPU — only the DA-trajectory upsample in `run()` (line ~539) passes a numpy array under a cuda device, so CPU-only tests never caught it. Fixed with `.cpu()` before `.numpy()` (PR #126, squash-merged → `4a05512`). Relaunched `batch/run_qg_s1.sbatch` as **job 51069** (2-task array, task 0 RUNNING on A40, task 1 queued); the dataset cache from the failed job's completed spinup is reused, so the ETKF proceeds directly.
