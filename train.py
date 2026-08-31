@@ -153,6 +153,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             hidden_channels=dc.hidden_channels,
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
+            param_head_channels=jdu.get("param_head_channels", None),
         )
     elif model_type == "predict_state_cfm":
         from models.vanilla_cfm import PredictStateCFM

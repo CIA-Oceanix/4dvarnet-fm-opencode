@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-joint-neural
 
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export PYTHONUNBUFFERED=1

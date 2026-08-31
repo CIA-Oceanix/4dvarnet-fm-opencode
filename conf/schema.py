@@ -177,6 +177,7 @@ class JointCFMConfig:
 class JointDirectUNetConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
+    param_head_channels: Optional[List[int]] = None
 
 
 @dataclass

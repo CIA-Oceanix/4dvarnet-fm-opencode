@@ -379,6 +379,39 @@ class TestNeuralInference:
             if "param_flow" in k:
                 assert torch.allclose(src[k], dst[k]), k
 
+    def test_load_model_joint_direct_unet_reconstructs_param_head(self, tmp_path):
+        """The loader must rebuild the reworked JointDirectUNet (state UNet
+        cond_extra_dim=1, output_dim=state_dim + a dedicated ParamHeadCNN)
+        from a checkpoint, NOT the old dual-head layout. A depth-3 param head
+        is used so a truncated reconstruction would leave param_head.blocks.2
+        and the head unloaded and fail this assertion.
+        """
+        from models.direct_unet import JointDirectUNet
+
+        SD, PD = 24, 8
+        ph_channels = [4, 8, 16]
+        model = JointDirectUNet(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32],
+                                param_head_channels=ph_channels)
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_direct_unet")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointDirectUNet)
+        assert loaded.state_dim == SD
+        assert loaded.cond_extra_dim == 1
+        assert loaded.unet.output_dim == SD
+        assert loaded.param_dim == PD
+        assert cfg.model.cond_extra_dim == 1
+        assert cfg.model.param_dim == PD
+        assert [b.conv1.out_channels for b in loaded.param_head.blocks] == ph_channels
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_head" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
     def test_evaluate_npz_roundtrip(self, tmp_path):
         """evaluate_npz loads stored .npz and returns metrics."""
         from evaluation.estimate_metrics import save_estimates

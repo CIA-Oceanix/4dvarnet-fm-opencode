@@ -125,8 +125,34 @@ def test_joint_direct_unet_l96_shapes(l96_joint_dataset):
     x, p = model.sample(batch, return_params=True)
     assert x.shape == (1, w["true_state"].shape[0], SD)
     assert p.shape == (1, PD)
-    assert model.cond_extra_dim == 1 + PD
-    assert model.unet.output_dim == SD + PD
+    assert model.cond_extra_dim == 1
+    assert model.unet.output_dim == SD
+    assert model.param_head.param_dim == PD
+
+
+def test_joint_direct_unet_oracle_gone(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    model = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    model.eval()
+    batch = _joint_batch(w)
+    v_state_a, _ = model.forward(batch)
+    batch_b = FlowMatchingBatch(
+        batch.states, batch.obs, batch.obs_mask, batch.forcing,
+        params=torch.randn_like(batch.params), true_params=batch.true_params)
+    v_state_b, _ = model.forward(batch_b)
+    assert torch.allclose(v_state_a, v_state_b, atol=1e-6)
+
+
+def test_joint_direct_unet_param_head_stop_grad(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    model = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    batch = _joint_batch(w)
+    _, params = model.forward(batch)
+    params.sum().backward()
+    state_grads = [p.grad for n, p in model.unet.named_parameters()]
+    assert all(g is None for g in state_grads), "state UNet must not receive param-head grads (detach on x_hat)"
+    param_grads = [p.grad for n, p in model.param_head.named_parameters()]
+    assert any(g is not None for g in param_grads)
 
 
 def test_joint_models_use_true_params(l96_joint_dataset):
@@ -143,7 +169,7 @@ def test_joint_models_use_true_params(l96_joint_dataset):
     jdu = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     _, p_du = jdu.sample(batch, return_params=True)
     assert p_du.shape == true_vec.shape
-    assert torch.all(p_du > 0)
+    assert torch.isfinite(p_du).all()
 
 
 def test_joint_dataloader_with_params(l96_joint_cfg):

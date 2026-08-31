@@ -109,16 +109,21 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             proj_in = state_dict[proj_key].shape[1]
 
         if is_joint:
-            # JointCFM (refactored): a single state UNet (output_dim = state_dim,
-            # cond_extra_dim = 1 for [obs, forcing]) plus a separate param-flow
-            # CNN (param_dim read from its head output channels). JointDirectUNet
-            # follows the older dual-head layout (see below).
+            # JointCFM (refactored) and JointDirectUNet (refactored) both have a
+            # single state UNet (output_dim = state_dim, cond_extra_dim = 1 for
+            # [obs, forcing]) plus a separate param head: JointCFM uses
+            # `param_flow` (a tau-flow CNN), JointDirectUNet uses `param_head`
+            # (a deterministic regression CNN). `param_dim` is read from the
+            # head's output channels. The legacy dual-head joint layout falls
+            # back to the old inference below.
             param_flow_key = "model.param_flow.head.0.weight"
-            if param_flow_key in state_dict:
+            param_head_key = "model.param_head.head.weight"
+            if param_flow_key in state_dict or param_head_key in state_dict:
                 # state UNet: cond_extra_dim = proj_in - 2*state_dim, output_dim = state_dim
                 cond_extra_dim = proj_in - 2 * output_dim
                 state_dim = output_dim
-                param_dim = state_dict[param_flow_key].shape[0]
+                head_key = param_flow_key if param_flow_key in state_dict else param_head_key
+                param_dim = state_dict[head_key].shape[0]
             else:
                 # Legacy JointDirectUNet / old joint dual-head layout:
                 # state_dim = proj_in - 1 - output_dim, cond_extra_dim = 1 + param_dim
@@ -146,18 +151,19 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
 
         # Infer the param-flow CNN hidden channels for JointCFM from its conv
         # blocks (param_flow.blocks.N.conv1.weight: [out, in, 3]). Walk all
-        # blocks present so a depth-3 param flow ([32,64,128], the L7/L9 default)
-        # is recovered, not truncated to the first two layers.
-        pf_blocks = [0]
-        n = 1
-        while f"model.param_flow.blocks.{n}.conv1.weight" in state_dict:
-            pf_blocks.append(n)
-            n += 1
-        if len(pf_blocks) > 1:
-            inferred_params["param_flow_channels"] = [
-                state_dict[f"model.param_flow.blocks.{i}.conv1.weight"].shape[0]
-                for i in pf_blocks
-            ]
+        # blocks present so a depth-3 param flow/head ([32,64,128], the L7/L8/L9
+        # default) is recovered, not truncated to the first two layers.
+        for head_name in ("param_flow", "param_head"):
+            hb_blocks = [0]
+            n = 1
+            while f"model.{head_name}.blocks.{n}.conv1.weight" in state_dict:
+                hb_blocks.append(n)
+                n += 1
+            if len(hb_blocks) > 1:
+                inferred_params[f"{head_name}_channels"] = [
+                    state_dict[f"model.{head_name}.blocks.{i}.conv1.weight"].shape[0]
+                    for i in hb_blocks
+                ]
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
@@ -182,6 +188,7 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "param_dim": param_dim,  # 0 for obs-only; >0 for joint models
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
                 "param_flow_channels": inferred_params.get("param_flow_channels", None),
+                "param_head_channels": inferred_params.get("param_head_channels", None),
                 "device": "cpu",
             },
             "deterministic": False,
@@ -288,6 +295,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             dropout=cfg.model.get("dropout", 0.1),
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+            param_head_channels=cfg.model.get("param_head_channels", None),
         )
     elif model_class == TweedieCFM:
         tc = cfg.model.get("tweedie_cfm", {})

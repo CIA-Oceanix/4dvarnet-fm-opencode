@@ -35,6 +35,25 @@
 
 **Verification:** Job 51000 COMPLETED exit 0:0 in 20:47 (S0 + S1 both 200/200 finite). `pytest tests/test_joint_estimation_l96.py -m "not slow"` — 21 passed. Reports regenerated cleanly; DA-baselines table in the neural report now lists all three joint methods.
 
+## 2026-08-31: Fix JointDirectUNet (L8) — remove true-param oracle + dedicated deterministic param head
+
+**Summary:** Fixed the same true-parameter oracle bug L7/L9 had, in the **L8 deterministic joint model** `JointDirectUNet` (`models/direct_unet.py`). Previously `_cond` concatenated `batch.params` into the UNet conditioning (`cond_extra_dim = 1+param_dim`), so both the **state estimate** `v[..., :state_dim]` and the **param readout** (a tail of one `output_dim = state_dim+param_dim` UNet) saw the true per-window params — params were effectively read off the oracle. Rewrote it to mirror the L7/L9 symmetric split, adapted for a deterministic (no-τ) model: the **state UNet** conditions on `[obs, forcing]` only (`cond_extra_dim=1`, `output_dim=state_dim`, oracle removed), and a new **`ParamHeadCNN`** (same 3-layer CNN + global-average-pooling shape as the L9 param flow, but `time_emb_dim=0` and no τ interpolant) regresses the raw `(B,param_dim)` params from `(obs, forcing, x̂_state)` where `x̂_state` is the model's own oracle-free state estimate (stop-grad `detach()`). Per user decision, the param head uses **L9's conventions**: default `[32,64,128]` channels and **raw (signed) output** (softplus positivity removed). `true_params` appear only as the regression target.
+
+**Files modified:**
+- `models/direct_unet.py` — new `ParamHeadCNN` (ConvBlock `time_emb_dim=0`, `cat([obs,forcing,x̂_state])`, head Conv1d → mean over T → `(B,param_dim)` raw); reworked `JointDirectUNet` (cond_extra_dim=1, output_dim=state_dim, param_head, `forward`→`(v_state, params)`, loss = state MSE + 0.1·param MSE, no softplus)
+- `evaluation/neural_inference.py` — joint loader: `param_head.head.weight` branch (JointDirectUNet) alongside `param_flow.head.0.weight` (JointCFM); generalized channel inference to walk both `param_flow`/`param_head` blocks; `cfg_dict` + `create_model` pass `param_head_channels`
+- `conf/schema.py` — `JointDirectUNetConfig.param_head_channels: Optional[List[int]] = None`
+- `train.py` — `model_factory` joint_direct_unet passes `param_head_channels`
+- `config/experiment/L8_joint_direct_unet_s0s1.yaml` — `param_head_channels: [32, 64, 128]`
+- `tests/test_joint_estimation_l96_neural.py` — updated `test_joint_direct_unet_l96_shapes` (cond_extra_dim==1, output_dim==SD, param_head.param_dim==PD); removed softplus positivity assert in `test_joint_models_use_true_params`; new `test_joint_direct_unet_oracle_gone` + `test_joint_direct_unet_param_head_stop_grad`
+- `tests/test_neural_inference.py` — new `test_load_model_joint_direct_unet_reconstructs_param_head` (depth-3 param head, exact key/shape/weight round-trip)
+- `batch/run_l96_joint_neural_{training,eval,eval_ens30}.sbatch` — `cd` → joint-neural worktree (were pointing at master, would run unfixed code)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** L8's state velocity previously saw true params at inference (unfair advantage masking real obs/forcing-only reconstruction, same as L7/L9). With L8 sharing the same oracle-removal, the full L7/L8/L9 joint array can be retrained with no oracle path. Raw signed params match L9's flow convention (joint DA params are signed).
+
+**Verification:** `pytest tests/{joint_estimation_l96_neural,joint_estimation_l96,vanilla_cfm,direct_unet,neural_inference,lorenz96_training,hydra_config,metrics,baselines_hydra}.py -m "not slow"` — **146 passed, 1 deselected**. L8 `model_factory` smoke: cond_extra_dim=1, state output_dim=24, param_head `[32,64,128]`. `py_compile` clean; ruff: no new debt (only pre-existing PLR0402 on direct_unet.py:2). `bash -n` OK on all 3 modified sbatch.
+
 ## 2026-08-31: Fix JointCFM loader — param-flow channel inference truncated depth-3 param flow to 2 blocks
 
 **Summary:** Fixed a loader bug in the refactored JointCFM support (`evaluation/neural_inference.py`): `load_checkpoint` inferred the param-flow CNN hidden channels from only the first two conv blocks (`blocks.0`/`blocks.1`), producing `[32,64]` for the L7/L9 default `[32,64,128]`. A real depth-3 checkpoint therefore rebuilt a 2-block `ParamFlowCNN`, silently dropping `param_flow.blocks.2.*` (12 keys) and shape-mismatching the head + `blocks.0` (head expected 64→8 not 128→8). Combined with `strict=False` in `load_model`, `eval_joint_neural_l96.py` would load L7/L9 with a random/garbage param flow and no error — the same silent-truncation class the loader's own state-UNet inference (downs.2) already guarded against. Now walks all blocks present, and the loader tests use a depth-3 param flow (`[4,8,16]`) plus an exact key/shape/weight round-trip assertion via `load_model`.
