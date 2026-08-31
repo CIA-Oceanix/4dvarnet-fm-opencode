@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-31: QG S0/S1 DA baselines — consolidated report (cross-resolution S1)
+
+**Summary:** Added a consolidated QG S0/S1 DA-baseline report to master, matching the L63/L96 convention (`reports/qg/` generator + `outputs/*.md`). The report covers the error-free S0 baseline and the S1 cross-resolution case (truth 64×64 vs DA model at da_nx=16 and da_nx=32), with the full S0/S1 settings and per-field (q/psi, per-layer) RMSE/EV/improv tables. Because the QG code (`data/qg.py`, `models/*`) lives only on `feat/qg-case-study`, the generator is JSON-only: it reads the curated S0/S1 result JSONs (committed on `feat/qg-case-study`) and a `qg_settings.json` snapshot, and renders the self-contained Markdown. The 4 dataset-spinup caches are copied into the local master worktree under `reports/qg_cache/` (gitignored via `*.pt`, so local-only and non-committed) so the datasets are accessible from the local `origin/master`.
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_report.py` — new: JSON-only generator (no QG imports) rendering the consolidated report.
+- `reports/qg/outputs/qg_s0s1_report.md` — new: the rendered report (S0 matrix + S1 da_nx=16/32, per-field tables, full settings).
+- `reports/qg/outputs/qg_settings.json` — new: QGConfig snapshot used by the runs (from `data/qg.py`).
+- `batch/run_qg_s1_da32.sbatch` — new: da_nx=32 S1 production batch script.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** Deliver the QG S0/S1 DA-baseline results to the main integration branch in the established report layout, with the expensive spinup datasets available locally on master (gitignored) so results are reproducible without re-spinning up.
+
+**Verification:** generator runs clean on the JSONs; the rendered `.md` tables match the result JSONs. pytest (master, fast) unchanged — no QG tests on master.
+
 ## 2026-08-31: L96 Joint-Strong-4DVar — batched pure-gradient Adam (NaN fix) + full 200-window benchmark
 
 **Summary:** Replaced the NaN-diverging sequential LBFGS `JointStrong4DVarL96` with a batched, purely-gradient Adam solve vectorized over all windows (mirrors the state-only `Strong4DVar.assimilate_batch`), fixing the root cause of the prior batch-Adam NaN (free log-param block drifting unboundedly under `lr=0.2` until `exp()`/dynamics overflow). Ran the full 200-window S0/S1 benchmark (Job 51000), updated both joint reports, and recorded the results in PLAN.md/CHANGELOG.
