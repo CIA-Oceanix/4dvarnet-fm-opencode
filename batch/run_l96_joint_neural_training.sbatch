@@ -40,6 +40,7 @@ rm -rf "experiments/${EXP}"
 
 python train.py \
   --config-name experiment/${EXP} \
+  ++data.test_cache=experiments/l96_datasets_obsj2_int100_nwin200.pt \
   hydra.run.dir=. \
   hydra.output_subdir=null
 
