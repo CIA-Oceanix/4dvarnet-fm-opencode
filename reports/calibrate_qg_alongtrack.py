@@ -13,55 +13,56 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.qg import QGConfig, make_qg_s0_s1_datasets
-from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
+from models.qg_interp import spectral_resize_2d
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIGDIR = os.path.join(BASE, "reports", "outputs", "figs")
 os.makedirs(FIGDIR, exist_ok=True)
 
 
+def _resize_state(state, dyn, nlayers, src_n, dst_n, device):
+    """Spectral down/upsample a flattened (nlayers*src_n*src_n) state to dst grid."""
+    lead = state.shape[:-1]
+    x = state.reshape(*lead, nlayers, src_n, src_n)
+    y = spectral_resize_2d(x, dst_n, dst_n, device)
+    return y.reshape(*lead, nlayers * dst_n * dst_n)
+
+
 def _build_dyn(cfg, window, device):
     da_params = window["da_params"]
-    model = window["da_model"]
+    nx_da = int(window.get("da_nx") or cfg.nx)
     common = {
-        "nx": cfg.nx, "L": cfg.L, "dt": cfg.dt, "beta": da_params["beta"],
+        "nx": nx_da, "L": cfg.L, "dt": cfg.dt, "beta": da_params["beta"],
         "rd": da_params["rd"], "U1": da_params["U1"], "rek": da_params["rek"],
         "filterfac": cfg.filterfac,
         "wind_amp": window["wind_amp"],
         "wind_sigma": cfg.wind_sigma,
     }
-    if model == "qg1l":
-        return QG1LDynamics(**common).to(device)
     return QGDynamics(**common, delta=cfg.delta,
                       U2=da_params.get("U2", cfg.U2)).to(device)
 
 
 def _free_divergence(cfg, dyn, window):
-    ic = window["true_state"][0].to(dyn.device)
-    ws = window["wind_state_corrupted"].to(dyn.device)
+    """Free forecast divergence of the DA model from an exact truth IC.
+
+    For a cross-resolution DA model (S1) the truth IC is spectrally downsampled
+    to the DA grid before the roll and the rolled forecast is upsampled back to
+    the truth grid for comparison, so the divergence measures the combined
+    resolution+param-bias+wind error over the window.
+    """
     truth = window["true_state"].to(dyn.device)
+    ws = window["wind_state_corrupted"].to(dyn.device)
+    ic = truth[0]
+    nlayers = dyn.state_dim // (dyn.ny * dyn.nx)
+    if dyn.ny != cfg.ny:
+        ic = _resize_state(ic, dyn, nlayers, cfg.ny, dyn.ny, dyn.device)
     roll = dyn.rollout_trajectory(ic, cfg.num_steps - 1, wind_state=ws)
+    if dyn.ny != cfg.ny:
+        roll = _resize_state(roll, dyn, nlayers, dyn.ny, cfg.ny, dyn.device)
     diff = (roll - truth).norm(dim=-1)
     ref = truth.norm(dim=-1)
     return (diff[1:] / ref[1:].clamp_min(1e-12)).mean().item()
-
-
-def _free_divergence_s1b(cfg, dyn, window):
-    target = window["target_state_psi"].to(dyn.device)
-    ws = window["wind_state_corrupted"].to(dyn.device)
-    ic = dyn.state_from_streamfunction(target[0])
-    roll = dyn.rollout_trajectory(ic, cfg.num_steps - 1, wind_state=ws)
-    roll_psi = dyn.streamfunctions(roll).reshape(cfg.num_steps, -1)
-    diff = (roll_psi - target).norm(dim=-1)
-    ref = target.norm(dim=-1)
-    return (diff[1:] / ref[1:].clamp_min(1e-12)).mean().item()
-
-
-def _free_divergence_for(cfg, dyn, window):
-    if window["da_model"] == "qg1l":
-        return _free_divergence_s1b(cfg, dyn, window)
-    return _free_divergence(cfg, dyn, window)
 
 
 def _ke_per_window(cfg, dyn, window):
@@ -140,12 +141,12 @@ def main():
 
     kes = []
     levels = []
-    rols = {"test_s0": [], "test_s1a": [], "test_s1b": []}
-    for k in ("test_s0", "test_s1a", "test_s1b"):
+    rols = {"test_s0": [], "test_s1": []}
+    for k in ("test_s0", "test_s1"):
         d = ds[k]
         for i in range(len(d)):
             dyn = _build_dyn(cfg, d[i], device)
-            rols[k].append(_free_divergence_for(cfg, dyn, d[i]))
+            rols[k].append(_free_divergence(cfg, dyn, d[i]))
         if k == "test_s0":
             for i in range(len(d)):
                 dyn = _build_dyn(cfg, d[i], device)
@@ -153,14 +154,13 @@ def main():
                 levels.append(d[i]["wind_amp"])
 
     max_s0 = max(rols["test_s0"])
-    min_err = min(min(rols["test_s1a"]), min(rols["test_s1b"]))
-    if max_s0 >= min_err:
+    min_s1 = min(rols["test_s1"])
+    if max_s0 >= min_s1:
         print(f"WARNING: S0 not well-separated (max_s0={max_s0:.3e} "
-              f"min_err={min_err:.3e})")
+              f"min_s1={min_s1:.3e})")
     else:
-        print(f"S0 max divergence {max_s0:.3e} < S1a min "
-              f"{min(rols['test_s1a']):.3e} / S1b min {min(rols['test_s1b']):.3e} "
-              f"(separation {min_err / max(max_s0, 1e-12):.1f}x)")
+        print(f"S0 max divergence {max_s0:.3e} < S1 min {min_s1:.3e} "
+              f"(separation {min_s1 / max(max_s0, 1e-12):.1f}x)")
 
     axes[1, 1].bar(range(len(kes)), kes, tick_label=[f"{l:.1e}" for l in levels])
     axes[1, 1].set_title("Window KE by wind_amp level")
@@ -176,8 +176,7 @@ def main():
 
     summary["free_divergence"] = {
         "test_s0": rols["test_s0"],
-        "test_s1a": rols["test_s1a"],
-        "test_s1b": rols["test_s1b"],
+        "test_s1": rols["test_s1"],
     }
     for i in range(len(ds["test_s0"])):
         summary["wind_levels"][str(ds["test_s0"][i]["wind_amp"])] = {

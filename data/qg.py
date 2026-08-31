@@ -1,5 +1,9 @@
+import hashlib
+import json
 import math
-from dataclasses import dataclass
+import os
+import pickle
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch
@@ -53,6 +57,7 @@ class QGConfig:
     s1_loc_sigma_frac: float = 0.25
     s1_tau_days: float = 10.0
     s1_sigma_eta_frac: float = 0.3
+    da_nx: int | None = None
     init_lag_days: float = 0.5
     init_seed: int = 7001
 
@@ -399,17 +404,19 @@ class QGS01Dataset:
             ws_corrupt = ws_true
             da_params = dict(w["true_params"])
             da_model = "qg2l"
-        else:
-            ws_corrupt = _make_corrupted_wind_state(cfg, ws_true, i)
+            da_nx = cfg.nx
+        elif scenario == "test_s1":
+            b = cfg.s1_param_bias
             da_params = dict(w["true_params"])
-            if scenario == "test_s1a":
-                b = cfg.s1_param_bias
-                da_params["rd"] = da_params["rd"] * (1 - b)
-                da_params["rek"] = da_params["rek"] * (1 - b)
-                da_model = "qg2l"
-            else:
-                da_model = "qg1l"
+            da_params["rd"] = da_params["rd"] * (1 - b)
+            da_params["rek"] = da_params["rek"] * (1 - b)
+            da_model = "qg2l_lores"
+            da_nx = cfg.da_nx if cfg.da_nx else cfg.nx
+            ws_corrupt = _make_corrupted_wind_state(cfg, ws_true, i)
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
         w["da_model"] = da_model
+        w["da_nx"] = da_nx
         w["da_params"] = da_params
         w["wind_state_corrupted"] = ws_corrupt
         w["forcing_true"] = ws_true[:, 0].clone()
@@ -417,11 +424,46 @@ class QGS01Dataset:
         return w
 
 
-def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None) -> dict:
+def _truth_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
+    """Deterministic cache path for the generated S0/S1 truth windows.
+
+    The expensive step (`QGS01Dataset._generate_truth`, the per-window spinup)
+    depends on the full config plus the number of windows; obs geometry/density
+    do affect it (obs are generated inside `_generate_truth`), so the whole
+    `QGConfig` is part of the key. Same config -> same seeded data -> cache hit.
+    """
+    payload = {"cfg": asdict(cfg), "n_windows": n}
+    key = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()[:20]
+    return os.path.join(cache_dir, f"qg_truth_{key}.pt")
+
+
+def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
+                           cache_dir: str | None = None) -> dict:
+    """Build the S0/S1 datasets, optionally caching/loading the shared truth.
+
+    `cache_dir` (when set) stores the per-window truth (`_generate_truth` output,
+    the dominant spinup cost) keyed by config, so repeated runs with the same
+    config skip the ~4.5-min CPU spinup. Default None keeps prior on-the-fly
+    behavior unchanged.
+    """
     n = num_test_windows or cfg.num_windows
-    base = QGS01Dataset._generate_truth(cfg, n)
+    base = None
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        path = _truth_cache_path(cfg, n, cache_dir)
+        if os.path.exists(path):
+            try:
+                base = torch.load(path, map_location="cpu")
+            except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
+                base = None
+        if base is None:
+            base = QGS01Dataset._generate_truth(cfg, n)
+            torch.save(base, path)
+    else:
+        base = QGS01Dataset._generate_truth(cfg, n)
     return {
         "test_s0": QGS01Dataset(cfg, "test_s0", base_windows=base),
-        "test_s1a": QGS01Dataset(cfg, "test_s1a", base_windows=base),
-        "test_s1b": QGS01Dataset(cfg, "test_s1b", base_windows=base),
+        "test_s1": QGS01Dataset(cfg, "test_s1", base_windows=base),
     }

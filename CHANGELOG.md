@@ -1,5 +1,78 @@
 # Changelog
 
+## 2026-08-31: QG S1 cross-resolution case study — DA baselines (resolution-mismatch model error)
+
+**Summary:** Implemented the S1 resolution-mismatch case-study end-to-end. The S1 scenario is redesigned from the old S1a/S1b split (which the user had replaced with a single `test_s1`) into a **cross-resolution DA setup**: truth/obs at 64×64, DA model at 16×16 (`da_nx`), with param bias (`rd,rek·0.85`) + corrupted moving-storm wind layered on top. `run()` now handles the cross-resolution seams: init is spectrally downsampled to the DA grid, the psi-obs H-function spectrally upsamples the DA streamfunction to the obs grid, localization is computed in physical (obs-grid) coordinates, and the DA/free-forecast trajectories are upsampled back to the truth grid for metrics. `obs_var='q'` with a cross-res model is rejected (PV-obs indices select truth-grid points with no 1:1 lower-res mapping — S1 is psi-only). Free-divergence calibration confirms separation: S0 ~6.7e-8 vs S1 ~0.99 at small scale.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — new `_resize_state_layers`/`_downsample_to_da`/`_upsample_to_truth` (spectral, both grids square); `run()` per-window loop downsamples the shared init to DA grid, upsamples analyses/free-roll to truth grid, builds a truth-resolution `truth_inner` for `_field_layer_metrics` psi inversion; passes `state_ny/state_nx` to the psi-obs col-localization; raises `ValueError` for q-obs on cross-res; default scenarios → `("test_s0","test_s1")`; `_free_forecast_rmse` upsampled for cross-res.
+- `data/qg.py` — `QGConfig.da_nx`; `_scenario_window` emits `test_s1` (`da_model="qg2l_lores"`, `da_nx`, param bias + corrupted wind), drops S1a/S1b; `make_qg_s0_s1_datasets` returns `{test_s0, test_s1}`; cache-load exception narrowed (`pickle` import).
+- `models/qg_interp.py` — NEW: `spectral_resize_2d` (add-pad/truncate in wavenumber space) added; used by all cross-res seams.
+- `evaluation/sweep_qg_baselines.py` — `--da-nx` flag; default scenarios `test_s0,test_s1`.
+- `reports/calibrate_qg_alongtrack.py` — `_build_dyn` uses `da_nx`; `_free_divergence` downsamples the IC to DA grid/upsamples the roll to truth grid for cross-res; S1a/S1b → S1.
+- `tests/test_qg_s0s1.py` — S1a/S1b → S1; added `test_s1_param_bias_and_lores`, `test_s1_da_nx_defaults_to_truth_nx`, `test_s1_corrupts_wind_even_at_full_res`, `test_s1_share_corrupted_wind_across_windows`; `da_nx` in window keys.
+- `tests/test_qg_baselines.py` — `_psi_h` calls updated for the new `nx` arg; added `test_resize_state_layers_down_up_roundtrip`, `test_downsample_da_scales_dimension`, `test_s1_cross_res_run_smoke`, `test_s1_cross_res_q_obs_rejected`.
+- `tests/test_qg_random_columns.py` — scenario list S1a/S1b → S1.
+- `batch/run_qg_s1.sbatch` — new: 2-task array (lag 1.0/2.0) S0+S1 cross-res ETKF probe, nx=64 da_nx=16, psi-obs, cols=4, 1% noise.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The user requested the S1 case-study be a cross-resolution model-error setup (DA model at 16×16 vs truth at 64×64) using spectral interpolation, psi-obs, cols=4, 1% noise, replacing the prior S1a/S1b split. This PR wires all five cross-resolution seams (H-function upsample, init downsample, physical-coordinate localization, trajectory upsample for metrics, and DA state_dim) so the S0/S1 DA baselines run correctly under the resolution mismatch, and guards the psi-only constraint.
+
+**Verification:** `pytest tests/test_qg_baselines.py tests/test_qg_s0s1.py tests/test_qg_random_columns.py -m "not slow"` — all pass (40 passed on the core two files; + random_columns). Cross-res smoke (nx=8, da_nx=4, 2 windows, psi-obs ETKF) runs cleanly: S0 rmse 2.17e-8/EV 0.999, S1 rmse 2.92e-7/EV 0.913, per-field metrics computed. `ruff check` clean on all touched files except the pre-existing `_obs_spec_rc` RUF059 in `test_qg_baselines.py` (unchanged from HEAD); mypy: no new errors in the touched files (55 pre-existing in `baselines.py` via import chain, unchanged).
+
+## 2026-08-30: QG S0 ETKF at 1% noise, 8 cols/day — lag 2.0 (DA beats free forecast decisively)
+
+**Summary:** Ran the same 1%-noise / 8-column-per-day (12.5% per-day coverage) S0 ETKF probe at **init lag = 2.0** (was 1.0). As the free forecast degrades with lag (EV_free 0.727 → **0.301**), DA's `forecast_improvement` rises decisively above 1 for BOTH obs types: **q-obs 0.99 → 1.50**, **psi-obs 1.42 → 1.89**. DA now beats the free forecast outright in the upper (observed) layer for both. A metric finding surfaced: `expvar_full` spans BOTH layers while the S0 obs observe only the upper layer, so the unobserved lower layer drags the full-state pooled EV down (q-obs lag2: EV_full 0.053 vs upper-q EV **0.614**; and in every run EV_upper_q ≫ EV_full). The obs-relevant skill metric is therefore the upper-layer EV (`expvar_upper_q`): q-obs 0.614, psi-obs 0.795 at lag 2.0.
+
+| obs | lag | EV_free | ff_rmse | da_rmse | improv | EV_full | EV_upper_q |
+|---|---|---|---|---|---|---|---|
+| q | 1.0 | 0.727 | 7.33e-6 | 7.43e-6 | 0.99 | −0.54 | 0.674 |
+| q | 2.0 | 0.301 | 1.30e-5 | 8.67e-6 | **1.50** | 0.053 | 0.614 |
+| psi | 1.0 | 0.727 | 7.33e-6 | 5.18e-6 | 1.42 | 0.777 | 0.865 |
+| psi | 2.0 | 0.301 | 1.30e-5 | 6.89e-6 | **1.89** | 0.689 | 0.795 |
+
+**Files modified:**
+- `batch/run_qg_nz1pct_c8_lag2.sbatch` — new: 2-task array (q/psi) S0 ETKF, `--cols-per-day 8`, `--obs-noise-frac-list 0.01`, `--init-lag-days-list 2.0`, nx=64; outputs `reports/outputs/qg_nz1pct_c8_lag2_{q,psi}/`.
+- `reports/outputs/qg_nz1pct_c8_lag2_{q,psi}/qg_nz1pctc8lag2_etkf_c8_nz0p01_i1.0_l6.0_lag2.0_n80_d1.0_r0.0_a0.0.json` — 2 result JSONs (job 50932, COMPLETED).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The user asked for the same q/psi @ 12.5%-per-day coverage run at lag 2.0. With the lagged-init first-guess degrading at longer lag, obs (1% noise) become genuinely informative vs the larger background error, so DA should beat the free forecast even for q-obs (which had only reached improv≈1 at lag 1.0). Confirmed: both obs types cross `improv>1` at lag 2.0.
+
+**Verification:** Local CPU smoke (nx=16, cols=8, nz=0.01, lag 2.0): q improv 1.31, psi 0.55 — runs cleanly. Production job 50932 COMPLETED (q ~315s, psi ~322s; only benign torch kernel-cache warnings).
+
+## 2026-08-30: QG S0 ETKF at 1% noise — 8 random columns/day (coverage 0.52%→1.04%)
+
+**Summary:** Re-ran the 1%-noise S0 ETKF probe (nx=64, window_days=30, num_windows=5, spinup 2y, N=80, infl 1.0, loc 6, lag 1.0, band 0.25, `disp_frac=1.0`, ridge-fix in place) doubling the obs density from 4 to **8 random meridional columns/day** (coverage 0.52% → 1.04%; 15,360 obs over 1,474,560 space-time gridpoints). Doubling columns improves BOTH obs types monotonically: **psi-obs `improv` 1.16 → 1.42, EV_full 0.752 → 0.777**; **q-obs `improv` 0.77 → 0.99, EV_full −1.40 → −0.54** (nearly reaching the free forecast but still not crossing `improv>1`). The q-vs-psi asymmetry persists: at this sparse coverage psi (streamfunction, which needs the nonlocal spectral inversion) assimilates robustly and beats the free forecast, while q (direct PV) still degrades it — the pooled q-obs EV is dragged down by a single large per-window error (rmse_list `[9.3e-07, 3.6e-06, 1.4e-06, 2.3e-05, 7.9e-06]`, window 3 ~2.3e-05).
+
+| obs | cols | coverage | da_rmse | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|
+| psi | 4 | 0.52% | 6.32e-6 | 1.16 | 0.752 | 0.727 |
+| psi | 8 | 1.04% | 5.18e-6 | **1.42** | **0.777** | 0.727 |
+| q | 4 | 0.52% | 9.47e-6 | 0.77 | −1.40 | 0.727 |
+| q | 8 | 1.04% | 7.43e-6 | 0.99 | −0.54 | 0.727 |
+
+**Files modified:**
+- `batch/run_qg_nz1pct_c8.sbatch` — new: 2-task array (q-obs/psi-obs) S0 ETKF at `--cols-per-day 8`, `--obs-noise-frac-list 0.01`, nx=64, lag 1.0; outputs to `reports/outputs/qg_nz1pct_c8_{q,psi}/`.
+- `reports/outputs/qg_nz1pct_c8_{q,psi}/qg_nz1pctc8_etkf_c8_nz0p01_i1.0_l6.0_lag1.0_n80_d1.0_r0.0_a0.0.json` — 2 result JSONs (job 50930, COMPLETED).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** Establish how S0 ETKF skill responds to obs density at fixed 1% noise — the cleanest lever to push q-obs above `improv>1` and to test the robustness of the psi-obs advantage found at cols=4. Coverage doubles (0.52→1.04%); psi-obs stays clearly better than the free forecast and improves, while q-obs approaches but still crosses the forecast only when more columns are added.
+
+**Verification:** Local CPU smoke (nx=16, cols=8): q-obs improv 2.13, psi-obs 0.64 — runs cleanly. Production job 50930 COMPLETED (q ~310s, psi ~318s; only benign torch kernel-cache warnings).
+
+## 2026-08-30: QG S0 ETKF baseline at 1% obs noise, nx=64 (post-ridge-fix) — psi-obs beats free forecast
+
+**Summary:** Ran the minimal 1%-noise S0 ETKF probe on the production config (nx=64, window_days=30, num_windows=5, spinup 2y, N=80, inflation 1.0, loc 6, random_columns cols/day=4, lag 1.0, band 0.25, `disp_frac=1.0`) with the scale-relative ridge fix (PR #119) in place. 1% obs noise means `sigma = 0.01 * std(field)` of each obs type's own signal (q-obs σ_q ≈ 0.01·2.6e-5 ≈ **2.6e-7**, ~28× cleaner than the ~7.3e-6 free-forecast error at this lag). **Result — the Stage-B goal is achieved for psi-obs:** `forecast_improvement` finally exceeds 1 at production scale (`improv=1.16`, EV_free 0.727 → EV_full **0.752**), i.e. DA beats the free forecast. q-obs does NOT (`improv=0.77`, EV_full **−1.40**), degrading where psi-obs improves — a clean copy of the same S0 case with both obs types shows the sparse longitudinal/column coverage regime is sensitive to which field is observed. q-obs negative pooled EV is driven by a few very large per-window errors (rmse_list `[1.9e-06, 5.4e-06, 2.4e-06, 2.7e-05, 1.0e-05]`; window 3 ~2.7e-05), consistent with the filter occasionally trusting sparse; a high-clean-obs pulls off an already-good forecast.
+
+**Files modified:**
+- `batch/run_qg_nz1pct.sbatch` — new: 2-task array (q-obs/psi-obs) S0 ETKF at `--obs-noise-frac-list 0.01`, nx=64, lag 1.0; outputs to `reports/outputs/qg_nz1pct_{q,psi}/`.
+- `reports/outputs/qg_nz1pct_{q,psi}/qg_nz1pct_etkf_c4_nz0p01_i1.0_l6.0_lag1.0_n80_d1.0_r0.0_a0.0.json` — 2 result JSONs (job 50927, COMPLETED).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** After surgically fixing the localized-ETKF ridge (which had made `forecast_improvement` sub-1 and R-invariant), the cleanest next probe was the 1% noise case at the reference lag (EV_free≈0.73), the regime where obs are genuinely cleaner than the background error — the physically plausible route to DA beating the free forecast. Delivers the first production-scale `improve>1` S0 result and exposes a q-vs-psi-obs asymmetry to investigate next.
+
+**Verification:** Local CPU smoke (nx=16, 2 windows, both obs types) runs cleanly with the merged fix. Production job 50927 COMPLETED (q task in ~312s, psi in ~312s; only benign torch kernel-cache warnings). No source-code change this turn beyond the new batch script.
+
 ## 2026-08-29: QG localized-ETKF gain-killing ridge bug + fix
 
 **Summary:** Root-caused the DA-vs-free-forecast anomaly (`forecast_improvement < 1` at every obs config) to a genuine bug in the localized ETKF: the Kalman-gain ridge was a **hardcoded absolute `1e-4`** (`evaluation/baselines.py:789`), independent of the covariance scale. At QG scales the localized observed-space covariance `loc_H_Pf_Ht` is ~1e-14 and `R_var` ~1e-16, so `ridge=1e-4` dwarfed both by ~10 orders of magnitude, driving the gain to ~0 (`||K@dy||` ~8e-18 vs ensemble scale ~4.5e-8). The filter was therefore **invariant to a 50× change in obs noise** (nz=0.05 vs 0.001 gave byte-identical results) — which is exactly the tell-tale the user's "degenerate DA" instinct pointed at. It was not the ensemble (spread is healthy ~1e-8, no collapse; `disp_frac=0` reproduces the free forecast exactly and positive dispersion makes DA monotonically worse — a live filter), but a **gain-killing ridge**. Fix: make the ridge **scale-relative**, `ridge = rel * loc_H_Pf_Ht.max()` (default `rel=1e-4`), matching the covariance magnitude so R actually enters the gain. After the fix: DA responds to R (nz=0.05 improv 0.83 → nz=0.001 improv **2.67** at lag 1.0) and **DA beats the free forecast** in the clean-obs / longer-lag regime (improv 2.67–2.73), exactly as physically expected. L63/L96 localized paths (state O(1)) are behavior-preserving since `1e-4 * O(1) ≈ 1e-4`. The related absolute-ridge sites in the **batch** paths (`EnKF.assimilate_batch`/`ETKF.assimilate_batch`, lines 1081/1177) remain latent for now (QG uses the single-window path only; fixing them is deferred to keep this PR minimal and low-risk).

@@ -35,12 +35,13 @@ def main():
     ap.add_argument("--init", default="lagged", choices=["lagged", "white"])
     ap.add_argument("--geometry", default="random_columns")
     ap.add_argument("--init-lag-days-list", default="2.0")
+    ap.add_argument("--da-nx", type=int, default=None)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--cols-per-day-list", default=None)
     ap.add_argument("--obs-noise-frac-list", default=None)
     ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
-    ap.add_argument("--scenarios", default="test_s0,test_s1a,test_s1b")
+    ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--outdir", default="reports/outputs/figs")
     ap.add_argument("--device", default=None)
     ap.add_argument("--tag", default="sweep")
@@ -48,6 +49,8 @@ def main():
     ap.add_argument("--disp-frac-list", default=None)
     ap.add_argument("--etkf-ridge-list", default=None)
     ap.add_argument("--etkf-additive-list", default=None)
+    ap.add_argument("--cache-dir", default="reports/qg_cache")
+    ap.add_argument("--save-traj", action="store_true")
     args = ap.parse_args()
 
     device = _device(args.device)
@@ -76,18 +79,20 @@ def main():
                 cfg = QGConfig(
                     nx=args.nx, window_days=args.window_days,
                     spinup_years=args.spinup_years, num_windows=args.num_windows,
-                    obs_geometry=args.geometry, cols_per_day=cols, seed=7)
+                    obs_geometry=args.geometry, cols_per_day=cols, seed=7,
+                    da_nx=args.da_nx)
             else:
                 cfg = QGConfig(
                     nx=args.nx, window_days=args.window_days,
                     spinup_years=args.spinup_years, num_windows=args.num_windows,
                     obs_geometry=args.geometry, cols_per_day=cols,
-                    obs_noise_std_frac=noise, seed=7)
+                    obs_noise_std_frac=noise, seed=7, da_nx=args.da_nx)
             print(f"device={device} building dataset (cols={cols},"
                   f"noise={noise}) once", flush=True)
             t0 = time.time()
-            ds = make_qg_s0_s1_datasets(cfg)
-            print(f"dataset built in {time.time() - t0:.1f}s", flush=True)
+            ds = make_qg_s0_s1_datasets(cfg, cache_dir=args.cache_dir)
+            print(f"dataset built in {time.time() - t0:.1f}s (cache={args.cache_dir})",
+                  flush=True)
             for method in methods:
                 for lag in lags:
                     for infl in infls:
@@ -113,7 +118,8 @@ def main():
                                                     obs_var=args.obs_var,
                                                     disp_frac=disp,
                                                     etkf_ridge=ridge,
-                                                    etkf_additive=a)
+                                                    etkf_additive=a,
+                                                    save_traj=os.path.join(args.outdir, "trajectories") if args.save_traj else None)
                                             dt = time.time() - t1
                                             rows = " ".join(
                                                 f"{s}:EV{p['scenarios'][s]['expvar_full']:.3f}"
@@ -121,6 +127,16 @@ def main():
                                                 for s in p["scenarios"])
                                             print(f"[{args.tag}|{tag}] {dt:.1f}s {rows}",
                                                   flush=True)
+                                            s0 = p["scenarios"].get("test_s0", {})
+                                            mpf = s0.get("metrics_per_field")
+                                            if mpf:
+                                                line = "  ".join(
+                                                    f"{fld}{k[-1]}:ev{d['ev']:.2f}/ff{d['ev_free']:.2f}"
+                                                    f"/im{d['improv']:.2f}"
+                                                    for fld in ("q", "psi")
+                                                    for k in ("layer1", "layer2")
+                                                    for d in [mpf[fld][k]])
+                                                print(f"      [{args.tag}] {line}", flush=True)
                                             with open(os.path.join(
                                                     args.outdir,
                                                     f"qg_{args.tag}_{tag}.json"),

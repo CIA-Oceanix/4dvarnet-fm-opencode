@@ -90,7 +90,7 @@ def test_random_columns_deterministic():
     cfg = _cfg()
     da = make_qg_s0_s1_datasets(cfg)
     db = make_qg_s0_s1_datasets(_cfg())
-    for scen in ("test_s0", "test_s1a", "test_s1b"):
+    for scen in ("test_s0", "test_s1"):
         wa = da[scen][0]
         wb = db[scen][0]
         assert torch.equal(wa["obs_columns"], wb["obs_columns"])

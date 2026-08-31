@@ -29,12 +29,10 @@ def _periodic_dist(a, b, L):
 def test_scenario_set_keys_and_shared_truth():
     cfg = _tiny_cfg()
     ds = make_qg_s0_s1_datasets(cfg)
-    assert set(ds.keys()) == {"test_s0", "test_s1a", "test_s1b"}
+    assert set(ds.keys()) == {"test_s0", "test_s1"}
     for i in range(len(ds["test_s0"])):
         assert torch.equal(ds["test_s0"][i]["true_state"],
-                           ds["test_s1a"][i]["true_state"])
-        assert torch.equal(ds["test_s0"][i]["true_state"],
-                           ds["test_s1b"][i]["true_state"])
+                           ds["test_s1"][i]["true_state"])
 
 
 def test_window_shapes():
@@ -54,7 +52,7 @@ def test_window_shapes():
         "true_state", "target_state_psi", "target_state_q", "obs",
         "obs_mask", "track_x_index", "obs_field", "wind_curl",
         "wind_state_true", "wind_state_corrupted", "true_params",
-        "da_model", "da_params", "wind_seed", "wind_amp", "forcing_true",
+        "da_model", "da_params", "da_nx", "wind_seed", "wind_amp", "forcing_true",
         "forcing_corrupted", "init_state", "init_dt_days", "init_lead_truth"}
 
 
@@ -77,7 +75,7 @@ def test_obs_nan_pattern_and_track_advance():
 def test_deterministic():
     ds_a = make_qg_s0_s1_datasets(_tiny_cfg())
     ds_b = make_qg_s0_s1_datasets(_tiny_cfg())
-    for k in ("test_s0", "test_s1a", "test_s1b"):
+    for k in ("test_s0", "test_s1"):
         for wa, wb in zip(ds_a[k], ds_b[k]):
             assert torch.equal(wa["true_state"], wb["true_state"])
             assert torch.equal(wa["target_state_psi"], wb["target_state_psi"])
@@ -100,44 +98,55 @@ def test_s0_has_no_model_error():
         assert w["da_params"]["rek"] == w["true_params"]["rek"]
 
 
-def test_s1a_param_bias():
-    ds = make_qg_s0_s1_datasets(_tiny_cfg())
-    cfg = ds["test_s0"].cfg
-    b = cfg.s1_param_bias
-    for i in range(len(ds["test_s1a"])):
-        w = ds["test_s1a"][i]
-        assert w["da_model"] == "qg2l"
+def test_s1_param_bias_and_lores():
+    cfg = _tiny_cfg(da_nx=16)
+    ds = make_qg_s0_s1_datasets(cfg)
+    s0c = ds["test_s0"].cfg
+    b = s0c.s1_param_bias
+    for i in range(len(ds["test_s1"])):
+        w = ds["test_s1"][i]
+        assert w["da_model"] == "qg2l_lores"
+        assert w["da_nx"] == 16
         assert math.isclose(w["da_params"]["rd"],
                             w["true_params"]["rd"] * (1 - b))
         assert math.isclose(w["da_params"]["rek"],
                             w["true_params"]["rek"] * (1 - b))
         assert w["da_params"]["U1"] == w["true_params"]["U1"]
+        assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+        assert w["da_params"]["rd"] != w["true_params"]["rd"]
 
 
-def test_s1b_structural_no_param_bias():
+def test_s1_da_nx_defaults_to_truth_nx():
     ds = make_qg_s0_s1_datasets(_tiny_cfg())
-    for i in range(len(ds["test_s1b"])):
-        w = ds["test_s1b"][i]
-        assert w["da_model"] == "qg1l"
-        assert w["da_params"]["rd"] == w["true_params"]["rd"]
-        assert w["da_params"]["rek"] == w["true_params"]["rek"]
-        assert w["da_params"]["U1"] == w["true_params"]["U1"]
+    for w in ds["test_s1"]:
+        assert w["da_nx"] == ds["test_s0"].cfg.nx
 
 
-def test_s1a_s1b_share_corrupted_wind():
+def test_s1_corrupts_wind_even_at_full_res():
+    """Without da_nx set, S1 applies param bias + wind corruption at full res."""
     ds = make_qg_s0_s1_datasets(_tiny_cfg())
-    for i in range(len(ds["test_s1a"])):
-        assert torch.equal(ds["test_s1a"][i]["wind_state_corrupted"],
-                           ds["test_s1b"][i]["wind_state_corrupted"])
+    b = ds["test_s0"].cfg.s1_param_bias
+    for w in ds["test_s1"]:
+        assert w["da_model"] == "qg2l_lores"
+        assert w["da_params"]["rd"] == w["true_params"]["rd"] * (1 - b)
+        assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+
+
+def test_s1_share_corrupted_wind_across_windows():
+    ds = make_qg_s0_s1_datasets(_tiny_cfg())
+    for i in range(len(ds["test_s1"])):
+        w = ds["test_s1"][i]
+        assert torch.isfinite(w["wind_state_corrupted"]).all()
+
 
 
 @pytest.mark.slow
-def test_s1a_corrupted_wind_stats():
+def test_s1_corrupted_wind_stats():
     cfg = _tiny_cfg(num_windows=4)
     ds = make_qg_s0_s1_datasets(cfg)
     sigma_loc = cfg.s1_loc_sigma_frac * cfg.wind_sigma
-    for i in range(len(ds["test_s1a"])):
-        w = ds["test_s1a"][i]
+    for i in range(len(ds["test_s1"])):
+        w = ds["test_s1"][i]
         ws_true = w["wind_state_true"]
         ws_corrupt = w["wind_state_corrupted"]
         assert not torch.equal(ws_corrupt, ws_true)
@@ -161,7 +170,7 @@ def test_s1a_corrupted_wind_stats():
 def test_param_draws_in_range():
     cfg = _tiny_cfg()
     ds = make_qg_s0_s1_datasets(cfg)
-    for k in ("test_s0", "test_s1a", "test_s1b"):
+    for k in ("test_s0", "test_s1"):
         for w in ds[k]:
             lo, hi = 1 - cfg.param_range, 1 + cfg.param_range
             assert lo * cfg.U1 <= w["true_params"]["U1"] <= hi * cfg.U1
