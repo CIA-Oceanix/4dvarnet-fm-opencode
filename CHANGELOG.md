@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-31: QG S1 model-error sensitivity — da_nx=16 factorial (resolution sweep 16/32/64)
+
+**Summary:** Completed the da_nx=16 leg of the S1 model-error factorial, giving the full resolution sweep over {16, 32, 64}. 3 new runs (jobs 51102/51103/51104, all COMPLETED): `s1_noparam_da16`, `s1_nowind_da16`, `s1_noparam_nowind_da16`; combined with the da_nx=16 ref (`qg_s1_lag1p0`, job 51069) and the existing da_nx=32/64 factor-cells for 12 cells total. **Finding — the resolution×{param,wind} interaction is U-shaped, not monotone:** the param DA-impact on ψ is **largest at da_nx=64** (−0.30 to −0.42), smallest at da_nx=32 (−0.07), and intermediate at da_nx=16 (−0.19 to −0.23); the wind DA-impact is small at 16/32 (~−0.06) and largest at 64 (−0.23 to −0.33). So the coarse model masks param/wind sensitivity only up to a point — at the very coarse 4:1 (da_nx=16) the mask partially lifts again. **The mismatch does not make DA harder the L63/L96 way:** the resolution-only cells (off/off) give the best DA at every resolution (16: +0.184, 32: +0.531, 64: +0.752), while param bias is the dominant DA-difficulty driver at every resolution (largest single DA improvement when removed).
+
+**Files modified:**
+- `batch/run_qg_s1_{noparam,nowind,noparam_nowind}_da16.sbatch` — new: 3 da_nx=16 factorial cells.
+- `reports/outputs/qg_s1_{noparam,nowind,noparam_nowind}_da16_lag1p0/*.json` — 3 result JSONs (jobs 51102/51103/51104).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** Extend the S1 sensitivity study to the original 4:1 (da_nx=16) mismatch to test whether the coarse-model masking of param/wind errors strengthens or reverses at very low DA resolution, and to complete the resolution sweep (16/32/64) for the model-mismatch-vs-DA-complexity question raised by the L63/L96 analogy.
+
+**Verification:** all 3 jobs COMPLETED (no tracebacks); bash syntax clean on the 3 scripts; result JSONs validated against the console summaries.
+
 ## 2026-08-31: QG S1 model-error sensitivity — full 2×2×2 factorial (param × wind × resolution)
 
 **Summary:** Completed the full 2×2×2 factorial over the three S1 model-error components (param corruption, wind forcing noise, resolution mismatch) at lag 1.0, extending the earlier component ablations. 3 new runs (jobs 51095/51096/51097, all COMPLETED): `s1_noparam_nowind@da_nx=32`, `s1_noparam@da_nx=64`, `s1_nowind@da_nx=64`; combined with the 4 prior runs (`s1_da32`, `s1_noparam`, `s1_nowind` @32, `s1_nores` @64) and the S0 anchor (`qg_matrix_c4_psi`, = off/off/@64) for the full 8-cell design. **Finding — a resolution×{param,wind} interaction (confirms the hypothesis):** the DA is markedly more sensitive to both the param and wind errors at full resolution than at da_nx=32. Per-field DA impacts roughly double-to-quadruple at da_nx=64 (ψ upper param −0.068→−0.302, wind −0.056→−0.230; ψ lower −0.075→−0.422, −0.061→−0.326; q upper −0.117→−0.194, −0.021→−0.070). The coarse DA model damps the high-wavenumber imprint of the param/wind errors, so the resolution mismatch masks the DA's true sensitivity to them — explaining the earlier "Ablation-C contradiction." The param×wind 2-way interaction is near-zero (independent); the dominant interaction is resolution×{param,wind}. The da_nx=64 side uses honest metrics (no upsample inflation), so the interaction is clean.
