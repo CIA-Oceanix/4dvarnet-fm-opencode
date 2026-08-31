@@ -59,20 +59,69 @@ def test_joint_cfm_l96_shapes(l96_joint_dataset):
     assert model.param_flow.param_dim == PD
 
 
+def test_joint_cfm_param_normalization(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    ref = torch.tensor([8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1])
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16],
+                     param_ref=ref.tolist())
+    batch = _joint_batch(w)
+    true_vec = batch.true_params
+    norm = model._norm(true_vec)
+    assert torch.allclose(
+        norm,
+        (true_vec - ref.unsqueeze(0)) / (0.2 * ref.unsqueeze(0)),
+        atol=1e-5,
+    )
+    assert torch.allclose(model._denorm(norm), true_vec, atol=1e-5)
+    assert torch.allclose(model.param_ref, ref)
+    assert torch.allclose(model.param_scale, 0.2 * ref)
+    loss = model.compute_cfm_loss(batch)
+    assert torch.isfinite(loss) and loss.ndim == 0
+    _, p = model.sample(batch, N_outer=3, return_params=True)
+    assert p.shape == (1, PD)
+    ref_diff = torch.abs(p - ref.unsqueeze(0))
+    assert torch.all(ref_diff / ref.unsqueeze(0) < 3.0), (
+        f"denormalized sample {p} too far from reference {ref}")
+
+
+def test_joint_cfm_default_param_ref_is_ones(l96_joint_dataset):
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    assert torch.allclose(model.param_ref, torch.ones(PD))
+    assert torch.allclose(model.param_scale, 0.2 * torch.ones(PD))
+
+
 def test_joint_cfm_oracle_gone(l96_joint_dataset):
     w = l96_joint_dataset[0]
     model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     model.eval()
     batch = _joint_batch(w)
     x_t = torch.randn_like(batch.states)
-    tau = torch.zeros(1)
-    param_0 = torch.randn(1, PD)
-    v_state_a, _, _ = model.forward(x_t, batch, tau, param_0)
+    tau = torch.tensor([0.3])
+    param_tau = torch.randn(1, PD)
+    v_state_a, v_param_a, _ = model.forward(x_t, batch, tau, param_tau)
     batch_b = FlowMatchingBatch(
         batch.states, batch.obs, batch.obs_mask, batch.forcing,
         params=torch.randn_like(batch.params), true_params=batch.true_params)
-    v_state_b, _, _ = model.forward(x_t, batch_b, tau, param_0)
+    v_state_b, v_param_b, _ = model.forward(x_t, batch_b, tau, param_tau)
     assert torch.allclose(v_state_a, v_state_b, atol=1e-6)
+    assert torch.allclose(v_param_a, v_param_b, atol=1e-6)
+
+
+def test_joint_cfm_param_flow_oracle_gone_at_inference(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], N_outer=10)
+    model.eval()
+    batch = _joint_batch(w)
+    torch.manual_seed(0)
+    with torch.no_grad():
+        _, p_a = model.sample(batch, N_outer=10, return_params=True)
+    batch_b = FlowMatchingBatch(
+        batch.states, batch.obs, batch.obs_mask, batch.forcing,
+        params=batch.params, true_params=torch.randn_like(batch.true_params))
+    torch.manual_seed(0)
+    with torch.no_grad():
+        _, p_b = model.sample(batch_b, N_outer=10, return_params=True)
+    assert torch.allclose(p_a, p_b, atol=1e-6)
 
 
 def test_joint_cfm_param_flow_target(l96_joint_dataset):
@@ -80,8 +129,8 @@ def test_joint_cfm_param_flow_target(l96_joint_dataset):
     model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     batch = _joint_batch(w)
     tau = torch.tensor([0.5])
-    param_0 = torch.randn(1, PD)
-    _, v_param, _ = model.forward(torch.randn_like(batch.states), batch, tau, param_0)
+    param_tau = torch.randn(1, PD)
+    _, v_param, _ = model.forward(torch.randn_like(batch.states), batch, tau, param_tau)
     assert v_param.shape == (1, PD)
     assert torch.isfinite(v_param).all()
 
@@ -91,9 +140,9 @@ def test_joint_cfm_stop_grad_xhat(l96_joint_dataset):
     model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     batch = _joint_batch(w)
     tau = torch.tensor([0.3])
-    param_0 = torch.randn(1, PD, requires_grad=False)
+    param_tau = torch.randn(1, PD, requires_grad=False)
     x_t = torch.randn_like(batch.states)
-    _, v_param, _ = model.forward(x_t, batch, tau, param_0)
+    _, v_param, _ = model.forward(x_t, batch, tau, param_tau)
     loss = v_param.sum()
     loss.backward()
     state_grads = [p.grad for n, p in model.unet.named_parameters()]
@@ -102,18 +151,19 @@ def test_joint_cfm_stop_grad_xhat(l96_joint_dataset):
     assert any(g is not None for g in param_flow_grads)
 
 
-def test_joint_cfm_param_flow_recovers_true_at_tau1(l96_joint_dataset):
+def test_joint_cfm_param_flow_conditions_on_passed_param(l96_joint_dataset):
     w = l96_joint_dataset[0]
     model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     model.eval()
     batch = _joint_batch(w)
+    x_t = torch.randn_like(batch.states)
+    tau = torch.tensor([1.0])
+    param_tau = torch.randn(1, PD)
     with torch.no_grad():
-        param_0 = torch.randn(1, PD)
-        x_t = torch.randn_like(batch.states)
-        tau = torch.tensor([1.0])
-        v_state, v_param, x_hat = model.forward(x_t, batch, tau, param_0)
+        _, v_param, x_hat = model.forward(x_t, batch, tau, param_tau)
     assert torch.allclose(x_hat, x_t, atol=1e-6)
     assert v_param.shape == (1, PD)
+    assert torch.isfinite(v_param).all()
 
 
 def test_joint_direct_unet_l96_shapes(l96_joint_dataset):

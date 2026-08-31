@@ -171,6 +171,7 @@ class JointCFMConfig:
     param_noise_max: float = 0.3
     param_flow_channels: Optional[List[int]] = None
     train_tau_0_only: bool = False
+    param_ref: Optional[List[float]] = None
 
 
 @dataclass

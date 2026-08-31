@@ -139,7 +139,7 @@ class JointCFM(VanillaCFM):
 
     def __init__(self, state_dim=3, param_dim=4, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1, param_loss_weight=0.1,
-                 param_flow_channels=None, train_tau_0_only=False):
+                 param_flow_channels=None, train_tau_0_only=False, param_ref=None):
         super().__init__(state_dim=state_dim, param_dim=param_dim,
                          hidden_channels=hidden_channels,
                          time_emb_dim=time_emb_dim, N_outer=N_outer,
@@ -166,24 +166,36 @@ class JointCFM(VanillaCFM):
             dropout=dropout,
         )
         self.train_tau_0_only = train_tau_0_only
+        if param_ref is None:
+            param_ref = [1.0] * param_dim
+        ref = torch.tensor(param_ref, dtype=torch.float32)
+        if ref.numel() != param_dim:
+            raise ValueError(f"param_ref length {ref.numel()} != param_dim {param_dim}")
+        self.register_buffer("param_ref", ref)
+        self.register_buffer("param_scale", 0.2 * ref)
 
-    def forward(self, x_t, batch, tau, param_0=None):
+    def _norm(self, param):
+        return (param - self.param_ref) / self.param_scale
+
+    def _denorm(self, param_norm):
+        return param_norm * self.param_scale + self.param_ref
+
+    def forward(self, x_t, batch, tau, param_tau=None):
         cond = _make_cond(batch.obs, batch.forcing, batch.params, 0, 1)
         v_state = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         v_state = v_state.transpose(1, 2)
         x_hat_1 = x_t + (1.0 - tau).view(-1, 1, 1) * v_state
         v_param = None
-        if param_0 is not None:
-            Bp, Tp, _ = x_t.shape
-            param_tau = ((1.0 - tau).view(-1, 1, 1) * param_0.unsqueeze(1)
-                         + tau.view(-1, 1, 1) * batch.true_params.unsqueeze(1))
-            param_tau = param_tau.expand(Bp, Tp, -1)
+        if param_tau is not None:
+            while param_tau.dim() < 3:
+                param_tau = param_tau.unsqueeze(1)
+            param_tau = param_tau.expand(x_t.shape[0], x_t.shape[1], -1)
             v_param = self.param_flow(batch.obs, batch.forcing,
                                       x_hat_1.detach(), param_tau, tau)
         return v_state, v_param, x_hat_1
 
     def _param_target(self, batch, param_0, tau):
-        return batch.true_params - param_0
+        return self._norm(batch.true_params) - param_0
 
     def compute_cfm_loss(self, batch):
         B = batch.obs.shape[0]
@@ -193,7 +205,9 @@ class JointCFM(VanillaCFM):
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         v_target = batch.states - x0
         param_0 = torch.randn(B, self.param_dim, device=device)
-        v_pred_state, v_pred_param, _ = self.forward(x_tau, batch, tau, param_0)
+        param_tau = (1.0 - tau).view(-1, 1, 1) * param_0.unsqueeze(1) \
+            + tau.view(-1, 1, 1) * self._norm(batch.true_params).unsqueeze(1)
+        v_pred_state, v_pred_param, _ = self.forward(x_tau, batch, tau, param_tau)
         loss_cfm = F.mse_loss(v_pred_state, v_target)
         if batch.true_params is not None and self.param_loss_weight > 0:
             param_target = self._param_target(batch, param_0, tau)
@@ -230,7 +244,7 @@ class JointCFM(VanillaCFM):
                 v_state, v_param, _ = self.forward(x, batch, tau, param)
                 x = x + dt * v_state
                 param = param + dt * v_param
-        return x, param
+        return x, self._denorm(param)
 
 
 class PredictStateCFM(nn.Module):

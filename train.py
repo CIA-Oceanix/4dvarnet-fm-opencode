@@ -142,6 +142,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_loss_weight=jc.param_loss_weight,
             param_flow_channels=jc.get("param_flow_channels", None),
             train_tau_0_only=jc.train_tau_0_only,
+            param_ref=jc.get("param_ref", None),
         )
     elif model_type == "joint_direct_unet":
         from models.direct_unet import JointDirectUNet

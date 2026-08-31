@@ -287,6 +287,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_flow_channels=cfg.model.get("param_flow_channels", None),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            param_ref=cfg.model.get("param_ref", None),
         )
     elif model_class == JointDirectUNet:
         model = model_class(
