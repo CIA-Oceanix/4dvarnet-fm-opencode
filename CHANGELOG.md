@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-31: QG S1 model-error sensitivity — full 2×2×2 factorial (param × wind × resolution)
+
+**Summary:** Completed the full 2×2×2 factorial over the three S1 model-error components (param corruption, wind forcing noise, resolution mismatch) at lag 1.0, extending the earlier component ablations. 3 new runs (jobs 51095/51096/51097, all COMPLETED): `s1_noparam_nowind@da_nx=32`, `s1_noparam@da_nx=64`, `s1_nowind@da_nx=64`; combined with the 4 prior runs (`s1_da32`, `s1_noparam`, `s1_nowind` @32, `s1_nores` @64) and the S0 anchor (`qg_matrix_c4_psi`, = off/off/@64) for the full 8-cell design. **Finding — a resolution×{param,wind} interaction (confirms the hypothesis):** the DA is markedly more sensitive to both the param and wind errors at full resolution than at da_nx=32. Per-field DA impacts roughly double-to-quadruple at da_nx=64 (ψ upper param −0.068→−0.302, wind −0.056→−0.230; ψ lower −0.075→−0.422, −0.061→−0.326; q upper −0.117→−0.194, −0.021→−0.070). The coarse DA model damps the high-wavenumber imprint of the param/wind errors, so the resolution mismatch masks the DA's true sensitivity to them — explaining the earlier "Ablation-C contradiction." The param×wind 2-way interaction is near-zero (independent); the dominant interaction is resolution×{param,wind}. The da_nx=64 side uses honest metrics (no upsample inflation), so the interaction is clean.
+
+**Files modified:**
+- `batch/run_qg_s1_{noparam_nowind,noparam_da64,nowind_da64}.sbatch` — new: 3 remaining factorial cells.
+- `reports/outputs/qg_s1_{noparam_nowind,noparam_da64,nowind_da64}_lag1p0/*.json` — 3 result JSONs (jobs 51095/51096/51097).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** Determine whether the S1 DA sensitivity to param/wind errors depends on resolution (interaction) — the coarse resolution masks model-error sensitivity, with implications for how S1 tuning and DA-error mitigation should be done.
+
+**Verification:** all 3 jobs COMPLETED (no tracebacks); bash syntax clean on the 3 scripts; result JSONs validated against the console summaries.
+
 ## 2026-08-31: QG S1 model-error sensitivity study (component ablations, lag 1.0)
 
 **Summary:** Assessed the S1 DA configuration's sensitivity to each of its three model-error components, using **da_nx=32 as the reference**. Added 4 CLI flags to `sweep_qg_baselines.py` (`--s1-param-bias`, `--s1-amp-bias`, `--s1-loc-sigma-frac`, `--s1-sigma-eta-frac`, all defaulting to the existing values = backward compatible) and ran three single-component ablations at lag=1.0 (psi-obs, cols=4, 1% noise, truth 64×64, ETKF N=80), reusing the reference `run_qg_s1_da32.sbatch` pattern:
