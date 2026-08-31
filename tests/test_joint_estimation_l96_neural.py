@@ -295,3 +295,101 @@ def test_litmodel_joint_training_step(l96_joint_dataset):
         loss.backward()
         grad_ok = any(p.grad is not None for p in model.parameters())
         assert grad_ok, f"{mtype} produced no gradients"
+
+
+def test_param_flow_cnn_attn_pool_shape(l96_joint_dataset):
+    from models.vanilla_cfm import ParamFlowCNN
+
+    w = l96_joint_dataset[0]
+    batch = _joint_batch(w)
+    B, T = 1, batch.obs.shape[1]
+    obs = batch.obs
+    forcing = batch.forcing
+    x_hat = torch.randn(B, T, SD)
+    param_tau = torch.randn(B, T, PD)
+    tau = torch.zeros(B)
+    for pool in ("mean", "attn"):
+        model = ParamFlowCNN(param_dim=PD, state_dim=SD, hidden_channels=[8, 16],
+                             time_emb_dim=16, pool=pool)
+        out = model(obs, forcing, x_hat, param_tau, tau)
+        assert out.shape == (B, PD), f"{pool} pool output shape {out.shape}"
+        assert torch.isfinite(out).all()
+    attn = ParamFlowCNN(param_dim=PD, state_dim=SD, hidden_channels=[8, 16],
+                        time_emb_dim=16, pool="attn")
+    assert hasattr(attn, "attn_pool")
+
+
+def test_param_head_cnn_attn_pool_shape(l96_joint_dataset):
+    from models.direct_unet import ParamHeadCNN
+
+    w = l96_joint_dataset[0]
+    batch = _joint_batch(w)
+    B, T = 1, batch.obs.shape[1]
+    obs = batch.obs
+    forcing = batch.forcing
+    x_hat = torch.randn(B, T, SD)
+    for pool in ("mean", "attn"):
+        model = ParamHeadCNN(param_dim=PD, state_dim=SD, hidden_channels=[8, 16],
+                             pool=pool)
+        out = model(obs, forcing, x_hat)
+        assert out.shape == (B, PD)
+        assert torch.isfinite(out).all()
+    attn = ParamHeadCNN(param_dim=PD, state_dim=SD, hidden_channels=[8, 16], pool="attn")
+    assert hasattr(attn, "attn_pool")
+
+
+def test_joint_direct_unet_normalization_roundtrip(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    ref = torch.tensor([8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1])
+    model = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16],
+                            param_ref=ref.tolist())
+    batch = _joint_batch(w)
+    true_vec = batch.true_params
+    norm = model._norm(true_vec)
+    assert torch.allclose(model._denorm(norm), true_vec, atol=1e-5)
+    assert torch.allclose(model.param_ref, ref)
+    assert torch.allclose(model.param_scale, 0.2 * ref)
+    loss = model.compute_loss(batch)
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    _, p = model.sample(batch, return_params=True)
+    assert p.shape == (1, PD)
+    assert torch.isfinite(p).all()
+
+
+def test_joint_direct_unet_default_param_ref_is_ones(l96_joint_dataset):
+    model = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    assert torch.allclose(model.param_ref, torch.ones(PD))
+    assert torch.allclose(model.param_scale, 0.2 * torch.ones(PD))
+
+
+def test_joint_models_stage2_param_only_loss_and_freeze(l96_joint_dataset):
+    from training.lightning_module import LitModel
+
+    w = l96_joint_dataset[0]
+    batch = _joint_batch(w)
+    for cls, mtype, extra in [
+        (JointCFM, "joint_cfm", {"train_tau_0_only": True}),
+        (JointDirectUNet, "joint_direct_unet", {}),
+    ]:
+        model = cls(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], **extra)
+        lit = LitModel(model, model_type=mtype, stage=2)
+        lit.on_train_start()
+        unet_trainable = any(p.requires_grad for p in model.unet.parameters())
+        assert not unet_trainable, f"{mtype}: stage-2 state UNet should be frozen"
+        loss = lit._forward_and_loss(batch)
+        assert loss.ndim == 0 and torch.isfinite(loss)
+        loss.backward()
+        unet_grads = [p.grad for p in model.unet.parameters() if p.grad is not None]
+        assert len(unet_grads) == 0, f"{mtype}: frozen UNet got gradients"
+
+
+def test_joint_cfm_sample_params_from_state(l96_joint_dataset):
+    w = l96_joint_dataset[0]
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], N_outer=3)
+    model.eval()
+    batch = _joint_batch(w)
+    x_hat = batch.states.clone()
+    with torch.no_grad():
+        p = model.sample_params_from_state(batch, x_hat, N_outer=3)
+    assert p.shape == (1, PD)
+    assert torch.isfinite(p).all()

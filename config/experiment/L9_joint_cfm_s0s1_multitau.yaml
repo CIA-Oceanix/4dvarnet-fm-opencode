@@ -19,6 +19,7 @@ model:
     param_flow_channels: [32, 64, 128]
     train_tau_0_only: false
     param_ref: [8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]
+    param_flow_pool: attn
 
 training:
   stage1:
@@ -26,7 +27,9 @@ training:
     lr: 0.001
     gradient_clip_val: 10.0
   stage2:
-    epochs: 0
+    epochs: 100
+    lr: 0.001
+    gradient_clip_val: 10.0
 
 data:
   data_setup: s0_s1

@@ -14,6 +14,8 @@ model:
     param_dim: 8
     param_loss_weight: 0.1
     param_head_channels: [32, 64, 128]
+    param_ref: [8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]
+    param_head_pool: attn
 
 training:
   stage1:
@@ -21,7 +23,9 @@ training:
     lr: 0.001
     gradient_clip_val: 10.0
   stage2:
-    epochs: 0
+    epochs: 100
+    lr: 0.001
+    gradient_clip_val: 10.0
 
 data:
   data_setup: s0_s1

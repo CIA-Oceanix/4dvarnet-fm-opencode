@@ -6,8 +6,8 @@ re-runs on the canonical cached S0/S1 test set) and recomputes the detailed
 per-parameter diagnostics from the stored arrays, WITHOUT re-running inference:
 
 - ``joint_estimates_{case}.npz``      single-sample (n_members=1)
-- ``joint_estimates_{case}_ens30.npz`` ens30 (n_members=30; params_pred is the
-  member-mean (W,8))
+- ``joint_estimates_{case}_ens30_k{k}.npz`` ens30, k Euler steps (n_members=30;
+  params_pred is the member-mean (W,8))
 
 Each npz holds ``params_pred (W,8)``, ``params_true (W,8)``, ``x0 (W,40)`` and
 ``forcing_true (W,3000)``, so everything below — per-parameter RMSE / EV / NRMSE
@@ -49,6 +49,7 @@ J_OBS = 2
 
 MODELS = [
     ("L7_joint_cfm_s0s1", "JointCFM tau=0"),
+    ("L8_joint_direct_unet_s0s1", "JointDirectUNet"),
     ("L9_joint_cfm_s0s1_multitau", "JointCFM multi-tau"),
 ]
 ENS_K_STEPS = [1, 10]
@@ -179,7 +180,7 @@ def build_model_section(md, exp_name, desc, exp_dir, dyn, obs_idx, recompute_for
         md.append(header)
         md.append(sep)
         for case in CASES:
-            npz = exp_dir / f"joint_estimates_{case}_ens30.npz"
+            npz = exp_dir / f"joint_estimates_{case}_ens30_k{k}.npz"
             if not npz.exists():
                 md.append(f"| {case.upper()} | RMSE | " + " | ".join(["--"] * 8) + " | -- |")
                 continue
@@ -206,7 +207,7 @@ def build_model_section(md, exp_name, desc, exp_dir, dyn, obs_idx, recompute_for
         for case in CASES:
             r = e = None
             if recompute_forecast:
-                npz = exp_dir / f"joint_estimates_{case}_ens30.npz"
+                npz = exp_dir / f"joint_estimates_{case}_ens30_k{k}.npz"
                 if npz.exists():
                     pred, true, data = load_params(npz)
                     r, e = free_forecast(dyn, data["x0"], data["forcing_true"], true, pred, obs_idx)
@@ -248,7 +249,7 @@ def main():
     md.append("# L96 joint state-parameter — per-parameter diagnostic (offline recompute)")
     md.append("")
     md.append("**Source:** the eval arrays stored by `eval_joint_neural_l96.py` "
-              "(`joint_estimates_{case}.npz` / `..._ens30.npz`), recomputed offline — no "
+              "(`joint_estimates_{case}.npz` / `..._ens30_k{k}.npz`), recomputed offline — no "
               "inference re-run. Pooled over the 200 cached windows (Obs30, observed subspace 24D).")
     md.append("")
     md.append("**Metrics:** per-parameter `RMSE = sqrt(mean((pred-true)^2))`, "

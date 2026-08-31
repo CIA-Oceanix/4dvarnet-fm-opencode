@@ -39,6 +39,12 @@ MODEL_DEFS = {
         "desc": "Conditional flow matching (state + 8-param joint output) trained at tau=0 only; "
                 "sampled with a single Euler step. Hidden [64,128,256], 400 epochs.",
     },
+    "L8_joint_direct_unet_s0s1": {
+        "type": "JointDirectUNet",
+        "tau": "n/a",
+        "desc": "Single-pass joint regression obs -> (state, 8 params). Deterministic. Hidden "
+                "[64,128,256], 200 epochs.",
+    },
     "L9_joint_cfm_s0s1_multitau": {
         "type": "JointCFM",
         "tau": "multi-tau",
@@ -86,11 +92,11 @@ def metrics_case(data, case):
     return metrics.get(case)
 
 
-def param_ev_from_npz(edir: Path, case: str, ens: int) -> np.ndarray | None:
+def param_ev_from_npz(edir: Path, case: str, ens: int, k: int = 1) -> np.ndarray | None:
     """Per-parameter EV ($EV_p = 1 - mean((pred-true)^2)/var(true)$) computed
     offline from the stored eval arrays (single-sample if ``ens=0``, else the
-    member-mean params of the ``ens``30 run). Returns ``(8,)`` or None."""
-    suff = "_ens30" if ens else ""
+    member-mean params of the ``ens``30 run at k Euler steps). Returns ``(8,)`` or None."""
+    suff = "" if not ens else f"_ens30_k{k}"
     npz = edir / f"joint_estimates_{case}{suff}.npz"
     if not npz.exists():
         return None
@@ -331,8 +337,9 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if is_best else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Only ens30 runs present on disk are shown; missing runs render as --. "
-                  "Best per column: lowest RMSE/ES, highest EV.*")
+        md.append("*Only ens30 runs present on disk are shown; missing runs render as -- (L8 is "
+                  "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
+                  "highest EV.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -354,7 +361,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             for case in CASES:
-                ev = param_ev_from_npz(edir, case, ens=k) if edir.is_dir() else None
+                ev = param_ev_from_npz(edir, case, ens=k, k=k) if edir.is_dir() else None
                 rows.append((exp_name, case, ev))
         best_idx = [None] * (len(PARAM_LIST) + 1)
         for i in range(len(PARAM_LIST) + 1):
@@ -375,7 +382,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if (v is not None and v == best_idx[i]) else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Best per cell (highest EV) is bolded.*")
+        md.append("*Best per cell (highest EV) is bolded. L8 is deterministic (no ensemble).*")
         md.append("")
         md.append("---")
         md.append("")

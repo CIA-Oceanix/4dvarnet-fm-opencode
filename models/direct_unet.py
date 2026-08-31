@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.unet import ConvBlock, UNet1D
+from models.unet import AttentionPool1D, ConvBlock, UNet1D
 
 
 class DirectUNet(nn.Module):
@@ -55,11 +55,13 @@ class ParamHeadCNN(nn.Module):
     matching the L9 param-flow convention.
     """
 
-    def __init__(self, param_dim=4, state_dim=24, hidden_channels=None, dropout=0.1):
+    def __init__(self, param_dim=4, state_dim=24, hidden_channels=None, dropout=0.1,
+                 pool="mean"):
         super().__init__()
         if hidden_channels is None:
             hidden_channels = [32, 64, 128]
         self.param_dim = param_dim
+        self.pool = pool
         in_c = state_dim + 1 + state_dim
         self.blocks = nn.ModuleList()
         cin = in_c
@@ -67,6 +69,8 @@ class ParamHeadCNN(nn.Module):
             self.blocks.append(ConvBlock(cin, hc, time_emb_dim=0, dropout=dropout))
             cin = hc
         self.head = nn.Conv1d(cin, param_dim, 1)
+        if pool == "attn":
+            self.attn_pool = AttentionPool1D(param_dim)
 
     def forward(self, obs, forcing, x_hat):
         obs_clean = torch.nan_to_num(obs, nan=0.0)
@@ -78,8 +82,9 @@ class ParamHeadCNN(nn.Module):
         for block in self.blocks:
             x = block(x)
         x = self.head(x)
-        x = x.mean(dim=-1)
-        return x
+        if self.pool == "attn":
+            return self.attn_pool(x)
+        return x.mean(dim=-1)
 
 
 class JointDirectUNet(nn.Module):
@@ -93,12 +98,14 @@ class JointDirectUNet(nn.Module):
     """
 
     def __init__(self, state_dim=3, hidden_channels=None, dropout=0.1, param_dim=4,
-                 param_loss_weight=0.1, param_head_channels=None):
+                 param_loss_weight=0.1, param_head_channels=None, param_ref=None,
+                 param_head_pool="mean"):
         super().__init__()
         self.state_dim = state_dim
         self.param_dim = param_dim
         self.param_loss_weight = param_loss_weight
         self.cond_extra_dim = 1
+        self._stage = 1
         if hidden_channels is None:
             hidden_channels = [64, 128, 256]
         self.unet = UNet1D(
@@ -117,7 +124,24 @@ class JointDirectUNet(nn.Module):
             state_dim=state_dim,
             hidden_channels=param_head_channels,
             dropout=dropout,
+            pool=param_head_pool,
         )
+        if param_ref is None:
+            param_ref = [1.0] * param_dim
+        ref = torch.tensor(param_ref, dtype=torch.float32)
+        if ref.numel() != param_dim:
+            raise ValueError(f"param_ref length {ref.numel()} != param_dim {param_dim}")
+        self.register_buffer("param_ref", ref)
+        self.register_buffer("param_scale", 0.2 * ref)
+
+    def _norm(self, param):
+        return (param - self.param_ref) / self.param_scale
+
+    def _denorm(self, param_norm):
+        return param_norm * self.param_scale + self.param_ref
+
+    def set_stage(self, stage):
+        self._stage = stage
 
     def _cond(self, batch):
         obs = batch.obs
@@ -126,26 +150,42 @@ class JointDirectUNet(nn.Module):
         cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
         return cond
 
-    def forward(self, batch):
+    def _forward_state(self, batch):
         B, T, D = batch.obs.shape
         cond = self._cond(batch)
         x = torch.zeros(B, D, T, device=batch.obs.device)
         tau = torch.zeros(B, device=batch.obs.device)
         v_state = self.unet(x, cond.transpose(1, 2), tau=tau).transpose(1, 2)
-        params = self.param_head(batch.obs, batch.forcing, v_state.detach())
-        return v_state, params
+        return v_state
+
+    def _forward_norm(self, batch):
+        v_state = self._forward_state(batch)
+        params_norm = self.param_head(batch.obs, batch.forcing, v_state.detach())
+        return v_state, params_norm
+
+    def forward(self, batch):
+        v_state, params_norm = self._forward_norm(batch)
+        return v_state, self._denorm(params_norm)
 
     def estimate_params(self, batch):
         _, params = self.forward(batch)
         return params
 
     def compute_loss(self, batch):
-        v_state, params = self.forward(batch)
+        v_state, params_norm = self._forward_norm(batch)
         loss_state = F.mse_loss(v_state, batch.states)
         if batch.true_params is not None and self.param_loss_weight > 0:
-            loss_param = F.mse_loss(params, batch.true_params.to(batch.states.device))
+            target = self._norm(batch.true_params.to(batch.states.device))
+            loss_param = F.mse_loss(params_norm, target)
             return loss_state + self.param_loss_weight * loss_param
         return loss_state
+
+    def compute_param_loss(self, batch):
+        _, params_norm = self._forward_norm(batch)
+        if batch.true_params is None:
+            return torch.tensor(0.0, device=batch.states.device)
+        target = self._norm(batch.true_params.to(batch.states.device))
+        return F.mse_loss(params_norm, target)
 
     def sample(self, batch, return_params=False):
         v_state, params = self.forward(batch)

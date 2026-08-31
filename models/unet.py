@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 
@@ -13,6 +14,29 @@ class SinusoidalEmbedding(nn.Module):
         freqs = torch.exp(-math.log(10000.0) * torch.arange(half, device=t.device) / half)
         args = t.unsqueeze(-1) * freqs.unsqueeze(0)
         return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+
+
+class AttentionPool1D(nn.Module):
+    """Learned-query attention pooling over the time axis of (B, C, T).
+
+    A single learned query vector attends over the T timesteps and produces a
+    weighted mean ``(B, C)``. Unlike global average pooling, this lets the
+    network weight the timesteps that carry the most signal (e.g. where the
+    state response to a model parameter is strongest), which aids regression
+    of window-constant parameters whose effect unfolds over time.
+    """
+
+    def __init__(self, channels: int):
+        super().__init__()
+        self.channels = channels
+        self.query = nn.Parameter(torch.zeros(1, channels, 1))
+        nn.init.kaiming_uniform_(self.query, a=math.sqrt(5))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, T)
+        scale = math.sqrt(self.channels)
+        attn = torch.softmax((x * self.query) / scale, dim=-1)  # (B, C, T)
+        return (x * attn).sum(dim=-1)  # (B, C)
 
 
 class ConvBlock(nn.Module):

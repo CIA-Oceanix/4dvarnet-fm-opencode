@@ -143,6 +143,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_flow_channels=jc.get("param_flow_channels", None),
             train_tau_0_only=jc.train_tau_0_only,
             param_ref=jc.get("param_ref", None),
+            param_flow_pool=jc.get("param_flow_pool", "mean"),
         )
     elif model_type == "joint_direct_unet":
         from models.direct_unet import JointDirectUNet
@@ -155,6 +156,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
             param_head_channels=jdu.get("param_head_channels", None),
+            param_ref=jdu.get("param_ref", None),
+            param_head_pool=jdu.get("param_head_pool", "mean"),
         )
     elif model_type == "predict_state_cfm":
         from models.vanilla_cfm import PredictStateCFM
@@ -492,6 +495,19 @@ def main(cfg: DictConfig):
             train_time += time.time() - t0
             print(f"    Stage 2 done in {time.time()-t0:.1f}s")
         elif model_type == "tweedie_cfm" and epochs_s2 > 0:
+            t0 = time.time()
+            stage_cfg = cfg.training.stage2
+            lit = LitModel(model, model_type=model_type, stage=2,
+                           lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
+                           use_gradient_loss=cfg.training.loss.use_gradient,
+                           gradient_weight=cfg.training.loss.gradient_weight)
+            trainer = create_trainer(cfg, 2)
+            trainer.fit(lit, loaders["train"], loaders["val"])
+            path = cfg.paths.checkpoint_stage2
+            torch.save(lit.model.state_dict(), path)
+            train_time += time.time() - t0
+            print(f"    Stage 2 done in {train_time-t0:.1f}s")
+        elif model_type in ("joint_cfm", "joint_direct_unet") and epochs_s2 > 0:
             t0 = time.time()
             stage_cfg = cfg.training.stage2
             lit = LitModel(model, model_type=model_type, stage=2,

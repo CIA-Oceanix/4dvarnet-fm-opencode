@@ -189,6 +189,8 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
                 "param_flow_channels": inferred_params.get("param_flow_channels", None),
                 "param_head_channels": inferred_params.get("param_head_channels", None),
+                "param_flow_pool": "attn" if "model.param_flow.attn_pool.query" in state_dict else "mean",
+                "param_head_pool": "attn" if "model.param_head.attn_pool.query" in state_dict else "mean",
                 "device": "cpu",
             },
             "deterministic": False,
@@ -222,6 +224,14 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                         m[key] = tc[key]
                 if len(tc) > 0:
                     m.tweedie_cfm = tc
+            for sub in ("joint_cfm", "joint_direct_unet"):
+                sub_cfg = yaml_cfg.model.get(sub, {})
+                if hasattr(sub_cfg, "get"):
+                    m = cfg.model
+                    for key in ("param_ref", "param_flow_pool", "param_head_pool",
+                                "param_flow_channels", "param_head_channels"):
+                        if m.get(key) is None and key in sub_cfg:
+                            m[key] = sub_cfg[key]
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not merge tweedie_cfm from {config_path}: {e}")
 
@@ -288,6 +298,7 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_flow_channels=cfg.model.get("param_flow_channels", None),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             param_ref=cfg.model.get("param_ref", None),
+            param_flow_pool=cfg.model.get("param_flow_pool", "mean"),
         )
     elif model_class == JointDirectUNet:
         model = model_class(
@@ -297,6 +308,8 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_head_channels=cfg.model.get("param_head_channels", None),
+            param_ref=cfg.model.get("param_ref", None),
+            param_head_pool=cfg.model.get("param_head_pool", "mean"),
         )
     elif model_class == TweedieCFM:
         tc = cfg.model.get("tweedie_cfm", {})
@@ -465,6 +478,7 @@ def _run_case_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -482,7 +496,8 @@ def _run_case_inference(
     model.eval()
     is_joint = isinstance(model, (JointCFM, JointDirectUNet))
     member_preds: list[list] = [[] for _ in range(n_members)]
-    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint else None
+    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint and not ens_then_head else None
+    ens_then_head_params: list = [] if (is_joint and ens_then_head) else None
     all_true = []
     param_trues = []
     x0_all = []
@@ -496,9 +511,15 @@ def _run_case_inference(
 
             for m in range(n_members):
                 if isinstance(model, JointCFM):
-                    pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, N_outer=n_outer, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
                 elif isinstance(model, JointDirectUNet):
-                    pred, params = model.sample(batch_obj, return_params=True)
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, return_params=True)
                 elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
@@ -508,8 +529,19 @@ def _run_case_inference(
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
-                if is_joint:
+                if is_joint and not ens_then_head:
                     member_param_preds[m].append(params.detach().float().cpu())
+            if ens_then_head:
+                # Average the n_members state estimates for THIS batch, then
+                # estimate params once from the ensemble-mean state (stability
+                # for the param head). member_preds keeps accumulating globally.
+                cur = [torch.cat([member_preds[m][-1]], dim=0) for m in range(n_members)]
+                x_hat_mean = torch.stack(cur, dim=-1).mean(dim=-1)
+                if isinstance(model, JointCFM):
+                    p = model.sample_params_from_state(batch_obj, x_hat_mean, N_outer=n_outer)
+                else:
+                    _, p = model.sample(batch_obj, return_params=True)
+                ens_then_head_params.append(p.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
@@ -543,10 +575,15 @@ def _run_case_inference(
         out["members"] = members
         out["trajectories"] = members.mean(axis=-1)
     if is_joint:
-        # Each member predicts a (W, P) param vector; stack+mean to get the
-        # per-window ensemble-mean params (W, P), matching params_true (W, P).
-        per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
-        out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
+        if ens_then_head:
+            # Params estimated once from the ensemble-mean state, one (W_batch, P)
+            # per batch.
+            out["params_pred"] = torch.cat(ens_then_head_params, dim=0).numpy()
+        else:
+            # Each member predicts a (W, P) param vector; stack+mean to get the
+            # per-window ensemble-mean params (W, P), matching params_true (W, P).
+            per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
+            out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
         out["params_true"] = torch.cat(param_trues, dim=0).numpy()
         # Full-state initial conditions + clean forcing for the forecast-skill
         # metric (these must NOT be subsampled to the observed subspace).
@@ -562,6 +599,7 @@ def run_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -571,6 +609,7 @@ def run_inference(
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
     """
     return {
-        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer)
+        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
+                                  ens_then_head=ens_then_head)
         for case, dl in dataloaders.items()
     }
