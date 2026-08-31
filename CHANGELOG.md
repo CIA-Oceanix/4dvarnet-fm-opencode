@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-08-31: QG S1 CUDA crash fix + relaunch (PR #126, job 51069)
+
+**Summary:** The first S1 production run (job 51064) **failed both tasks** with `TypeError: cannot convert cuda:0 device type tensor to numpy` at `_resize_state_layers`. `spectral_resize_2d` moves its input to the target device (cuda), but the numpy-input branch of `_resize_state_layers` called `.numpy()` without moving back to CPU — only the DA-trajectory upsample in `run()` (line ~539) passes a numpy array under a cuda device, so CPU-only tests never caught it. Fixed with `.cpu()` before `.numpy()` (PR #126, squash-merged → `4a05512`). Relaunched `batch/run_qg_s1.sbatch` as **job 51069** (2-task array, task 0 RUNNING on A40, task 1 queued); the dataset cache from the failed job's completed spinup is reused, so the ETKF proceeds directly.
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_resize_state_layers` numpy branch: `out.cpu().numpy()` (was `out.numpy()`); docstring notes numpy output is moved back to CPU.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The production-scale S1 run exposed a device-handling bug that the CPU-only fast tests could not exercise. The `.cpu()` before `.numpy()` makes the numpy branch correct for any non-CPU device.
+
+**Verification:** `test_s1_cross_res_run_smoke` + roundtrip/downsample tests pass; full fast QG suite 46 passed (1 pre-existing cadence failure); ruff clean. PR #126 pytest green, approved by `rfablet-review`, squash-merged at `4a05512`.
+
 ## 2026-08-31: QG S1 merges + production launch (PRs #123/#124, job 51064)
 
 **Summary:** Drived the S1 cross-resolution work through the run-to-completion PR flow and launched the production run. PR #123 (S1 cross-res DA baselines + per-field metrics, caching, trajectory storage) approved by `rfablet-review`, pytest green, squash-merged to `feat/qg-case-study` (→ `28d50f8`). Caught and fixed a batch bug found in review: `batch/run_qg_s1.sbatch` indexed `LAGS[$SLURM_ARRAY_TASK_ID]` for lag 1.0/2.0 but never declared `#SBATCH --array`, so only task 0 would run — fixed with `--array=0-1` via PR #124 (batch-only, squash-merged → `28f7f1a`). Also added `*.err`/`*_*.out` root-level SLURM artifacts to `.gitignore` (the ~100 uncommitted `NNNNN_*.err` files are now ignored). Launched `batch/run_qg_s1.sbatch` as **job 51064** (2-task array on A40 `sl-mee-br-205`, nx=64 da_nx=16, psi-obs, cols=4, 1% noise, lag 1.0/2.0).
