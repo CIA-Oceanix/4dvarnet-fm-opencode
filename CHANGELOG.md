@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-31: QG S1 merges + production launch (PRs #123/#124, job 51064)
+
+**Summary:** Drived the S1 cross-resolution work through the run-to-completion PR flow and launched the production run. PR #123 (S1 cross-res DA baselines + per-field metrics, caching, trajectory storage) approved by `rfablet-review`, pytest green, squash-merged to `feat/qg-case-study` (→ `28d50f8`). Caught and fixed a batch bug found in review: `batch/run_qg_s1.sbatch` indexed `LAGS[$SLURM_ARRAY_TASK_ID]` for lag 1.0/2.0 but never declared `#SBATCH --array`, so only task 0 would run — fixed with `--array=0-1` via PR #124 (batch-only, squash-merged → `28f7f1a`). Also added `*.err`/`*_*.out` root-level SLURM artifacts to `.gitignore` (the ~100 uncommitted `NNNNN_*.err` files are now ignored). Launched `batch/run_qg_s1.sbatch` as **job 51064** (2-task array on A40 `sl-mee-br-205`, nx=64 da_nx=16, psi-obs, cols=4, 1% noise, lag 1.0/2.0).
+
+**Files modified:**
+- `.gitignore` — ignore root-level `[0-9]*_[0-9]*.err`/`.out` SLURM artifacts.
+- `batch/run_qg_s1.sbatch` — add `#SBATCH --array=0-1` so both lags run (PR #124).
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The S1 production run is the user's requested cross-resolution DA baseline; the array declaration was required for both lag 1.0 and 2.0 to execute. Hygiene fix keeps ~100 SLURM stderr artifacts out of version control.
+
+**Verification:** PR #123 pytest green (46 passed; pre-existing cadence failure confirmed on base). PR #124 pytest green. Merged at `28f7f1a`. `squeue` shows `51064_0` RUNNING on `sl-mee-br-205`, `51064_1` PD.
+
 ## 2026-08-31: QG S1 cross-resolution case study — DA baselines (resolution-mismatch model error)
 
 **Summary:** Implemented the S1 resolution-mismatch case-study end-to-end. The S1 scenario is redesigned from the old S1a/S1b split (which the user had replaced with a single `test_s1`) into a **cross-resolution DA setup**: truth/obs at 64×64, DA model at 16×16 (`da_nx`), with param bias (`rd,rek·0.85`) + corrupted moving-storm wind layered on top. `run()` now handles the cross-resolution seams: init is spectrally downsampled to the DA grid, the psi-obs H-function spectrally upsamples the DA streamfunction to the obs grid, localization is computed in physical (obs-grid) coordinates, and the DA/free-forecast trajectories are upsampled back to the truth grid for metrics. `obs_var='q'` with a cross-res model is rejected (PV-obs indices select truth-grid points with no 1:1 lower-res mapping — S1 is psi-only). Free-divergence calibration confirms separation: S0 ~6.7e-8 vs S1 ~0.99 at small scale.
