@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
+cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-joint-neural
 
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
 export CONDA_DEFAULT_ENV=fdv
@@ -40,6 +40,7 @@ rm -rf "experiments/${EXP}"
 
 python train.py \
   --config-name experiment/${EXP} \
+  ++data.test_cache=experiments/l96_datasets_obsj2_int100_nwin200.pt \
   hydra.run.dir=. \
   hydra.output_subdir=null
 

@@ -16,6 +16,7 @@ model:
   joint_cfm:
     param_dim: 8
     param_loss_weight: 0.1
+    param_flow_channels: [32, 64, 128]
     train_tau_0_only: true
 
 training:

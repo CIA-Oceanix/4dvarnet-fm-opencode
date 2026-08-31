@@ -169,6 +169,7 @@ class JointCFMConfig:
     param_loss_weight: float = 0.1
     param_noise_min: float = 0.0
     param_noise_max: float = 0.3
+    param_flow_channels: Optional[List[int]] = None
     train_tau_0_only: bool = False
 
 
@@ -176,6 +177,7 @@ class JointCFMConfig:
 class JointDirectUNetConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
+    param_head_channels: Optional[List[int]] = None
 
 
 @dataclass

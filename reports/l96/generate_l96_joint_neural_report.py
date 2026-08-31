@@ -21,6 +21,8 @@ import logging
 import math
 from pathlib import Path
 
+import numpy as np
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -90,8 +92,52 @@ def metrics_case(data, case):
     return metrics.get(case)
 
 
+def param_ev_from_npz(edir: Path, case: str, ens: int) -> np.ndarray | None:
+    """Per-parameter EV ($EV_p = 1 - mean((pred-true)^2)/var(true)$) computed
+    offline from the stored eval arrays (single-sample if ``ens=0``, else the
+    member-mean params of the ``ens``30 run). Returns ``(8,)`` or None."""
+    suff = "_ens30" if ens else ""
+    npz = edir / f"joint_estimates_{case}{suff}.npz"
+    if not npz.exists():
+        return None
+    d = np.load(npz)
+    pred = np.asarray(d["params_pred"], dtype=float)
+    true = np.asarray(d["params_true"], dtype=float)
+    mse = np.mean((pred - true) ** 2, axis=0)
+    var_true = np.var(true, axis=0)
+    return 1.0 - mse / np.maximum(var_true, 1e-12)
+
+
+DA_PARAM_METHODS = ("Joint-ETKF", "Joint-EnKF")
+
+
+def da_param_rmse_tables(da_case) -> dict:
+    """Per-parameter RMSE for the joint DA filters from ``l96_joint_comparison.json``.
+
+    Returns ``{method: {case ("S0"/"S1"): {param: float}}}`` for methods that store a
+    full 8-param ``param_rmse`` dict. Per-parameter **EV** and the free forecast are NOT
+    stored for DA (the per-window predictions were not archived), so DA rows in the EV
+    tables render as ``--``.
+    """
+    tables = {}
+    if not da_case:
+        return tables
+    for m in DA_PARAM_METHODS:
+        per_case = {}
+        for case in ("S0", "S1"):
+            e = (da_case.get(case) or {}).get(m) or {}
+            pr = e.get("param_rmse")
+            if isinstance(pr, dict) and pr:
+                per_case[case] = {k: float(v) for k, v in pr.items() if k in PARAM_LIST}
+        if per_case:
+            tables[m] = per_case
+    return tables
+
+
 def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> None:
     md = []
+    da_case = load_json(comparison_json)
+    da_param_rmse = da_param_rmse_tables(da_case)
 
     md.append("# L96 Joint State-Parameter Neural Estimation Benchmark")
     md.append("")
@@ -102,6 +148,67 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
               "**and** the 8 model parameters `F, c1, hx, eps, w1..w4` (fast weights per index; "
               "h fixed), matching the L96 joint DA convention. Each model's predictions are "
               "evaluated on the same cached S0/S1 test set used by the DA baselines.")
+    md.append("")
+    md.append("**Oracle-free retrain (2026-08-31):** the numbers below are from the retrained "
+              "checkpoints produced with the true-parameter oracle removed — the state UNet "
+              "conditions on `[obs, forcing]` only (`cond_extra_dim=1`, `output_dim=state_dim`) "
+              "and a dedicated parameter head (`ParamFlowCNN` / `ParamHeadCNN`) reads the params "
+              "from that oracle-free state estimate; `true_params` appear only as the regression "
+              "target. Earlier published per-parameter rows came from oracle-contaminated runs "
+              "(true params fed into the UNet conditioning) and are **not** a valid baseline — "
+              "the correct comparison is the **joint DA baselines** table below.")
+    md.append("")
+    md.append("**Per-parameter detail:** `reports/l96/outputs/l96_joint_param_diagnostic.md` gives "
+              "the full offline per-parameter RMSE / EV / NRMSE and free-forecast tables (single "
+              "and ens30, all runs), recomputed from the stored eval arrays.")
+    md.append("")
+    md.append("---")
+    md.append("")
+
+    # Consolidated neural-vs-DA summary (state + mean per-param RMSE, S0/S1)
+    md.append("## Consolidated summary — neural vs DA (S0/S1)")
+    md.append("")
+    md.append("Single-sample state RMSE (S0/S1), S1/S0 degradation, and **mean** per-parameter RMSE "
+              "over the 8 params (F, c1, hx, eps, w1..w4). State RMSE beats DA on S1 (robust "
+              "≈1.0 degradation) but DA filters recover the parameters far better on S0 "
+              "(Joint-ETKF mean per-param RMSE 0.053 vs best neural 0.122). L9's multi-τ param "
+              "head is the notable failure (mean 0.750 on S0).")
+    md.append("")
+    md.append("| Method | S0 state RMSE | S1 state RMSE | S1/S0 | S0 paramRMSE mean | S1 paramRMSE mean |")
+    md.append("|---|---|---|---|---|---|")
+    rows = []
+    for exp_name in MODEL_DEFS:
+        edir = exp_dir / exp_name
+        data = find_single_eval(edir) if edir.is_dir() else None
+        m0 = metrics_case(data, "s0") if data else None
+        m1 = metrics_case(data, "s1") if data else None
+        if not m0 or not m1:
+            rows.append((exp_name, [None] * 5))
+            continue
+        pr0 = m0.get("param_rmse_mean")
+        pr1 = m1.get("param_rmse_mean")
+        deg = (data.get("metrics", {}).get("degradation") if data else None)
+        rows.append((exp_name, [m0["rmse"], m1["rmse"], deg, pr0, pr1]))
+    for method, per_case in da_param_rmse.items():
+        e0 = (da_case.get("S0") or {}).get(method) or {}
+        e1 = (da_case.get("S1") or {}).get(method) or {}
+        r0 = (e0.get("state_rmse") or {}).get("mean")
+        r1 = (e1.get("state_rmse") or {}).get("mean")
+        pr0v = [v for v in (per_case.get("S0") or {}).values() if isinstance(v, float)]
+        pr1v = [v for v in (per_case.get("S1") or {}).values() if isinstance(v, float)]
+        pr0 = float(np.mean(pr0v)) if pr0v else None
+        pr1 = float(np.mean(pr1v)) if pr1v else None
+        deg = (r1 / r0) if (isinstance(r0, float) and isinstance(r1, float) and r0 > 0) else None
+        rows.append((method, [r0, r1, deg, pr0, pr1]))
+    for method, vals in rows:
+        cells = [f"| {method} |"]
+        for v in vals:
+            cells.append(f" {fmt_num(v)} |")
+        md.append("".join(cells))
+    md.append("")
+    md.append("*Lower is better for every column: state RMSE, S1/S0 degradation, and mean per-param "
+              "RMSE. DA S1 paramRMSE average includes the pinned-to-prior `w3/w4` = 0, so it is not "
+              "fully apples-to-apples (see the per-column parameter tables below).*")
     md.append("")
     md.append("---")
     md.append("")
@@ -117,35 +224,72 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     md.append("---")
     md.append("")
 
-    # Single-sample table
+    # Single-sample table (neural + joint-DA, state RMSE / EV / ES, S1/S0 degradation)
     md.append("## Single-sample results (n_members=1, k=1)")
     md.append("")
-    md.append("State RMSE over the observed subspace. S1/S0 is the degradation ratio "
-              "(>1 means the model is worse on the parameter-biased S1 setup).")
+    md.append("State metrics over the observed subspace for the neural models (single-sample) "
+              "and the joint-DA filters. S1/S0 is the degradation ratio (>1 means worse on the "
+              "parameter-biased S1 setup). ES for the deterministic neural models and DA rows is "
+              "the N=1 mean-absolute-error proxy; the DA filters' ES is N=30 (see DA note).")
     md.append("")
-    md.append("| ID | S0 RMSE | S1 RMSE | S1/S0 |")
-    md.append("|---|---|---|---|")
+    md.append("| ID | S0 RMSE | S0 EV | S0 ES | S1 RMSE | S1 EV | S1 ES | S1/S0 |")
+    md.append("|---|---|---|---|---|---|---|---|")
     rows = []
     for exp_name in MODEL_DEFS:
         edir = exp_dir / exp_name
         data = find_single_eval(edir) if edir.is_dir() else None
         m0 = metrics_case(data, "s0") if data else None
         m1 = metrics_case(data, "s1") if data else None
+        if m0 and m1:
+            ev0 = m0["ev"]["groups"]["all_obs"] if m0.get("ev") else None
+            es0 = m0["es"]["groups"]["all_obs"] if m0.get("es") else None
+            ev1 = m1["ev"]["groups"]["all_obs"] if m1.get("ev") else None
+            es1 = m1["es"]["groups"]["all_obs"] if m1.get("es") else None
+        else:
+            ev0 = es0 = ev1 = es1 = None
         r0 = m0["rmse"] if m0 else None
         r1 = m1["rmse"] if m1 else None
         deg = (data.get("metrics", {}).get("degradation") if data else None)
         if isinstance(deg, float) and math.isnan(deg):
             deg = None
-        rows.append((exp_name, r0, r1, deg))
-    best_r0 = min((r for _, r, _, _ in rows if isinstance(r, float)), default=None)
-    best_r1 = min((r for _, _, r, _ in rows if isinstance(r, float)), default=None)
-    for exp_name, r0, r1, deg in rows:
-        b0 = " **" if isinstance(r0, float) and r0 == best_r0 else ""
-        b1 = " **" if isinstance(r1, float) and r1 == best_r1 else ""
-        md.append(f"| {exp_name} | {fmt_num(r0)}{b0} | {fmt_num(r1)}{b1} | {fmt_num(deg)} |")
+        rows.append((exp_name, r0, ev0, es0, r1, ev1, es1, deg))
+    # Joint-DA filters: state RMSE / EV / ES read from the comparison JSON (S0/S1 deg computed).
+    da_rows = []
+    for method, per_case in da_param_rmse.items():
+        e0 = (da_case.get("S0") or {}).get(method) or {}
+        e1 = (da_case.get("S1") or {}).get(method) or {}
+        r0 = (e0.get("state_rmse") or {}).get("mean")
+        r1 = (e1.get("state_rmse") or {}).get("mean")
+        ev0 = (e0.get("ev") or {}).get("mean")
+        ev1 = (e1.get("ev") or {}).get("mean")
+        es0 = (e0.get("es") or {}).get("mean")
+        es1 = (e1.get("es") or {}).get("mean")
+        deg = (r1 / r0) if (isinstance(r0, float) and isinstance(r1, float) and r0 > 0) else None
+        rows.append((method, r0, ev0, es0, r1, ev1, es1, deg))
+        da_rows.append(method)
+    # best per column: columns are [S0 RMSE, S0 EV, S0 ES, S1 RMSE, S1 EV, S1 ES, S1/S0];
+    # lowest for RMSE/ES/degradation (0,2,3,5,6), highest for EV (1,4).
+    best = {j: (None, False) for j in range(7)}
+    for _, r0, ev0, es0, r1, ev1, es1, deg in rows:
+        for j, v in enumerate([r0, ev0, es0, r1, ev1, es1, deg]):
+            if not isinstance(v, float):
+                continue
+            lower_is_better = j in (0, 2, 3, 5, 6)
+            bv, _ = best[j]
+            if bv is None or (v < bv) == lower_is_better:
+                best[j] = (v, lower_is_better)
+    for exp_name, r0, ev0, es0, r1, ev1, es1, deg in rows:
+        vals = [r0, ev0, es0, r1, ev1, es1, deg]
+        cells = [f"| {exp_name} |"]
+        for j, v in enumerate(vals):
+            bv, _ = best[j]
+            cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
+        md.append("".join(cells))
     md.append("")
-    md.append("*Best per column is bolded (lowest RMSE; S1/S0 degradation >1 means worse on the "
-              "parameter-biased S1 setup).*")
+    md.append("*Best per column: lowest RMSE / ES / degradation, highest EV. The joint-DA rows "
+              "(Joint-ETKF / Joint-EnKF) come from `l96_joint_comparison.json`; their ES is the "
+              "N=30 ensemble score while the neural single-sample ES is an N=1 MAE proxy (not "
+              "strictly comparable, flagged).*")
     md.append("")
     md.append("---")
     md.append("")
@@ -194,14 +338,57 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
             md.append("".join(cells))
         md.append("")
         md.append("*Only ens30 runs present on disk are shown; missing runs render as -- (L8 is "
-                  "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
-                  "highest EV.*")
+              "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
+              "highest EV.*")
+        md.append("")
+        md.append("---")
+        md.append("")
+
+    # Per-parameter EV (ens30)
+    for k in ENS_K_STEPS:
+        md.append(f"## Parameter EV — ens30 (n_members=30, k={k})")
+        md.append("")
+        md.append("Per-parameter explained variance from the **member-mean** parameters of the "
+                  "30-member ensemble (offline from the stored eval arrays). Deep integration "
+                  "(k=10) of the multi-tau JointCFM parameter head can **collapse** the EV "
+                  "(hugely negative) even when the ensemble-mean state improves.")
+        md.append("")
+        header = "| ID | Case | " + " | ".join(PARAM_LIST) + " | mean |"
+        sep = "|---|---|" + "---|" * len(PARAM_LIST) + "---|"
+        md.append(header)
+        md.append(sep)
+        rows = []
+        for exp_name in MODEL_DEFS:
+            edir = exp_dir / exp_name
+            for case in CASES:
+                ev = param_ev_from_npz(edir, case, ens=k) if edir.is_dir() else None
+                rows.append((exp_name, case, ev))
+        best_idx = [None] * (len(PARAM_LIST) + 1)
+        for i in range(len(PARAM_LIST) + 1):
+            vals = []
+            for _, _, ev in rows:
+                if ev is None:
+                    continue
+                v = ev[i] if i < len(PARAM_LIST) else float(np.mean(ev))
+                vals.append(v)
+            best_idx[i] = max(vals) if vals else None
+        for exp_name, case, ev in rows:
+            if ev is not None:
+                vals = list(ev) + [float(np.mean(ev))]
+            else:
+                vals = [None] * (len(PARAM_LIST) + 1)
+            cells = [f"| {exp_name} | {case.upper()} |"]
+            for i, v in enumerate(vals):
+                cells.append(f" {fmt_num(v)}{' **' if (v is not None and v == best_idx[i]) else ''} |")
+            md.append("".join(cells))
+        md.append("")
+        md.append("*Best per cell (highest EV) is bolded. L8 is deterministic (no ensemble).*")
         md.append("")
         md.append("---")
         md.append("")
 
     # Parameter tables
-    for _, label in (("s0", "S0"), ("s1", "S1")):
+    for case, label in (("s0", "S0"), ("s1", "S1")):
         md.append(f"## Parameter RMSE — {label} (single-sample)")
         md.append("")
         md.append("Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.")
@@ -213,7 +400,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             data = find_single_eval(edir) if edir.is_dir() else None
-            m = metrics_case(data, label if label in ("s0", "s1") else "s0")
+            m = metrics_case(data, case)
             if m is None:
                 md.append(f"| {exp_name} | " + " | ".join(["--"] * len(PARAM_LIST)) + " | -- |")
                 continue
@@ -223,6 +410,22 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(prmse.get(p), missing='--')} |")
             cells.append(f" {fmt_num(m.get('param_rmse_mean'), missing='--')} |")
             md.append("".join(cells))
+        # Joint DA filters (per-parameter RMSE from the comparison JSON). Per-parameter
+        # EV and the free forecast are not archived for DA, so only the RMSE rows appear.
+        for method, per_case in da_param_rmse.items():
+            dv = per_case.get(case.upper()) or {}
+            vals = [dv.get(p) for p in PARAM_LIST]
+            meanv = np.mean([v for v in vals if v is not None]) if any(v is not None for v in vals) else None
+            cells = [f"| {method} |"]
+            for v in vals:
+                cells.append(f" {fmt_num(v, missing='--')} |")
+            cells.append(f" {fmt_num(meanv, missing='--')} |")
+            md.append("".join(cells))
+        md.append("")
+        md.append("*Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` "
+                  "(S1 `w3`/`w4` are pinned to the reference prior, not estimated). Per-parameter "
+                  "EV and the free forecast are **not** stored for DA (the per-window predictions "
+                  "were not archived), so those tables show DA as `--`.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -261,8 +464,59 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 best = best_idx[i]
                 cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == best) else ''} |")
             md.append("".join(cells))
+        for method in da_param_rmse:
+            md.append(f"| {method} | " + " | ".join(["--"] * (len(PARAM_LIST) + 1)) + " |")
         md.append("")
-        md.append("*Best per column (lowest NRMSE) is bolded.*")
+        md.append("*Best per column (lowest NRMSE) is bolded. Joint-DA rows render as `--`: per-parameter "
+                  "NRMSE needs the true-parameter scale (`mean(|true|)`) which is not archived for DA "
+                  "(only the aggregated 8-param RMSE in `l96_joint_comparison.json`).*")
+        md.append("")
+        md.append("---")
+        md.append("")
+
+    # Per-parameter EV (single-sample)
+    for case, label in (("s0", "S0"), ("s1", "S1")):
+        md.append(f"## Parameter EV — {label} (single-sample)")
+        md.append("")
+        md.append("Per-parameter explained variance `EV_p = 1 - mean((pred-true)^2)/var(true)` "
+                  "pooled over the 200 windows (computed offline from the stored eval arrays). "
+                  "Negative => parameter estimate is worse than a time-constant mean prediction. "
+                  "Note: `eps/w3/w4` have very small true variance, so even good absolute errors "
+                  "give large negative EV there — **NRMSE above is the fair cross-param metric**.")
+        md.append("")
+        header = "| ID | " + " | ".join(PARAM_LIST) + " | mean |"
+        sep = "|---|" + "---|" * len(PARAM_LIST) + "---|"
+        md.append(header)
+        md.append(sep)
+        rows = []
+        for exp_name in MODEL_DEFS:
+            edir = exp_dir / exp_name
+            ev = param_ev_from_npz(edir, case, ens=0) if edir.is_dir() else None
+            rows.append((exp_name, ev))
+        best_idx = [None] * (len(PARAM_LIST) + 1)
+        for i in range(len(PARAM_LIST) + 1):
+            vals = []
+            for _, ev in rows:
+                if ev is None:
+                    continue
+                v = ev[i] if i < len(PARAM_LIST) else float(np.mean(ev))
+                vals.append(v)
+            best_idx[i] = max(vals) if vals else None
+        for exp_name, ev in rows:
+            if ev is not None:
+                vals = list(ev) + [float(np.mean(ev))]
+            else:
+                vals = [None] * (len(PARAM_LIST) + 1)
+            cells = [f"| {exp_name} |"]
+            for i, v in enumerate(vals):
+                cells.append(f" {fmt_num(v)}{' **' if (v is not None and v == best_idx[i]) else ''} |")
+            md.append("".join(cells))
+        for method in da_param_rmse:
+            md.append(f"| {method} | " + " | ".join(["--"] * (len(PARAM_LIST) + 1)) + " |")
+        md.append("")
+        md.append("*Best per column (highest EV) is bolded. Joint-DA rows render as `--`: per-parameter "
+                  "EV is not archived for the DA baselines (only the aggregated 8-param RMSE in "
+                  "`l96_joint_comparison.json`).*")
         md.append("")
         md.append("---")
         md.append("")
@@ -313,8 +567,12 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 bv, _ = best[j]
                 cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
             md.append("".join(cells))
+        for method in da_param_rmse:
+            md.append(f"| {method} | " + " | ".join(["--"] * 6) + " |")
         md.append("")
-        md.append("*Best per column is bolded (lowest RMSE, highest EV).*")
+        md.append("*Best per column is bolded (lowest RMSE, highest EV). Joint-DA rows render as `--`: "
+                  "the free forecast needs per-window predicted params (`x0`/`forcing` rollouts), "
+                  "which are not archived for DA.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -372,13 +630,13 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     md.append("## DA baselines (joint)")
     md.append("")
     md.append("Joint augmented-state DA filters (state **and** 8 params) benchmarked on the same "
-              "cached S0/S1 test set, vs the best neural joint estimator (L9 single-sample). "
-              "Rows are read from `experiments/l96_joint_comparison.json`; missing methods "
-              "render as --.")
+              "cached S0/S1 test set, for direct comparison against the oracle-free neural rows "
+              "above. Rows are read from `experiments/l96_joint_comparison.json`; missing methods "
+              "render as --. For a per-parameter DA table (Joint-ETKF/EnKF/Strong-4DVar) see "
+              "`l96_joint_da_benchmark.md`.")
     md.append("")
     md.append("| Method | S0 RMSE | S0 ES | S1 RMSE | S1 ES |")
     md.append("|---|---|---|---|---|")
-    da_case = load_json(comparison_json)
     joint_da_names = []
     if da_case:
         seen = set()
