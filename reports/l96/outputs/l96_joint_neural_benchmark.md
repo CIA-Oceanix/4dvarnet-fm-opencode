@@ -22,9 +22,9 @@ State RMSE over the observed subspace. S1/S0 is the degradation ratio (>1 means 
 
 | ID | S0 RMSE | S1 RMSE | S1/S0 |
 |---|---|---|---|
-| L7_joint_cfm_s0s1 | 0.6062 ** | 0.6620 | 1.0920 |
-| L8_joint_direct_unet_s0s1 | 0.6096 | 0.6611 | 1.0846 |
-| L9_joint_cfm_s0s1_multitau | 0.6257 | 0.6313 ** | 1.0089 |
+| L7_joint_cfm_s0s1 | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | 0.6257 ** | 0.6313 ** | 1.0089 |
 
 *Best per column is bolded (lowest RMSE; S1/S0 degradation >1 means worse on the parameter-biased S1 setup).*
 
@@ -36,9 +36,9 @@ State RMSE / explained variance (EV) / energy score (ES) over the observed subsp
 
 | ID | S0 RMSE | S0 EV | S0 ES | S1 RMSE | S1 EV | S1 ES |
 |---|---|---|---|---|---|---|
-| L7_joint_cfm_s0s1 | 0.6021 | 0.8624 | 0.3669 | 0.6579 | 0.8384 | 0.3969 |
+| L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- |
-| L9_joint_cfm_s0s1_multitau | 0.6009 ** | 0.8642 ** | 0.3615 ** | 0.6037 ** | 0.8622 ** | 0.3636 ** |
+| L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- | -- | -- |
 
 *Only ens30 runs present on disk are shown; missing runs render as -- (L8 is deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, highest EV.*
 
@@ -50,9 +50,9 @@ State RMSE / explained variance (EV) / energy score (ES) over the observed subsp
 
 | ID | S0 RMSE | S0 EV | S0 ES | S1 RMSE | S1 EV | S1 ES |
 |---|---|---|---|---|---|---|
-| L7_joint_cfm_s0s1 | 0.6021 | 0.8624 | 0.3669 | 0.6579 | 0.8384 | 0.3969 |
+| L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- |
-| L9_joint_cfm_s0s1_multitau | 0.5251 ** | 0.8932 ** | 0.3115 ** | 0.5308 ** | 0.8903 ** | 0.3153 ** |
+| L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- | -- | -- |
 
 *Only ens30 runs present on disk are shown; missing runs render as -- (L8 is deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, highest EV.*
 
@@ -64,8 +64,8 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 
 | ID | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
 |---|---|---|---|---|---|---|---|---|---|
-| L7_joint_cfm_s0s1 | 6.3826 | 0.1338 | 0.2543 | 0.6942 | 0.4033 | 0.3776 | 0.7224 | 0.7296 | 1.2122 |
-| L8_joint_direct_unet_s0s1 | 0.1295 | 0.1174 | 0.0165 | 0.0159 | 0.0837 | 0.0987 | 0.0149 | 0.0127 | 0.0611 |
+| L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 | L9_joint_cfm_s0s1_multitau | 0.1765 | 0.0803 | 0.0386 | 0.0118 | 0.0371 | 0.1054 | 0.0117 | 0.0118 | 0.0591 |
 
 ---
@@ -76,8 +76,8 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 
 | ID | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
 |---|---|---|---|---|---|---|---|---|---|
-| L7_joint_cfm_s0s1 | 6.3826 | 0.1338 | 0.2543 | 0.6942 | 0.4033 | 0.3776 | 0.7224 | 0.7296 | 1.2122 |
-| L8_joint_direct_unet_s0s1 | 0.1295 | 0.1174 | 0.0165 | 0.0159 | 0.0837 | 0.0987 | 0.0149 | 0.0127 | 0.0611 |
+| L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 | L9_joint_cfm_s0s1_multitau | 0.1765 | 0.0803 | 0.0386 | 0.0118 | 0.0371 | 0.1054 | 0.0117 | 0.0118 | 0.0591 |
 
 ---
@@ -174,8 +174,9 @@ Joint augmented-state DA filters (state **and** 8 params) benchmarked on the sam
 |---|---|---|---|---|
 | Joint-ETKF | 0.6334 | 0.2977 | 1.4971 | 0.9374 |
 | Joint-EnKF | 0.7263 | 0.3709 | 1.4592 | 0.8434 |
+| Joint-Strong-4DVar | 0.7122 | 0.4623 | 1.2001 | 0.8102 |
 
-*ES is the N=30 ensemble Energy Score; lower is better for both RMSE and ES. Joint-Strong-4DVar is deferred; Joint-EnKF / Joint-ETKF rows appear once the comparator writes them into `l96_joint_comparison.json`.*
+*ES is the N=30 ensemble Energy Score for the filters; Joint-Strong-4DVar is a deterministic solve so its ES is the N=1 MAE proxy (marked per the DA report). Lower is better for RMSE and ES. Rows are read from `experiments/l96_joint_comparison.json`.*
 
 ---
 

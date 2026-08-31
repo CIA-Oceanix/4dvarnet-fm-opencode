@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-31: L96 Joint-Strong-4DVar — batched pure-gradient Adam (NaN fix) + full 200-window benchmark
+
+**Summary:** Replaced the NaN-diverging sequential LBFGS `JointStrong4DVarL96` with a batched, purely-gradient Adam solve vectorized over all windows (mirrors the state-only `Strong4DVar.assimilate_batch`), fixing the root cause of the prior batch-Adam NaN (free log-param block drifting unboundedly under `lr=0.2` until `exp()`/dynamics overflow). Ran the full 200-window S0/S1 benchmark (Job 51000), updated both joint reports, and recorded the results in PLAN.md/CHANGELOG.
+
+**Headline (cached S0/S1, Obs30, 200 windows, batch=200):** Joint-Strong-4DVar S0 state RMSE **0.7122** / EV 0.7556 / ES 0.462 (N=1 MAE proxy), S1 **1.2001** / EV 0.4129 / ES 0.810. It beats vanilla Strong-4DVar (0.750/1.432) on both cases and is the **best DA row on S1** (ahead of Joint-EnKF 1.459 / Joint-ETKF 1.497); on S0 it ranks third among the joint DA (Joint-ETKF 0.633 best). Param RMSE mean 0.226 (S0) / 0.299 (S1) — weaker than the filters (F 0.85 S0 / 1.44 S1 dominates), consistent with `lr_param`/prior handling. Both cases **200/200 finite** (decision gate ≥180 passed) — the NaN problem is resolved.
+
+**Files modified:**
+- `evaluation/baselines.py` — `JointStrong4DVarL96`: real batched `assimilate_batch` (fixed-iteration Adam, vectorized `_forward_l96_batch`, per-sub-window param carry); new `lr_param` (default `0.1*lr`) and `param_clamp_span` (default `ln 1.5`) hard log-param envelope clamp; `param_prior_scale` default 0.1→1.0; grad-norm cap 100; removed the `assimilate_batch=None` shadow
+- `evaluation/run_l96.py` — batch-path gate `hasattr`→`callable`; NaN-window skip guard in both batch + sequential loops (lines 184/215)
+- `eval_joint_comparison_l96.py` — logs `finite windows: X/N` per method
+- `batch/run_l96_joint_comparison.sbatch` — `--batch-size 200` (matches state-only benchmark); comment updated to batched-Adam
+- `tests/test_joint_estimation_l96.py` — replaced obsolete tests with batched-Adam finiteness, batched-route, sequential-fallback, NaN-skip (21 passing)
+- `reports/l96/generate_l96_joint_neural_report.py` — DA-baselines footnote updated (Joint-Strong-4DVar no longer deferred; ES convention note)
+- `reports/l96/outputs/l96_joint_da_benchmark.md`, `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated with the Joint-Strong-4DVar rows
+- `PLAN.md` — Phase C + Experiments joint-DA sections updated; `CHANGELOG.md` — this entry
+
+**Rationale:** The prior `JointStrong4DVarL96` diverged to NaN on the real benchmark (confirmed: the free log-param block under batched Adam drifted unboundedly). The user rejected the sequential LBFGS workaround and requested a purely-gradient scheme mirroring the state-only config. The batched Adam with separate param lr + hard log-envelope clamp keeps `exp()` finite and parameters bounded, matching the state-only Strong-4DVar's fixed-iteration gradient solver — yielding finite, competitive results on all 200+200 windows.
+
+**Verification:** Job 51000 COMPLETED exit 0:0 in 20:47 (S0 + S1 both 200/200 finite). `pytest tests/test_joint_estimation_l96.py -m "not slow"` — 21 passed. Reports regenerated cleanly; DA-baselines table in the neural report now lists all three joint methods.
+
 ## 2026-08-30: Refresh V2rerun ens30 row in the TweedieCFM report + update master with the master-code reproduction
 
 **Summary:** Refreshed the dedicated TweedieCFM report's `V2rerun` **ens30×10** row using the fresh master-code reproduction of published V2 (a retrain of the `V2_tweedie_cfm_l96_rerun` config on master, job 50964), which is now the current best-in-family V2 (S0 **0.4693** / S1 **0.4665**, EV 0.913/0.913, degradation 0.994). Updated master's `experiments/V2_tweedie_cfm_l96_rerun/` with the fresh retrained checkpoints, ens30 eval outputs (`estimates_*.npz`, `members_*.npz`, `neural_eval.json`), `results.json` and `trajectories_*.npz` (PR-branch originals preserved as `.bak`). Per the confirmed scope: only the **ens30** row updates (the N=1 row and the consolidated report's V2 = **kinner1** row are intentionally unchanged). The consolidated report was regenerated and confirmed bit-identical (kinner1 untouched; consistency checks PASS in both reports).

@@ -2471,9 +2471,10 @@ class JointStrong4DVarL96(Strong4DVar):
     """
 
     def __init__(self, da_window_steps=300, B_var=2.0, R_var=0.5, P_var=1.0,
-                 max_iter=40, lr=0.1, dt=0.001, device=torch.device("cpu"),
+                 max_iter=40, lr=0.1, lr_param=None, param_clamp_span=None,
+                 dt=0.001, device=torch.device("cpu"),
                  coupling_exponent=1.0, dynamics=None, obs_operator=None,
-                 h=None, J=4, fast_weights=None, param_prior_scale=0.1):
+                 h=None, J=4, fast_weights=None, param_prior_scale=1.0):
         super().__init__(da_window_steps=da_window_steps, B_var=B_var, R_var=R_var,
                          max_iter=max_iter, lr=lr, dt=dt, device=device,
                          coupling_exponent=coupling_exponent, dynamics=dynamics,
@@ -2481,10 +2482,28 @@ class JointStrong4DVarL96(Strong4DVar):
         self.P_var = P_var
         self.J = J
         self.param_prior_scale = param_prior_scale
+        self.lr_param = 0.1 * lr if lr_param is None else lr_param
+        self.param_clamp_span = 0.4054651081081644 if param_clamp_span is None else param_clamp_span
         self._fixed_h = 1.0 if h is None else h
         self._init_fw = [1.0, 1.0, 0.1, 0.1] if fast_weights is None else list(fast_weights)
         self._sd = self.state_dim
         self.param_dim = _L96_JOINT_PARAM_DIM
+        self._n_scl = 4  # (F, c1, hx, eps)
+        self._ref_fw = [1.0, 1.0, 0.1, 0.1]  # w3/w4 default on S1 (J=2), not estimated
+
+    def _params_to_report(self, mean_est, num_steps):
+        """Return the 8-wide per-step param array (F,c1,hx,eps,w1..w4).
+
+        ``mean_est`` is the estimated [F,c1,hx,eps,w1..wJ] block (J = active fast
+        weights); the unestimated w3/w4 (S1, J=2) default to the reference prior.
+        """
+        arr = np.zeros((num_steps, self.param_dim))
+        n_est = mean_est.shape[-1]
+        arr[:, :n_est] = mean_est
+        for k in range(n_est, self.param_dim):
+            arr[:, k] = self._ref_fw[k - self._n_scl]
+        return arr
+
 
     def _forward_l96(self, x0, steps, win_force, F_v, c1_v, hx_v, eps_v, fw_v):
         traj = [x0]
@@ -2498,6 +2517,18 @@ class JointStrong4DVarL96(Strong4DVar):
             traj.append(next_s)
         return torch.stack(traj)
 
+    def _forward_l96_batch(self, x0, steps, win_force, F_v, c1_v, hx_v, eps_v, fw_v):
+        traj = [x0]
+        h_fixed = self._fixed_h
+        for t in range(1, steps):
+            s = traj[-1]
+            W = win_force[:, t - 1]
+            next_s = self.dynamics.step(s, W, F=F_v, c1=c1_v, h=h_fixed, hx=hx_v,
+                                        eps=eps_v, fast_weights=fw_v)
+            next_s = torch.clamp(next_s, -50.0, 50.0)
+            traj.append(next_s)
+        return torch.stack(traj, dim=1)
+
     def _prior_terms(self, logp, ref):
         return torch.sum((logp - ref) ** 2) / self.P_var
 
@@ -2510,7 +2541,16 @@ class JointStrong4DVarL96(Strong4DVar):
         sd = self._sd
         nw = num_steps // self.da_window_steps
         analysis = np.zeros((num_steps, sd))
-        param_arr = np.zeros((num_steps, self.param_dim))
+        fw_full = list(fast_weights)
+        if len(fw_full) > self.J:
+            fw_full = fw_full[:self.J]
+        n_est = self._n_scl + len(fw_full)
+        param_est = np.zeros((num_steps, n_est))
+
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+        es_acc = _ESAccumulator(num_steps, sd, 1) if ref_full is not None else None
 
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         if self.obs_operator.indices is not None:
@@ -2526,7 +2566,7 @@ class JointStrong4DVarL96(Strong4DVar):
         log_c1 = L(torch.tensor(c1, device=self.device)).detach().requires_grad_(True)
         log_hx = L(torch.tensor(hx, device=self.device)).detach().requires_grad_(True)
         log_eps = L(torch.tensor(eps, device=self.device)).detach().requires_grad_(True)
-        fw_t = torch.tensor(list(fast_weights), dtype=torch.float32, device=self.device,
+        fw_t = torch.tensor(fw_full, dtype=torch.float32, device=self.device,
                             requires_grad=True)
         ref_logF, ref_logc1, ref_loghx, ref_logeps = log_F.detach(), log_c1.detach(), log_hx.detach(), log_eps.detach()
         ref_fw = fw_t.detach().clone()
@@ -2584,12 +2624,164 @@ class JointStrong4DVarL96(Strong4DVar):
                                            F_v, c1_v, hx_v, eps_v, fw_v)
             analysis[start:end] = final_traj.detach().cpu().numpy()
             est = torch.cat([F_v.reshape(1), c1_v.reshape(1), hx_v.reshape(1), eps_v.reshape(1), fw_v.reshape(-1)]).detach().cpu().numpy()
-            param_arr[start:end] = np.tile(est, (self.da_window_steps, 1))
+            param_est[start:end] = np.tile(est, (self.da_window_steps, 1))
+            if es_acc is not None:
+                for t in range(start, end):
+                    es_acc.step(final_traj[t - start].reshape(1, -1), ref_full[t])
             current_bg = final_traj[-1].detach()
             log_F, log_c1, log_hx, log_eps = lF.detach(), lc1.detach(), lhx.detach(), leps.detach()
             fw_t = lfw.detach()
 
+        param_arr = self._params_to_report(param_est, num_steps)
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, "obs_operator", None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr)
+        return BaselineResult(trajectory=analysis, rmse=rmse, params=param_arr,
+                              es=(es_acc.es() if es_acc is not None else None))
+
+    def assimilate_batch(self, observations, obs_mask, forcing, true_state=None,
+                         F=None, c1=None, h=None, hx=None, eps=None,
+                         fast_weights=None, **kwargs):
+        """Batched joint Strong-4DVar over the augmented (state + log-params) control.
+
+        Mirrors ``Strong4DVar.assimilate_batch``: a fixed-iteration Adam solve over
+        all ``B`` windows at once (no LBFGS / line search). ``F``/``c1``/``hx``/``eps``
+        are ``[B]`` tensors and ``fast_weights`` is ``[B, da_J]`` (one per window,
+        already sliced by the caller). Each window's x0 and log-params are optimized
+        jointly over every assimilation window. Parameter stability is enforced by
+        (1) a separate smaller learning rate ``self.lr_param`` on the log-param
+        groups, (2) a hard log-space envelope clamp around each window's reference,
+        and (3) a gradient-norm cap — together these keep ``exp()`` finite and the
+        parameters from drifting to overflow (the batch-Adam NaN of the prior
+        implementation).
+        """
+        B, num_steps, _ = observations.shape
+        if true_state is not None and not torch.is_tensor(true_state):
+            true_state = torch.as_tensor(true_state, device=observations.device)
+        sd = self._sd
+        nw = num_steps // self.da_window_steps
+        device = self.device
+
+        if F is None:
+            F = torch.full((B,), 8.0, device=device)
+        if c1 is None:
+            c1 = torch.full((B,), 1.0, device=device)
+        if h is None:
+            h = torch.full((B,), 1.0, device=device)
+        if hx is None:
+            hx = torch.full((B,), 1.0, device=device)
+        if eps is None:
+            eps = torch.full((B,), 0.1, device=device)
+        if fast_weights is None:
+            fast_weights = torch.tensor([self._init_fw] * B, device=device)
+        if fast_weights.shape[-1] > self.J:
+            fast_weights = fast_weights[..., :self.J]
+        n_est = self._n_scl + fast_weights.shape[-1]
+        self._fixed_h = float(h.reshape(-1)[0].item()) if h.dim() else float(h.item())
+
+        analysis = np.zeros((B, num_steps, sd))
+        param_est = np.zeros((B, num_steps, n_est))
+
+        ref_full = true_state.cpu().numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+
+        interp_obs = _interp_observations(observations, obs_mask)
+        current_bg = interp_obs[:, 0]
+        if self.obs_operator.indices is not None:
+            current_bg = self.obs_operator.expand_to_state(current_bg, sd)
+        current_bg = current_bg + torch.randn(B, sd, device=device) * 1.5
+
+        def Lv(x):
+            return torch.log(torch.clamp(x, min=1e-6))
+
+        log_F = Lv(F).detach().requires_grad_(True)
+        log_c1 = Lv(c1).detach().requires_grad_(True)
+        log_hx = Lv(hx).detach().requires_grad_(True)
+        log_eps = Lv(eps).detach().requires_grad_(True)
+        fw_t = fast_weights.clone().detach().requires_grad_(True)
+        ref_logF, ref_logc1, ref_loghx, ref_logeps = (
+            log_F.detach(), log_c1.detach(), log_hx.detach(), log_eps.detach())
+        ref_fw = fw_t.detach().clone()
+        clamp = self.param_clamp_span
+
+        for w in range(nw):
+            start = w * self.da_window_steps
+            end = start + self.da_window_steps
+            win_obs = observations[:, start:end]
+            win_mask = obs_mask[:, start:end]
+            win_force = forcing[:, start:end]
+
+            x_ctrl = current_bg.clone().detach().requires_grad_(True)
+            x_bg_ref = current_bg.clone().detach()
+
+            lF = log_F.clone().detach().requires_grad_(True)
+            lc1 = log_c1.clone().detach().requires_grad_(True)
+            lhx = log_hx.clone().detach().requires_grad_(True)
+            leps = log_eps.clone().detach().requires_grad_(True)
+            lfw = fw_t.clone().detach().requires_grad_(True)
+            param_list = [lF, lc1, lhx, leps, lfw]
+
+            opt = optim.Adam([
+                {"params": [x_ctrl], "lr": self.lr},
+                {"params": param_list, "lr": self.lr_param},
+            ])
+            refs = [ref_logF, ref_logc1, ref_loghx, ref_logeps]
+
+            for _ in range(self.max_iter * 4):
+                opt.zero_grad()
+                F_v = torch.exp(lF)
+                c1_v = torch.exp(lc1)
+                hx_v = torch.exp(lhx)
+                eps_v = torch.exp(leps)
+                fw_v = torch.clamp(lfw, min=1e-6)
+                traj = self._forward_l96_batch(x_ctrl, self.da_window_steps, win_force,
+                                               F_v, c1_v, hx_v, eps_v, fw_v)
+                J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
+                J_p = sum(self._prior_terms(p, r) for p, r in zip(param_list, refs)) \
+                    + torch.sum((lfw - ref_fw) ** 2) / self.P_var
+                diff = self.obs_operator(traj) - torch.nan_to_num(win_obs, nan=0.0)
+                masked_diff = diff * win_mask.unsqueeze(-1)
+                J_o = torch.sum(masked_diff ** 2) / self.R_var
+                J_total = 0.5 * J_b + 0.5 * J_o + self.param_prior_scale * J_p
+                J_total.backward()
+                torch.nn.utils.clip_grad_norm_([x_ctrl] + param_list, max_norm=100.0)
+                opt.step()
+                for p, r in zip(param_list, refs):
+                    with torch.no_grad():
+                        p.clamp_(r - clamp, r + clamp)
+                with torch.no_grad():
+                    lfw.clamp_(ref_fw - clamp, ref_fw + clamp)
+
+            F_v = torch.exp(lF.detach())
+            c1_v = torch.exp(lc1.detach())
+            hx_v = torch.exp(lhx.detach())
+            eps_v = torch.exp(leps.detach())
+            fw_v = torch.clamp(lfw.detach(), min=1e-6)
+            with torch.no_grad():
+                final_traj = self._forward_l96_batch(
+                    x_ctrl.detach(), self.da_window_steps, win_force,
+                    F_v, c1_v, hx_v, eps_v, fw_v)
+            analysis[:, start:end] = final_traj.detach().cpu().numpy()
+            est = torch.cat([F_v.reshape(B, 1), c1_v.reshape(B, 1), hx_v.reshape(B, 1),
+                             eps_v.reshape(B, 1), fw_v.reshape(B, -1)], dim=-1)
+            param_est[:, start:end] = est.detach().cpu().numpy()[:, None, :].repeat(
+                self.da_window_steps, axis=1)
+            current_bg = final_traj[:, -1].detach()
+            log_F, log_c1, log_hx, log_eps = lF.detach(), lc1.detach(), lhx.detach(), leps.detach()
+            fw_t = lfw.detach()
+
+        results = []
+        for b in range(B):
+            ref = observations[b].cpu().numpy() if true_state is None else true_state[b].cpu().numpy()
+            ref = _safe_ref(ref, analysis[b], getattr(self, "obs_operator", None))
+            rmse_b = np.sqrt(np.mean((analysis[b] - ref) ** 2, axis=0))
+            es_b = (
+                np.mean(np.abs(analysis[b] - ref_full[b]), axis=0)
+                if ref_full is not None else None
+            )
+            prms = self._params_to_report(param_est[b], num_steps)
+            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b,
+                                          params=prms, es=es_b))
+        return results
+
