@@ -35,6 +35,19 @@
 
 **Verification:** Job 51000 COMPLETED exit 0:0 in 20:47 (S0 + S1 both 200/200 finite). `pytest tests/test_joint_estimation_l96.py -m "not slow"` — 21 passed. Reports regenerated cleanly; DA-baselines table in the neural report now lists all three joint methods.
 
+## 2026-08-31: Fix JointCFM loader — param-flow channel inference truncated depth-3 param flow to 2 blocks
+
+**Summary:** Fixed a loader bug in the refactored JointCFM support (`evaluation/neural_inference.py`): `load_checkpoint` inferred the param-flow CNN hidden channels from only the first two conv blocks (`blocks.0`/`blocks.1`), producing `[32,64]` for the L7/L9 default `[32,64,128]`. A real depth-3 checkpoint therefore rebuilt a 2-block `ParamFlowCNN`, silently dropping `param_flow.blocks.2.*` (12 keys) and shape-mismatching the head + `blocks.0` (head expected 64→8 not 128→8). Combined with `strict=False` in `load_model`, `eval_joint_neural_l96.py` would load L7/L9 with a random/garbage param flow and no error — the same silent-truncation class the loader's own state-UNet inference (downs.2) already guarded against. Now walks all blocks present, and the loader tests use a depth-3 param flow (`[4,8,16]`) plus an exact key/shape/weight round-trip assertion via `load_model`.
+
+**Files modified:**
+- `evaluation/neural_inference.py` — loop over `param_flow.blocks.N.conv1.weight` until absent; build `param_flow_channels` for the full depth
+- `tests/test_neural_inference.py` — `test_load_model_joint_cfm_reconstructs_param_flow` now uses depth-3 `[4,8,16]`; `test_load_model_joint_cfm_checkpoint_roundtrip` now asserts exact key-set/shape equality and `param_flow` weight preservation (both with depth-3 state UNet `[8,16,32]`)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Without the fix, the standalone L7/L9 eval would produce meaningless parameter estimates from an unloaded third block + mis-sized head, silently undermining the joint state-parameter benchmark the oracle-removal PR is meant to re-run.
+
+**Verification:** `pytest ... -m "not slow"` — 129 passed, 1 deselected (unchanged). Direct repro: 3-block `[32,64,128]` checkpoint now infers `[32,64,128]`, rebuilds 3 blocks, exact key+shape round-trip. `py_compile` clean; ruff count unchanged on touched files (pre-existing UP045/BLE001/SIM114/TRY004 only).
+
 ## 2026-08-30: JointCFM (L7/L9) — remove true-param oracle + symmetric state/param conditional flow matching
 
 **Summary:** Fixed the JointCFM **true-parameter oracle bug** (the state CFM velocity `u_θ` was conditioned on the true per-window params via `batch.params`, which `data.lorenz96.py` writes from `params_true`, leaking the oracle into both state and param heads at inference). Rewrote `JointCFM` as a **symmetric conditional flow** over a shared τ: (1) the **state flow** `u_θ(x_τ, τ, y, f)` now conditions on `[obs, forcing]` only (`cond_extra_dim=1`, `output_dim=state_dim`; oracle removed); (2) a new **param flow** `v_φ(obs, forcing, x̂₁, param_τ, τ)` — a 3-layer `ParamFlowCNN` (+ average pooling → single `(B, param_dim)` velocity) — flows `param₀ ~ N(0,I)` toward `true_param` via `param_τ = (1−τ)param₀ + τ·true_param`, target `true_param − param₀` (true_param appears only as the CFM target, never fixed conditioning); (3) **coupled integration**: one shared Euler loop advances the state first, forms the analytic per-τ state estimate `x̂₁(τₙₑₓₜ) = x(τₙₑₓₜ) + (1−τₙₑₓₜ)·u_θ`, then advances params reading that fresh `x̂₁` (stop-grad detached); coupling is state→param only, analytic in both train and inference. `JointDirectUNet` (L8) intentionally left as-is this pass (deferred next step). Fixed the joint loader in `evaluation/neural_inference.py` to reconstruct the new two-part JointCFM (`cond_extra_dim = proj_in − 2·state_dim`, `state_dim = output_dim`, `param_dim`/`param_flow_channels` from the param-flow conv shapes) instead of the old dual-head layout. Added `param_flow_channels` to `JointCFMConfig` + L7/L9 configs.

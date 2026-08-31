@@ -145,11 +145,19 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             inferred_params["cond_extra_dim"] = cond_extra_dim
 
         # Infer the param-flow CNN hidden channels for JointCFM from its conv
-        # blocks (param_flow.blocks.N.conv1.weight: [out, in, 3]).
-        if "model.param_flow.blocks.1.conv1.weight" in state_dict:
-            pf_conv1 = state_dict["model.param_flow.blocks.0.conv1.weight"]
-            pf_conv2 = state_dict["model.param_flow.blocks.1.conv1.weight"]
-            inferred_params["param_flow_channels"] = [pf_conv1.shape[0], pf_conv2.shape[0]]
+        # blocks (param_flow.blocks.N.conv1.weight: [out, in, 3]). Walk all
+        # blocks present so a depth-3 param flow ([32,64,128], the L7/L9 default)
+        # is recovered, not truncated to the first two layers.
+        pf_blocks = [0]
+        n = 1
+        while f"model.param_flow.blocks.{n}.conv1.weight" in state_dict:
+            pf_blocks.append(n)
+            n += 1
+        if len(pf_blocks) > 1:
+            inferred_params["param_flow_channels"] = [
+                state_dict[f"model.param_flow.blocks.{i}.conv1.weight"].shape[0]
+                for i in pf_blocks
+            ]
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
