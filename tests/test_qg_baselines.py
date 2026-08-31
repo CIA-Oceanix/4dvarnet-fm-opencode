@@ -13,6 +13,7 @@ from evaluation.baselines import (
 from evaluation.run_qg_baselines import (
     WindStateAdapter,
     _build_dyn,
+    _downsample_to_da,
     _ensemble_from_init,
     _event_columns,
     _free_forecast_init,
@@ -23,7 +24,9 @@ from evaluation.run_qg_baselines import (
     _psi_h,
     _q_alongtrack_obs,
     _q_obs_indices_t,
+    _resize_state_layers,
     _sample_init_state,
+    _upsample_to_truth,
 )
 
 NX = 8
@@ -146,7 +149,7 @@ def test_psi_h_matches_manual_inversion_slice():
     device = torch.device("cpu")
     dyn = _build_dyn(cfg, w, device)
     obs_cols = _event_columns(cfg, w)
-    h = _psi_h(dyn, obs_cols, cfg.ny, device)
+    h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
     x = torch.randn(dyn.state_dim)
     ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
     t = ev[0]
@@ -167,7 +170,7 @@ def test_psi_h_per_time_columns():
     device = torch.device("cpu")
     dyn = _build_dyn(cfg, w, device)
     obs_cols = _event_columns(cfg, w)
-    h = _psi_h(dyn, obs_cols, cfg.ny, device)
+    h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
     x = torch.randn(dyn.state_dim)
     ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
     t0, t1 = ev[0], ev[1]
@@ -372,10 +375,10 @@ def test_q_obs_multi_window_localized_run_no_crash():
     ds = make_qg_s0_s1_datasets(cfg)
     from evaluation.run_qg_baselines import run
     p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
-            inflation=1.0, loc_radius=4.0, scenarios=("test_s0", "test_s1a"),
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s0",),
             init="lagged", geometry="random_columns", obs_var="q",
             init_lag_days=0.5, ds=ds)
-    for s in ("test_s0", "test_s1a"):
+    for s in ("test_s0",):
         assert s in p["scenarios"]
         assert np.isfinite(p["scenarios"][s]["expvar_full"])
 
@@ -448,3 +451,71 @@ def test_localized_etkf_r_sensitive_analysis():
     rmse_hi = analysis_rmse(base_r_var)
     rmse_lo = analysis_rmse(base_r_var * 1e-4)
     assert abs(rmse_hi - rmse_lo) > 1e-10
+
+
+def test_resize_state_layers_down_up_roundtrip():
+    device = torch.device("cpu")
+    src, dst, nlayers = 16, 8, 2
+    # Build a pure low-wavenumber (k=2) field on the src grid: integer grid
+    # frequencies are exactly periodic, so the mode lies below the dst Nyquist
+    # and the down->up roundtrip is near-lossless. White noise would put energy
+    # above the downsampled Nyquist that truncation cannot recover.
+    yy, xx = torch.meshgrid(torch.arange(src, dtype=torch.float),
+                            torch.arange(src, dtype=torch.float), indexing="ij")
+    s = float(src)
+    layer0 = torch.cos(2 * torch.pi * 2 * xx / s) * torch.sin(2 * torch.pi * 2 * yy / s)
+    layer1 = layer0 * 2
+    st = torch.stack([layer0, layer1]).reshape(-1)
+    down = _resize_state_layers(st, nlayers, src, dst, device)
+    assert down.shape == (nlayers * dst * dst,)
+    up = _resize_state_layers(down, nlayers, dst, src, device)
+    assert torch.allclose(st, up, atol=1e-6)
+    # Batch dims preserved.
+    bat = torch.randn(5, nlayers * src * src)
+    out = _resize_state_layers(bat, nlayers, src, dst, device)
+    assert out.shape == (5, nlayers * dst * dst)
+
+
+def test_downsample_da_scales_dimension():
+    device = torch.device("cpu")
+    st = torch.randn(2 * 16 * 16)
+    down = _downsample_to_da(st, 8, 2, 16, device)
+    assert down.shape == (2 * 8 * 8,)
+    up = _upsample_to_truth(down, 8, 2, 16, device)
+    assert up.shape == (2 * 16 * 16,)
+
+
+def test_s1_cross_res_run_smoke():
+    """End-to-end S1 cross-resolution psi-obs ETKF run must complete and
+    produce finite, sensibly-sized results. Exercises init downsampling, the
+    upsampled H-function, physical-coordinate localization, and the
+    trajectory/metrics upsampling path."""
+    cfg = QGConfig(nx=16, window_days=6.0, spinup_years=0.05,
+                   num_windows=2, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3, da_nx=8)
+    from evaluation.run_qg_baselines import run
+    ds = make_qg_s0_s1_datasets(cfg)
+    p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s0", "test_s1"),
+            init="lagged", geometry="random_columns",
+            obs_var="psi", init_lag_days=0.5, ds=ds)
+    assert "test_s1" in p["scenarios"]
+    s1 = p["scenarios"]["test_s1"]
+    for key in ("rmse_mean", "forecast_rmse_mean", "expvar_full"):
+        assert np.isfinite(s1[key])
+    assert np.isfinite(s1["forecast_improvement"])
+
+
+def test_s1_cross_res_q_obs_rejected():
+    """obs_var='q' with a cross-resolution S1 model must raise (PV-obs indices
+    select truth-grid points with no 1:1 mapping in the lower-res state)."""
+    cfg = QGConfig(nx=16, window_days=6.0, spinup_years=0.05,
+                   num_windows=1, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3, da_nx=8)
+    from evaluation.run_qg_baselines import run
+    ds = make_qg_s0_s1_datasets(cfg)
+    with pytest.raises(ValueError):
+        run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s1",),
+            init="lagged", geometry="random_columns",
+            obs_var="q", init_lag_days=0.5, ds=ds)

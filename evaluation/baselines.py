@@ -110,21 +110,31 @@ def _build_qg_loc_matrices(state_dim: int, obs_indices_t: list, nlayers: int,
 
 def _build_qg_col_loc_matrices(state_dim: int, obs_columns_t: list,
                                nlayers: int, ny: int, nx: int,
-                               loc_radius: float, device) -> tuple:
+                               loc_radius: float, device,
+                               state_ny: int | None = None,
+                               state_nx: int | None = None) -> tuple:
     """Per-time Gaspari-Cohn localization for upper-layer column obs.
 
     Each event observes `C` meridional columns of the upper layer (state dim
-    (nlayers, ny, nx), layer-major). Returns (Lx_t, Ly_t): lists (one per obs
-    time) of (state_dim, C*ny) and (C*ny, C*ny) correlation matrices built
-    from grid distance to the observed (layer=0) grid points. Cross-layer
-    separations -> weight 0.
+    (nlayers, state_ny, state_nx), layer-major). Returns (Lx_t, Ly_t): lists
+    (one per obs time) of (state_dim, C*ny) and (C*ny, C*ny) correlation
+    matrices built from distance to the observed (layer=0) grid points.
+    Cross-layer separations -> weight 0.
+
+    `ny, nx` are the OBS grid dimensions. `state_ny/state_nx` (default = ny/nx)
+    give the DA-model grid; state positions are mapped onto the obs grid so the
+    Gaspari-Cohn distance is measured in obs-grid units (physical), which keeps
+    the same-resolution behaviour byte-identical and supports cross-resolution
+    DA models (S1: DA grid 16x16, obs grid 64x64).
     """
-    gpl = ny * nx
+    s_ny = state_ny if state_ny is not None else ny
+    s_nx = state_nx if state_nx is not None else nx
+    gpl = s_ny * s_nx
     ar = torch.arange(state_dim, device=device, dtype=torch.float64)
     state_layer = ar // gpl
     g = ar % gpl
-    state_y = g // nx
-    state_x = g % nx
+    state_y = (g // s_nx) * (ny / s_ny)
+    state_x = (g % s_nx) * (nx / s_nx)
     layer_gap = 2.0 * max(ny, nx)
     Lx_t: list[torch.Tensor | None] = []
     Ly_t: list[torch.Tensor | None] = []

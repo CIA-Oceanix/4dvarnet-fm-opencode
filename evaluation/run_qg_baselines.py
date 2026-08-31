@@ -20,6 +20,7 @@ from evaluation.baselines import (
 from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
+from models.qg_interp import spectral_resize_2d
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -54,11 +55,45 @@ class WindStateAdapter(DynamicsBase):
         return torch.stack(traj, dim=-2), forcing
 
 
+def _da_nx_for_window(cfg, window):
+    """DA model grid size: window['da_nx'] (set by the scenario) else truth nx."""
+    return int(window.get("da_nx") or cfg.nx)
+
+
+def _resize_state_layers(traj, nlayers, src_n, dst_n, device):
+    """Spectral down/upsample a layer-major flattened state to a new grid.
+
+    `traj` is a (..., nlayers*src_n*src_n) real tensor or numpy array (single
+    state, ensemble member, or full trajectory); each layer is reshaped to
+    (src_n, src_n), spectrally resized to (dst_n, dst_n), and re-flattened
+    layer-major. Both grids are square (the QG grid). Returns the same type
+    (torch/numpy) as the input, on `device` for torch.
+    """
+    is_np = isinstance(traj, np.ndarray)
+    t = torch.from_numpy(traj).float() if is_np else traj
+    lead = t.shape[:-1]
+    x = t.reshape(*lead, nlayers, src_n, src_n)
+    y = spectral_resize_2d(x, dst_n, dst_n, device)
+    out = y.reshape(*lead, nlayers * dst_n * dst_n)
+    return out.numpy() if is_np else out
+
+
+def _downsample_to_da(state, da_nx, nlayers, truth_n, device):
+    """Downsample a truth-resolution state to the DA-model grid."""
+    return _resize_state_layers(state, nlayers, truth_n, da_nx, device)
+
+
+def _upsample_to_truth(state, da_nx, nlayers, truth_n, device):
+    """Upsample a DA-model-resolution state to the truth/obs grid (truth_n)."""
+    return _resize_state_layers(state, nlayers, da_nx, truth_n, device)
+
+
 def _build_dyn(cfg, window, device):
     da_params = window["da_params"]
     model = window["da_model"]
+    nx_da = _da_nx_for_window(cfg, window)
     common = {
-        "nx": cfg.nx, "L": cfg.L, "dt": cfg.dt, "beta": da_params["beta"],
+        "nx": nx_da, "L": cfg.L, "dt": cfg.dt, "beta": da_params["beta"],
         "rd": da_params["rd"], "U1": da_params["U1"], "rek": da_params["rek"],
         "filterfac": cfg.filterfac,
         "wind_amp": window["wind_amp"], "wind_sigma": cfg.wind_sigma,
@@ -130,13 +165,17 @@ def _event_columns(cfg, window):
     return window["obs_columns"]
 
 
-def _psi_h(dyn, obs_cols, ny, device):
+def _psi_h(dyn, obs_cols, ny, nx, device):
     """H-function for obs of upper-layer streamfunction columns.
+
+    Computes the DA model's streamfunction and (for a cross-resolution DA model,
+    e.g. S1 with a lower-res grid) spectrally upsamples it to the obs grid
+    (ny, nx) before selecting the observed meridional columns.
 
     Args:
         dyn: QG dynamics (access via dyn.inner.streamfunctions)
         obs_cols: list of column lists per time (e.g., [[0,3], None, [2]])
-        ny: ny of grid
+        ny, nx: obs-grid dimensions
         device: torch device
 
     Returns:
@@ -144,15 +183,18 @@ def _psi_h(dyn, obs_cols, ny, device):
     """
     def h(state, index=None):
         batch = state.ndim > 1
+        psi = dyn.inner.streamfunctions(state)
+        if dyn.inner.ny != ny or dyn.inner.nx != nx:
+            psi = spectral_resize_2d(psi, ny, nx)
         cols = obs_cols[index]
         if not batch:
-            psi1 = dyn.inner.streamfunctions(state)
-            return torch.cat([psi1[0, :, c] for c in cols])
+            psi1 = psi[0]
+            return torch.cat([psi1[:, c] for c in cols])
         else:
-            psi1 = dyn.inner.streamfunctions(state)
+            psi1 = psi[:, 0]
             C = len(cols)
-            o = C * dyn.inner.ny
-            stacked = torch.stack([psi1[:, 0, :, c] for c in cols], dim=1)
+            o = C * ny
+            stacked = torch.stack([psi1[:, :, c] for c in cols], dim=1)
             return stacked.reshape(state.shape[0], o)
     return h
 
@@ -190,10 +232,11 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius):
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
         return obs, r_var, obs_operator, _build_qg_loc_matrices
     else:
+        dyn = _build_dyn(cfg, window, device)
         obs_cols = _event_columns(cfg, window)
-        h = _psi_h(_build_dyn(cfg, window, device), obs_cols, cfg.ny, device)
+        h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
         obs, r_var, od = _obs_spec_rc(cfg, window, device)
-        obs_op = ObsOperator(cfg.state_dim, h=h, h_index_at=None, n_obs=od)
+        obs_op = ObsOperator(dyn.state_dim, h=h, h_index_at=None, n_obs=od)
         return obs, r_var, obs_op, _build_qg_col_loc_matrices
 
 
@@ -301,6 +344,58 @@ def _pooled_expvar(analyses, refs):
     return 1.0 - np.mean(sq, axis=0) / var
 
 
+def _field_layer_metrics(analyses, refs, free_ra, inner, per_layer, device):
+    """Per-field (q/psi) per-layer (upper/lower) RMSE + pooled EV for DA and free forecast.
+
+    `analyses`/`free_ra` are lists of DA/free-forecast trajectories (each (T, 2*per_layer),
+    layer-major q-state), `refs` the matching truth. Computes:
+      - q: per-layer via state slicing
+      - psi: upper/lower/full via the model spectral inversion `inner.streamfunctions`.
+    Returns a nested dict of scalars: rmse / rmse_free / improv / ev / ev_free per (field, layer).
+    """
+    def q_traj(traj):
+        nlayer = inner.state_dim // per_layer
+        slices = {"full": traj}
+        for li in range(nlayer):
+            slices[f"layer{li + 1}"] = traj[:, li * per_layer:(li + 1) * per_layer]
+        return slices
+
+    def psi_traj(traj):
+        psi = inner.streamfunctions(
+            torch.from_numpy(traj).float().to(device)).detach().cpu().numpy()
+        nlayer = psi.shape[-3] if psi.ndim == 4 else 1
+        slices = {"full": psi.reshape(psi.shape[0], -1)}
+        for li in range(nlayer):
+            pflat = psi[..., li, :, :].reshape(psi.shape[0], per_layer)
+            slices[f"layer{li + 1}"] = pflat
+        return slices
+
+    def layer_sets(fields_anal, fields_ref, fields_free):
+        out = {}
+        for name, getter in (("q", q_traj), ("psi", psi_traj)):
+            sample = getter(fields_ref[0])
+            layers = [k for k in sample if k != "full"] + ["full"]
+            out[name] = {}
+            for k in layers:
+                a = [getter(x)[k] for x in fields_anal]
+                ref = [getter(x)[k] for x in fields_ref]
+                fr = [getter(x)[k] for x in fields_free]
+                rmse = float(np.sqrt(np.mean(
+                    np.concatenate([(x - r) ** 2 for x, r in zip(a, ref)], axis=0))))
+                rmse_free = float(np.sqrt(np.mean(
+                    np.concatenate([(x - r) ** 2 for x, r in zip(fr, ref)], axis=0))))
+                out[name][k] = {
+                    "rmse": rmse,
+                    "rmse_free": rmse_free,
+                    "improv": rmse_free / max(rmse, 1e-30),
+                    "ev": float(np.mean(_pooled_expvar(a, ref))),
+                    "ev_free": float(np.mean(_pooled_expvar(fr, ref))),
+                }
+        return out
+
+    return layer_sets(analyses, refs, free_ra)
+
+
 def _free_forecast_init(cfg, window, init_lag_days, device):
     """Sample a single band-centered init state (test/back-compat helper).
 
@@ -317,19 +412,26 @@ def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state):
 
     `init_state` is the SAME initial condition used to seed the DA ensemble, so
     the free-forecast and DA results are compared apples-to-apples (identical
-    initial state; only assimilated observations differ).
+    initial state; only assimilated observations differ). For a cross-resolution
+    DA model (S1), `init_state` is in DA-model space and the rolled forecast is
+    spectrally upsampled to the truth grid before the RMSE is taken.
     """
     truth = window["true_state"].float()
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
-    return float(np.sqrt(np.mean((roll.detach().cpu().numpy()
-                                  - truth.numpy()) ** 2)))
+    roll = roll.detach().cpu().numpy()
+    nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
+    if dyn.inner.ny != cfg.ny:
+        roll = _upsample_to_truth(
+            roll, dyn.inner.ny, nlayers, cfg.ny, torch.device("cpu"))
+    return float(np.sqrt(np.mean((roll - truth.numpy()) ** 2)))
 
 
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
-        loc_radius=None, scenarios=("test_s0", "test_s1a", "test_s1b"),
+        loc_radius=None, scenarios=("test_s0", "test_s1"),
         out_path=None, init="lagged", geometry="random_columns",
         obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
-        etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25):
+        etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25,
+        save_traj=None):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -349,9 +451,18 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         mean_init_lag_list = []
         free_ra = []
         method = None
+        truth_inner = None
         for i in range(len(d)):
             w = d[i]
             dyn = _build_dyn(cfg, w, device)
+            da_nx = _da_nx_for_window(cfg, w)
+            nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
+            cross_res = da_nx != cfg.nx
+            if obs_var == "q" and cross_res:
+                raise ValueError(
+                    "obs_var='q' is not supported for a cross-resolution DA model "
+                    "(S1): the PV-obs indices select truth-grid points that have no "
+                    "one-to-one mapping in the lower-res state. Use obs_var='psi'.")
             obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
                                                                device,
                                                                obs_var,
@@ -366,7 +477,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 # is apples-to-apples (identical initial condition).
                 shared_init, init_lag_val = _sample_init_state(
                     cfg, w, init_lag_days, band_half, device)
-                sigma_raw = float(w["init_lead_truth"].std(0).mean())
+                if cross_res:
+                    shared_init = _downsample_to_da(
+                        shared_init, da_nx, nlayers, cfg.nx, device)
+                    lead = _downsample_to_da(
+                        w["init_lead_truth"].float(), da_nx, nlayers, cfg.nx, device)
+                    sigma_raw = float(lead.std(0).mean())
+                else:
+                    sigma_raw = float(w["init_lead_truth"].std(0).mean())
                 init_ensemble = _ensemble_from_init(
                     shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
@@ -398,7 +516,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     cols_t = _event_columns(cfg, w)
                     Lx_t, Ly_t = _build_qg_col_loc_matrices(
                         dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
-                        loc_radius, device)
+                        loc_radius, device, state_ny=da_nx, state_nx=da_nx)
                 if method_name == "enkf":
                     method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
@@ -416,16 +534,25 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                    forcing=forcing, init_ensemble=init_ensemble)
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
-            analyses.append(res.trajectory)
+            traj_da = res.trajectory
+            if cross_res:
+                traj_da = _upsample_to_truth(
+                    traj_da, da_nx, nlayers, cfg.nx, device)
+            analyses.append(traj_da)
             refs.append(ref)
             rmse_list.append(float(np.sqrt(np.mean(
-                (res.trajectory - ref) ** 2))))
+                (traj_da - ref) ** 2))))
             fcast_rmse.append(_free_forecast_rmse(
                 cfg, dyn, w, device, forcing, shared_init))
             if shared_init is not None:
                 free_roll = dyn.rollout_trajectory(
                     shared_init, cfg.num_steps - 1, wind_state=forcing)
-                free_ra.append(free_roll.detach().cpu().numpy())
+                free_roll = free_roll.detach().cpu().numpy()
+                if cross_res:
+                    free_roll = _upsample_to_truth(
+                        free_roll, da_nx, nlayers, cfg.nx,
+                        torch.device("cpu"))
+                free_ra.append(free_roll)
         ev = _pooled_expvar(analyses, refs)
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],
@@ -435,6 +562,35 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         ev_free = None
         if free_ra:
             ev_free = float(np.mean(_pooled_expvar(free_ra, refs)))
+        metrics_per_field = None
+        if free_ra:
+            if truth_inner is None:
+                # psi metric inversion uses a truth-res model. Its params come
+                # from window 0's true_params (per-window draws vary, so the
+                # per-field PSI diagnostic for later windows uses window-0's
+                # params; the DA RMSE/EV themselves are computed directly from
+                # the q-state and are unaffected).
+                tp = d[0]["true_params"]
+                truth_inner = QGDynamics(
+                    nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
+                    delta=cfg.delta, U1=tp["U1"], U2=tp["U2"], rek=tp["rek"],
+                    filterfac=cfg.filterfac,
+                    wind_amp=d[0]["wind_amp"], wind_sigma=cfg.wind_sigma,
+                    clip_range=1e-3).to(device)
+            metrics_per_field = _field_layer_metrics(
+                analyses, refs, free_ra, truth_inner, per_layer, device)
+        traj_path = None
+        if save_traj and free_ra:
+            os.makedirs(save_traj, exist_ok=True)
+            name = f"{scen}_m{method_name}_ov{obs_var}_lag{init_lag_days}"
+            traj_path = os.path.join(save_traj, f"traj_{name}.npz")
+            np.savez_compressed(
+                traj_path,
+                analyses=np.stack(analyses).astype(np.float32),
+                free_forecast=np.stack(free_ra).astype(np.float32),
+                refs=np.stack(refs).astype(np.float32),
+                per_layer=per_layer,
+            )
         summary[scen] = {
             "rmse_mean": da_r,
             "rmse_list": rmse_list,
@@ -443,6 +599,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "expvar_full": float(np.mean(ev)),
             "expvar_upper_q": float(np.mean(ev_upper)),
             "expvar_free": ev_free,
+            "metrics_per_field": metrics_per_field,
+            "traj_path": traj_path,
             "mean_init_lag_days": float(np.mean(mean_init_lag_list)) if mean_init_lag_list else None,
             "spread_t0_mean": float(np.mean(spread_t0_list)) if spread_t0_list else None,
         }
@@ -476,7 +634,7 @@ def main():
     ap.add_argument("--ensemble", type=int, default=60)
     ap.add_argument("--inflation", type=float, default=1.05)
     ap.add_argument("--loc-radius", type=float, default=None)
-    ap.add_argument("--scenarios", default="test_s0,test_s1a,test_s1b")
+    ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--init", choices=["lagged", "white"], default="lagged")
