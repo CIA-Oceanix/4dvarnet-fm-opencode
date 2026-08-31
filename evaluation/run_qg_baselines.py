@@ -67,7 +67,8 @@ def _resize_state_layers(traj, nlayers, src_n, dst_n, device):
     state, ensemble member, or full trajectory); each layer is reshaped to
     (src_n, src_n), spectrally resized to (dst_n, dst_n), and re-flattened
     layer-major. Both grids are square (the QG grid). Returns the same type
-    (torch/numpy) as the input, on `device` for torch.
+    (torch/numpy) as the input; torch output is on `device`, numpy output is
+    moved back to CPU (numpy cannot hold a CUDA tensor).
     """
     is_np = isinstance(traj, np.ndarray)
     t = torch.from_numpy(traj).float() if is_np else traj
@@ -75,7 +76,7 @@ def _resize_state_layers(traj, nlayers, src_n, dst_n, device):
     x = t.reshape(*lead, nlayers, src_n, src_n)
     y = spectral_resize_2d(x, dst_n, dst_n, device)
     out = y.reshape(*lead, nlayers * dst_n * dst_n)
-    return out.numpy() if is_np else out
+    return out.cpu().numpy() if is_np else out
 
 
 def _downsample_to_da(state, da_nx, nlayers, truth_n, device):
