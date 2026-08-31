@@ -49,7 +49,6 @@ J_OBS = 2
 
 MODELS = [
     ("L7_joint_cfm_s0s1", "JointCFM tau=0"),
-    ("L8_joint_direct_unet_s0s1", "JointDirectUNet"),
     ("L9_joint_cfm_s0s1_multitau", "JointCFM multi-tau"),
 ]
 ENS_K_STEPS = [1, 10]

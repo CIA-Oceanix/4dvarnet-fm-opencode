@@ -39,12 +39,6 @@ MODEL_DEFS = {
         "desc": "Conditional flow matching (state + 8-param joint output) trained at tau=0 only; "
                 "sampled with a single Euler step. Hidden [64,128,256], 400 epochs.",
     },
-    "L8_joint_direct_unet_s0s1": {
-        "type": "JointDirectUNet",
-        "tau": "n/a",
-        "desc": "Single-pass joint regression obs -> (state, 8 params). Deterministic. Hidden "
-                "[64,128,256], 200 epochs.",
-    },
     "L9_joint_cfm_s0s1_multitau": {
         "type": "JointCFM",
         "tau": "multi-tau",
@@ -337,9 +331,8 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if is_best else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Only ens30 runs present on disk are shown; missing runs render as -- (L8 is "
-              "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
-              "highest EV.*")
+        md.append("*Only ens30 runs present on disk are shown; missing runs render as --. "
+                  "Best per column: lowest RMSE/ES, highest EV.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -382,7 +375,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if (v is not None and v == best_idx[i]) else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Best per cell (highest EV) is bolded. L8 is deterministic (no ensemble).*")
+        md.append("*Best per cell (highest EV) is bolded.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -620,8 +613,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Best per column is bolded (highest EV, lowest RMSE). L8 is deterministic and not "
-                  "run as an ensemble → --.*")
+        md.append("*Best per column is bolded (highest EV, lowest RMSE).*")
         md.append("")
         md.append("---")
         md.append("")
