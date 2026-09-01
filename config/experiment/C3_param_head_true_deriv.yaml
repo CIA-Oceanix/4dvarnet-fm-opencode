@@ -32,3 +32,10 @@ data:
   num_test_windows: 200
   test_param_noise: 0.2
   param_names: [F, c1, hx, eps, w1, w2, w3, w4]
+  randomize:
+    F:            {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    c1:           {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    hx:           {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    eps:          {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    fast_weights: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    h:            {randomized: false, noise: 0.2, biased: false, bias: 0.0}

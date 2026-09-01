@@ -70,7 +70,7 @@ class FlowMatchingDataset(Dataset):
         if self.resample_bias_draws:
             true = tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0))
                          for n in self.param_names)
-            draw = 1.0 + torch.empty(len(true)).uniform_(-self.bias_max, self.bias_max)
+            draw = 1.0 + torch.empty(len(true)).uniform_(0.0, self.bias_max)
             return tuple(t * float(d) for t, d in zip(true, draw.tolist()))
         if not self.use_biased_params:
             return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)

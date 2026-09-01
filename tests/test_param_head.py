@@ -142,7 +142,8 @@ def test_resample_bias_draws_vary_around_true(bias_dataset):
             vals[i].append(p[i])
     for i in range(8):
         assert len(set(round(v, 3) for v in vals[i])) > 5, f"param {i} not varying"
-        assert abs(float(np.mean(vals[i])) - true[i]) / true[i] < 0.05
+        assert all(v / true[i] >= 1.0 - 1e-6 for v in vals[i]), f"param {i} not positive-only"
+        assert abs(float(np.mean(vals[i])) / true[i] - 1.1) < 0.05, f"param {i} mean not ~1.1x"
         assert all(abs(v / true[i] - 1.0) <= 0.2 + 1e-6 for v in vals[i])
 
 
