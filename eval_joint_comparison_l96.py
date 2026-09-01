@@ -152,6 +152,7 @@ def main():
     cfg_map = {"S0": cfg_s0, "S1": cfg_s1}
 
     results = {}
+    traj_arrays = {}
     for label, ds_key, coupling_exponent, J in cases:
         if ds_key not in datasets:
             continue
@@ -177,6 +178,18 @@ def main():
             mean_rmse = rmse_stats[0]
             ev_arr = expvar_stats[0]
             es_arr = es_stats[0]
+
+            prefix = f"{label}_{method_name.replace('-', '_').replace(' ', '_')}"
+            traj_arrays[f"{prefix}_trajectories"] = np.stack(
+                [r.trajectory for r in bl_results], axis=0)
+            if bl_results[0].ensemble_variance is not None:
+                traj_arrays[f"{prefix}_ensemble_variance"] = np.stack(
+                    [r.ensemble_variance for r in bl_results], axis=0)
+            if bl_results[0].params is not None:
+                traj_arrays[f"{prefix}_params"] = np.stack(
+                    [r.params for r in bl_results], axis=0)
+            if bl_results[0].es is not None:
+                traj_arrays[f"{prefix}_es"] = np.stack([r.es for r in bl_results], axis=0)
 
             entry = {
                 "state_rmse": {
@@ -217,6 +230,15 @@ def main():
                 print()
 
         results[label] = case_results
+
+        traj_path = os.path.join(EXP_DIR, "l96_joint_baselines_trajectories.npz")
+        merged = dict(traj_arrays)
+        if os.path.exists(traj_path):
+            with np.load(traj_path, allow_pickle=False) as existing:
+                merged = {**{k: existing[k] for k in existing.files}, **merged}
+        np.savez_compressed(traj_path, **merged)
+        print(f"  Saved {label} reconstructions to {traj_path} "
+              f"({len(merged)} arrays)")
 
     out_path = os.path.join(EXP_DIR, "l96_joint_comparison.json")
     # Merge into any existing results (e.g. when re-running only a method subset),
