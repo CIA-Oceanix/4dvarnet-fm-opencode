@@ -3,6 +3,27 @@ from torch.utils.data import DataLoader, Dataset
 from typing import Dict
 
 
+def _l96_biased_param_vector(w):
+    """Extract the biased (``*_da``) 8-param vector from an L96 window.
+
+    The randomize/s0_s1 layout stores scalar biased scalar params as
+    ``F_da, c1_da, hx_da, eps_da`` and the biased fast weights as the list
+    ``fast_weights_da`` (there is no per-index ``w{j}_da``). Falls back to the
+    un-biased key when a ``*_da`` entry is absent (e.g. test_s0 windows which
+    carry no bias). Mirrors ``_window_param_vector`` in
+    ``evaluation/neural_inference.py`` for the true/plain layout.
+    """
+    vec = [float(w.get(f"{n}_da", w.get(n, 1.0 if n == "c1" else 0.0)))
+           for n in ("F", "c1", "hx", "eps")]
+    fw = w.get("fast_weights_da", w.get("fast_weights"))
+    if fw is None:
+        fw = w.get("true_fast_weights", [1.0, 1.0, 0.1, 0.1])
+    fw = list(fw)
+    if len(fw) < 4:
+        fw = fw + [0.0] * (4 - len(fw))
+    return tuple(vec + [float(x) for x in fw])
+
+
 class FlowMatchingBatch:
     def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None):
         self.states = states
@@ -28,7 +49,7 @@ class FlowMatchingBatch:
 class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
-                 obs_var_indices=None):
+                 obs_var_indices=None, use_biased_params: bool = False):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -37,12 +58,15 @@ class FlowMatchingDataset(Dataset):
         self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
         self.param_dim = len(self.param_names)
         self.obs_var_indices = obs_var_indices
+        self.use_biased_params = use_biased_params
 
     def __len__(self):
         return len(self.source)
 
     def _extract_params(self, w):
-        return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+        if not self.use_biased_params:
+            return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+        return _l96_biased_param_vector(w)
 
     def _extract_true_params(self, w):
         return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)

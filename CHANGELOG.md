@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-01: L96 cascade state→param head (C1/C2) — documented negative + NRMSE relevance metric
+
+**Summary:** Added a decoupled **state→param cascade** (new `StateParamHead`/`StateParamModel`, `model_type=param_head`) that reads the 8 L96 params (F,c1,hx,eps,w1..w4) from obs + biased `*_da` params + forcing + a state estimate, and trained it under two state sources: **C1** = frozen L1b state-only DirectUNet estimate, **C2** = exact true state (ablation). Both are **documented negatives** for parameter recovery: even with the exact true state (C2) the head **fails the fast weights `w1/w2` (S1 NRMSE ≈ 1.1-1.2, error larger than the parameter itself)**, an information/architecture bottleneck — only the coupled multi-τ flow (L9) recovers all 8 params. F is partly a state-quality effect (true state halves it 1.67→0.86). Also fixed a **train/eval obs-consistency bug** (`_make_eval_batch` now subsamples `states` to `obs_var_indices` for L96, matching the training dataloader) and extended the consolidated report with **computed DA NRMSE rows + a w3/w4 pinned-prior masking footnote** so the neural-vs-DA relevance statement is stated properly (NRMSE = RMSE/mean|true|).
+
+**Cascade result (S1, per-param NRMSE):**
+
+| model | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|
+| C1 (L1b state) | 0.21 | 0.11 | 0.13 | 0.13 | 1.16 | 1.12 | 1.21 | 1.10 | **0.65** |
+| C2 (true state) | 0.11 | 0.11 | 0.07 | 0.10 | 1.17 | 1.12 | 1.07 | 1.08 | **0.60** |
+| L9 JointCFM multi-τ | **0.07** | 0.16 | 0.09 | 0.12 | 0.13 | 0.16 | 0.20 | 0.18 | **0.14** |
+| Joint-ETKF (DA) | 0.08 | 0.10 | 0.06 | 0.11 | 0.12 | 0.12 | 0.00* | 0.00* | **0.07** |
+
+*DA w3/w4 = pinned to reference prior (masking, not recovery); DA mean 0.07 incl / 0.10 excl the masked w3/w4. L9 keeps every param ≤0.20 NRMSE (F 0.07) — genuine param recovery at parity with the joint filters on the params they actually estimate.*
+
+**Files modified:**
+- `models/param_head.py` — new `StateParamHead` (CNN-pool regressor, raw output, `_norm`/`_denorm`) + `StateParamModel` (frozen `state_source∈{l1b,true}` encoder + trainable head, `_xhat`)
+- `data/dataloader.py` — `use_biased_params` + `_l96_biased_param_vector` (reads `*_da`/`fast_weights_da`, falls back to true) so `batch.params` = biased for S1-style training
+- `conf/schema.py` — `ParamHeadConfig` (param_dim, param_head_channels, param_ref, param_head_pool, state_checkpoint, state_source, ...) + `model_type: "param_head"`
+- `train.py` — `model_factory`/`_make_eval_batch`/`evaluate_model`/`save_trajectories` param_head + use_biased wiring; **`_make_eval_batch` subsamples `states` to `obs_var_indices`** (fixes C2 true-source 40D-vs-24D collapse)
+- `training/lightning_module.py` — param_head freeze + optimizer + loss dispatch
+- `config/experiment/C1_stateparam_head_s1.yaml`, `C2_stateparam_head_state_true.yaml` — new
+- `batch/run_l96_param_head_train.sbatch` — new (EXP env override)
+- `tests/test_param_head.py` — new (5 tests, 1 skips w/o L1b)
+- `reports/l96/generate_l96_joint_neural_report.py` — C1/C2 cascade rows in param-RMSE + NRMSE tables; **real DA NRMSE rows** (archived per-param RMSE ÷ cached true-param scale via new `PARAM_MEAN_TRUE`/`da_nrmse_values`/`nrmse_from_rmse` helpers); w3/w4 masking footnote; `CASCADE_DEFS`; benchmark-table + intro entries
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated
+- `PLAN.md` — Phase C-adjacent note
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked whether a decoupled state-then-param estimator (the cascade) could recover the L96 params as the joint models / joint DA do, and — because Q1's "true params fed at S0 are sanity-checks, S1 is what matters" — the C2 true-state ablation isolates whether the L1b state estimate's quality (vs an info/architecture limit) causes C1's failure. Verdict: F is state-quality-limited (halved by true state) but w1/w2 fail regardless (info bottleneck). NRMSE (÷ mean|true param|) is the honest relevance metric for the wide dynamic range (F≈8 vs eps≈0.1); the report now carries computed DA NRMSE with the w3/w4 masking called out, since DA reads "better" on the mean only through that pinned-prior artifact. Recorded as a documented negative experiment, not a benchmark win.
+
+**Verification:** jobs 51313 (C1) + 51321 (C2) COMPLETED exit 0, 300 epochs. `pytest tests/test_param_head.py tests/test_joint_estimation_l96_neural.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_neural_inference.py -m "not slow"` — 108 passed. `python reports/l96/generate_l96_joint_neural_report.py` exit 0; labels + w3/w4 footnote render; `py_compile` clean; ruff on the generator = only pre-existing EXE001/UP032 (none introduced).
+
 ## 2026-08-31: QG S0/S1 DA baselines — consolidated report (cross-resolution S1)
 
 **Summary:** Added a consolidated QG S0/S1 DA-baseline report to master, matching the L63/L96 convention (`reports/qg/` generator + `outputs/*.md`). The report covers the error-free S0 baseline and the S1 cross-resolution case (truth 64×64 vs DA model at da_nx=16 and da_nx=32), with the full S0/S1 settings and per-field (q/psi, per-layer) RMSE/EV/improv tables. Because the QG code (`data/qg.py`, `models/*`) lives only on `feat/qg-case-study`, the generator is JSON-only: it reads the curated S0/S1 result JSONs (committed on `feat/qg-case-study`) and a `qg_settings.json` snapshot, and renders the self-contained Markdown. The 4 dataset-spinup caches are copied into the local master worktree under `reports/qg_cache/` (gitignored via `*.pt`, so local-only and non-committed) so the datasets are accessible from the local `origin/master`.

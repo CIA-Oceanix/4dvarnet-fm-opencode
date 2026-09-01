@@ -185,6 +185,19 @@ class JointDirectUNetConfig:
 
 
 @dataclass
+class ParamHeadConfig:
+    param_dim: int = 8
+    param_head_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    state_checkpoint: Optional[str] = None
+    state_model_type: str = "direct_unet"
+    state_hidden_channels: Optional[List[int]] = None
+    state_cond_extra_dim: int = 0
+    state_source: str = "l1b"
+
+
+@dataclass
 class PredictStateCFMConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -209,7 +222,7 @@ class TweedieCFMConfig:
 
 @dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -223,6 +236,7 @@ class ModelConfig:
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    param_head: ParamHeadConfig = field(default_factory=ParamHeadConfig)
     predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
     tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
 
