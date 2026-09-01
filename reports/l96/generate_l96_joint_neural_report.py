@@ -48,6 +48,10 @@ CASCADE_DEFS = {
                               "state_source": "frozen L1b state estimate (decoupled)"},
     "C2_stateparam_head_state_true": {"short": "C2 (true state)",
                                       "state_source": "exact true state (ablation)"},
+    "C3_param_head_true_deriv": {"short": "C3 (true state + derivative + bias-resample)",
+                                 "state_source": "exact true state + temporal-derivative channel, "
+                                                 "positive-only bias-resampled `*_da` training "
+                                                 "(2026-09-01)"},
 }
 
 # ID -> (eval file base name, type, tau mode, description)
@@ -221,12 +225,19 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
               "the full offline per-parameter RMSE / EV / NRMSE and free-forecast tables (single "
               "and ens30, all runs), recomputed from the stored eval arrays.")
     md.append("")
-    md.append("**Cascade (documented negative, 2026-09-01):** a decoupled state→param head fed by the "
-              "frozen L1b state estimate (C1) or the exact true state (C2) was added to the NRMSE and "
-              "param-RMSE tables. Both **fail the fast weights** `w1/w2` (NRMSE ≈ 1.1-1.2 even with "
-              "the true state) — an information/architecture bottleneck, so only the coupled multi-τ "
-              "flow (L9) recovers all 8 params. Recorded for completeness, not as a benchmark win. "
-              "See CHANGELOG 2026-09-01.")
+    md.append("**Cascade (documented negative → partial improvement, 2026-09-01):** the decoupled "
+              "state→param head fed by the frozen L1b state estimate (C1), the exact true state (C2), "
+              "or the true state + derivative channel with positive-only bias-resampled `*_da` "
+              "training (C3) is tabulated in the NRMSE / param-RMSE tables below. C1/C2 **fail the "
+              "fast weights** `w1/w2` (NRMSE ≈ 1.1-1.2 even with the true state) — an "
+              "information/architecture bottleneck. C3 (torch-level `torch.diff` derivative channel + "
+              "positive-bias training matching the S1 `*_da` protocol) **recovers F hard** "
+              "(S1 NRMSE 0.11→0.05) and pulls `w1/w2` below 1.0 (S1 ≈ 0.99/0.97) with a −21% S1 mean "
+              "paramRMSE, but still trails the coupled multi-τ flow (L9) and the joint-DA filters, and "
+              "**regresses `c1`** (S1 NRMSE 0.11→0.23) — the loss is MSE in a per-param normalized "
+              "space dominated by the still-≈1.0 `w1..w4` errors, so the optimizer trades the "
+              "low-signal `c1` against the large fast-weight gains. Recorded for completeness, not a "
+              "benchmark win. See CHANGELOG 2026-09-01.")
     md.append("")
     md.append("---")
     md.append("")
@@ -289,7 +300,8 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     for exp_name, d in CASCADE_DEFS.items():
         src = d["state_source"]
         md.append(f"| {exp_name} | StateParamHead (param-only) | n/a | Decoupled cascade: "
-                  f"param head fed by {src}. Documented negative on fast weights. |")
+                  f"param head fed by {src}. C1/C2 documented negative on fast weights; C3 partially "
+                  f"fixes F + w1/w2 via derivative + positive-bias training but regresses c1. |")
     md.append("")
     md.append("---")
     md.append("")
@@ -593,7 +605,9 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                       "filters on the params they actually estimate. The C1/C2 cascade (fed even the "
                       "exact true state) fails the fast weights (w1/w2 NRMSE ≈ 1.1-1.2, error larger "
                       "than the parameter itself) — a documented information/architecture bottleneck, "
-                      "not a benchmark win. Joint-DA S1 `w3`/`w4` NRMSE 0.00 is the pinned-to-prior "
+                      "not a benchmark win; C3's derivative + positive-bias training (2026-09-01) "
+                      "recovers F (0.05) and pulls w1/w2 below 1.0 (≈0.99/0.97) but **regresses c1** "
+                      "(0.23). Joint-DA S1 `w3`/`w4` NRMSE 0.00 is the pinned-to-prior "
                       "masking artifact (they are **not** estimated), not recovery; DA mean NRMSE is "
                       "0.07 incl. / 0.10 excl. those masked w3/w4. The DA NRMSE rows are derived from "
                       "their archived per-param RMSE in `l96_joint_comparison.json` ÷ the cached "
@@ -603,7 +617,9 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
             md.append("*Best per column (lowest NRMSE) is bolded. Joint-DA NRMSE rows are derived from "
                       "their archived per-param RMSE ÷ the cached true-param scale. The C1/C2 cascade "
                       "is a documented negative (fast weights at NRMSE ≈ 1.0 even at S0 where true "
-                      "params are fed) — shown for completeness, not as a benchmark win.*")
+                      "params are fed) — shown for completeness, not as a benchmark win; C3's "
+                      "positive-bias training (2026-09-01) keeps S0 ≈ parity with C2, the improvement "
+                      "is concentrated on S1.*")
         md.append("")
         md.append("---")
         md.append("")
