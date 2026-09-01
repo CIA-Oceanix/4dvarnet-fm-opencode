@@ -383,6 +383,47 @@ def test_joint_models_stage2_param_only_loss_and_freeze(l96_joint_dataset):
         assert len(unet_grads) == 0, f"{mtype}: frozen UNet got gradients"
 
 
+def test_joint_cfm_stage2_param_loss_conditions_on_real_state(l96_joint_dataset):
+    """Stage-2 compute_param_loss must condition the param flow on the real
+    sampled state path (``x_tau = mix(x0, states, tau)``), not a degenerate zero
+    state. Under the old bug the param-flow gradient was invariant to
+    ``batch.states``; with the fix it must differ when the true state changes."""
+    w = l96_joint_dataset[0]
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    batch_a = _joint_batch(w)
+    batch_b = FlowMatchingBatch(
+        batch_a.states + 1.0, batch_a.obs, batch_a.obs_mask, batch_a.forcing,
+        params=batch_a.params, true_params=batch_a.true_params)
+
+    def param_grad(batch):
+        model.zero_grad()
+        torch.manual_seed(1234)
+        loss = model.compute_param_loss(batch)
+        loss.backward()
+        return [p.grad.clone() for p in model.param_flow.parameters()
+                if p.grad is not None]
+
+    ga = param_grad(batch_a)
+    gb = param_grad(batch_b)
+    assert len(ga) > 0
+    diff = sum(torch.abs(g1 - g2).sum() for g1, g2 in zip(ga, gb))
+    assert diff > 0, "stage-2 param flow must be conditioned on the real state"
+
+
+def test_joint_cfm_stage2_param_loss_real_state_finite(l96_joint_dataset):
+    from training.lightning_module import LitModel
+
+    w = l96_joint_dataset[0]
+    model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
+    lit = LitModel(model, model_type="joint_cfm", stage=2)
+    lit.on_train_start()
+    loss = lit._forward_and_loss(_joint_batch(w))
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    loss.backward()
+    unet_grads = [p.grad for p in model.unet.parameters() if p.grad is not None]
+    assert len(unet_grads) == 0, "frozen UNet got gradients in stage-2 param loss"
+
+
 def test_joint_cfm_sample_params_from_state(l96_joint_dataset):
     w = l96_joint_dataset[0]
     model = JointCFM(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], N_outer=3)

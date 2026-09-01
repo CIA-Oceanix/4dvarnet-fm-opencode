@@ -226,25 +226,25 @@ class JointCFM(VanillaCFM):
         return loss_cfm
 
     def compute_param_loss(self, batch):
-        """Stage-2 loss: param-only conditional flow matching (state flow frozen)."""
+        """Stage-2 loss: param-only conditional flow matching (state flow frozen).
+
+        Conditions the param flow on the real sampled state path ``x_tau``/``x_hat_1``
+        exactly as stage-1's ``compute_cfm_loss`` does, so stage-2 training matches
+        the deployment conditioning (a real integrated state estimate). The state
+        UNet is frozen (no grad flows to it); ``x_hat_1`` is stop-grad detached.
+        """
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
         if batch.true_params is None:
             return torch.tensor(0.0, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        x0 = torch.randn_like(batch.states) * self.sigma_prior
+        x_tau = self.interpolant.mix(x0, batch.states, tau)
         param_0 = torch.randn(B, self.param_dim, device=device)
         param_tau = (1.0 - tau).view(-1, 1, 1) * param_0.unsqueeze(1) \
             + tau.view(-1, 1, 1) * self._norm(batch.true_params).unsqueeze(1)
         param_target = self._param_target(batch, param_0, tau)
-        xs = torch.zeros_like(batch.states)
-        cond = _make_cond(batch.obs, batch.forcing, batch.params, 0, 1)
-        v_state = self.unet(xs.transpose(1, 2), cond.transpose(1, 2), tau=tau).transpose(1, 2)
-        x_hat_1 = xs + (1.0 - tau).view(-1, 1, 1) * v_state
-        while param_tau.dim() < 3:
-            param_tau = param_tau.unsqueeze(1)
-        param_tau = param_tau.expand(B, batch.states.shape[1], -1)
-        v_pred_param = self.param_flow(batch.obs, batch.forcing,
-                                       x_hat_1.detach(), param_tau, tau)
+        _, v_pred_param, _ = self.forward(x_tau, batch, tau, param_tau)
         return F.mse_loss(v_pred_param, param_target)
 
     def sample(self, batch, N_outer=None, return_params=False):

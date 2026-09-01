@@ -24,18 +24,22 @@ class AttentionPool1D(nn.Module):
     network weight the timesteps that carry the most signal (e.g. where the
     state response to a model parameter is strongest), which aids regression
     of window-constant parameters whose effect unfolds over time.
+
+    A learned 1x1 ``key`` projection produces per-position keys so the query
+    can select positions, not channels: ``attn = softmax(query^T · key(x))``.
     """
 
     def __init__(self, channels: int):
         super().__init__()
         self.channels = channels
-        self.query = nn.Parameter(torch.zeros(1, channels, 1))
-        nn.init.kaiming_uniform_(self.query, a=math.sqrt(5))
+        self.query = nn.Parameter(torch.randn(1, channels) * (channels ** -0.5))
+        self.key = nn.Conv1d(channels, channels, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, T)
-        scale = math.sqrt(self.channels)
-        attn = torch.softmax((x * self.query) / scale, dim=-1)  # (B, C, T)
+        keys = self.key(x)  # (B, C, T)
+        logits = torch.einsum("qc,bct->bt", self.query, keys) / math.sqrt(self.channels)  # (B, T)
+        attn = torch.softmax(logits, dim=-1).unsqueeze(1)  # (B, 1, T)
         return (x * attn).sum(dim=-1)  # (B, C)
 
 
