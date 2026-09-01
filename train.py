@@ -75,13 +75,15 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
-                         obs_var_indices=None, use_biased_params=False):
+                         obs_var_indices=None, use_biased_params=False,
+                         resample_bias_draws=False, bias_max=0.2):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
                  obs_var_indices=obs_var_indices,
-                 use_biased_params=use_biased_params)
+                 use_biased_params=use_biased_params,
+                 resample_bias_draws=resample_bias_draws, bias_max=bias_max)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
                             shuffle=True, **kw),
@@ -174,6 +176,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_ref=ph.get("param_ref", None),
             param_head_pool=ph.get("param_head_pool", "mean"),
             state_source=ph.get("state_source", "l1b"),
+            augment_derivatives=ph.get("augment_derivatives", False),
             device=device,
         )
     elif model_type == "predict_state_cfm":
@@ -481,6 +484,8 @@ def main(cfg: DictConfig):
             with_params=(model_type in ("joint_cfm", "joint_direct_unet", "param_head")),
             obs_var_indices=obs_var_indices,
             use_biased_params=(model_type == "param_head"),
+            resample_bias_draws=dc.get("resample_bias_draws", False),
+            bias_max=dc.get("bias_max", 0.2),
         )
     else:
         loaders = make_experiment_dataloaders(

@@ -49,7 +49,8 @@ class FlowMatchingBatch:
 class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
-                 obs_var_indices=None, use_biased_params: bool = False):
+                 obs_var_indices=None, use_biased_params: bool = False,
+                 resample_bias_draws: bool = False, bias_max: float = 0.2):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -59,11 +60,18 @@ class FlowMatchingDataset(Dataset):
         self.param_dim = len(self.param_names)
         self.obs_var_indices = obs_var_indices
         self.use_biased_params = use_biased_params
+        self.resample_bias_draws = resample_bias_draws
+        self.bias_max = bias_max
 
     def __len__(self):
         return len(self.source)
 
     def _extract_params(self, w):
+        if self.resample_bias_draws:
+            true = tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0))
+                         for n in self.param_names)
+            draw = 1.0 + torch.empty(len(true)).uniform_(-self.bias_max, self.bias_max)
+            return tuple(t * float(d) for t, d in zip(true, draw.tolist()))
         if not self.use_biased_params:
             return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
         return _l96_biased_param_vector(w)

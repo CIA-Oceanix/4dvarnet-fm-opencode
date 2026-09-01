@@ -1,6 +1,23 @@
 # Changelog
 
-## 2026-09-01: L96 cascade state→param head (C1/C2) — documented negative + NRMSE relevance metric
+## 2026-09-01: Known-true-state param estimation — derivative augmentation + bias-resampling (C3)
+
+**Summary:** Built the two planned improvement levers for the S1 parameter-estimation problem (known-true-state setting): **(A1a) temporal-derivative augmentation** and **(B2) training-time bias resampling**. The C2 diagnosis was that the stack-and-pool head fails the fast weights `w1/w2` (S1 NRMSE ≈ 1.1-1.2) even with the exact true state — those params scale the *rates* of the Y dynamics, a signal carried only by the **time-derivative** of the state, which a static instantaneous-input CNN-pool head never sees. A1a appends a finite-difference `d x/dt` channel so the fast-rate signal becomes spatially visible; B2 re-samples the 10% parameter bias around the true params per `__getitem__` call during training so the head learns the *mapping across the bias distribution* instead of memorizing fixed `*_da`-vs-true pairs.
+
+**Files modified:**
+- `models/param_head.py` — `StateParamHead` gains `augment_derivatives` (optional `d x/dt` input channels via `_final_inputs`); threaded through `StateParamModel`/`StateParamModel.__init__`
+- `data/dataloader.py` — `FlowMatchingDataset` gains `resample_bias_draws` + `bias_max`; `_extract_params` re-samples `true_{n}·(1+U(−bias_max,bias_max))` per call when enabled
+- `conf/schema.py` — `ParamHeadConfig.augment_derivatives`; `DataConfig.resample_bias_draws` + `bias_max`
+- `train.py` — `make_l96_dataloaders` (flag + bias_max pass-through) + `model_factory` param_head `augment_derivatives`
+- `config/experiment/C3_param_head_true_deriv.yaml` — new: `state_source: "true"`, `augment_derivatives: true`, `data.resample_bias_draws: true`
+- `tests/test_param_head.py` — new `test_state_param_head_deriv_augment_shape` (input-channel delta = state_dim; finite forward/loss) + `test_resample_bias_draws_vary_around_true` (50 draws: varying, mean≈true, within ±20%)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Directly targets the C2-documented root cause (temporal identifiability of the fast weights) from the two axes the user prioritized: architecture (derivative channels make the rate signal observable) and training data (bias resampling gives the head many noisy→true pairs per trajectory, improving robustness to the S1 10% bias). Uses the C2 `state_source='true'` gateway as decided. Training/eval of the cached S1 set uses fixed `*_da` params (unchanged protocol); resampling is a training-only augmentation.
+
+**Verification:** `pytest tests/test_param_head.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_neural_inference.py tests/test_hydra_config.py -m "not slow"` — **94 passed, 1 deselected**. C3 config composes via Hydra (`resample_bias_draws=True`, `augment_derivatives=True`, head `in_c=81` = 24+8+1+24+24). 1-epoch `train.py` smoke (20 train / 5 val windows) completes end-to-end: S1 param RMSE after 1 epoch eps/w3/w4 already low (0.011/0.103/0.091), w1/w2 higher (0.92/0.97) — pipeline sound (no conclusion at 1 epoch). Ruff: no new debt on touched files (only pre-existing PLR0402 param_head.py:2 and pre-existing test/dataloader debt).
+
+
 
 **Summary:** Added a decoupled **state→param cascade** (new `StateParamHead`/`StateParamModel`, `model_type=param_head`) that reads the 8 L96 params (F,c1,hx,eps,w1..w4) from obs + biased `*_da` params + forcing + a state estimate, and trained it under two state sources: **C1** = frozen L1b state-only DirectUNet estimate, **C2** = exact true state (ablation). Both are **documented negatives** for parameter recovery: even with the exact true state (C2) the head **fails the fast weights `w1/w2` (S1 NRMSE ≈ 1.1-1.2, error larger than the parameter itself)**, an information/architecture bottleneck — only the coupled multi-τ flow (L9) recovers all 8 params. F is partly a state-quality effect (true state halves it 1.67→0.86). Also fixed a **train/eval obs-consistency bug** (`_make_eval_batch` now subsamples `states` to `obs_var_indices` for L96, matching the training dataloader) and extended the consolidated report with **computed DA NRMSE rows + a w3/w4 pinned-prior masking footnote** so the neural-vs-DA relevance statement is stated properly (NRMSE = RMSE/mean|true|).
 

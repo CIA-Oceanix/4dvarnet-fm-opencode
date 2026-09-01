@@ -103,6 +103,55 @@ def test_state_param_head_no_oracle(bias_dataset):
     assert torch.isfinite(out1).all()
 
 
+def test_state_param_head_deriv_augment_shape():
+    w = None
+    base = StateParamHead(state_dim=SD, param_dim=PD, hidden_channels=[8, 16],
+                          param_ref=REF, augment_derivatives=False)
+    aug = StateParamHead(state_dim=SD, param_dim=PD, hidden_channels=[8, 16],
+                         param_ref=REF, augment_derivatives=True)
+    assert aug.blocks[0].conv1.in_channels == base.blocks[0].conv1.in_channels + SD
+    b = _B()
+    b.obs = torch.zeros(2, 10, SD)
+    b.forcing = torch.zeros(2, 10)
+    b.params = torch.randn(2, PD)
+    b.true_params = torch.randn(2, PD)
+    x_hat = torch.randn(2, 10, SD)
+    out = aug(b, x_hat)
+    assert out.shape == (2, PD)
+    assert torch.isfinite(out).all()
+    loss = aug.compute_loss(b, x_hat)
+    assert torch.isfinite(loss)
+
+
+def test_resample_bias_draws_vary_around_true(bias_dataset):
+    from data.dataloader import FlowMatchingDataset
+    obs_idx = make_obs_j_indices(8, 4, 2)
+    ds = FlowMatchingDataset(
+        bias_dataset, T_max=0.1, obs_interval=20,
+        with_params=True, param_names=list(PARAM_NAMES),
+        obs_var_indices=obs_idx, use_biased_params=True,
+        resample_bias_draws=True, bias_max=0.2,
+    )
+    w = bias_dataset[0]
+    true = [float(w[f"true_{nm}"]) for nm in PARAM_NAMES]
+    vals = [[] for _ in range(8)]
+    for _ in range(50):
+        item = ds[0]
+        p = [float(x) for x in item[4:4 + 8]]
+        for i in range(8):
+            vals[i].append(p[i])
+    for i in range(8):
+        assert len(set(round(v, 3) for v in vals[i])) > 5, f"param {i} not varying"
+        assert abs(float(np.mean(vals[i])) - true[i]) / true[i] < 0.05
+        assert all(abs(v / true[i] - 1.0) <= 0.2 + 1e-6 for v in vals[i])
+
+
+def _B():
+    class _B:
+        pass
+    return _B()
+
+
 def test_state_param_model_frozen_encoder_optional():
     if not os.path.exists(L1B_CKPT):
         pytest.skip("L1b checkpoint not available (need master worktree copy)")

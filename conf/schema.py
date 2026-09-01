@@ -61,6 +61,8 @@ class DataConfig:
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
     test_cache: Optional[str] = None
+    resample_bias_draws: bool = False
+    bias_max: float = 0.2
 
     # Device
     device: str = "cpu"
@@ -195,6 +197,7 @@ class ParamHeadConfig:
     state_hidden_channels: Optional[List[int]] = None
     state_cond_extra_dim: int = 0
     state_source: str = "l1b"
+    augment_derivatives: bool = False
 
 
 @dataclass
