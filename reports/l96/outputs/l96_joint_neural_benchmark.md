@@ -19,8 +19,8 @@ Single-sample state RMSE (S0/S1), S1/S0 degradation, and **mean** per-parameter 
 | L7_joint_cfm_s0s1 | 0.6332 | 0.6513 | 1.0286 | 0.1219 | 0.1837 |
 | L8_joint_direct_unet_s0s1 | 0.6247 | 0.9190 | 1.4710 | 0.1167 | 0.1422 |
 | L9_joint_cfm_s0s1_multitau | 0.6619 | 0.6658 | 1.0059 | 0.7503 | 0.9559 |
-| Joint-ETKF | 0.6334 | 1.4971 | 2.3638 | 0.0531 | 0.1278 |
-| Joint-EnKF | 0.7263 | 1.4592 | 2.0091 | 0.0567 | 0.1479 |
+| Joint-ETKF | 0.6348 | 1.4976 | 2.3593 | 0.0558 | 0.1298 |
+| Joint-EnKF | 0.7244 | 1.4602 | 2.0156 | 0.0553 | 0.1504 |
 
 *Lower is better for every column: state RMSE, S1/S0 degradation, and mean per-param RMSE. DA S1 paramRMSE average includes the pinned-to-prior `w3/w4` = 0, so it is not fully apples-to-apples (see the per-column parameter tables below).*
 
@@ -45,8 +45,8 @@ State metrics over the observed subspace for the neural models (single-sample) a
 | L7_joint_cfm_s0s1 | 0.6332 | 0.8520 | 0.4034 | 0.6513 ** | 0.8427 ** | 0.4163 ** | 1.0286 |
 | L8_joint_direct_unet_s0s1 | 0.6247 ** | 0.8555 ** | 0.3931 | 0.9190 | 0.7069 | 0.5498 | 1.4710 |
 | L9_joint_cfm_s0s1_multitau | 0.6619 | 0.8355 | 0.4155 | 0.6658 | 0.8325 | 0.4203 | 1.0059 ** |
-| Joint-ETKF | 0.6334 | 0.8213 | 0.2977 ** | 1.4971 | 0.1819 | 0.9374 | 2.3638 |
-| Joint-EnKF | 0.7263 | 0.7742 | 0.3709 | 1.4592 | 0.2302 | 0.8434 | 2.0091 |
+| Joint-ETKF | 0.6348 | 0.8207 | 0.2991 ** | 1.4976 | 0.1811 | 0.9382 | 2.3593 |
+| Joint-EnKF | 0.7244 | 0.7750 | 0.3703 | 1.4602 | 0.2291 | 0.8438 | 2.0156 |
 
 *Best per column: lowest RMSE / ES / degradation, highest EV. The joint-DA rows (Joint-ETKF / Joint-EnKF) come from `l96_joint_comparison.json`; their ES is the N=30 ensemble score while the neural single-sample ES is an N=1 MAE proxy (not strictly comparable, flagged).*
 
@@ -123,8 +123,8 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 | L7_joint_cfm_s0s1 | 0.3860 | 0.1271 | 0.0781 | 0.0337 | 0.1200 | 0.1269 | 0.0526 | 0.0503 | 0.1219 |
 | L8_joint_direct_unet_s0s1 | 0.3600 | 0.1363 | 0.1559 | 0.0220 | 0.1089 | 0.1232 | 0.0140 | 0.0134 | 0.1167 |
 | L9_joint_cfm_s0s1_multitau | 3.1023 | 0.4477 | 0.4995 | 0.3639 | 0.4691 | 0.4675 | 0.3186 | 0.3338 | 0.7503 |
-| Joint-ETKF | 0.1306 | 0.0167 | 0.0156 | 0.0016 | 0.1155 | 0.1218 | 0.0119 | 0.0112 | 0.0531 |
-| Joint-EnKF | 0.1532 | 0.0180 | 0.0168 | 0.0019 | 0.1157 | 0.1245 | 0.0120 | 0.0113 | 0.0567 |
+| Joint-ETKF | 0.1472 | 0.0173 | 0.0168 | 0.0018 | 0.1149 | 0.1249 | 0.0118 | 0.0114 | 0.0558 |
+| Joint-EnKF | 0.1444 | 0.0192 | 0.0178 | 0.0015 | 0.1139 | 0.1226 | 0.0121 | 0.0114 | 0.0553 |
 
 *Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` (S1 `w3`/`w4` are pinned to the reference prior, not estimated). Per-parameter EV and the free forecast are **not** stored for DA (the per-window predictions were not archived), so those tables show DA as `--`.*
 
@@ -139,8 +139,8 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 | L7_joint_cfm_s0s1 | 0.4696 | 0.2011 | 0.1794 | 0.0561 | 0.2686 | 0.1469 | 0.0769 | 0.0710 | 0.1837 |
 | L8_joint_direct_unet_s0s1 | 0.5463 | 0.1380 | 0.1407 | 0.0302 | 0.1213 | 0.1220 | 0.0241 | 0.0150 | 0.1422 |
 | L9_joint_cfm_s0s1_multitau | 4.0048 | 0.8054 | 0.5446 | 0.3856 | 0.6696 | 0.5189 | 0.3695 | 0.3486 | 0.9559 |
-| Joint-ETKF | 0.6082 | 0.1052 | 0.0637 | 0.0106 | 0.1161 | 0.1186 | 0.0000 | 0.0000 | 0.1278 |
-| Joint-EnKF | 0.7637 | 0.1053 | 0.0640 | 0.0112 | 0.1194 | 0.1197 | 0.0000 | 0.0000 | 0.1479 |
+| Joint-ETKF | 0.6248 | 0.1098 | 0.0616 | 0.0107 | 0.1137 | 0.1177 | 0.0000 | 0.0000 | 0.1298 |
+| Joint-EnKF | 0.7868 | 0.1063 | 0.0647 | 0.0108 | 0.1170 | 0.1179 | 0.0000 | 0.0000 | 0.1504 |
 
 *Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` (S1 `w3`/`w4` are pinned to the reference prior, not estimated). Per-parameter EV and the free forecast are **not** stored for DA (the per-window predictions were not archived), so those tables show DA as `--`.*
 
@@ -276,8 +276,9 @@ Joint augmented-state DA filters (state **and** 8 params) benchmarked on the sam
 
 | Method | S0 RMSE | S0 ES | S1 RMSE | S1 ES |
 |---|---|---|---|---|
-| Joint-ETKF | 0.6334 | 0.2977 | 1.4971 | 0.9374 |
-| Joint-EnKF | 0.7263 | 0.3709 | 1.4592 | 0.8434 |
+| Joint-ETKF | 0.6348 | 0.2991 | 1.4976 | 0.9382 |
+| Joint-EnKF | 0.7244 | 0.3703 | 1.4602 | 0.8438 |
+| Joint-Strong-4DVar | 0.7054 | 0.4575 | 1.1999 | 0.8100 |
 
 *ES is the N=30 ensemble Energy Score for the filters; Joint-Strong-4DVar is a deterministic solve so its ES is the N=1 MAE proxy (marked per the DA report). Lower is better for RMSE and ES. Rows are read from `experiments/l96_joint_comparison.json`.*
 

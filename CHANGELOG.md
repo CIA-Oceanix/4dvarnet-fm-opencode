@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-01: L96 joint-DA reconstruction artifacts + full 6-method comparison JSON
+
+**Summary:** Made `eval_joint_comparison_l96.py` persist per-window reconstruction `.npz` arrays (trajectories, per-member `ensemble_variance`, `params`, `es`) for every benchmarked method, merged incrementally into `experiments/l96_joint_baselines_trajectories.npz` on a per-case basis. Re-ran the 3 joint DA methods on the cached S0/S1 test set (Obs30, 200 windows) to produce their reconstructions — which were previously never saved and lost after each run: Run 1 = Joint-ETKF + Joint-EnKF at batch=10 (job 51098), Run 2 = Joint-Strong-4DVar at batch=200 (job 51131). Re-ran vanilla Strong-4DVar via the comparator (job 51294, batch=200) so it appears in the comparator schema, then assembled the full **6-method** `experiments/l96_joint_comparison.json` on master (vanilla ETKF/EnKF from master + fresh vanilla Strong-4DVar + the 3 joint rows) and regenerated both joint reports so they render all 6 DA methods.
+
+**Headline (cached S0/S1, Obs30, 200 windows):** Results reproduce the published rows — **S0 best = Joint-ETKF 0.6348** (EV 0.8207 / ES 0.2991); **S1 best DA = Joint-Strong-4DVar 1.1999** (EV 0.4132, ahead of vanilla Strong-4DVar 1.4319, Joint-EnKF 1.4602, Joint-ETKF 1.4976). Vanilla Strong-4DVar confirms the canonical cache (S0 0.7398/EV 0.7490, S1 1.4319/EV 0.2400). The joint npz holds exactly the 22 joint-method arrays (no vanilla keys — vanilla reconstructions already live on master's state-only cache).
+
+**Files modified:**
+- `eval_joint_comparison_l96.py` — per-method `trajectories`/`ensemble_variance`/`params`/`es` collection into a merged `l96_joint_baselines_trajectories.npz` (npz-merge preserves arrays from earlier/partial runs)
+- `batch/run_l96_joint_comparison.sbatch` — final config for the vanilla Strong-4DVar leg (`--methods Strong-4DVar --batch-size 200`)
+- `reports/l96/outputs/l96_joint_da_benchmark.md` — regenerated: now benchmarks all 6 DA methods (methods table, RMSE/EV/ES per case, joint-only per-param tables)
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated: DA-baselines section now includes Joint-Strong-4DVar
+- `CHANGELOG.md` — this entry
+- (gitignored artifacts copied to master: `experiments/l96_joint_comparison.json`, `experiments/l96_joint_baselines_trajectories.npz`, `experiments/l96_datasets_obsj2_int100_nwin200.pt`)
+
+**Rationale:** The joint DA baselines never saved their per-window reconstructions, so the joint state trajectories were lost after each run. Persisting them and running the 3 joint methods on the canonical cached test set gives the reconstructions needed for downstream trajectory/metrics/Hovmöller work. Assembling the full 6-method JSON and regenerating the reports makes the DA-vs-neural and joint-vs-vanilla comparison complete on master.
+
+**Verification:** Jobs 51098 (Joint-ETKF/EnKF, batch=10) + 51131 (Joint-Strong-4DVar, batch=200) + 51294 (vanilla Strong-4DVar, batch=200) all COMPLETED exit 0:0; all 200-window S0/S1 combos 200/200 finite; values match the published rows. npz = exactly 22 joint arrays, no vanilla. Both report generators run clean on master with the 6-method JSON.
+
 ## 2026-08-31: QG S0/S1 DA baselines — consolidated report (cross-resolution S1)
 
 **Summary:** Added a consolidated QG S0/S1 DA-baseline report to master, matching the L63/L96 convention (`reports/qg/` generator + `outputs/*.md`). The report covers the error-free S0 baseline and the S1 cross-resolution case (truth 64×64 vs DA model at da_nx=16 and da_nx=32), with the full S0/S1 settings and per-field (q/psi, per-layer) RMSE/EV/improv tables. Because the QG code (`data/qg.py`, `models/*`) lives only on `feat/qg-case-study`, the generator is JSON-only: it reads the curated S0/S1 result JSONs (committed on `feat/qg-case-study`) and a `qg_settings.json` snapshot, and renders the self-contained Markdown. The 4 dataset-spinup caches are copied into the local master worktree under `reports/qg_cache/` (gitignored via `*.pt`, so local-only and non-committed) so the datasets are accessible from the local `origin/master`.
