@@ -331,6 +331,19 @@ beats vanilla Strong-4DVar (0.750/1.432) on both cases and is the **best DA row 
 (ahead of Joint-EnKF 1.459 / Joint-ETKF 1.497); param RMSE mean 0.226 (S0) / 0.299
 (S1), weaker than the filters (F 0.85 dominates).
 
+**Multi-method reconstruction artifacts (merged 2026-09-01, PR #134)** —
+`eval_joint_comparison_l96.py` persists per-window reconstruction `.npz` arrays
+(`trajectories`, per-member `ensemble_variance`, `params`, `es`) for every benchmarked
+method, merged into `experiments/l96_joint_baselines_trajectories.npz`. Re-ran the 3
+joint methods (jobs 51098/51131) + vanilla Strong-4DVar (51294, so it appears in the
+comparator schema) on the canonical cached S0/S1 test set. `experiments/l96_joint_comparison.json`
+is now the full **6-method** comparison (vanilla ETKF/EnKF/Strong-4DVar + Joint-ETKF/EnKF/
+Strong-4DVar; fresh re-run values: Joint-ETKF S0 0.6348, Joint-EnKF 0.7244, Joint-Strong-4DVar
+0.7054/1.1999). Both joint reports regenerate against it, so the neural report's DA-baselines
+table now lists all 6 DA methods (incl. Joint-Strong-4DVar). Note the master committed DA
+report retains oracle-free neural values; a stale local regeneration against oracle-era JSONs
+on the master worktree was discarded in favor of the merged oracle-free content.
+
 ## Phases
 
 ### Phase 0: Plan
