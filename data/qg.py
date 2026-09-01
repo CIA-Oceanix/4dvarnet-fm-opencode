@@ -413,6 +413,18 @@ class QGS01Dataset:
             da_model = "qg2l_lores"
             da_nx = cfg.da_nx if cfg.da_nx else cfg.nx
             ws_corrupt = _make_corrupted_wind_state(cfg, ws_true, i)
+        elif scenario == "test_s1_qg1l":
+            # Structural model-error scenario: reduced-gravity single-layer DA
+            # model (no baroclinic mode) at FULL resolution, keeping the same
+            # param bias + corrupted wind as test_s1. The DA model's 1-layer
+            # state represents the truth's upper layer.
+            b = cfg.s1_param_bias
+            da_params = dict(w["true_params"])
+            da_params["rd"] = da_params["rd"] * (1 - b)
+            da_params["rek"] = da_params["rek"] * (1 - b)
+            da_model = "qg1l"
+            da_nx = cfg.nx
+            ws_corrupt = _make_corrupted_wind_state(cfg, ws_true, i)
         else:
             raise ValueError(f"unknown scenario {scenario!r}")
         w["da_model"] = da_model
@@ -466,4 +478,5 @@ def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
     return {
         "test_s0": QGS01Dataset(cfg, "test_s0", base_windows=base),
         "test_s1": QGS01Dataset(cfg, "test_s1", base_windows=base),
+        "test_s1_qg1l": QGS01Dataset(cfg, "test_s1_qg1l", base_windows=base),
     }

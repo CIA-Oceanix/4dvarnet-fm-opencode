@@ -29,10 +29,12 @@ def _periodic_dist(a, b, L):
 def test_scenario_set_keys_and_shared_truth():
     cfg = _tiny_cfg()
     ds = make_qg_s0_s1_datasets(cfg)
-    assert set(ds.keys()) == {"test_s0", "test_s1"}
+    assert set(ds.keys()) == {"test_s0", "test_s1", "test_s1_qg1l"}
     for i in range(len(ds["test_s0"])):
         assert torch.equal(ds["test_s0"][i]["true_state"],
                            ds["test_s1"][i]["true_state"])
+        assert torch.equal(ds["test_s0"][i]["true_state"],
+                           ds["test_s1_qg1l"][i]["true_state"])
 
 
 def test_window_shapes():
@@ -169,6 +171,42 @@ def test_s1_ablation_component_neutralization():
         assert w["da_nx"] == ds["test_s0"].cfg.nx
         assert math.isclose(w["da_params"]["rd"], w["true_params"]["rd"] * (1 - b))
         assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+
+
+def test_s1_qg1l_scenario():
+    """S1-QG1L: reduced-gravity 1-layer DA model at full res + same param/wind errors."""
+    cfg = _tiny_cfg()
+    ds = make_qg_s0_s1_datasets(cfg)
+    b = cfg.s1_param_bias
+    for w in ds["test_s1_qg1l"]:
+        assert w["da_model"] == "qg1l"
+        assert w["da_nx"] == ds["test_s0"].cfg.nx
+        assert math.isclose(w["da_params"]["rd"], w["true_params"]["rd"] * (1 - b))
+        assert not torch.equal(w["wind_state_corrupted"], w["wind_state_true"])
+        assert w["da_params"]["rd"] != w["true_params"]["rd"]
+
+
+def test_s1_qg1l_metrics_upper_layer():
+    """qg1l DA seed/metadata stay 1-layer (upper) while targets remain upper-layer fields."""
+    from models.qg1l_dynamics import QG1LDynamics
+
+    cfg = _tiny_cfg()
+    ds = make_qg_s0_s1_datasets(cfg)
+    dyn = QG1LDynamics(nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=cfg.beta, rd=cfg.rd,
+                       U1=cfg.U1, rek=cfg.rek, filterfac=cfg.filterfac,
+                       wind_amp=cfg.wind_amp, wind_sigma=cfg.wind_sigma,
+                       wind_cx=cfg.wind_cx, wind_cy=cfg.wind_cy,
+                       wind_drift_tau_days=cfg.wind_drift_tau_days,
+                       wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=cfg.wind_seed)
+    w = ds["test_s1_qg1l"][0]
+    assert dyn.state_dim == cfg.ny * cfg.nx
+    # upper-layer targets are (T, ny*nx): the 1-layer comparison space
+    assert w["target_state_q"].shape[-1] == cfg.ny * cfg.nx
+    assert w["target_state_psi"].shape[-1] == cfg.ny * cfg.nx
+    # 1-layer init projection: upper-layer q slice is a valid 1-layer state
+    init = w["true_state"][0, :cfg.ny * cfg.nx]
+    s = init.reshape(cfg.ny, cfg.nx)
+    assert s.shape == (cfg.ny, cfg.nx)
 
 
 @pytest.mark.slow

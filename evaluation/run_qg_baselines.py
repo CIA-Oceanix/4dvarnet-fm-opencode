@@ -189,10 +189,12 @@ def _psi_h(dyn, obs_cols, ny, nx, device):
             psi = spectral_resize_2d(psi, ny, nx)
         cols = obs_cols[index]
         if not batch:
-            psi1 = psi[0]
+            # 2-layer: psi is (2, ny, nx) -> upper layer; 1-layer: (ny, nx).
+            psi1 = psi[0] if psi.ndim == 3 else psi
             return torch.cat([psi1[:, c] for c in cols])
         else:
-            psi1 = psi[:, 0]
+            # 2-layer: psi is (B, 2, ny, nx) -> upper layer; 1-layer: (B, ny, nx).
+            psi1 = psi[:, 0] if psi.ndim == 4 else psi
             C = len(cols)
             o = C * ny
             stacked = torch.stack([psi1[:, :, c] for c in cols], dim=1)
@@ -330,6 +332,9 @@ def _evaluate_window(cfg, window, method, device, obs=None, forcing=None,
         obs, _ = _q_alongtrack_obs(cfg, window, device)
     mask = window["obs_mask"].to(device)
     truth = window["true_state"].to(device)
+    if window["da_model"] == "qg1l":
+        # 1-layer DA compares against the truth's upper layer only.
+        truth = truth[:, :cfg.ny * cfg.nx]
     if forcing is None:
         forcing = window["wind_state_corrupted"].to(device)
     if init_ensemble is not None:
@@ -364,7 +369,11 @@ def _field_layer_metrics(analyses, refs, free_ra, inner, per_layer, device):
     def psi_traj(traj):
         psi = inner.streamfunctions(
             torch.from_numpy(traj).float().to(device)).detach().cpu().numpy()
-        nlayer = psi.shape[-3] if psi.ndim == 4 else 1
+        if psi.ndim == 3:
+            # 1-layer model: streamfunctions returns (T, ny, nx) without a
+            # leading layer dim; normalize to (T, 1, ny, nx).
+            psi = psi[:, None]
+        nlayer = psi.shape[-3]
         slices = {"full": psi.reshape(psi.shape[0], -1)}
         for li in range(nlayer):
             pflat = psi[..., li, :, :].reshape(psi.shape[0], per_layer)
@@ -408,23 +417,32 @@ def _free_forecast_init(cfg, window, init_lag_days, device):
     return _sample_init_state(cfg, window, init_lag_days, 0.25, device)
 
 
-def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state):
+def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state,
+                        upper_only=False):
     """RMSE of the no-obs model forecast rolled from a shared init state.
 
     `init_state` is the SAME initial condition used to seed the DA ensemble, so
     the free-forecast and DA results are compared apples-to-apples (identical
     initial state; only assimilated observations differ). For a cross-resolution
     DA model (S1), `init_state` is in DA-model space and the rolled forecast is
-    spectrally upsampled to the truth grid before the RMSE is taken.
+    spectrally upsampled to the truth grid before the RMSE is taken. For a
+    1-layer DA model (qg1l), `upper_only=True` compares the roll against the
+    truth's upper layer only.
     """
     truth = window["true_state"].float()
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     roll = roll.detach().cpu().numpy()
     nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
+    if upper_only:
+        truth = truth[:, : per_layer_for(cfg)]
     if dyn.inner.ny != cfg.ny:
         roll = _upsample_to_truth(
             roll, dyn.inner.ny, nlayers, cfg.ny, torch.device("cpu"))
     return float(np.sqrt(np.mean((roll - truth.numpy()) ** 2)))
+
+
+def per_layer_for(cfg):
+    return cfg.ny * cfg.nx
 
 
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
@@ -458,6 +476,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             dyn = _build_dyn(cfg, w, device)
             da_nx = _da_nx_for_window(cfg, w)
             nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
+            is_qg1l = w["da_model"] == "qg1l"
             cross_res = da_nx != cfg.nx
             if obs_var == "q" and cross_res:
                 raise ValueError(
@@ -478,7 +497,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 # is apples-to-apples (identical initial condition).
                 shared_init, init_lag_val = _sample_init_state(
                     cfg, w, init_lag_days, band_half, device)
-                if cross_res:
+                if is_qg1l:
+                    # 1-layer DA state = truth's upper-layer PV q1 (the 1-layer
+                    # model represents the upper layer). All DA members and the
+                    # free forecast start from this same projective init.
+                    shared_init = shared_init[:per_layer]
+                    lead = w["init_lead_truth"].float()[:, :per_layer]
+                    sigma_raw = float(lead.std(0).mean())
+                elif cross_res:
                     shared_init = _downsample_to_da(
                         shared_init, da_nx, nlayers, cfg.nx, device)
                     lead = _downsample_to_da(
@@ -539,16 +565,21 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             if cross_res:
                 traj_da = _upsample_to_truth(
                     traj_da, da_nx, nlayers, cfg.nx, device)
+            if is_qg1l:
+                # 1-layer DA output vs truth's upper layer only.
+                ref = ref[:, :per_layer]
             analyses.append(traj_da)
             refs.append(ref)
             rmse_list.append(float(np.sqrt(np.mean(
                 (traj_da - ref) ** 2))))
             fcast_rmse.append(_free_forecast_rmse(
-                cfg, dyn, w, device, forcing, shared_init))
+                cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l))
             if shared_init is not None:
                 free_roll = dyn.rollout_trajectory(
                     shared_init, cfg.num_steps - 1, wind_state=forcing)
                 free_roll = free_roll.detach().cpu().numpy()
+                if is_qg1l:
+                    free_roll = free_roll[:, :per_layer]
                 if cross_res:
                     free_roll = _upsample_to_truth(
                         free_roll, da_nx, nlayers, cfg.nx,
@@ -572,12 +603,23 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 # params; the DA RMSE/EV themselves are computed directly from
                 # the q-state and are unaffected).
                 tp = d[0]["true_params"]
-                truth_inner = QGDynamics(
-                    nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
-                    delta=cfg.delta, U1=tp["U1"], U2=tp["U2"], rek=tp["rek"],
-                    filterfac=cfg.filterfac,
-                    wind_amp=d[0]["wind_amp"], wind_sigma=cfg.wind_sigma,
-                    clip_range=1e-3).to(device)
+                if d[0]["da_model"] == "qg1l":
+                    # 1-layer structural-error scenario: invert the 1-layer DA
+                    # state to a 1-layer streamfunction; metrics are upper-layer
+                    # only (the refs/analyses are already 1-layer here).
+                    from models.qg1l_dynamics import QG1LDynamics
+                    truth_inner = QG1LDynamics(
+                        nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
+                        U1=tp["U1"], rek=tp["rek"], filterfac=cfg.filterfac,
+                        wind_amp=d[0]["wind_amp"], wind_sigma=cfg.wind_sigma,
+                        clip_range=1e-3).to(device)
+                else:
+                    truth_inner = QGDynamics(
+                        nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
+                        delta=cfg.delta, U1=tp["U1"], U2=tp["U2"], rek=tp["rek"],
+                        filterfac=cfg.filterfac,
+                        wind_amp=d[0]["wind_amp"], wind_sigma=cfg.wind_sigma,
+                        clip_range=1e-3).to(device)
             metrics_per_field = _field_layer_metrics(
                 analyses, refs, free_ra, truth_inner, per_layer, device)
         traj_path = None

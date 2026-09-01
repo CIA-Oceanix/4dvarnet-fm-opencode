@@ -519,3 +519,30 @@ def test_s1_cross_res_q_obs_rejected():
             inflation=1.0, loc_radius=4.0, scenarios=("test_s1",),
             init="lagged", geometry="random_columns",
             obs_var="q", init_lag_days=0.5, ds=ds)
+
+
+def test_s1_qg1l_run_smoke():
+    """End-to-end S1-QG1L psi-obs ETKF run (1-layer DA model) must complete
+    and produce finite, upper-layer metrics. Exercises the 1-layer init
+    projection, the 1-layer H-function branch, and the 1-layer per-field
+    metrics path."""
+    cfg = QGConfig(nx=16, window_days=6.0, spinup_years=0.05,
+                   num_windows=2, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3)
+    from evaluation.run_qg_baselines import run
+    ds = make_qg_s0_s1_datasets(cfg)
+    assert all(w["da_model"] == "qg1l" for w in ds["test_s1_qg1l"])
+    p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+            inflation=1.0, loc_radius=4.0, scenarios=("test_s1_qg1l",),
+            init="lagged", geometry="random_columns",
+            obs_var="psi", init_lag_days=0.5, ds=ds)
+    s1 = p["scenarios"]["test_s1_qg1l"]
+    for key in ("rmse_mean", "forecast_rmse_mean", "expvar_full",
+                "expvar_upper_q"):
+        assert np.isfinite(s1[key])
+    assert np.isfinite(s1["forecast_improvement"])
+    mpf = s1["metrics_per_field"]
+    assert set(mpf["q"].keys()) >= {"layer1"}
+    for fld in ("q", "psi"):
+        assert np.isfinite(mpf[fld]["layer1"]["ev"])
+
