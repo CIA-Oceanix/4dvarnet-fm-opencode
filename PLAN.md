@@ -33,7 +33,10 @@ report + generator were on master).
   and per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble` in ETKF/EnKF, merged
   with the L96/joint/ES work.
 - **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
-  JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md`.
+  JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
+  governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,
+  psi-obs focus). Dedicated `reports/qg/generate_qg1l_report.py` → `qg1l_report.md` for
+  the reduced-gravity structural-error case (r-scale sweep).
 - **Tests**: 6 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
   `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`) — all in the master CI gate.
 - **sbatch**: 31 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps.

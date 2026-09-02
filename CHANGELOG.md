@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-09-02: Revised readable QG DA report (equations + S0/S1-QG2L/S1-QG1L sections, psi-obs focus) + dedicated QG1L report
+
+**Summary:** Reworked the QG consolidated report (`reports/qg/generate_qg_s0s1_report.py`
+→ `qg_s0s1_report.md`) to be readable and self-contained, and added a dedicated
+reduced-gravity/model-error report (`reports/qg/generate_qg1l_report.py` →
+`qg1l_report.md`). The revised S0/S1 report now leads with the governing equations of the
+two-layer Phillips QG system (and the 1-layer reduced-gravity model), a compact
+case-study table describing S0 and the two S1 configurations, and splits results into an
+**S0** section (error-free, psi-obs), an **S1-QG2L** section (model error = param bias +
+corrupted wind + cross-resolution at **da_nx = 16 / 32 / 64**), and an **S1-QG1L**
+section (structural 1-layer error, obs-var r-scale sweep). All sections report RMSE /
+free-forecast RMSE / forecast-improv / pooled-EV, per field (q/ψ) and per layer. The
+psi-obs focus means the q-obs runs are demoted to a local-PV reference in the QG1L
+section only. No new GPU runs: the full-S1 **da_nx=64** row exists on master as the
+`qg_s1_nores` ablation (param + wind corruption ON, resolution mismatch removed).
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_report.py` — rewritten: equations §1, case-study table §2,
+  base config §3, S0 §4, S1-QG2L da_nx 16/32/64 §5, S1-QG1L r-scale §6, interpretation §7.
+- `reports/qg/outputs/qg_s0s1_report.md` — regenerated.
+- `reports/qg/generate_qg1l_report.py` — new dedicated QG1L generator.
+- `reports/qg/outputs/qg1l_report.md` — new generated QG1L report.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The previous consolidated report was dense and hard to follow, mixing q- and
+psi-obs and cross-resolution variants without the system equations or a clear per-scenario
+structure. The user requested a revised version focused on psi-obs with one section per
+scenario (S0, S1-QG2L, S1-QG1L), the governing equations, and a dedicated QG1L report —
+stating that the full-S1 da_nx=64 result should exist from the ablation study and not to
+launch new jobs if it does. That result is the `qg_s1_nores` (da_nx=64) ablation committed
+on master, so the report covers da_nx 16/32/64 with existing data only.
+
+**Verification:** both generators run clean (`python reports/qg/generate_qg_s0s1_report.py`
+and `generate_qg1l_report.py`, exit 0, no missing-JSON warnings); `py_compile` on both;
+QG fast pytest gate `pytest tests/{test_qg_dynamics,test_qg1l_dynamics,test_qg_baselines,
+test_qg_s0s1,test_qg_random_columns,test_qg_data}.py -m "not slow"` — all passed
+(34 + 65); `ruff` on the two scripts: only pre-existing EXE001 shebang convention
+(informational in CI; the repo uses shebangs on all runnable scripts).
+
 ## 2026-09-02: Integrate full QG (two-layer quasi-geostrophic) executable codebase to master
 
 **Summary:** Brought the complete QG case-study executable onto master, so master now
