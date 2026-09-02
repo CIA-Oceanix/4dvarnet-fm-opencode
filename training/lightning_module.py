@@ -42,7 +42,7 @@ class LitModel(pl.LightningModule):
         elif self.model_type in ("joint_cfm", "joint_direct_unet") and self.stage == 2:
             params = self.model.param_flow.parameters() if self.model_type == "joint_cfm" \
                 else self.model.param_head.parameters()
-        elif self.model_type == "param_head":
+        elif self.model_type in ("param_head", "param_head_unet"):
             params = self.model.param_head.parameters()
         else:
             params = self.model.parameters()
@@ -86,7 +86,7 @@ class LitModel(pl.LightningModule):
                     for p in self.model.param_head.parameters():
                         p.requires_grad = True
                 self.model.set_stage(2)
-        elif self.model_type == "param_head":
+        elif self.model_type in ("param_head", "param_head_unet"):
             if getattr(self.model, "state_encoder", None) is not None:
                 for p in self.model.state_encoder.parameters():
                     p.requires_grad = False
@@ -117,7 +117,7 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_loss(batch)
         elif self.model_type == "tweedie_cfm":
             loss = self.model.compute_loss(batch)
-        elif self.model_type == "param_head":
+        elif self.model_type in ("param_head", "param_head_unet"):
             loss = self.model.compute_loss(batch)
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")

@@ -5,9 +5,13 @@ import pytest
 import torch
 
 from data.dataloader import _l96_biased_param_vector, _l96_true_param_vector
-from data.lorenz96 import Lorenz96Config, RandomBiasLorenz96Dataset, _make_lorenz96_dynamics
+from data.lorenz96 import (
+    Lorenz96Config,
+    RandomBiasLorenz96Dataset,
+    _make_lorenz96_dynamics,
+)
 from evaluation.run_l96 import make_obs_j_indices
-from models.param_head import StateParamHead, StateParamModel
+from models.param_head import StateParamHead, StateParamModel, StateParamUNet
 
 PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
 SD, PD = 24, 8
@@ -194,3 +198,90 @@ def test_state_param_model_frozen_encoder_optional():
                for p in model.state_encoder.parameters())
     assert any(p.grad is not None and p.grad.norm() > 0
                for p in model.param_head.parameters())
+
+
+def test_state_param_unet_shapes():
+    model = StateParamUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], param_ref=REF)
+    class _B:
+        pass
+    b = _B()
+    b.obs = torch.zeros(2, 64, SD)
+    b.forcing = torch.zeros(2, 64)
+    b.params = torch.randn(2, PD)
+    b.true_params = torch.randn(2, PD)
+    x_hat = torch.zeros(2, 64, SD)
+    out = model(b, x_hat)
+    assert out.shape == (2, PD)
+    assert torch.isfinite(out).all()
+    loss = model.compute_loss(b, x_hat)
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    loss.backward()
+    assert any(p.grad is not None and p.grad.norm() > 0 for p in model.parameters())
+
+
+def test_state_param_unet_no_oracle(bias_dataset):
+    w = bias_dataset[0]
+    b = _batch(w, use_biased=True)
+    model = StateParamUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16], param_ref=REF)
+    x_hat = torch.zeros(1, b.T, SD)
+    out1 = model(b, x_hat)
+    b2 = _batch(w, use_biased=True)
+    b2.params = torch.randn_like(b2.params)
+    out2 = model(b2, x_hat)
+    assert not torch.allclose(out1, out2)
+    assert torch.isfinite(out1).all()
+
+
+def test_state_param_unet_frozen_encoder_optional():
+    if not os.path.exists(L1B_CKPT):
+        pytest.skip("L1b checkpoint not available (need master worktree copy)")
+    model = StateParamModel(
+        state_dim=SD, param_dim=PD,
+        state_checkpoint=L1B_CKPT,
+        state_hidden_channels=[64, 128, 256],
+        backbone="unet",
+        unet_hidden_channels=[8, 16],
+        param_ref=REF,
+        device=torch.device("cpu"),
+    )
+    assert isinstance(model.param_head, StateParamUNet)
+    assert all(not p.requires_grad for p in model.state_encoder.parameters())
+    assert all(p.requires_grad for p in model.param_head.parameters())
+    from data.lorenz96 import RandomParamLorenz96Dataset
+    obs_idx = make_obs_j_indices(8, 4, 2)
+    cfg = Lorenz96Config(T_max=0.1, dt=0.001, obs_interval=20, num_windows=1,
+                         spinup_steps=500, seed=42, obs_var_indices=obs_idx)
+    dyn = _make_lorenz96_dynamics(cfg)
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.2, dynamics=dyn)
+    b = _batch(ds[0], use_biased=True)
+    loss = model.compute_loss(b)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert all(p.grad is None or p.grad.norm() == 0
+               for p in model.state_encoder.parameters())
+    assert any(p.grad is not None and p.grad.norm() > 0
+               for p in model.param_head.parameters())
+
+
+def test_param_head_unet_configs_instantiate():
+    from hydra import compose, initialize
+
+    from train import model_factory
+
+    for name, src in [("C4a_param_head_unet_true", "true"),
+                      ("C4b_param_head_unet_l1b", "l1b")]:
+        with initialize(config_path="../config", version_base=None):
+            cfg = compose(config_name=f"experiment/{name}")
+        assert cfg.model.model_type == "param_head_unet"
+        assert cfg.model.param_head_unet.state_source == src
+        dev = torch.device("cpu")
+        model = model_factory(cfg, dev)
+        assert isinstance(model.param_head, StateParamUNet)
+        assert model.state_source == src
+        if src == "l1b":
+            if not os.path.exists(L1B_CKPT):
+                pytest.skip("L1b checkpoint not available")
+            assert model.state_encoder is not None
+            assert all(not p.requires_grad for p in model.state_encoder.parameters())
+        else:
+            assert model.state_encoder is None

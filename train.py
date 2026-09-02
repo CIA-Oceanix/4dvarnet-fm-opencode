@@ -179,6 +179,24 @@ def model_factory(cfg: DictConfig, device: torch.device):
             augment_derivatives=ph.get("augment_derivatives", False),
             device=device,
         )
+    elif model_type == "param_head_unet":
+        from models.param_head import StateParamModel
+        ph = cfg.model.param_head_unet
+        model = StateParamModel(
+            state_dim=cfg.model.state_dim,
+            param_dim=ph.param_dim,
+            state_checkpoint=ph.get("state_checkpoint", None),
+            state_model_type=ph.get("state_model_type", "direct_unet"),
+            state_hidden_channels=ph.get("state_hidden_channels", None),
+            state_cond_extra_dim=ph.get("state_cond_extra_dim", 0),
+            param_head_channels=ph.get("param_head_channels", None),
+            param_ref=ph.get("param_ref", None),
+            param_head_pool=ph.get("param_head_pool", "mean"),
+            state_source=ph.get("state_source", "l1b"),
+            backbone="unet",
+            unet_hidden_channels=ph.get("hidden_channels", None),
+            device=device,
+        )
     elif model_type == "predict_state_cfm":
         from models.vanilla_cfm import PredictStateCFM
         psc = cfg.model.predict_state_cfm
@@ -277,7 +295,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
-        elif model_type == "param_head":
+        elif model_type in ("param_head", "param_head_unet"):
             pred, params = model(batch)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
@@ -331,7 +349,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type == "param_head":
+        elif model_type in ("param_head", "param_head_unet"):
             pred, _ = model(batch)
             pred = pred.detach().cpu().numpy()[0]
         elif model_type == "predict_state_cfm":
@@ -493,9 +511,9 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_direct_unet", "param_head")),
+            with_params=(model_type in ("joint_cfm", "joint_direct_unet", "param_head", "param_head_unet")),
             obs_var_indices=obs_var_indices,
-            use_biased_params=(model_type == "param_head"),
+            use_biased_params=(model_type in ("param_head", "param_head_unet")),
             resample_bias_draws=dc.get("resample_bias_draws", False),
             bias_max=dc.get("bias_max", 0.2),
         )
@@ -584,7 +602,7 @@ def main(cfg: DictConfig):
     t0 = time.time()
     results_metrics = {}
     param_metrics = {}
-    is_joint = model_type in ("joint_cfm", "joint_direct_unet", "param_head")
+    is_joint = model_type in ("joint_cfm", "joint_direct_unet", "param_head", "param_head_unet")
     NO = dc.get("NO", 8)
     J = dc.get("J", 4)
     obs_j_local = dc.get("obs_j", 2)
@@ -595,14 +613,14 @@ def main(cfg: DictConfig):
             m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
                                          return_params=True, param_names=param_names,
                                          param_dim=param_dim, obs_var_indices=obs_var_indices,
-                                         use_biased_params=(model_type == "param_head"))
+                                         use_biased_params=(model_type in ("param_head", "param_head_unet")))
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
             m, s = evaluate_model(model, datasets[key], device, model_type,
                                   param_names=param_names, param_dim=param_dim,
                                   obs_var_indices=obs_var_indices,
-                                  use_biased_params=(model_type == "param_head"))
+                                  use_biased_params=(model_type in ("param_head", "param_head_unet")))
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -614,7 +632,7 @@ def main(cfg: DictConfig):
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
                               param_names=param_names, param_dim=param_dim,
                               obs_var_indices=obs_var_indices,
-                              use_biased_params=(model_type == "param_head"))
+                              use_biased_params=(model_type in ("param_head", "param_head_unet")))
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 
