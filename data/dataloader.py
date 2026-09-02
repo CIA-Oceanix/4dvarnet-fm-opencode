@@ -24,6 +24,32 @@ def _l96_biased_param_vector(w):
     return tuple(vec + [float(x) for x in fw])
 
 
+def _l96_true_param_vector(w):
+    """Extract the true 8-param vector from an L96 window, list-format aware.
+
+    Mirrors ``_window_param_vector(bd, prefix="true_")`` in
+    ``evaluation/neural_inference.py``: read scalar ``true_F..true_eps`` keys
+    and the fast weights as scalar ``true_w1..true_w4`` when flattened, falling
+    back to splitting the ``true_fast_weights`` list for older cached windows
+    (which store only the list form). Used by the eval path so fast-weight RMSE
+    is measured against the correct per-window truth instead of a silent 0.0.
+    """
+    vec = [float(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)))
+           for n in ("F", "c1", "hx", "eps")]
+    scalar_keys = [f"true_w{j}" for j in range(1, 5)]
+    if all(k in w for k in scalar_keys):
+        vec += [float(w[k]) for k in scalar_keys]
+    else:
+        fw = w.get("true_fast_weights")
+        if fw is None:
+            fw = w.get("fast_weights", [1.0, 1.0, 0.1, 0.1])
+        fw = list(fw)
+        if len(fw) < 4:
+            fw = fw + [0.0] * (4 - len(fw))
+        vec += [float(x) for x in fw]
+    return tuple(vec)
+
+
 class FlowMatchingBatch:
     def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None):
         self.states = states
@@ -77,6 +103,8 @@ class FlowMatchingDataset(Dataset):
         return _l96_biased_param_vector(w)
 
     def _extract_true_params(self, w):
+        if self.param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+            return _l96_true_param_vector(w)
         return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):
@@ -120,6 +148,8 @@ class ConcatFMDataset(Dataset):
         return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
 
     def _extract_true_params(self, w):
+        if self.param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+            return _l96_true_param_vector(w)
         return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):

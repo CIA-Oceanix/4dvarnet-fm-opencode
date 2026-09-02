@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from data.dataloader import _l96_biased_param_vector
+from data.dataloader import _l96_biased_param_vector, _l96_true_param_vector
 from data.lorenz96 import Lorenz96Config, RandomBiasLorenz96Dataset, _make_lorenz96_dynamics
 from evaluation.run_l96 import make_obs_j_indices
 from models.param_head import StateParamHead, StateParamModel
@@ -67,6 +67,19 @@ def test_biased_vec_differs_from_true(bias_dataset):
     for i in range(4):
         true[i] = float(w[f"true_{PARAM_NAMES[i]}"])
     assert not np.allclose(biased[:5], true[:5])
+
+
+def test_true_param_vector_list_form_matches_window_param_vector():
+    from evaluation.neural_inference import _window_param_vector
+    list_w = {"true_F": 8.0, "true_c1": 1.0, "true_hx": 1.0, "true_eps": 0.1,
+              "true_fast_weights": [1.08, 0.97, 0.12, 0.11]}
+    flat_w = {"true_F": 8.0, "true_c1": 1.0, "true_hx": 1.0, "true_eps": 0.1,
+              "true_w1": 1.08, "true_w2": 0.97, "true_w3": 0.12, "true_w4": 0.11}
+    expected = [8.0, 1.0, 1.0, 0.1, 1.08, 0.97, 0.12, 0.11]
+    assert _l96_true_param_vector(list_w) == tuple(expected)
+    assert _l96_true_param_vector(flat_w) == tuple(expected)
+    assert _l96_true_param_vector(list_w) == tuple(_window_param_vector(list_w, prefix="true_"))
+    assert _l96_true_param_vector(flat_w) == tuple(_window_param_vector(flat_w, prefix="true_"))
 
 
 def test_state_param_head_shapes():

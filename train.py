@@ -231,9 +231,21 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
     else:
         params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
                               dtype=torch.float32, device=device)
-    true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
+    if param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+        from data.dataloader import _l96_true_param_vector
+        true_param_vec = _l96_true_param_vector(w)
+    else:
+        true_param_vec = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+    true_params = torch.tensor([true_param_vec],
                                dtype=torch.float32, device=device)
     return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
+
+
+def _eval_true_param_list(w, param_names):
+    if list(param_names) == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+        from data.dataloader import _l96_true_param_vector
+        return list(_l96_true_param_vector(w))
+    return [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
 
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
@@ -257,19 +269,19 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+            tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
         elif model_type == "joint_direct_unet":
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+            tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
         elif model_type == "param_head":
             pred, params = model(batch)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+            tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
         elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]

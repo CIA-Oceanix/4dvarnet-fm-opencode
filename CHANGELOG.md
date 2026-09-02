@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-02: Fix C1/C2/C3 fast-weight eval-metric bug — models were healthy, the metric was wrong
+
+**Summary:** Root-caused and fixed the spurious "fast-weight failure" reported for the L96 decoupled
+state→param cascade models (C1/C2/C3). The published per-parameter RMSE showed `w1..w4` at exactly
+their reference magnitude (~1.0/0.1), which looked like the head outputting ≈0 for the fast weights.
+It was **entirely an eval-metric artifact**, not a model failure: `train.py`'s eval built true-params
+via `w.get("true_w1", w.get("w1", 0.0))`, but the cached L96 test windows (`l96_datasets_obsj2_int100_nwin200.pt`)
+predate the fast_weights flattening and store only the `true_fast_weights` **list** — so all four
+fast-weight channels were compared against a silent **0.0** (`param_rmse ≈ sqrt(mean(pred²))` ≈ the
+parameter's own magnitude). Training was unaffected (freshly generated train/val windows DO get
+flattened `true_w1..` keys), which is why the models learned correct weights. A direct checkpoint probe
+confirmed the true recovery: C2 S0 fast-weight RMSE **0.011/0.012/0.010/0.010**.
+
+**Corrected results (fixed 8-param RMSE on the cached S0/S1 set, no retraining):**
+
+| model | S0 w1..w4 | S1 w1/w2 | S1 F |
+|---|---|---|---|
+| C1 (L1b state) | 0.012/0.013/0.011/0.010 | 0.18/0.12 | 1.65 |
+| C2 (true state) | 0.011/0.012/0.010/0.010 | 0.21/0.12 | 0.97 |
+| C3 (state+deriv+bias-resample) | 0.051/0.064/0.010/0.009 | 0.04/0.10 | 0.52 |
+
+C3 (derivative + positive-only bias-resampled `*_da` training) is the most S1-robust cascade member —
+it trades a small S0 hit (F 0.26, c1 0.09) for the best biased-S1 recovery (w1/w2 0.04/0.10, F 0.52) —
+confirming the training-data alignment was the right lever, not an architecture fix. The coupled
+multi-τ flow (L9) and joint-DA filters still lead overall parameter recovery.
+
+**Files modified:**
+- `data/dataloader.py` — new `_l96_true_param_vector` (list-aware, matches `_window_param_vector`); `FlowMatchingDataset._extract_true_params` / `ConcatFMDataset._extract_true_params` route the L96 8-param case through it
+- `train.py` — `_make_eval_batch` builds eval true-params via the helper instead of scalar-key fallback; new `_eval_true_param_list` used by all three eval sites (`joint_cfm`/`joint_direct_unet`/`param_head`)
+- `rerun_param_head_eval.py` — new: rebuilds each C1/C2/C3 model from its checkpoint and re-runs the corrected `evaluate_model` on the cached test set, rewriting only `param_rmse_s0/s1` in `results.json` (no retrain)
+- `reports/l96/generate_l96_joint_neural_report.py` — cascade narrative + footnotes updated from "documented negative" to the corrected finding; `CASCADE_DEFS` comment refreshed
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated with corrected cascade tables
+- `tests/test_param_head.py` — new `test_true_param_vector_list_form_matches_window_param_vector` (both cache formats, cross-checked against `_window_param_vector`)
+
+**Rationale:** The "≈reference-magnitude fast-weight RMSE" signature had been misread as a model
+bottleneck since the data was flattened only in training generation, not in the eval cache. Fixing the
+one extraction path (and hardening the dataset/dataloader) makes the fast-weight comparisons correct and
+reveals the cascade is a genuine, S1-robust param estimator — a materially different conclusion from the
+published negative. A rerun script was chosen over retraining because the checkpoints were already correct.
+
+**Verification:** `pytest tests/test_param_head.py -m "not slow"` — 8 passed. `python -m py_compile` on
+`train.py`, `data/dataloader.py`, `rerun_param_head_eval.py`, and the report generator — clean. Probe of C2 S0
+w1..w4 = 0.011/0.012/0.010/0.010 matches the corrected `results.json`. `rerun_param_head_eval.py` updated all
+three `results.json` (other fields preserved); report regenerated (exit 0) with the corrected cascade rows.
+
 ## 2026-09-01: C2-vs-C3 cascade report — C3 added to the L96 joint neural benchmark (positive-bias training result)
 
 **Summary:** Added the **C3** cascade experiment (`C3_param_head_true_deriv`) to `reports/l96/generate_l96_joint_neural_report.py` and regenerated `reports/l96/outputs/l96_joint_neural_benchmark.md`, giving the first C2-vs-C3 comparison in the canonical benchmark. C3 trains a decoupled state→param head on the **exact true state plus a temporal-derivative channel** with **positive-only bias-resampled** `*_da` training (matching the S1 bias protocol; see the preceding entry). On S1 it **recovers F hard** (NRMSE 0.108→0.047), **pulls w1/w2 below 1.0** (≈1.17/1.12 → ≈0.98/0.97), and cuts the **mean S1 paramRMSE 0.4466 → 0.3521 (−21%)**, but **regresses c1** (NRMSE 0.110→0.234) and still trails the coupled multi-τ flow (L9) and the joint-DA filters on fast-weight recovery. The regression is attributed to the per-param-normalized MSE loss being dominated by the still-≈1.0 `w1..w4` errors, so the optimizer trades the low-signal c1 for large fast-weight gains. C3 stays a documented (partial) negative — not a benchmark win — consistent with the C1/C2 framing.
