@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-09-02: UNet cascade param heads (C4a true-state / C4b L1b-state) — architecture ablation
+
+**Summary:** Added `StateParamUNet`, a full encoder-decoder param-regression head with skip
+connections, addressing the shallow-CNN limitation identified in the C1/C2/C3 cascade: the CNN
+(`StateParamHead`, 3× kernel-3 ConvBlocks) has a receptive field of only ~7 steps over a 3000-step
+trajectory, which is why it could not extract temporal derivative/parameter information from the raw
+signal without C3's explicit `torch.diff` channel. `StateParamUNet` (reusing `models.unet`
+`ConvBlock`/`Down`/`Up` with a bottleneck + skip connections) has a much larger effective receptive
+field and captures multi-scale temporal features implicitly, so no derivative channel is needed.
+`StateParamModel` gains a `backbone="unet"` switch (`ParamHeadUNetConfig` + new `param_head_unet`
+model_type wired through `train.py`/`lightning_module`/`conf/schema.py`). Two UNet cascade
+experiments registered: **C4a** = UNet + true state (mirrors C2), **C4b** = UNet + frozen L1b
+state (mirrors C1), to isolate the architecture effect from the state-quality effect.
+
+**Files modified:**
+- `models/param_head.py` — new `StateParamUNet`; `StateParamModel` gains `backbone`/`unet_hidden_channels`
+- `conf/schema.py` — new `ParamHeadUNetConfig` + `ModelConfig.param_head_unet`
+- `training/lightning_module.py` — `param_head_unet` dispatch (optimizer, freeze, loss)
+- `train.py` — `param_head_unet` in `model_factory` + eval/save/trajectory/dataloader wiring
+- `config/experiment/C4a_param_head_unet_true.yaml`, `C4b_param_head_unet_l1b.yaml` — new
+- `tests/test_param_head.py` — UNet shapes / no-oracle / frozen-encoder / config-instantiation tests
+- `rerun_param_head_eval.py` — C4a/C4b added to `EXPERIMENTS`
+- `reports/l96/generate_l96_joint_neural_report.py` — C4a/C4b in `CASCADE_DEFS` (with `arch` field); bench-table narrative gated on whether `results.json` exists (pending rows say "training/eval pending")
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated
+
+**Rationale:** The user observed that a CNN should be able to compute finite differences from the raw
+signal and asked whether a UNet (with its multi-scale receptive field) could extract this temporal
+information implicitly — making C3's explicit derivative channel unnecessary. C4a/C4b are the
+architecture ablation that tests this directly, controlling for state-source quality (C4a = oracle
+true state, C4b = realistic L1b estimate).
+
+**Verification:** `pytest tests/test_param_head.py tests/test_hydra_config.py -m "not slow"` — 21 passed
+(+8 new UNet tests); broader fast gate (test_param_head/test_hydra_config/test_baselines_hydra/test_direct_unet/
+test_vanilla_cfm/test_lorenz96_training) — 98 passed. `py_compile` clean on all touched modules.
+`model_factory` smoke for both configs: C4a builds a UNet head with no encoder, C4b loads + freezes
+the L1b encoder (~1.9M frozen) and trains only the UNet head (~1.9M); forward/loss/backward finite,
+gradients only in the head. Full 1-epoch `train.py` CPU smoke (C4a) completed end-to-end (data-gen
+via cached test splits → Lightning stage-1 → param-RMSE eval). Ruff: no NEW error classes on touched
+source (only the schema.py file's pre-existing `Optional[List]` style on the new, sibling-consistent
+`ParamHeadUNetConfig`). Training launched: jobs 51425 (C4a) / 51426 (C4b), 300 epochs each on RTX8000.
+
 ## 2026-09-02: Fix C1/C2/C3 fast-weight eval-metric bug — models were healthy, the metric was wrong
 
 **Summary:** Root-caused and fixed the spurious "fast-weight failure" reported for the L96 decoupled
