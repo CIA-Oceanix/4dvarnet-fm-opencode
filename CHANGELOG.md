@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-09-02: Integrate full QG (two-layer quasi-geostrophic) executable codebase to master
+
+**Summary:** Brought the complete QG case-study executable onto master, so master now
+has the code (not just the previously JSON-only report + generator) to reproduce the
+QG S0/S1 DA-baseline results. Merged the QG dynamics/data/DA-baseline code + 6 test
+files + 31 sbatch + result JSONs from the `feat/qg-s1-qg1l` / `feat/qg-case-study`
+branches, reconciled the shared `evaluation/baselines.py` (QG ObsOperator H-mode,
+QG localization matrices, per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble`
+in ETKF/EnKF, merged onto master's L96/joint/ES code), and folded all six QG test files
+into master's persistent CI gate (now triggering on `feat/qg-*` too). Report scripts +
+result JSONs relocated from the pre-restructure `reports/` root / `reports/outputs/`
+into the per-system `reports/qg/[outputs/]` layout matching master's convention, and the
+report generator's `--json-root` default updated to `reports/qg/outputs/`.
+
+**Files modified:**
+- `evaluation/baselines.py` — merged QG additions onto master's version: `_gc_matrix`,
+  `_build_qg_loc_matrices`, `_build_qg_col_loc_matrices`; `ObsOperator` H-mode +
+  `obs_indices_t`/`h`/`h_index_at`/`n_obs` + `h_mode()`/`index_at()`; ETKF/EnKF
+  `loc_Lx_t`/`loc_Ly_t` + `init_ensemble` + `_per_time(t)` + per-time localized branches
+  (scale-relative `etkf_ridge` ridge); preserves master's `_ESAccumulator`/L96/joint code.
+- `data/qg.py`, `models/qg_dynamics.py`, `models/qg1l_dynamics.py`, `models/qg_interp.py`,
+  `evaluation/run_qg_baselines.py`, `evaluation/sweep_qg_baselines.py` — new QG code.
+- `tests/test_qg_{dynamics,data,baselines,s0s1,random_columns}.py`, `tests/test_qg1l_dynamics.py` — 6 new QG test files (99 fast tests).
+- `batch/run_qg_*.sbatch` — 31 QG sbatch scripts.
+- `reports/qg/` — relocated QG report scripts (`animate/calibrate/diagnose/snapshots/
+  qg_s1_qg1l_rscale_probe.py`) + `reports/qg/outputs/` QG result JSONs + figures; the
+  pre-existing `reports/qg/generate_qg_s0s1_report.py` + `outputs/{qg_s0s1_report.md,
+  qg_settings.json}` kept.
+- `reports/qg/generate_qg_s0s1_report.py` — `--json-root` default → `reports/qg/outputs/`.
+- `.github/workflows/ci.yml` — `feat/qg-*` triggers + six QG test files in the pytest gate.
+- `PLAN.md` — new QG section; `CHANGELOG.md` — this entry.
+- `data/lorenz96.py` — cosmetic `obs_var_indices: np.ndarray | None` (unchanged behavior).
+- `.gitignore` — `reports/qg_cache/` + SLURM `[0-9]*_[0-9]*.err` patterns.
+
+**Rationale:** The QG epoch-2 deliverable was the report + JSON-only generator on master;
+the code that produces them lived only on topic branches. Landing the executable code
+makes the QG report reproducible on master and permanently protects the shared DA filter
+code (ObsOperator/ETKF/EnKF) via the CI gate — a real 3-way merge (master's L96/joint/ES
+rewrites vs the QG H-mode/localization additions). The six-file QG gate is a deliberate,
+persistent governance choice: it applies to every future master PR.
+
+**Verification:** `pytest` on the QG suite (99 passed) + the L96/ES/joint regression
+suite (91 passed) both green against the merged `baselines.py`; `python -m py_compile`
+clean; `reports/qg/generate_qg_s0s1_report.py --json-root reports/qg/outputs/` regenerates
+the report; ruff informational.
+
 ## 2026-09-01: L96 joint-DA reconstruction artifacts + full 6-method comparison JSON
 
 **Summary:** Made `eval_joint_comparison_l96.py` persist per-window reconstruction `.npz` arrays (trajectories, per-member `ensemble_variance`, `params`, `es`) for every benchmarked method, merged incrementally into `experiments/l96_joint_baselines_trajectories.npz` on a per-case basis. Re-ran the 3 joint DA methods on the cached S0/S1 test set (Obs30, 200 windows) to produce their reconstructions — which were previously never saved and lost after each run: Run 1 = Joint-ETKF + Joint-EnKF at batch=10 (job 51098), Run 2 = Joint-Strong-4DVar at batch=200 (job 51131). Re-ran vanilla Strong-4DVar via the comparator (job 51294, batch=200) so it appears in the comparator schema, then assembled the full **6-method** `experiments/l96_joint_comparison.json` on master (vanilla ETKF/EnKF from master + fresh vanilla Strong-4DVar + the 3 joint rows) and regenerated both joint reports so they render all 6 DA methods.

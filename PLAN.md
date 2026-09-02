@@ -15,6 +15,30 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
 (`train_mix: cs1+cs2`, `state_dim=3` checkpoints). The **L-series** is the two-scale
 **Lorenz-96** benchmark (`system: lorenz96`, `state_dim=24` observed subspace).
 
+## QG (two-layer quasi-geostrophic) — integrated to master 2026-09-02
+
+DA-baseline case study on a two-layer Phillips channel (pyqg-compatible), now with
+the **full executable codebase integrated to master** (previously only the JSON-only
+report + generator were on master).
+
+- **Dynamics**: `models/qg_dynamics.py` (`QGDynamics`, 2-layer) + `models/qg1l_dynamics.py`
+  (`QG1LDynamics`, reduced-gravity 1-layer structural-error model) + `models/qg_interp.py`
+  (spectral resize). Native torch port of pyqg v0.4.0 (RK4, flux-form advection, pyqg
+  exponential filter, masked PV inversion), moving-storm wind-stress curl forcing.
+- **Data**: `data/qg.py` (`QGConfig`, `QGDataset`, `make_qg_s0_s1_datasets`) — S0/S1
+  along-track + random-column obs, corrupted wind/param bias, qg1l structural-error scenario.
+- **DA baselines**: `evaluation/run_qg_baselines.py` (+ `eval_qg1l_rscale_probe.py`,
+  `sweep_qg_baselines.py`) drive EnKF/ETKF on ψ/q. `evaluation/baselines.py` carries the
+  shared `ObsOperator` H-mode, `_build_qg_loc_matrices`/`_build_qg_col_loc_matrices`,
+  and per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble` in ETKF/EnKF, merged
+  with the L96/joint/ES work.
+- **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
+  JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md`.
+- **Tests**: 6 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
+  `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`) — all in the master CI gate.
+- **sbatch**: 31 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps.
+- QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

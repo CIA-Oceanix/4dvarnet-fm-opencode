@@ -3,7 +3,7 @@
 **Date:** 2026-08-31
 **Branch (report):** master
 **Provenance (jobs, A40 `sl-mee-br-205`):** S0 1%-noise matrix (prior session, jobs 50927/50930/50932); S1 @ da_nx=16 (job 51069); S1 @ da_nx=32 (job 51075).
-**Result JSONs (committed on `feat/qg-case-study`):** `reports/outputs/qg_matrix_{c4,c8}_{q,psi}/`, `reports/outputs/qg_s1_lag{1,2}p0/`, `reports/outputs/qg_s1_da32_lag{1,2}p0/`.
+**Result JSONs (committed on master):** `reports/qg/outputs/qg_matrix_{c4,c8}_{q,psi}/`, `reports/qg/outputs/qg_s1_lag{1,2}p0/`, `reports/qg/outputs/qg_s1_da32_lag{1,2}p0/`.
 
 ## 1. Full S0/S1 settings
 
