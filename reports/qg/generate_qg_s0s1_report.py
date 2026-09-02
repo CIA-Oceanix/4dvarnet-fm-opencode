@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Generate the consolidated QG S0/S1 DA-baseline report.
 
-JSON-only generator (no QG/neural code imports, since the QG modules live on
-``feat/qg-case-study`` and are not present on master). It consumes:
+JSON-only generator (no QG/neural code imports). It consumes:
 
-- the curated S0/S1 result JSONs (committed on ``feat/qg-case-study`` under
-  ``reports/outputs/`` -- S0 1%-noise matrix, S1 @ da_nx=16, S1 @ da_nx=32), and
+- the curated S0/S1 result JSONs (committed on master under
+  ``reports/qg/outputs/`` -- S0 1%-noise matrix, S1 @ da_nx=16, S1 @ da_nx=32), and
 - a settings snapshot ``reports/qg/outputs/qg_settings.json`` (the ``QGConfig``
   values used by the runs, captured from ``data/qg.py``).
 
@@ -13,9 +12,9 @@ It renders ``reports/qg/outputs/qg_s0s1_report.md`` with the full S0/S1 settings
 and all metric tables (RMSE / pooled-EV / forecast-improv, per field q/psi and
 per layer) inlined, so the report is self-contained on master.
 
-Source JSONs are looked up relative to ``--json-root`` (default the QG worktree
-``reports/outputs``). Run it from the QG worktree (where the JSONs exist); the
-rendered Markdown is what is committed to master.
+Source JSONs are looked up relative to ``--json-root`` (default
+``reports/qg/outputs``, where the relocated QG result JSONs live on master). Run it
+from the repo root; the rendered Markdown is what is committed to master.
 """
 import argparse
 import json
@@ -97,7 +96,7 @@ def _lag_dir(label: str, lag: float) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--json-root", default=str(ROOT / "reports" / "outputs"))
+    ap.add_argument("--json-root", default=str(ROOT / "reports/qg/outputs"))
     ap.add_argument("--settings", default=str(ROOT / "reports/qg/outputs/qg_settings.json"))
     ap.add_argument("--out", default=str(ROOT / "reports/qg/outputs/qg_s0s1_report.md"))
     args = ap.parse_args()
@@ -116,10 +115,10 @@ def main() -> None:
     add("**Provenance (jobs, A40 `sl-mee-br-205`):** "
         "S0 1%-noise matrix (prior session, jobs 50927/50930/50932); "
         "S1 @ da_nx=16 (job 51069); S1 @ da_nx=32 (job 51075).")
-    add("**Result JSONs (committed on `feat/qg-case-study`):** "
-        "`reports/outputs/qg_matrix_{c4,c8}_{q,psi}/`, "
-        "`reports/outputs/qg_s1_lag{1,2}p0/`, "
-        "`reports/outputs/qg_s1_da32_lag{1,2}p0/`.")
+    add("**Result JSONs (committed on master):** "
+        "`reports/qg/outputs/qg_matrix_{c4,c8}_{q,psi}/`, "
+        "`reports/qg/outputs/qg_s1_lag{1,2}p0/`, "
+        "`reports/qg/outputs/qg_s1_da32_lag{1,2}p0/`.")
     add("")
 
     add("## 1. Full S0/S1 settings")
