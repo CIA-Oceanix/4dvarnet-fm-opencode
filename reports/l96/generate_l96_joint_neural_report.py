@@ -47,13 +47,26 @@ PARAM_MEAN_TRUE = {
 # C3's bias-resample trades a small S0 hit for the best S1 robustness (see findings).
 CASCADE_DEFS = {
     "C1_stateparam_head_s1": {"short": "C1 (L1b state)",
+                              "arch": "StateParamHead (CNN)",
                               "state_source": "frozen L1b state estimate (decoupled)"},
     "C2_stateparam_head_state_true": {"short": "C2 (true state)",
+                                      "arch": "StateParamHead (CNN)",
                                       "state_source": "exact true state (ablation)"},
     "C3_param_head_true_deriv": {"short": "C3 (true state + derivative + bias-resample)",
+                                 "arch": "StateParamHead (CNN)",
                                  "state_source": "exact true state + temporal-derivative channel, "
                                                  "positive-only bias-resampled `*_da` training "
                                                  "(2026-09-01)"},
+    "C4a_param_head_unet_true": {"short": "C4a (UNet, true state)",
+                                 "arch": "StateParamUNet (UNet)",
+                                 "state_source": "exact true state, UNet backbone (implicit "
+                                                 "multi-scale temporal features, no derivative "
+                                                 "channel)"},
+    "C4b_param_head_unet_l1b": {"short": "C4b (UNet, L1b state)",
+                                "arch": "StateParamUNet (UNet)",
+                                "state_source": "frozen L1b state estimate, UNet backbone (implicit "
+                                                "multi-scale temporal features, no derivative "
+                                                "channel)"},
 }
 
 # ID -> (eval file base name, type, tau mode, description)
@@ -300,9 +313,12 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         md.append(f"| {exp_name} | {d['type']} | {d['tau']} | {d['desc']} |")
     for exp_name, d in CASCADE_DEFS.items():
         src = d["state_source"]
-        md.append(f"| {exp_name} | StateParamHead (param-only) | n/a | Decoupled cascade: "
-                  f"param head fed by {src}. With the corrected per-param metric all recover the "
-                  f"fast weights on S0; C3's positive-bias training is the most S1-robust. |")
+        has_res = bool(cascade_param_rmse(exp_dir, exp_name))
+        tail = ("training/eval pending (not yet evaluated)." if not has_res
+                else "With the corrected per-param metric all recover the "
+                     "fast weights on S0; C3's positive-bias training is the most S1-robust.")
+        md.append(f"| {exp_name} | {d['arch']} | n/a | Decoupled cascade: "
+                  f"param head fed by {src}. {tail} |")
     md.append("")
     md.append("---")
     md.append("")

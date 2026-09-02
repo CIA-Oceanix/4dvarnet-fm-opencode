@@ -35,9 +35,11 @@ Single-sample state RMSE (S0/S1), S1/S0 degradation, and **mean** per-parameter 
 | L7_joint_cfm_s0s1 | JointCFM | tau=0 | Conditional flow matching (state + 8-param joint output) trained at tau=0 only; sampled with a single Euler step. Hidden [64,128,256], 400 epochs. |
 | L8_joint_direct_unet_s0s1 | JointDirectUNet | n/a | Single-pass joint regression obs -> (state, 8 params). Deterministic. Hidden [64,128,256], 200 epochs. |
 | L9_joint_cfm_s0s1_multitau | JointCFM | multi-tau | Standard multi-tau conditional flow matching (state + 8-param joint output); sampled as a 30-member ensemble with 10 Euler steps (ens30 x 10, N=30). Hidden [64,128,256], 400 epochs. |
-| C1_stateparam_head_s1 | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by frozen L1b state estimate (decoupled). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
-| C2_stateparam_head_state_true | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state (ablation). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
-| C3_param_head_true_deriv | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state + temporal-derivative channel, positive-only bias-resampled `*_da` training (2026-09-01). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C1_stateparam_head_s1 | StateParamHead (CNN) | n/a | Decoupled cascade: param head fed by frozen L1b state estimate (decoupled). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C2_stateparam_head_state_true | StateParamHead (CNN) | n/a | Decoupled cascade: param head fed by exact true state (ablation). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C3_param_head_true_deriv | StateParamHead (CNN) | n/a | Decoupled cascade: param head fed by exact true state + temporal-derivative channel, positive-only bias-resampled `*_da` training (2026-09-01). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C4a_param_head_unet_true | StateParamUNet (UNet) | n/a | Decoupled cascade: param head fed by exact true state, UNet backbone (implicit multi-scale temporal features, no derivative channel). training/eval pending (not yet evaluated). |
+| C4b_param_head_unet_l1b | StateParamUNet (UNet) | n/a | Decoupled cascade: param head fed by frozen L1b state estimate, UNet backbone (implicit multi-scale temporal features, no derivative channel). training/eval pending (not yet evaluated). |
 
 ---
 

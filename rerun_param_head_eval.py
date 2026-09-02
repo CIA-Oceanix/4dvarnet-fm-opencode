@@ -27,6 +27,8 @@ EXPERIMENTS = [
     "C1_stateparam_head_s1",
     "C2_stateparam_head_state_true",
     "C3_param_head_true_deriv",
+    "C4a_param_head_unet_true",
+    "C4b_param_head_unet_l1b",
 ]
 
 TEST_CACHE = "experiments/l96_datasets_obsj2_int100_nwin200.pt"
