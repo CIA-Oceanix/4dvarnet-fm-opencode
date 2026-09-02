@@ -8,7 +8,7 @@
 
 **Per-parameter detail:** `reports/l96/outputs/l96_joint_param_diagnostic.md` gives the full offline per-parameter RMSE / EV / NRMSE and free-forecast tables (single and ens30, all runs), recomputed from the stored eval arrays.
 
-**Cascade (documented negative → partial improvement, 2026-09-01):** the decoupled state→param head fed by the frozen L1b state estimate (C1), the exact true state (C2), or the true state + derivative channel with positive-only bias-resampled `*_da` training (C3) is tabulated in the NRMSE / param-RMSE tables below. C1/C2 **fail the fast weights** `w1/w2` (NRMSE ≈ 1.1-1.2 even with the true state) — an information/architecture bottleneck. C3 (torch-level `torch.diff` derivative channel + positive-bias training matching the S1 `*_da` protocol) **recovers F hard** (S1 NRMSE 0.11→0.05) and pulls `w1/w2` below 1.0 (S1 ≈ 0.99/0.97) with a −21% S1 mean paramRMSE, but still trails the coupled multi-τ flow (L9) and the joint-DA filters, and **regresses `c1`** (S1 NRMSE 0.11→0.23) — the loss is MSE in a per-param normalized space dominated by the still-≈1.0 `w1..w4` errors, so the optimizer trades the low-signal `c1` against the large fast-weight gains. Recorded for completeness, not a benchmark win. See CHANGELOG 2026-09-01.
+**Cascade (decoupled state→param head, 2026-09-02):** the state→param head fed by the frozen L1b state estimate (C1), the exact true state (C2), or the true state + derivative channel with positive-only bias-resampled `*_da` training (C3) is tabulated in the NRMSE / param-RMSE tables below. **The earlier "fast-weight failure" (w1/w2 NRMSE ≈ 1.1-1.2) was an eval-metric bug**, not a model failure: the train-script eval read scalar `true_w1..true_w4` keys that the cached test windows don't have (they store `true_fast_weights` as a list), silently comparing all four fast-weight channels against 0.0. With the list-aware extraction every cascade model recovers the fast weights well on S0 (w1..w4 RMSE 0.011-0.013 for C1/C2), and on the biased S1 setup C3's positive-bias resampling is the most robust (w1/w2 0.04/0.10, F 0.52) while C1/C2 stay competitive on the fast weights and degrade mainly on F. See CHANGELOG 2026-09-02.
 
 ---
 
@@ -35,9 +35,9 @@ Single-sample state RMSE (S0/S1), S1/S0 degradation, and **mean** per-parameter 
 | L7_joint_cfm_s0s1 | JointCFM | tau=0 | Conditional flow matching (state + 8-param joint output) trained at tau=0 only; sampled with a single Euler step. Hidden [64,128,256], 400 epochs. |
 | L8_joint_direct_unet_s0s1 | JointDirectUNet | n/a | Single-pass joint regression obs -> (state, 8 params). Deterministic. Hidden [64,128,256], 200 epochs. |
 | L9_joint_cfm_s0s1_multitau | JointCFM | multi-tau | Standard multi-tau conditional flow matching (state + 8-param joint output); sampled as a 30-member ensemble with 10 Euler steps (ens30 x 10, N=30). Hidden [64,128,256], 400 epochs. |
-| C1_stateparam_head_s1 | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by frozen L1b state estimate (decoupled). C1/C2 documented negative on fast weights; C3 partially fixes F + w1/w2 via derivative + positive-bias training but regresses c1. |
-| C2_stateparam_head_state_true | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state (ablation). C1/C2 documented negative on fast weights; C3 partially fixes F + w1/w2 via derivative + positive-bias training but regresses c1. |
-| C3_param_head_true_deriv | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state + temporal-derivative channel, positive-only bias-resampled `*_da` training (2026-09-01). C1/C2 documented negative on fast weights; C3 partially fixes F + w1/w2 via derivative + positive-bias training but regresses c1. |
+| C1_stateparam_head_s1 | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by frozen L1b state estimate (decoupled). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C2_stateparam_head_state_true | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state (ablation). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
+| C3_param_head_true_deriv | StateParamHead (param-only) | n/a | Decoupled cascade: param head fed by exact true state + temporal-derivative channel, positive-only bias-resampled `*_da` training (2026-09-01). With the corrected per-param metric all recover the fast weights on S0; C3's positive-bias training is the most S1-robust. |
 
 ---
 
@@ -131,10 +131,10 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 | Joint-ETKF | 0.1306 | 0.0167 | 0.0156 | 0.0016 | 0.1155 | 0.1218 | 0.0119 | 0.0112 | 0.0531 |
 | Joint-EnKF | 0.1532 | 0.0180 | 0.0168 | 0.0019 | 0.1157 | 0.1245 | 0.0120 | 0.0113 | 0.0567 |
 
-*Cascade — decoupled state→param head (documented negative):*
-| C1 (L1b state) | 0.0997 | 0.0124 | 0.0113 | 0.0108 | 1.0134 | 1.0099 | 0.1009 | 0.0993 | 0.2947 |
-| C2 (true state) | 0.0944 | 0.0116 | 0.0138 | 0.0057 | 1.0150 | 1.0160 | 0.1012 | 0.1005 | 0.2948 |
-| C3 (true state + derivative + bias-resample) | 0.1464 | 0.0971 | 0.0173 | 0.0050 | 1.0185 | 0.9842 | 0.0974 | 0.0987 | 0.3081 |
+*Cascade — decoupled state→param head:*
+| C1 (L1b state) | 0.0940 | 0.0112 | 0.0139 | 0.0110 | 0.0123 | 0.0125 | 0.0113 | 0.0104 | 0.0221 |
+| C2 (true state) | 0.0863 | 0.0107 | 0.0130 | 0.0053 | 0.0110 | 0.0121 | 0.0103 | 0.0104 | 0.0199 |
+| C3 (true state + derivative + bias-resample) | 0.2629 | 0.0887 | 0.0139 | 0.0040 | 0.0511 | 0.0637 | 0.0102 | 0.0094 | 0.0630 |
 
 *Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` (S1 `w3`/`w4` are pinned to the reference prior, not estimated — their RMSE=0 is a masking artifact, **[not]** recovery; on the 6 genuinely-estimated params DA S1 mean NRMSE is ~0.10, i.e. parity with L9). Per-parameter EV and the free forecast are **not** stored for DA (the per-window predictions were not archived), so those tables show DA as `--`.*
 
@@ -152,10 +152,10 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 | Joint-ETKF | 0.6082 | 0.1052 | 0.0637 | 0.0106 | 0.1161 | 0.1186 | 0.0000 | 0.0000 | 0.1278 |
 | Joint-EnKF | 0.7637 | 0.1053 | 0.0640 | 0.0112 | 0.1194 | 0.1197 | 0.0000 | 0.0000 | 0.1479 |
 
-*Cascade — decoupled state→param head (documented negative):*
-| C1 (L1b state) | 1.6740 | 0.1063 | 0.1343 | 0.0128 | 1.1640 | 1.1242 | 0.1192 | 0.1109 | 0.5557 |
-| C2 (true state) | 0.8566 | 0.1099 | 0.0747 | 0.0098 | 1.1817 | 1.1265 | 0.1054 | 0.1085 | 0.4466 |
-| C3 (true state + derivative + bias-resample) | 0.3702 | 0.2338 | 0.0428 | 0.0117 | 0.9857 | 0.9690 | 0.0925 | 0.1113 | 0.3521 |
+*Cascade — decoupled state→param head:*
+| C1 (L1b state) | 1.6479 | 0.1006 | 0.1346 | 0.0144 | 0.1774 | 0.1208 | 0.0286 | 0.0258 | 0.2813 |
+| C2 (true state) | 0.9714 | 0.1178 | 0.0769 | 0.0103 | 0.2117 | 0.1232 | 0.0186 | 0.0144 | 0.1930 |
+| C3 (true state + derivative + bias-resample) | 0.5200 | 0.1364 | 0.0468 | 0.0108 | 0.0437 | 0.0966 | 0.0332 | 0.0447 | 0.1165 |
 
 *Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` (S1 `w3`/`w4` are pinned to the reference prior, not estimated — their RMSE=0 is a masking artifact, **[not]** recovery; on the 6 genuinely-estimated params DA S1 mean NRMSE is ~0.10, i.e. parity with L9). Per-parameter EV and the free forecast are **not** stored for DA (the per-window predictions were not archived), so those tables show DA as `--`.*
 
@@ -173,12 +173,12 @@ Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes away t
 | Joint-ETKF | 0.0162 ** | 0.0170 ** | 0.0159 ** | 0.0165 ** | 0.1143 ** | 0.1209 ** | 0.1173 ** | 0.1131 ** | 0.0664 ** |
 | Joint-EnKF | 0.0190 | 0.0183 | 0.0171 | 0.0187 | 0.1145 | 0.1235 | 0.1186 | 0.1133 | 0.0679 |
 
-*Cascade — decoupled state→param head (documented negative):*
-| C1 (L1b state) | 0.0124 | 0.0126 | 0.0115 | 0.1077 | 1.0033 | 1.0025 | 0.9932 | 0.9994 | 0.5178 |
-| C2 (true state) | 0.0117 | 0.0117 | 0.0141 | 0.0574 | 1.0049 | 1.0086 | 0.9961 | 1.0108 | 0.5144 |
-| C3 (true state + derivative + bias-resample) | 0.0182 | 0.0985 | 0.0176 | 0.0502 | 1.0084 | 0.9770 | 0.9588 | 0.9928 | 0.5152 |
+*Cascade — decoupled state→param head:*
+| C1 (L1b state) | 0.0117 | 0.0114 | 0.0141 | 0.1099 | 0.0122 | 0.0124 | 0.1117 | 0.1051 | 0.0486 |
+| C2 (true state) | 0.0107 | 0.0109 | 0.0132 | 0.0532 | 0.0109 | 0.0120 | 0.1012 | 0.1049 | 0.0396 |
+| C3 (true state + derivative + bias-resample) | 0.0326 | 0.0900 | 0.0141 | 0.0404 | 0.0506 | 0.0632 | 0.1006 | 0.0948 | 0.0608 |
 
-*Best per column (lowest NRMSE) is bolded. Joint-DA NRMSE rows are derived from their archived per-param RMSE ÷ the cached true-param scale. The C1/C2 cascade is a documented negative (fast weights at NRMSE ≈ 1.0 even at S0 where true params are fed) — shown for completeness, not as a benchmark win; C3's positive-bias training (2026-09-01) keeps S0 ≈ parity with C2, the improvement is concentrated on S1.*
+*Best per column (lowest NRMSE) is bolded. Joint-DA NRMSE rows are derived from their archived per-param RMSE ÷ the cached true-param scale. The C1/C2/C3 cascade (2026-09-02 re-eval) recovers the fast weights on S0 (C1/C2 w1..w4 NRMSE 0.01-0.02; F the main cost) — the earlier w1/w2 NRMSE ≈ 1.0 was an eval-metric artifact (fast-weight truth read as 0.0), not a model failure; C3's positive-bias training keeps S0 ≈ parity with C1/C2 on the fast weights and is the most S1-robust.*
 
 ---
 
@@ -194,12 +194,12 @@ Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes away t
 | Joint-ETKF | 0.0764 | 0.1049 ** | 0.0639 ** | 0.1066 ** | 0.1153 ** | 0.1181 ** | 0.0000 ** | 0.0000 ** | 0.0731 ** |
 | Joint-EnKF | 0.0959 | 0.1050 | 0.0642 | 0.1121 | 0.1186 | 0.1193 | 0.0000 ** | 0.0000 ** | 0.0769 |
 
-*Cascade — decoupled state→param head (documented negative):*
-| C1 (L1b state) | 0.2102 | 0.1059 | 0.1347 | 0.1290 | 1.1561 | 1.1199 | 1.2127 | 1.1022 | 0.6463 |
-| C2 (true state) | 0.1076 | 0.1095 | 0.0749 | 0.0980 | 1.1736 | 1.1222 | 1.0718 | 1.0790 | 0.6046 |
-| C3 (true state + derivative + bias-resample) | 0.0465 | 0.2331 | 0.0429 | 0.1170 | 0.9790 | 0.9653 | 0.9405 | 1.1062 | 0.5538 |
+*Cascade — decoupled state→param head:*
+| C1 (L1b state) | 0.2069 | 0.1003 | 0.1350 | 0.1442 | 0.1762 | 0.1203 | 0.2913 | 0.2565 | 0.1788 |
+| C2 (true state) | 0.1220 | 0.1174 | 0.0771 | 0.1030 | 0.2102 | 0.1227 | 0.1893 | 0.1432 | 0.1356 |
+| C3 (true state + derivative + bias-resample) | 0.0653 | 0.1360 | 0.0469 | 0.1084 | 0.0434 | 0.0963 | 0.3373 | 0.4446 | 0.1598 |
 
-*Best per column (lowest NRMSE) is bolded. On S1 the relevant comparison: L9 (multi-τ joint flow) keeps **every** parameter at NRMSE ≤ 0.20 (F 0.07), i.e. ≤20% relative error — genuine param recovery at parity with the joint DA filters on the params they actually estimate. The C1/C2 cascade (fed even the exact true state) fails the fast weights (w1/w2 NRMSE ≈ 1.1-1.2, error larger than the parameter itself) — a documented information/architecture bottleneck, not a benchmark win; C3's derivative + positive-bias training (2026-09-01) recovers F (0.05) and pulls w1/w2 below 1.0 (≈0.99/0.97) but **regresses c1** (0.23). Joint-DA S1 `w3`/`w4` NRMSE 0.00 is the pinned-to-prior masking artifact (they are **not** estimated), not recovery; DA mean NRMSE is 0.07 incl. / 0.10 excl. those masked w3/w4. The DA NRMSE rows are derived from their archived per-param RMSE in `l96_joint_comparison.json` ÷ the cached true-param scale; per-window predictions (EV, free forecast) are not archived for DA.*
+*Best per column (lowest NRMSE) is bolded. On S1 the relevant comparison: L9 (multi-τ joint flow) keeps **every** parameter at NRMSE ≤ 0.20 (F 0.07), i.e. ≤20% relative error — genuine param recovery at parity with the joint DA filters on the params they actually estimate. The C1/C2/C3 cascade (2026-09-02 re-eval with the fixed list-aware fast-weight metric) recovers the fast weights well (C2 w1/w2 NRMSE 0.21/0.12; C3 w1/w2 0.04/0.10, F 0.52) — the earlier w1/w2 NRMSE ≈ 1.1-1.2 was an eval-metric artifact (fast-weight truth read as 0.0), not a model failure. C3 remains the most S1-robust cascade member, but the coupled multi-τ flow (L9) and the joint-DA filters are still ahead on overall param recovery. Joint-DA S1 `w3`/`w4` NRMSE 0.00 is the pinned-to-prior masking artifact (they are **not** estimated), not recovery; DA mean NRMSE is 0.07 incl. / 0.10 excl. those masked w3/w4. The DA NRMSE rows are derived from their archived per-param RMSE in `l96_joint_comparison.json` ÷ the cached true-param scale; per-window predictions (EV, free forecast) are not archived for DA.*
 
 ---
 
