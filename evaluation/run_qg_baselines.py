@@ -21,6 +21,7 @@ from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
 from models.qg_interp import spectral_resize_2d
+from models.qg_psi_dynamics import wrap_psi
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -89,7 +90,7 @@ def _upsample_to_truth(state, da_nx, nlayers, truth_n, device):
     return _resize_state_layers(state, nlayers, da_nx, truth_n, device)
 
 
-def _build_dyn(cfg, window, device):
+def _build_dyn(cfg, window, device, psi_state: bool = False):
     da_params = window["da_params"]
     model = window["da_model"]
     nx_da = _da_nx_for_window(cfg, window)
@@ -105,6 +106,8 @@ def _build_dyn(cfg, window, device):
     else:
         inner = QGDynamics(**common, delta=cfg.delta,
                            U2=da_params.get("U2", cfg.U2))
+    if psi_state:
+        inner = wrap_psi(inner, model)
     return WindStateAdapter(inner.to(device))
 
 
@@ -241,6 +244,18 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         obs, r_var, _ = _q_alongtrack_obs(cfg, window, device)
         per_time = _q_obs_indices_t(cfg, window)
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
+        return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
+    if obs_var == "psi_state":
+        # Psi-state: the DA state itself is the streamfunction, so the
+        # observation operator is a trivial index lookup into the upper-layer
+        # psi entries (same geometry as q-obs, valid only for a same-resolution
+        # DA model; cross-resolution is rejected in run()).
+        dyn = _build_dyn(cfg, window, device, psi_state=True)
+        obs = window["obs"].to(device)
+        r_var = (cfg.obs_noise_std_frac
+                 * float(window["target_state_psi"].std())) ** 2
+        per_time = _q_obs_indices_t(cfg, window)
+        obs_operator = ObsOperator(dyn.state_dim, obs_indices_t=per_time)
         return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
     else:
         dyn = _build_dyn(cfg, window, device)
@@ -426,7 +441,7 @@ def _free_forecast_init(cfg, window, init_lag_days, device):
 
 
 def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state,
-                        upper_only=False):
+                        upper_only=False, psi_state=False):
     """RMSE of the no-obs model forecast rolled from a shared init state.
 
     `init_state` is the SAME initial condition used to seed the DA ensemble, so
@@ -435,11 +450,16 @@ def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state,
     DA model (S1), `init_state` is in DA-model space and the rolled forecast is
     spectrally upsampled to the truth grid before the RMSE is taken. For a
     1-layer DA model (qg1l), `upper_only=True` compares the roll against the
-    truth's upper layer only.
+    truth's upper layer only. For a psi-state DA model (`psi_state=True`),
+    `init_state`/the roll are streamfunctions and are converted back to PV
+    before comparison against the q-space truth.
     """
     truth = window["true_state"].float()
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     roll = roll.detach().cpu().numpy()
+    if psi_state:
+        roll = dyn.inner.psi_to_q(torch.from_numpy(roll).float().to(device))
+        roll = roll.detach().cpu().numpy()
     nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
     if upper_only:
         truth = truth[:, : per_layer_for(cfg)]
@@ -481,7 +501,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         truth_inner = None
         for i in range(len(d)):
             w = d[i]
-            dyn = _build_dyn(cfg, w, device)
+            is_psi_state = (obs_var == "psi_state")
+            dyn = _build_dyn(cfg, w, device, psi_state=is_psi_state)
             da_nx = _da_nx_for_window(cfg, w)
             nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
             is_qg1l = w["da_model"] == "qg1l"
@@ -491,6 +512,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     "obs_var='q' is not supported for a cross-resolution DA model "
                     "(S1): the PV-obs indices select truth-grid points that have no "
                     "one-to-one mapping in the lower-res state. Use obs_var='psi'.")
+            if obs_var == "psi_state" and cross_res:
+                raise ValueError(
+                    "obs_var='psi_state' is not supported for a cross-resolution "
+                    "DA model (S1): a trivial index lookup of the psi-state needs "
+                    "the DA and obs grids to match. Use obs_var='psi' (which "
+                    "spectrally resamples in H) for cross-resolution.")
             obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
                                                                device,
                                                                obs_var,
@@ -512,21 +539,31 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     # free forecast start from this same projective init.
                     shared_init = shared_init[:per_layer]
                     lead = w["init_lead_truth"].float()[:, :per_layer]
-                    sigma_raw = float(lead.std(0).mean())
                 elif cross_res:
                     shared_init = _downsample_to_da(
                         shared_init, da_nx, nlayers, cfg.nx, device)
                     lead = _downsample_to_da(
                         w["init_lead_truth"].float(), da_nx, nlayers, cfg.nx, device)
-                    sigma_raw = float(lead.std(0).mean())
                 else:
-                    sigma_raw = float(w["init_lead_truth"].std(0).mean())
+                    lead = w["init_lead_truth"].float()
+                if is_psi_state:
+                    # Convert the shared init (q-space) to the psi-space state
+                    # so the DA ensemble and free forecast are in the same
+                    # representation as the filter dynamics.
+                    shared_init = dyn.inner.q_to_psi(shared_init)
+                    # Dispersion scale in psi units so the ensemble spread has
+                    # the same physical meaning as the q-space scheme.
+                    sigma_raw = float(dyn.inner.q_to_psi(lead).std(0).mean())
+                else:
+                    sigma_raw = float(lead.std(0).mean())
                 init_ensemble = _ensemble_from_init(
                     shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
-            if obs_var == "q":
+            if obs_var in ("q", "psi_state"):
                 per_time = _q_obs_indices_t(cfg, w)
-                field_std = float(w["target_state_q"].std())
+                field_std = float(
+                    (w["target_state_q"] if obs_var == "q"
+                     else w["target_state_psi"]).std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None:
                     Lx_t, Ly_t = _build_qg_loc_matrices(
@@ -571,6 +608,11 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
             traj_da = res.trajectory
+            if is_psi_state:
+                # psi-state filter output -> PV before metrics/refs (q-space).
+                traj_da = dyn.inner.psi_to_q(
+                    torch.from_numpy(traj_da).float().to(device))
+                traj_da = traj_da.detach().cpu().numpy()
             if cross_res:
                 traj_da = _upsample_to_truth(
                     traj_da, da_nx, nlayers, cfg.nx, device)
@@ -582,11 +624,16 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             rmse_list.append(float(np.sqrt(np.mean(
                 (traj_da - ref) ** 2))))
             fcast_rmse.append(_free_forecast_rmse(
-                cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l))
+                cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l,
+                psi_state=is_psi_state))
             if shared_init is not None:
                 free_roll = dyn.rollout_trajectory(
                     shared_init, cfg.num_steps - 1, wind_state=forcing)
                 free_roll = free_roll.detach().cpu().numpy()
+                if is_psi_state:
+                    free_roll = dyn.inner.psi_to_q(
+                        torch.from_numpy(free_roll).float().to(device))
+                    free_roll = free_roll.detach().cpu().numpy()
                 if is_qg1l:
                     free_roll = free_roll[:, :per_layer]
                 if cross_res:
@@ -691,7 +738,7 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--init", choices=["lagged", "white"], default="lagged")
     ap.add_argument("--geometry", choices=["alongtrack", "random_columns"], default="alongtrack")
-    ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
+    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q")
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)

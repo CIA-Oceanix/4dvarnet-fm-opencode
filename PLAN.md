@@ -32,6 +32,14 @@ report + generator were on master).
   shared `ObsOperator` H-mode, `_build_qg_loc_matrices`/`_build_qg_col_loc_matrices`,
   and per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble` in ETKF/EnKF, merged
   with the L96/joint/ES work.
+- **Psi-state variant**: `models/qg_psi_dynamics.py` (`QGPsiDynamics`/`QG1LPsiDynamics`,
+  `wrap_psi`) integrates with the **streamfunction as the state variable**, so the psi
+  observation operator reduces to a trivial index lookup (`obs_var="psi_state"`). The
+  q-space physics is bit-identical to the q-state model (windows around the same
+  `_rk4_step`/filter/clip), so free forecasts match to ~1e-6 relative and ETKF skill is
+  comparable to the legacy H-function psi-obs. Works for same-resolution S0 + full-res
+  qg1l; cross-resolution S1 raises a clear `ValueError` (a psi index lookup needs the
+  DA and obs grids to match).
 - **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
   JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
   governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,

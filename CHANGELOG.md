@@ -1,6 +1,60 @@
 # Changelog
 
-## 2026-09-02: Revised readable QG DA report (equations + S0/S1-QG2L/S1-QG1L sections, psi-obs focus) + dedicated QG1L report
+## 2026-09-02: QG psi-state DA variant — streamfunction as the state (free-forecast + ETKF equivalence, incl. QG1L)
+
+**Summary:** Implemented a **psi-state** QG DA variant (`models/qg_psi_dynamics.py`:
+`QGPsiDynamics`/`QG1LPsiDynamics` + `wrap_psi`) that integrates with the **streamfunction
+ψ as the state variable** instead of PV `q`, wired it into `evaluation/run_qg_baselines.py`
+as a new `obs_var="psi_state"`, and verified two equivalence claims via
+`tests/test_qg_psi_state.py` (9 tests). The psi-state model holds ψ, converts ψ→q with a
+linear spectral operator (`forward_pv`, the exact inverse of `QGDynamics._invert`), runs
+the bit-identical q-space `_rk4_step` (incl. pyqg filter + `clip_range` clamp), then
+converts back q→ψ — so the q-space physics is unchanged, and the psi observation operator
+becomes a **trivial index lookup** (no per-step spectral inversion in `H`).
+
+**Results (verified):**
+- **Free forecast (Phase 1):** from the same physical init + wind, a 200-step ψ-state vs
+  q-state forecast agree in q-space to **2.4e-12 (2-layer) / 2.3e-13 (1-layer)** relative
+  to the initial |q| — identical up to the round-trip roundoff, as expected for a linear
+  representation change (chaotic divergence is absent because both integrate the same
+  q-space physics).
+- **ETKF DA (Phase 2):** on S0 (tiny nx=8 test config, random_columns, loc_radius=4),
+  ψ-state ETKF gives finite, skilful analyses (expvar 0.97) comparable to the legacy
+  H-function psi-obs (expvar 1.00) — similar skill, not bit-identical, because the
+  ensemble dispersion is expressed in ψ-units vs q-units.
+- **QG1L:** the 1-layer reduced-gravity structural-error scenario runs finite under
+  `psi_state`.
+- **Cross-resolution:** `obs_var="psi_state"` raises a clear `ValueError` on cross-res
+  S1 (a trivial index lookup requires DA and obs grids to match), paralleling the existing
+  `obs_var="q"` guard; use the legacy `obs_var="psi"` (H-function with spectral resample)
+  for cross-resolution.
+
+**Files modified:**
+- `models/qg_psi_dynamics.py` — new: `_PsiMixin`, `QGPsiDynamics`, `QG1LPsiDynamics`,
+  `wrap_psi`; `forward_pv` (2×2 spectral ψ→q inverse for 2-layer; `-(K2+rd^-2)` for
+  1-layer, both zeroed at the K2=0 mean mode), `psi_to_q`/`q_to_psi`, ψ-space `step`/
+  `rollout_trajectory`, identity `streamfunctions`.
+- `evaluation/run_qg_baselines.py` — `_build_dyn(..., psi_state=)` wraps in the ψ-state
+  model; `_make_obs_system` `psi_state` branch (index-mode obs-op + psi R_var +
+  `_build_qg_loc_matrices`); `_free_forecast_rmse(psi_state=)` (ψ→q before RMSE);
+  `run()` init→ψ conversion + ψ→q conversion of analysis/free-roll + cross-res guard;
+  `--obs-var psi_state` CLI choice.
+- `tests/test_qg_psi_state.py` — new: PV round-trip, free-forecast parity (2L + 1L),
+  `wrap_psi` dispatch, S0 finite/skill, legacy-psi parity, QG1L finite, cross-res rejection.
+- `.github/workflows/ci.yml` — added `test_qg_psi_state.py` to the pytest gate (17 test files).
+- `PLAN.md` — QG section ψ-state bullet.
+
+**Rationale:** Answering whether coding the QG forward model natively in ψ (so the
+observation operator on the streamfunction is a trivial lookup) is feasible, physically
+sound, and numerically equivalent to the q-state formulation. The implementation shows it
+is: equivalent by construction in q-space, with the benefit of an index-only `H` (no
+spectral inversion per DA step) and no cross-grid index ambiguity — at the cost of
+~4 spectral inversions per RK4 step. Every commit this session's earlier QG report claimed
+(psi-obs focus) is respected: the ψ-state is the direct-mapping natural extension.
+
+**Verification:** `pytest tests/test_qg_psi_state.py -m "not slow"` — 9 passed; full QG
+fast gate (7 files, 108 selected) green; `ruff check` clean on all three touched files.
+
 
 **Summary:** Reworked the QG consolidated report (`reports/qg/generate_qg_s0s1_report.py`
 → `qg_s0s1_report.md`) to be readable and self-contained, and added a dedicated
