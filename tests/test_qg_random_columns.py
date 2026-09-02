@@ -23,14 +23,18 @@ def test_random_columns_has_obs_columns_key():
     assert w["obs"].shape == (T, C * cfg.ny)
 
 
-def test_random_columns_daily_cadence_and_mask():
+def test_random_columns_one_event_per_day_and_mask():
     cfg = _cfg()
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
     spd = round(86400.0 / cfg.dt)
     ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
-    assert ev == list(range(0, cfg.num_steps, spd))
-    for t in ev:
+    # One event per day, placed at a random sub-daily offset within that day
+    # (PR #94 "random sub-daily obs"): no two events share a day, and each
+    # event lies inside its day's [day*spd, (day+1)*spd) window.
+    assert len(ev) == w["obs_mask"].shape[0] // spd
+    for i, t in enumerate(ev):
+        assert i * spd <= t < (i + 1) * spd
         assert int((w["obs_columns"][t] >= 0).all())
 
 

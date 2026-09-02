@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--cols-per-day-list", default=None)
     ap.add_argument("--obs-noise-frac-list", default=None)
     ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
+    ap.add_argument("--obs-var-r-scale-list", default=None)
     ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--outdir", default="reports/outputs/figs")
     ap.add_argument("--device", default=None)
@@ -77,6 +78,8 @@ def main():
              if args.cols_per_day_list else [args.cols_per_day])
     noises = ([float(x) for x in args.obs_noise_frac_list.split(",")]
               if args.obs_noise_frac_list else [None])
+    rscales = ([float(x) for x in args.obs_var_r_scale_list.split(",")]
+               if args.obs_var_r_scale_list else [1.0])
     for cols in colss:
         for noise in noises:
             if noise is None:
@@ -111,10 +114,12 @@ def main():
                                 for disp in disps:
                                     for ridge in ridges:
                                         for a in addit:
+                                          for rscale in rscales:
                                             tag = (f"{method}_c{cols}"
                                                    f"_nz{nzlab(noise)}"
                                                    f"_i{infl}_l{loc}_lag{lag}"
-                                                   f"_n{n}_d{disp}_r{ridge}_a{a}")
+                                                   f"_n{n}_d{disp}_r{ridge}_a{a}"
+                                                   f"_rs{rscale:g}")
                                             t1 = time.time()
                                             p = run(method, cfg, device=device,
                                                     N_ensemble=n,
@@ -129,6 +134,7 @@ def main():
                                                     disp_frac=disp,
                                                     etkf_ridge=ridge,
                                                     etkf_additive=a,
+                                                    obs_var_r_scale=rscale,
                                                     save_traj=os.path.join(args.outdir, "trajectories") if args.save_traj else None)
                                             dt = time.time() - t1
                                             rows = " ".join(

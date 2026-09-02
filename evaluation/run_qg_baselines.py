@@ -227,20 +227,28 @@ def _q_obs_indices_t(cfg, window):
     return [None] * T
 
 
-def _make_obs_system(cfg, window, device, obs_var, loc_radius):
-    """Build ObsOperator with index or H-mode based on obs_var."""
+def _make_obs_system(cfg, window, device, obs_var, loc_radius,
+                     obs_var_r_scale: float = 1.0):
+    """Build ObsOperator with index or H-mode based on obs_var.
+
+    `obs_var_r_scale` multiplies the observation-noise variance `r_var` (both
+    q- and psi-obs paths). Default 1.0 is the exact existing behaviour; scaling
+    R up models error that the perfect-forecast ensemble assumption understates
+    (e.g. a structurally-wrong DA model, where psi obs are mutually inconsistent
+    with the model) and probes the filter's over-trust of the obs.
+    """
     if obs_var == "q":
         obs, r_var, _ = _q_alongtrack_obs(cfg, window, device)
         per_time = _q_obs_indices_t(cfg, window)
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
-        return obs, r_var, obs_operator, _build_qg_loc_matrices
+        return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
     else:
         dyn = _build_dyn(cfg, window, device)
         obs_cols = _event_columns(cfg, window)
         h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
         obs, r_var, od = _obs_spec_rc(cfg, window, device)
         obs_op = ObsOperator(dyn.state_dim, h=h, h_index_at=None, n_obs=od)
-        return obs, r_var, obs_op, _build_qg_col_loc_matrices
+        return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_loc_matrices
 
 
 def _obs_spec_rc(cfg, window, device):
@@ -450,7 +458,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         out_path=None, init="lagged", geometry="random_columns",
         obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
         etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25,
-        save_traj=None):
+        save_traj=None, obs_var_r_scale=1.0):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -486,7 +494,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
                                                                device,
                                                                obs_var,
-                                                               loc_radius)
+                                                               loc_radius,
+                                                               obs_var_r_scale)
             forcing = w["wind_state_corrupted"].to(device)
             init_ensemble = None
             init_lag_val = 0.0
@@ -686,6 +695,7 @@ def main():
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
+    ap.add_argument("--obs-var-r-scale", type=float, default=1.0)
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
@@ -700,7 +710,8 @@ def main():
             inflation=args.inflation, loc_radius=args.loc_radius,
             scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
             init=args.init, geometry=args.geometry, obs_var=args.obs_var,
-            init_lag_days=args.init_lag_days, band_half=args.band_half)
+            init_lag_days=args.init_lag_days, band_half=args.band_half,
+            obs_var_r_scale=args.obs_var_r_scale)
 
 
 if __name__ == "__main__":

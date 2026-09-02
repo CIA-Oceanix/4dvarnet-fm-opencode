@@ -546,3 +546,64 @@ def test_s1_qg1l_run_smoke():
     for fld in ("q", "psi"):
         assert np.isfinite(mpf[fld]["layer1"]["ev"])
 
+
+def test_qg1l_psi_obs_r_scale_restores_da_over_free_forecast():
+    """Structural-model-error QG1L psi obs are over-trusted at default R.
+
+    Under the 1-layer-vs-2-layer mismatch the nonlocal psi obs are mutually
+    inconsistent with the (wrong) model, so the ETKF over-corrects and the DA
+    analysis becomes worse than the free forecast. Inflating the obs-noise
+    variance `obs_var_r_scale` (model-error-aware R) moves the analysis
+    monotonically toward the free-forecast limit (the DA-improv metric climbs
+    toward / crosses 1 while the free forecast stays there), without touching
+    the error-free S0 anchor. The key transferable claim is the monotone
+    approach, not that a single R-scale fully restores DA (production-scale
+    nx=64 shows it does not reach improv>=1 for the 1-layer mismatch)."""
+    from evaluation.run_qg_baselines import run
+    cfg = QGConfig(nx=16, window_days=6.0, spinup_years=0.05,
+                   num_windows=2, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3)
+    ds = make_qg_s0_s1_datasets(cfg)
+    kw = {
+        "device": torch.device("cpu"),
+        "N_ensemble": 8,
+        "inflation": 1.0,
+        "loc_radius": 4.0,
+        "scenarios": ("test_s0", "test_s1_qg1l"),
+        "init": "lagged",
+        "geometry": "random_columns",
+        "obs_var": "psi",
+        "init_lag_days": 0.5,
+        "ds": ds,
+    }
+    p_default = run("etkf", cfg, obs_var_r_scale=1.0, **kw)
+    p_infl = run("etkf", cfg, obs_var_r_scale=1e4, **kw)
+    q1_default = p_default["scenarios"]["test_s1_qg1l"]
+    q1_infl = p_infl["scenarios"]["test_s1_qg1l"]
+    assert q1_default["forecast_improvement"] < 1.0
+    assert q1_infl["forecast_improvement"] < 1.01
+    assert q1_infl["forecast_improvement"] >= q1_default["forecast_improvement"]
+    assert q1_infl["expvar_full"] >= q1_default["expvar_full"]
+    s0_default = p_default["scenarios"]["test_s0"]
+    s0_infl = p_infl["scenarios"]["test_s0"]
+    assert s0_infl["expvar_full"] > 0.5
+    assert abs(s0_infl["expvar_full"] - s0_default["expvar_full"]) < 0.15
+
+
+def test_make_obs_system_r_scale_wiring():
+    """The `obs_var_r_scale` knob must multiply r_var in both obs branches.
+
+    Pins the R-inflation wiring so a refactor cannot silently drop the scale
+    (the same class of bug as `obs_noise_std_frac` being lost when a dataset is
+    passed directly): for q- and psi-obs, `_make_obs_system(..., s)` must
+    return `r_var * s`, with s=1.0 reproduces the baseline exactly."""
+    cfg, w = _rc_window()
+    device = torch.device("cpu")
+    for obs_var in ("q", "psi"):
+        _, r_base, _, _ = _make_obs_system(cfg, w, device, obs_var, None, 1.0)
+        for scale in (0.5, 10.0, 1e4):
+            _, r_scaled, _, _ = _make_obs_system(cfg, w, device, obs_var, None,
+                                                 scale)
+            assert r_scaled == pytest.approx(r_base * scale, rel=1e-12)
+
+
