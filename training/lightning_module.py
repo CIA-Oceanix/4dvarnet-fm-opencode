@@ -39,6 +39,11 @@ class LitModel(pl.LightningModule):
                 params = self.model.mean_estimator.parameters()
             else:
                 params = self.model.velocity_unet.parameters()
+        elif self.model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet") and self.stage == 2:
+            params = self.model.param_flow.parameters() if self.model_type != "joint_direct_unet" \
+                else self.model.param_head.parameters()
+        elif self.model_type in ("param_head", "param_head_unet"):
+            params = self.model.param_head.parameters()
         else:
             params = self.model.parameters()
         return torch.optim.Adam(params, lr=self.lr)
@@ -70,6 +75,24 @@ class LitModel(pl.LightningModule):
                 for p in self.model.velocity_unet.parameters():
                     p.requires_grad = True
                 self.model.set_stage(2)
+        elif self.model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet"):
+            if self.stage == 2:
+                for p in self.model.unet.parameters():
+                    p.requires_grad = False
+                if self.model_type != "joint_direct_unet":
+                    for p in self.model.param_flow.parameters():
+                        p.requires_grad = True
+                else:
+                    for p in self.model.param_head.parameters():
+                        p.requires_grad = True
+                self.model.set_stage(2)
+        elif self.model_type in ("param_head", "param_head_unet"):
+            if getattr(self.model, "state_encoder", None) is not None:
+                for p in self.model.state_encoder.parameters():
+                    p.requires_grad = False
+            for p in self.model.param_head.parameters():
+                p.requires_grad = True
+            self.model.set_stage(1)
         self._frozen = True
 
     def _forward_and_loss(self, batch):
@@ -84,13 +107,17 @@ class LitModel(pl.LightningModule):
             loss = self.loss_fn(pred, batch.states)
         elif self.model_type == "vanilla_cfm":
             loss = self.model.compute_cfm_loss(batch)
-        elif self.model_type == "joint_cfm":
-            loss = self.model.compute_cfm_loss(batch)
+        elif self.model_type in ("joint_cfm", "joint_cfm_coupled"):
+            loss = self.model.compute_param_loss(batch) if self.stage == 2 \
+                else self.model.compute_cfm_loss(batch)
         elif self.model_type == "joint_direct_unet":
-            loss = self.model.compute_loss(batch)
+            loss = self.model.compute_param_loss(batch) if self.stage == 2 \
+                else self.model.compute_loss(batch)
         elif self.model_type == "predict_state_cfm":
             loss = self.model.compute_loss(batch)
         elif self.model_type == "tweedie_cfm":
+            loss = self.model.compute_loss(batch)
+        elif self.model_type in ("param_head", "param_head_unet"):
             loss = self.model.compute_loss(batch)
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")

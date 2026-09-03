@@ -52,6 +52,21 @@ MODEL_DEFS = {
                 "sampled as a 30-member ensemble with 10 Euler steps (ens30 x 10, N=30). Hidden "
                 "[64,128,256], 400 epochs.",
     },
+    "L10_joint_cfm_coupled_multitau": {
+        "type": "JointCFMCoupled",
+        "tau": "multi-tau",
+        "desc": "Coupled joint conditional flow: BOTH x_tau=(1-tau)x0+tau*x1 and "
+                "theta_tau=(1-tau)theta0+tau*theta1 condition both velocity fields "
+                "u_theta(x_tau,theta_tau,tau,obs,forcing) and v_phi(...) -> (theta1-theta0). "
+                "UNet param flow [32,64,128], state [64,128,256], 400 epochs.",
+    },
+    "L12_joint_direct_unet_unethead": {
+        "type": "JointDirectUNet",
+        "tau": "n/a",
+        "desc": "JointDirectUNet (deterministic) with a UNet param head (param_head_backbone=unet) "
+                "regressing 8 params from [obs, forcing, x_hat_state] (stop-grad), attention-pooled. "
+                "State [64,128,256], param head [32,64,128], 200 epochs.",
+    },
 }
 
 CASES = ["s0", "s1"]

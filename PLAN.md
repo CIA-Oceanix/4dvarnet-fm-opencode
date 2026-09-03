@@ -303,7 +303,22 @@ fw, fw6 int100/int200, legacy int200, dws50, dws50 fw) serve other lineages and 
 outcome uncertain given the CHANGELOG's note that some L96 caches "are not reproducible
 under current code semantics."
 
-## Experiments
+### Decoupled cascade (C1/C2) — documented negative (2026-09-01)
+
+A **decoupled state→param cascade** (`model_type=param_head`, `models/param_head.py`) was
+tested as an alternative to the coupled joint flow for recovering the 8 L96 params: a
+`StateParamHead` reads obs + biased `*_da` params + forcing + a state estimate, trained
+under two state sources — **C1** = frozen L1b state-only DirectUNet estimate, **C2** =
+exact true state (ablation). **Both fail the fast weights `w1/w2` on S1 (NRMSE ≈ 1.1-1.2,**
+i.e. relative error > 100%), even with the exact true state (C2) — an
+**information/architecture bottleneck**, not a state-quality issue (F is partly state-quality:
+true state halves it 1.67→0.86). Only the coupled **multi-τ flow (L9)** recovers all 8 params
+(S1 per-param NRMSE all ≤ 0.20, F 0.07) at parity with the joint DA filters on the params they
+actually estimate. **Recorded as a documented negative, not a benchmark win.** Details + NRMSE
+table: CHANGELOG 2026-09-01 and `reports/l96/outputs/l96_joint_neural_benchmark.md` (which now
+also carries computed DA NRMSE rows with a `w3/w4`=pinned-prior masking footnote).
+
+
 
 All E/F/G/S rows are **Lorenz-63** (`cs1+cs2` mixes); results live under `experiments/`.
 The **L-series** (Lorenz-96) is listed separately below.

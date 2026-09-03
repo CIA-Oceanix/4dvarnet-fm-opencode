@@ -61,6 +61,8 @@ class DataConfig:
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
     test_cache: Optional[str] = None
+    resample_bias_draws: bool = False
+    bias_max: float = 0.2
 
     # Device
     device: str = "cpu"
@@ -171,6 +173,8 @@ class JointCFMConfig:
     param_noise_max: float = 0.3
     param_flow_channels: Optional[List[int]] = None
     train_tau_0_only: bool = False
+    param_ref: Optional[List[float]] = None
+    param_flow_pool: str = "mean"
 
 
 @dataclass
@@ -178,6 +182,45 @@ class JointDirectUNetConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
     param_head_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    param_head_backbone: str = "cnn"
+
+
+@dataclass
+class JointCFMCoupledConfig:
+    param_dim: int = 4
+    param_loss_weight: float = 0.1
+    param_flow_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_flow_pool: str = "mean"
+
+
+@dataclass
+class ParamHeadConfig:
+    param_dim: int = 8
+    param_head_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    state_checkpoint: Optional[str] = None
+    state_model_type: str = "direct_unet"
+    state_hidden_channels: Optional[List[int]] = None
+    state_cond_extra_dim: int = 0
+    state_source: str = "l1b"
+    augment_derivatives: bool = False
+
+
+@dataclass
+class ParamHeadUNetConfig:
+    param_dim: int = 8
+    hidden_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    state_checkpoint: Optional[str] = None
+    state_model_type: str = "direct_unet"
+    state_hidden_channels: Optional[List[int]] = None
+    state_cond_extra_dim: int = 0
+    state_source: str = "l1b"
 
 
 @dataclass
@@ -205,7 +248,7 @@ class TweedieCFMConfig:
 
 @dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -218,7 +261,10 @@ class ModelConfig:
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
+    joint_cfm_coupled: JointCFMCoupledConfig = field(default_factory=JointCFMCoupledConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    param_head: ParamHeadConfig = field(default_factory=ParamHeadConfig)
+    param_head_unet: ParamHeadUNetConfig = field(default_factory=ParamHeadUNetConfig)
     predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
     tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
 

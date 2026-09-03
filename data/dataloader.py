@@ -3,6 +3,53 @@ from torch.utils.data import DataLoader, Dataset
 from typing import Dict
 
 
+def _l96_biased_param_vector(w):
+    """Extract the biased (``*_da``) 8-param vector from an L96 window.
+
+    The randomize/s0_s1 layout stores scalar biased scalar params as
+    ``F_da, c1_da, hx_da, eps_da`` and the biased fast weights as the list
+    ``fast_weights_da`` (there is no per-index ``w{j}_da``). Falls back to the
+    un-biased key when a ``*_da`` entry is absent (e.g. test_s0 windows which
+    carry no bias). Mirrors ``_window_param_vector`` in
+    ``evaluation/neural_inference.py`` for the true/plain layout.
+    """
+    vec = [float(w.get(f"{n}_da", w.get(n, 1.0 if n == "c1" else 0.0)))
+           for n in ("F", "c1", "hx", "eps")]
+    fw = w.get("fast_weights_da", w.get("fast_weights"))
+    if fw is None:
+        fw = w.get("true_fast_weights", [1.0, 1.0, 0.1, 0.1])
+    fw = list(fw)
+    if len(fw) < 4:
+        fw = fw + [0.0] * (4 - len(fw))
+    return tuple(vec + [float(x) for x in fw])
+
+
+def _l96_true_param_vector(w):
+    """Extract the true 8-param vector from an L96 window, list-format aware.
+
+    Mirrors ``_window_param_vector(bd, prefix="true_")`` in
+    ``evaluation/neural_inference.py``: read scalar ``true_F..true_eps`` keys
+    and the fast weights as scalar ``true_w1..true_w4`` when flattened, falling
+    back to splitting the ``true_fast_weights`` list for older cached windows
+    (which store only the list form). Used by the eval path so fast-weight RMSE
+    is measured against the correct per-window truth instead of a silent 0.0.
+    """
+    vec = [float(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)))
+           for n in ("F", "c1", "hx", "eps")]
+    scalar_keys = [f"true_w{j}" for j in range(1, 5)]
+    if all(k in w for k in scalar_keys):
+        vec += [float(w[k]) for k in scalar_keys]
+    else:
+        fw = w.get("true_fast_weights")
+        if fw is None:
+            fw = w.get("fast_weights", [1.0, 1.0, 0.1, 0.1])
+        fw = list(fw)
+        if len(fw) < 4:
+            fw = fw + [0.0] * (4 - len(fw))
+        vec += [float(x) for x in fw]
+    return tuple(vec)
+
+
 class FlowMatchingBatch:
     def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None):
         self.states = states
@@ -28,7 +75,8 @@ class FlowMatchingBatch:
 class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
-                 obs_var_indices=None):
+                 obs_var_indices=None, use_biased_params: bool = False,
+                 resample_bias_draws: bool = False, bias_max: float = 0.2):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -37,14 +85,26 @@ class FlowMatchingDataset(Dataset):
         self.param_names = param_names or ["sigma", "rho", "beta", "c1"]
         self.param_dim = len(self.param_names)
         self.obs_var_indices = obs_var_indices
+        self.use_biased_params = use_biased_params
+        self.resample_bias_draws = resample_bias_draws
+        self.bias_max = bias_max
 
     def __len__(self):
         return len(self.source)
 
     def _extract_params(self, w):
-        return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+        if self.resample_bias_draws:
+            true = tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0))
+                         for n in self.param_names)
+            draw = 1.0 + torch.empty(len(true)).uniform_(0.0, self.bias_max)
+            return tuple(t * float(d) for t, d in zip(true, draw.tolist()))
+        if not self.use_biased_params:
+            return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
+        return _l96_biased_param_vector(w)
 
     def _extract_true_params(self, w):
+        if self.param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+            return _l96_true_param_vector(w)
         return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):
@@ -88,6 +148,8 @@ class ConcatFMDataset(Dataset):
         return tuple(w.get(n, 1.0 if n == "c1" else 0.0) for n in self.param_names)
 
     def _extract_true_params(self, w):
+        if self.param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+            return _l96_true_param_vector(w)
         return tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
 
     def __getitem__(self, idx):

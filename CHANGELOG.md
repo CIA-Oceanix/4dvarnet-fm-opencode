@@ -1,5 +1,217 @@
 # Changelog
 
+## 2026-09-03: UNet param-head JointDirectUNet (L12) + coupled JointCFM ODE (L10)
+
+**Summary:** Objective: replace the initial CNN param heads with a **UNet param head** across both
+joint model families, and give JointCFM a genuinely **coupled ODE** where both `x_τ` and `θ_τ`
+condition **both** velocity fields. Two new joint models built, trained, evaluated and benchmarked:
+- **L10 `JointCFMCoupled`** (`joint_cfm_coupled`, new class, NOT a flag on `JointCFM`): the state
+  flow `u_θ(x_τ, θ_τ, τ, obs, forcing)→(x1−x0)` and the param flow
+  `v_φ(x_τ, θ_τ, τ, obs, forcing)→(θ1−θ0)` both read both interpolants `x_τ=(1−τ)x0+τx1`,
+  `θ_τ=(1−τ)θ0+τθ1` (no one-way `detach` like the current `JointCFM`); UNet param flow
+  (`ParamFlowUNet`, `[32,64,128]`, attention pool) is the only param-flow option; multi-τ only
+  (no τ=0 smoke variant); state `[64,128,256]`, 400 epochs.
+- **L12 `JointDirectUNet`** with a UNet param head (`ParamHeadUNet`, `param_head_backbone: unet`,
+  `[32,64,128]`, attention pool) regressing the 8 params from `[obs, forcing, x̂_state]` (stop-grad),
+  replacing the default CNN head; state `[64,128,256]`, 200 epochs.
+- Lightweight-first param heads default to `[32,64,128]`. Wiring: `JointCFMCoupledConfig` +
+  `param_head_backbone/param_head_pool/param_flow_pool` in schema; `model_factory` +
+  `lightning_module` dispatch (`joint_cfm_coupled`→`param_flow` stage-2 optimizer/freeze); eval
+  loader (`resolve_model_class JOINTCFMCOUPLED`, `create_model` branches, head-backbone + channel
+  inference for UNet flows/heads, `param_head_backbone` inference); configs L10/L12; report
+  `MODEL_DEFS` registration (renders `--` until eval JSONs exist); training + eval sbatch arrays.
+  15 new tests (coupled/UNet-head shapes, oracle-gone, sample, grads, multi-τ no-shortcut; loader
+  round-trips for coupled, UNet-head, CNN-head back-compat).
+
+**Results (canonical cached S0/S1, Obs30, 200 windows, single-sample, n_outer=10):** the coupled
+ODE is the headline — **L10 S0 0.6511 / S1 0.6536, S1/S0 degradation 1.004** (EV 0.84/0.84),
+the **best state RMSE on both S0 and S1** of any joint neural model and essentially no S1
+degradation, edging L9 (0.6515/0.6589, deg 1.01). **L12** is deterministic-family: best S0
+paramRMSE (0.0965) but S1 state 1.551 / degradation 2.33 (like L8, not robust to parameter
+bias). Joint-ETKF DA: S0 0.633 / S1 1.497.
+
+**Files modified:** `models/vanilla_cfm.py` (ParamFlowUNet, JointCFMCoupled), `models/direct_unet.py`
+(ParamHeadUNet, param_head_backbone dispatch), `conf/schema.py`, `train.py`, `training/lightning_module.py`,
+`evaluation/neural_inference.py`, `config/experiment/L10_joint_cfm_coupled_multitau.yaml`, `config/experiment/L12_joint_direct_unet_unethead.yaml`,
+`batch/run_l96_joint_unet_{training,eval}.sbatch`, `reports/l96/generate_l96_joint_neural_report.py` +
+`reports/l96/outputs/l96_joint_neural_benchmark.md` (L10/L12 rows live), `tests/test_joint_estimation_l96_neural.py`, `tests/test_neural_inference.py`.
+
+**Rationale:** The initial CNN param heads have a small receptive field over the 3000-step
+trajectory; a UNet head captures multi-scale temporal features implicitly (as C4a/C4b showed for
+the decoupled cascade). Extending this to the joint models, plus a genuinely coupled multi-τ ODE,
+tests whether the coupling—rather than architecture alone—drives the multi-τ S1 robustness.
+
+**Verification:** e2e 1-epoch CPU smokes for L10 (2.5M) + L12 (2.4M) train stage1+stage2 + eval with
+param RMSE; real GPU training jobs 51479_0/51479_1 COMPLETED exit 0 (49:37 / 29:43) with full
+stage1/stage2 checkpoints; standalone evals 51512_0/51512_1 COMPLETED exit 0 write joint_neural_eval.json;
+`pytest tests/test_joint_estimation_l96_neural.py tests/test_neural_inference.py tests/test_direct_unet.py tests/test_vanilla_cfm.py -m "not slow"` —
+91 passed; broader 8-file gate 158 passed; report generator runs clean with populated L10/L12 rows.
+
+## 2026-09-02: UNet cascade param heads (C4a true-state / C4b L1b-state) — architecture ablation
+
+**Summary:** Added `StateParamUNet`, a full encoder-decoder param-regression head with skip
+connections, addressing the shallow-CNN limitation identified in the C1/C2/C3 cascade: the CNN
+(`StateParamHead`, 3× kernel-3 ConvBlocks) has a receptive field of only ~7 steps over a 3000-step
+trajectory, which is why it could not extract temporal derivative/parameter information from the raw
+signal without C3's explicit `torch.diff` channel. `StateParamUNet` (reusing `models.unet`
+`ConvBlock`/`Down`/`Up` with a bottleneck + skip connections) has a much larger effective receptive
+field and captures multi-scale temporal features implicitly, so no derivative channel is needed.
+`StateParamModel` gains a `backbone="unet"` switch (`ParamHeadUNetConfig` + new `param_head_unet`
+model_type wired through `train.py`/`lightning_module`/`conf/schema.py`). Two UNet cascade
+experiments registered: **C4a** = UNet + true state (mirrors C2), **C4b** = UNet + frozen L1b
+state (mirrors C1), to isolate the architecture effect from the state-quality effect.
+
+**Files modified:**
+- `models/param_head.py` — new `StateParamUNet`; `StateParamModel` gains `backbone`/`unet_hidden_channels`
+- `conf/schema.py` — new `ParamHeadUNetConfig` + `ModelConfig.param_head_unet`
+- `training/lightning_module.py` — `param_head_unet` dispatch (optimizer, freeze, loss)
+- `train.py` — `param_head_unet` in `model_factory` + eval/save/trajectory/dataloader wiring
+- `config/experiment/C4a_param_head_unet_true.yaml`, `C4b_param_head_unet_l1b.yaml` — new
+- `tests/test_param_head.py` — UNet shapes / no-oracle / frozen-encoder / config-instantiation tests
+- `rerun_param_head_eval.py` — C4a/C4b added to `EXPERIMENTS`
+- `reports/l96/generate_l96_joint_neural_report.py` — C4a/C4b in `CASCADE_DEFS` (with `arch` field); bench-table narrative gated on whether `results.json` exists (pending rows say "training/eval pending")
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated
+
+**Rationale:** The user observed that a CNN should be able to compute finite differences from the raw
+signal and asked whether a UNet (with its multi-scale receptive field) could extract this temporal
+information implicitly — making C3's explicit derivative channel unnecessary. C4a/C4b are the
+architecture ablation that tests this directly, controlling for state-source quality (C4a = oracle
+true state, C4b = realistic L1b estimate).
+
+**Verification:** `pytest tests/test_param_head.py tests/test_hydra_config.py -m "not slow"` — 21 passed
+(+8 new UNet tests); broader fast gate (test_param_head/test_hydra_config/test_baselines_hydra/test_direct_unet/
+test_vanilla_cfm/test_lorenz96_training) — 98 passed. `py_compile` clean on all touched modules.
+`model_factory` smoke for both configs: C4a builds a UNet head with no encoder, C4b loads + freezes
+the L1b encoder (~1.9M frozen) and trains only the UNet head (~1.9M); forward/loss/backward finite,
+gradients only in the head. Full 1-epoch `train.py` CPU smoke (C4a) completed end-to-end (data-gen
+via cached test splits → Lightning stage-1 → param-RMSE eval). Ruff: no NEW error classes on touched
+source (only the schema.py file's pre-existing `Optional[List]` style on the new, sibling-consistent
+`ParamHeadUNetConfig`). Training launched: jobs 51425 (C4a) / 51426 (C4b), 300 epochs each on RTX8000.
+
+## 2026-09-02: Fix C1/C2/C3 fast-weight eval-metric bug — models were healthy, the metric was wrong
+
+**Summary:** Root-caused and fixed the spurious "fast-weight failure" reported for the L96 decoupled
+state→param cascade models (C1/C2/C3). The published per-parameter RMSE showed `w1..w4` at exactly
+their reference magnitude (~1.0/0.1), which looked like the head outputting ≈0 for the fast weights.
+It was **entirely an eval-metric artifact**, not a model failure: `train.py`'s eval built true-params
+via `w.get("true_w1", w.get("w1", 0.0))`, but the cached L96 test windows (`l96_datasets_obsj2_int100_nwin200.pt`)
+predate the fast_weights flattening and store only the `true_fast_weights` **list** — so all four
+fast-weight channels were compared against a silent **0.0** (`param_rmse ≈ sqrt(mean(pred²))` ≈ the
+parameter's own magnitude). Training was unaffected (freshly generated train/val windows DO get
+flattened `true_w1..` keys), which is why the models learned correct weights. A direct checkpoint probe
+confirmed the true recovery: C2 S0 fast-weight RMSE **0.011/0.012/0.010/0.010**.
+
+**Corrected results (fixed 8-param RMSE on the cached S0/S1 set, no retraining):**
+
+| model | S0 w1..w4 | S1 w1/w2 | S1 F |
+|---|---|---|---|
+| C1 (L1b state) | 0.012/0.013/0.011/0.010 | 0.18/0.12 | 1.65 |
+| C2 (true state) | 0.011/0.012/0.010/0.010 | 0.21/0.12 | 0.97 |
+| C3 (state+deriv+bias-resample) | 0.051/0.064/0.010/0.009 | 0.04/0.10 | 0.52 |
+
+C3 (derivative + positive-only bias-resampled `*_da` training) is the most S1-robust cascade member —
+it trades a small S0 hit (F 0.26, c1 0.09) for the best biased-S1 recovery (w1/w2 0.04/0.10, F 0.52) —
+confirming the training-data alignment was the right lever, not an architecture fix. The coupled
+multi-τ flow (L9) and joint-DA filters still lead overall parameter recovery.
+
+**Files modified:**
+- `data/dataloader.py` — new `_l96_true_param_vector` (list-aware, matches `_window_param_vector`); `FlowMatchingDataset._extract_true_params` / `ConcatFMDataset._extract_true_params` route the L96 8-param case through it
+- `train.py` — `_make_eval_batch` builds eval true-params via the helper instead of scalar-key fallback; new `_eval_true_param_list` used by all three eval sites (`joint_cfm`/`joint_direct_unet`/`param_head`)
+- `rerun_param_head_eval.py` — new: rebuilds each C1/C2/C3 model from its checkpoint and re-runs the corrected `evaluate_model` on the cached test set, rewriting only `param_rmse_s0/s1` in `results.json` (no retrain)
+- `reports/l96/generate_l96_joint_neural_report.py` — cascade narrative + footnotes updated from "documented negative" to the corrected finding; `CASCADE_DEFS` comment refreshed
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated with corrected cascade tables
+- `tests/test_param_head.py` — new `test_true_param_vector_list_form_matches_window_param_vector` (both cache formats, cross-checked against `_window_param_vector`)
+
+**Rationale:** The "≈reference-magnitude fast-weight RMSE" signature had been misread as a model
+bottleneck since the data was flattened only in training generation, not in the eval cache. Fixing the
+one extraction path (and hardening the dataset/dataloader) makes the fast-weight comparisons correct and
+reveals the cascade is a genuine, S1-robust param estimator — a materially different conclusion from the
+published negative. A rerun script was chosen over retraining because the checkpoints were already correct.
+
+**Verification:** `pytest tests/test_param_head.py -m "not slow"` — 8 passed. `python -m py_compile` on
+`train.py`, `data/dataloader.py`, `rerun_param_head_eval.py`, and the report generator — clean. Probe of C2 S0
+w1..w4 = 0.011/0.012/0.010/0.010 matches the corrected `results.json`. `rerun_param_head_eval.py` updated all
+three `results.json` (other fields preserved); report regenerated (exit 0) with the corrected cascade rows.
+
+## 2026-09-01: C2-vs-C3 cascade report — C3 added to the L96 joint neural benchmark (positive-bias training result)
+
+**Summary:** Added the **C3** cascade experiment (`C3_param_head_true_deriv`) to `reports/l96/generate_l96_joint_neural_report.py` and regenerated `reports/l96/outputs/l96_joint_neural_benchmark.md`, giving the first C2-vs-C3 comparison in the canonical benchmark. C3 trains a decoupled state→param head on the **exact true state plus a temporal-derivative channel** with **positive-only bias-resampled** `*_da` training (matching the S1 bias protocol; see the preceding entry). On S1 it **recovers F hard** (NRMSE 0.108→0.047), **pulls w1/w2 below 1.0** (≈1.17/1.12 → ≈0.98/0.97), and cuts the **mean S1 paramRMSE 0.4466 → 0.3521 (−21%)**, but **regresses c1** (NRMSE 0.110→0.234) and still trails the coupled multi-τ flow (L9) and the joint-DA filters on fast-weight recovery. The regression is attributed to the per-param-normalized MSE loss being dominated by the still-≈1.0 `w1..w4` errors, so the optimizer trades the low-signal c1 for large fast-weight gains. C3 stays a documented (partial) negative — not a benchmark win — consistent with the C1/C2 framing.
+
+**Files modified:**
+- `reports/l96/generate_l96_joint_neural_report.py` — added C3 to `CASCADE_DEFS`; refreshed the intro cascade narrative, benchmarked-models description, and the S0/S1 NRMSE footnotes to reflect C3's F/w1/w2 gain and c1 regression
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated with C3 rows in all four cascade tables (param-RMSE + NRMSE, S0 + S1)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked for a C2-vs-C3 comparison report delivered via the target PR workflow. The cascade C1/C2 results already lived in the joint neural benchmark generator (`CASCADE_DEFS`); adding C3 there (rather than a new standalone file) keeps the decoupled-cascade comparison in one auditable place alongside the DA baselines and L7/L8/L9, and makes the C2→C3 delta (training-data alignment win on S1) explicit.
+
+**Verification:** `python reports/l96/generate_l96_joint_neural_report.py` — exit 0, report regenerated. C3 rows render in all four cascade tables (S0/S1 param-RMSE + NRMSE) and the narrative footnotes; formatting consistent with C1/C2 rows. No other generator references `CASCADE_DEFS` (consolidated + DA reports unaffected). Report content cross-checks the raw `results.json` param RMSE values (e.g. C3 S1 F 0.3702, c1 0.2338, w1 0.9857, mean 0.3521).
+
+## 2026-09-01: C3 training-dataset alignment — positive-only bias resample + genuinely biased `*_da` train windows + full launch
+
+**Summary:** Specified and wired the C3 training dataset to match the S1 evaluation bias, then launched the full 300-epoch run. Root-caused the earlier C1/C2 S1 failure as a **train/eval bias mismatch**: the cached S1 eval set (`_da` keys verified: `F_da=9.33` vs `true_F=8.48`, all params `×1.1`) is genuinely biased, but `make_l96_s0_s1_trainval` train windows carried **identity** `*_da` because `lorenz96_default.yaml`'s per-param `randomize` dict sets `biased: false` for every param — so the model trained on an identity task and never saw a biased input, then hit the ×1.1 S1 bias at eval. Two dataset changes align train to eval: **(1)** `FlowMatchingDataset._extract_params` bias resample is now **positive-only** `1+U(0, bias_max)` (was symmetric `1+U(-bias_max, +bias_max)`), exactly matching S1's always-positive `*_da = true×(1+b)`; **(2)** scoped to C3 only, a `data.randomize` override marks F/c1/hx/eps/fast_weights `biased: true, bias: 0.1` so freshly-generated C3 train/val windows carry genuine `*_da = true×1.1` (verified: F ratio 1.1000, fast_weights 1.1) like the cached S1 set — `lorenz96_default.yaml` stays untouched so no other experiment changes.
+
+**Files modified:**
+- `data/dataloader.py` — resample draw `uniform_(-bias_max, bias_max)` → `uniform_(0.0, bias_max)` (positive-only)
+- `tests/test_param_head.py` — `test_resample_bias_draws_vary_around_true` updated for positive-only: mean ≈ `1.1×true` (±5%), all draws `≥ true` (added positivity bound), `≤ 1.2×true` kept
+- `config/experiment/C3_param_head_true_deriv.yaml` — added `data.randomize` block (5 params biased ×1.1, h fixed unbiased)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The known-true-state param head must learn the de-bias mapping (input biased `*_da` → output `true_*`) from state+derivative evidence. With the prior symmetric resample the training input distribution was centered on `true` (mean ×1.0) rather than on S1's biased inputs; positive-only matches the eval bias polarity exactly, and the `randomize` override makes the native `*_da` semantics consistent for train/val and any non-resample variant. Default config untouched to avoid perturbing L1-L9 / joint-DA / other experiments.
+
+**Verification:** `pytest tests/test_param_head.py tests/test_lorenz96_training.py tests/test_neural_inference.py tests/test_hydra_config.py tests/test_direct_unet.py -m "not slow"` — **94 passed, 1 deselected**. Hydra-compose of C3 confirmed `resample_bias_draws=true`, `bias_max=0.2`, all 5 randomize specs `biased=true/bias=0.1`, `state_source=true`, `augment_derivatives=true`; independently rebuilt `base_cfg` + `make_l96_s0_s1_trainval` and verified train-window `*_da` are `×1.1` (F ratio 1.1000, fast_weights [1.1]*4) and scalar `true_w1..w4` keys present. 1-epoch smoke (6 train/2 val, cached 200-window S1 test): finite, train_loss 0.309/val 0.989, S0/S1 param RMSE finite. **Full run launched as job 51329** (`EXP=C3_param_head_true_deriv sbatch batch/run_l96_param_head_train.sbatch`); confirmed training healthy — Epoch 61, train_loss 0.0823 / val_loss 0.132, ~42 it/s, all finite.
+
+**Next:** compare the completed C3 S1 per-param NRMSE vs the C2 documented negatives (F 0.857, w1 1.18, w2 1.13) — expectation w1/w2 recover toward ≤0.20 now that training sees the real bias distribution.
+
+## 2026-09-01: Known-true-state param estimation — derivative augmentation + bias-resampling (C3)
+
+**Summary:** Built the two planned improvement levers for the S1 parameter-estimation problem (known-true-state setting): **(A1a) temporal-derivative augmentation** and **(B2) training-time bias resampling**. The C2 diagnosis was that the stack-and-pool head fails the fast weights `w1/w2` (S1 NRMSE ≈ 1.1-1.2) even with the exact true state — those params scale the *rates* of the Y dynamics, a signal carried only by the **time-derivative** of the state, which a static instantaneous-input CNN-pool head never sees. A1a appends a finite-difference `d x/dt` channel so the fast-rate signal becomes spatially visible; B2 re-samples the 10% parameter bias around the true params per `__getitem__` call during training so the head learns the *mapping across the bias distribution* instead of memorizing fixed `*_da`-vs-true pairs.
+
+**Files modified:**
+- `models/param_head.py` — `StateParamHead` gains `augment_derivatives` (optional `d x/dt` input channels via `_final_inputs`); threaded through `StateParamModel`/`StateParamModel.__init__`
+- `data/dataloader.py` — `FlowMatchingDataset` gains `resample_bias_draws` + `bias_max`; `_extract_params` re-samples `true_{n}·(1+U(−bias_max,bias_max))` per call when enabled
+- `conf/schema.py` — `ParamHeadConfig.augment_derivatives`; `DataConfig.resample_bias_draws` + `bias_max`
+- `train.py` — `make_l96_dataloaders` (flag + bias_max pass-through) + `model_factory` param_head `augment_derivatives`
+- `config/experiment/C3_param_head_true_deriv.yaml` — new: `state_source: "true"`, `augment_derivatives: true`, `data.resample_bias_draws: true`
+- `tests/test_param_head.py` — new `test_state_param_head_deriv_augment_shape` (input-channel delta = state_dim; finite forward/loss) + `test_resample_bias_draws_vary_around_true` (50 draws: varying, mean≈true, within ±20%)
+- `CHANGELOG.md` — this entry
+
+**Rationale:** Directly targets the C2-documented root cause (temporal identifiability of the fast weights) from the two axes the user prioritized: architecture (derivative channels make the rate signal observable) and training data (bias resampling gives the head many noisy→true pairs per trajectory, improving robustness to the S1 10% bias). Uses the C2 `state_source='true'` gateway as decided. Training/eval of the cached S1 set uses fixed `*_da` params (unchanged protocol); resampling is a training-only augmentation.
+
+**Verification:** `pytest tests/test_param_head.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_neural_inference.py tests/test_hydra_config.py -m "not slow"` — **94 passed, 1 deselected**. C3 config composes via Hydra (`resample_bias_draws=True`, `augment_derivatives=True`, head `in_c=81` = 24+8+1+24+24). 1-epoch `train.py` smoke (20 train / 5 val windows) completes end-to-end: S1 param RMSE after 1 epoch eps/w3/w4 already low (0.011/0.103/0.091), w1/w2 higher (0.92/0.97) — pipeline sound (no conclusion at 1 epoch). Ruff: no new debt on touched files (only pre-existing PLR0402 param_head.py:2 and pre-existing test/dataloader debt).
+
+
+
+**Summary:** Added a decoupled **state→param cascade** (new `StateParamHead`/`StateParamModel`, `model_type=param_head`) that reads the 8 L96 params (F,c1,hx,eps,w1..w4) from obs + biased `*_da` params + forcing + a state estimate, and trained it under two state sources: **C1** = frozen L1b state-only DirectUNet estimate, **C2** = exact true state (ablation). Both are **documented negatives** for parameter recovery: even with the exact true state (C2) the head **fails the fast weights `w1/w2` (S1 NRMSE ≈ 1.1-1.2, error larger than the parameter itself)**, an information/architecture bottleneck — only the coupled multi-τ flow (L9) recovers all 8 params. F is partly a state-quality effect (true state halves it 1.67→0.86). Also fixed a **train/eval obs-consistency bug** (`_make_eval_batch` now subsamples `states` to `obs_var_indices` for L96, matching the training dataloader) and extended the consolidated report with **computed DA NRMSE rows + a w3/w4 pinned-prior masking footnote** so the neural-vs-DA relevance statement is stated properly (NRMSE = RMSE/mean|true|).
+
+**Cascade result (S1, per-param NRMSE):**
+
+| model | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|
+| C1 (L1b state) | 0.21 | 0.11 | 0.13 | 0.13 | 1.16 | 1.12 | 1.21 | 1.10 | **0.65** |
+| C2 (true state) | 0.11 | 0.11 | 0.07 | 0.10 | 1.17 | 1.12 | 1.07 | 1.08 | **0.60** |
+| L9 JointCFM multi-τ | **0.07** | 0.16 | 0.09 | 0.12 | 0.13 | 0.16 | 0.20 | 0.18 | **0.14** |
+| Joint-ETKF (DA) | 0.08 | 0.10 | 0.06 | 0.11 | 0.12 | 0.12 | 0.00* | 0.00* | **0.07** |
+
+*DA w3/w4 = pinned to reference prior (masking, not recovery); DA mean 0.07 incl / 0.10 excl the masked w3/w4. L9 keeps every param ≤0.20 NRMSE (F 0.07) — genuine param recovery at parity with the joint filters on the params they actually estimate.*
+
+**Files modified:**
+- `models/param_head.py` — new `StateParamHead` (CNN-pool regressor, raw output, `_norm`/`_denorm`) + `StateParamModel` (frozen `state_source∈{l1b,true}` encoder + trainable head, `_xhat`)
+- `data/dataloader.py` — `use_biased_params` + `_l96_biased_param_vector` (reads `*_da`/`fast_weights_da`, falls back to true) so `batch.params` = biased for S1-style training
+- `conf/schema.py` — `ParamHeadConfig` (param_dim, param_head_channels, param_ref, param_head_pool, state_checkpoint, state_source, ...) + `model_type: "param_head"`
+- `train.py` — `model_factory`/`_make_eval_batch`/`evaluate_model`/`save_trajectories` param_head + use_biased wiring; **`_make_eval_batch` subsamples `states` to `obs_var_indices`** (fixes C2 true-source 40D-vs-24D collapse)
+- `training/lightning_module.py` — param_head freeze + optimizer + loss dispatch
+- `config/experiment/C1_stateparam_head_s1.yaml`, `C2_stateparam_head_state_true.yaml` — new
+- `batch/run_l96_param_head_train.sbatch` — new (EXP env override)
+- `tests/test_param_head.py` — new (5 tests, 1 skips w/o L1b)
+- `reports/l96/generate_l96_joint_neural_report.py` — C1/C2 cascade rows in param-RMSE + NRMSE tables; **real DA NRMSE rows** (archived per-param RMSE ÷ cached true-param scale via new `PARAM_MEAN_TRUE`/`da_nrmse_values`/`nrmse_from_rmse` helpers); w3/w4 masking footnote; `CASCADE_DEFS`; benchmark-table + intro entries
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated
+- `PLAN.md` — Phase C-adjacent note
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked whether a decoupled state-then-param estimator (the cascade) could recover the L96 params as the joint models / joint DA do, and — because Q1's "true params fed at S0 are sanity-checks, S1 is what matters" — the C2 true-state ablation isolates whether the L1b state estimate's quality (vs an info/architecture limit) causes C1's failure. Verdict: F is state-quality-limited (halved by true state) but w1/w2 fail regardless (info bottleneck). NRMSE (÷ mean|true param|) is the honest relevance metric for the wide dynamic range (F≈8 vs eps≈0.1); the report now carries computed DA NRMSE with the w3/w4 masking called out, since DA reads "better" on the mean only through that pinned-prior artifact. Recorded as a documented negative experiment, not a benchmark win.
+
+**Verification:** jobs 51313 (C1) + 51321 (C2) COMPLETED exit 0, 300 epochs. `pytest tests/test_param_head.py tests/test_joint_estimation_l96_neural.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_neural_inference.py -m "not slow"` — 108 passed. `python reports/l96/generate_l96_joint_neural_report.py` exit 0; labels + w3/w4 footnote render; `py_compile` clean; ruff on the generator = only pre-existing EXE001/UP032 (none introduced).
+
 ## 2026-09-02: QG psi-state DA variant — streamfunction as the state (free-forecast + ETKF equivalence, incl. QG1L)
 
 **Summary:** Implemented a **psi-state** QG DA variant (`models/qg_psi_dynamics.py`:

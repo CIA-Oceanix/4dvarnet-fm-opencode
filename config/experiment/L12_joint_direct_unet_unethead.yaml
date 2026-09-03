@@ -13,6 +13,7 @@ model:
   joint_direct_unet:
     param_dim: 8
     param_loss_weight: 0.1
+    param_head_backbone: unet
     param_head_channels: [32, 64, 128]
     param_ref: [8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]
     param_head_pool: attn

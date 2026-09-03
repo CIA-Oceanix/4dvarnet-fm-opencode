@@ -4,28 +4,26 @@ defaults:
   - _self_
 
 model:
-  model_type: joint_direct_unet
+  model_type: param_head
   state_dim: 24
   param_dim: 8
-  direct_unet:
-    hidden_channels: [64, 128, 256]
-    dropout: 0.1
-  joint_direct_unet:
+  param_head:
     param_dim: 8
-    param_loss_weight: 0.1
     param_head_channels: [32, 64, 128]
     param_ref: [8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]
-    param_head_pool: attn
+    param_head_pool: mean
+    state_checkpoint: experiments/L1b_direct_unet_s0s1/checkpoints/stage1_best.ckpt
+    state_model_type: direct_unet
+    state_hidden_channels: [64, 128, 256]
+    state_cond_extra_dim: 0
 
 training:
   stage1:
-    epochs: 200
+    epochs: 300
     lr: 0.001
     gradient_clip_val: 10.0
   stage2:
-    epochs: 100
-    lr: 0.001
-    gradient_clip_val: 10.0
+    epochs: 0
 
 data:
   data_setup: s0_s1

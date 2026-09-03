@@ -412,6 +412,108 @@ class TestNeuralInference:
             if "param_head" in k:
                 assert torch.allclose(src[k], dst[k]), k
 
+    def test_load_model_joint_cfm_coupled_roundtrip(self, tmp_path):
+        """A JointCFMCoupled (UNet param-flow) checkpoint must reload with zero
+        missing/unexpected weights. The depth-3 UNet param flow uses downs/up/
+        bottleneck keys and a Sequential head (head.0/head.2), so a CNN-only
+        loader would silently drop the whole backbone and mismatch the head.
+        """
+        from models.vanilla_cfm import JointCFMCoupled
+
+        SD, PD = 24, 8
+        model = JointCFMCoupled(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32], time_emb_dim=64,
+                                param_flow_channels=[4, 8, 16], param_flow_pool="attn")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_cfm_coupled")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointCFMCoupled)
+        assert loaded.state_dim == SD and loaded.param_dim == PD
+        assert loaded.unet.cond_encoder.proj.in_features == 2 * SD + 1 + PD
+        assert type(loaded.param_flow).__name__ == "ParamFlowUNet"
+        assert cfg.model.param_dim == PD
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_flow" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
+    def test_load_model_joint_direct_unet_unet_head_roundtrip(self, tmp_path):
+        """A JointDirectUNet with a UNet param head (param_head_backbone=unet)
+        must reload with the UNet head reconstructed (backbone inferred from the
+        param_head.downs.* keys), not a CNN head that would drop every key of
+        the encoder-decoder and the Sequential head output conv.
+        """
+        from models.direct_unet import JointDirectUNet
+
+        SD, PD = 24, 8
+        model = JointDirectUNet(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32],
+                                param_head_channels=[4, 8, 16],
+                                param_head_pool="attn", param_head_backbone="unet")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_direct_unet")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointDirectUNet)
+        assert type(loaded.param_head).__name__ == "ParamHeadUNet"
+        assert cfg.model.param_head_backbone == "unet"
+        assert loaded.param_dim == PD
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_head" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
+    def test_load_model_joint_direct_unet_cnn_head_unchanged(self, tmp_path):
+        """The default CNN head back-compat: `joint_direct_unet` checkpoints with
+        a ParamHeadCNN must still resolve to a CNN head (backbone=cnn).
+        """
+        from models.direct_unet import JointDirectUNet
+
+        SD, PD = 24, 8
+        model = JointDirectUNet(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32],
+                                param_head_channels=[4, 8, 16])
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_direct_unet")
+        loaded, cfg = load_model(path)
+        assert type(loaded.param_head).__name__ == "ParamHeadCNN"
+        assert cfg.model.param_head_backbone == "cnn"
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst)
+
+    def test_load_model_joint_cfm_attn_pool_roundtrip(self, tmp_path):
+        """An attention-pool JointCFM checkpoint must reload with the attn_pool
+        reconstructed (param_flow_pool inferred from the state dict), not fall
+        back to the mean pool (which would silently drop attn_pool.query).
+        """
+        from models.vanilla_cfm import JointCFM
+
+        SD, PD = 24, 8
+        pf_channels = [4, 8, 16]
+        model = JointCFM(state_dim=SD, param_dim=PD,
+                         hidden_channels=[8, 16, 32], param_flow_channels=pf_channels,
+                         param_flow_pool="attn")
+        assert hasattr(model.param_flow, "attn_pool")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_cfm")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointCFM)
+        assert hasattr(loaded.param_flow, "attn_pool"), \
+            "attn-pool JointCFM loaded with the mean pool"
+        assert cfg.model.param_flow_pool == "attn"
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_flow" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
     def test_evaluate_npz_roundtrip(self, tmp_path):
         """evaluate_npz loads stored .npz and returns metrics."""
         from evaluation.estimate_metrics import save_estimates

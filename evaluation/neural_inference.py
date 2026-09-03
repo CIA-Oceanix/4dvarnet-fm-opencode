@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
-from models.vanilla_cfm import JointCFM, PredictStateCFM, TweedieCFM, VanillaCFM
+from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
 
 
 class BatchDict:
@@ -118,12 +118,25 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             # back to the old inference below.
             param_flow_key = "model.param_flow.head.0.weight"
             param_head_key = "model.param_head.head.weight"
-            if param_flow_key in state_dict or param_head_key in state_dict:
+            param_flow_unet_key = "model.param_flow.head.2.weight"
+            param_head_unet_key = "model.param_head.head.2.weight"
+            has_fl = param_flow_key in state_dict or param_flow_unet_key in state_dict
+            has_ph = param_head_key in state_dict or param_head_unet_key in state_dict
+            if has_fl or has_ph:
                 # state UNet: cond_extra_dim = proj_in - 2*state_dim, output_dim = state_dim
                 cond_extra_dim = proj_in - 2 * output_dim
                 state_dim = output_dim
-                head_key = param_flow_key if param_flow_key in state_dict else param_head_key
-                param_dim = state_dict[head_key].shape[0]
+                # param-dim comes from the head's OUTPUT conv. The head may be a
+                # CNN (param_flow.head.0 / bare param_head.head) or a UNet
+                # encoder-decoder ending in head.2 (the output 1x1 conv).
+                if param_flow_unet_key in state_dict:
+                    param_dim = state_dict[param_flow_unet_key].shape[0]
+                elif param_head_unet_key in state_dict:
+                    param_dim = state_dict[param_head_unet_key].shape[0]
+                elif param_flow_key in state_dict:
+                    param_dim = state_dict[param_flow_key].shape[0]
+                else:
+                    param_dim = state_dict[param_head_key].shape[0]
             else:
                 # Legacy JointDirectUNet / old joint dual-head layout:
                 # state_dim = proj_in - 1 - output_dim, cond_extra_dim = 1 + param_dim
@@ -164,6 +177,17 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                     state_dict[f"model.{head_name}.blocks.{i}.conv1.weight"].shape[0]
                     for i in hb_blocks
                 ]
+            # UNet param backbone: downs.N.block.conv1.weight exists when the
+            # head is a UNet (JointCFMCoupled param flow / UNet JointDirectUNet
+            # head). Read the encoder triple exactly as for the state UNet.
+            elif f"model.{head_name}.downs.1.block.conv1.weight" in state_dict:
+                c1 = state_dict[f"model.{head_name}.downs.1.block.conv1.weight"]
+                ch = [c1.shape[1], c1.shape[0]]
+                if f"model.{head_name}.downs.2.block.conv1.weight" in state_dict:
+                    ch.append(state_dict[f"model.{head_name}.downs.2.block.conv1.weight"].shape[0])
+                else:
+                    ch.append(256)
+                inferred_params[f"{head_name}_channels"] = ch
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
@@ -189,6 +213,9 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
                 "param_flow_channels": inferred_params.get("param_flow_channels", None),
                 "param_head_channels": inferred_params.get("param_head_channels", None),
+                "param_flow_pool": "attn" if "model.param_flow.attn_pool.query" in state_dict else "mean",
+                "param_head_pool": "attn" if "model.param_head.attn_pool.query" in state_dict else "mean",
+                "param_head_backbone": "unet" if "model.param_head.downs.0.block.conv1.weight" in state_dict else "cnn",
                 "device": "cpu",
             },
             "deterministic": False,
@@ -222,6 +249,14 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                         m[key] = tc[key]
                 if len(tc) > 0:
                     m.tweedie_cfm = tc
+            for sub in ("joint_cfm", "joint_direct_unet"):
+                sub_cfg = yaml_cfg.model.get(sub, {})
+                if hasattr(sub_cfg, "get"):
+                    m = cfg.model
+                    for key in ("param_ref", "param_flow_pool", "param_head_pool",
+                                "param_flow_channels", "param_head_channels"):
+                        if m.get(key) is None and key in sub_cfg:
+                            m[key] = sub_cfg[key]
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not merge tweedie_cfm from {config_path}: {e}")
 
@@ -243,6 +278,8 @@ def resolve_model_class(cfg: Any) -> tuple:
         return JointDirectUNet, cfg
     elif model_type == "JOINTCFM":
         return JointCFM, cfg
+    elif model_type == "JOINTCFMCOUPLED":
+        return JointCFMCoupled, cfg
     elif model_type == "TWEEDIECFM":
         return TweedieCFM, cfg
     elif model_type == "PREDICTSTATECFM":
@@ -287,6 +324,22 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_flow_channels=cfg.model.get("param_flow_channels", None),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            param_ref=cfg.model.get("param_ref", None),
+            param_flow_pool=cfg.model.get("param_flow_pool", "mean"),
+        )
+    elif model_class == JointCFMCoupled:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 1),
+            param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+            param_flow_channels=cfg.model.get("param_flow_channels", None),
+            param_ref=cfg.model.get("param_ref", None),
+            param_flow_pool=cfg.model.get("param_flow_pool", "mean"),
         )
     elif model_class == JointDirectUNet:
         model = model_class(
@@ -296,6 +349,9 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_head_channels=cfg.model.get("param_head_channels", None),
+            param_ref=cfg.model.get("param_ref", None),
+            param_head_pool=cfg.model.get("param_head_pool", "mean"),
+            param_head_backbone=cfg.model.get("param_head_backbone", "cnn"),
         )
     elif model_class == TweedieCFM:
         tc = cfg.model.get("tweedie_cfm", {})
@@ -464,6 +520,7 @@ def _run_case_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -479,9 +536,10 @@ def _run_case_inference(
     ground-truth in ``"params_true"`` (W, P).
     """
     model.eval()
-    is_joint = isinstance(model, (JointCFM, JointDirectUNet))
+    is_joint = isinstance(model, (JointCFM, JointCFMCoupled, JointDirectUNet))
     member_preds: list[list] = [[] for _ in range(n_members)]
-    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint else None
+    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint and not ens_then_head else None
+    ens_then_head_params: list = [] if (is_joint and ens_then_head) else None
     all_true = []
     param_trues = []
     x0_all = []
@@ -494,10 +552,16 @@ def _run_case_inference(
             batch_obj = BatchDict(batch)
 
             for m in range(n_members):
-                if isinstance(model, JointCFM):
-                    pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
+                if isinstance(model, (JointCFM, JointCFMCoupled)):
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, N_outer=n_outer, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
                 elif isinstance(model, JointDirectUNet):
-                    pred, params = model.sample(batch_obj, return_params=True)
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, return_params=True)
                 elif isinstance(model, DirectUNet):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
@@ -507,8 +571,19 @@ def _run_case_inference(
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
-                if is_joint:
+                if is_joint and not ens_then_head:
                     member_param_preds[m].append(params.detach().float().cpu())
+            if ens_then_head:
+                # Average the n_members state estimates for THIS batch, then
+                # estimate params once from the ensemble-mean state (stability
+                # for the param head). member_preds keeps accumulating globally.
+                cur = [torch.cat([member_preds[m][-1]], dim=0) for m in range(n_members)]
+                x_hat_mean = torch.stack(cur, dim=-1).mean(dim=-1)
+                if isinstance(model, JointCFM):
+                    p = model.sample_params_from_state(batch_obj, x_hat_mean, N_outer=n_outer)
+                else:
+                    _, p = model.sample(batch_obj, return_params=True)
+                ens_then_head_params.append(p.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
@@ -542,10 +617,15 @@ def _run_case_inference(
         out["members"] = members
         out["trajectories"] = members.mean(axis=-1)
     if is_joint:
-        # Each member predicts a (W, P) param vector; stack+mean to get the
-        # per-window ensemble-mean params (W, P), matching params_true (W, P).
-        per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
-        out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
+        if ens_then_head:
+            # Params estimated once from the ensemble-mean state, one (W_batch, P)
+            # per batch.
+            out["params_pred"] = torch.cat(ens_then_head_params, dim=0).numpy()
+        else:
+            # Each member predicts a (W, P) param vector; stack+mean to get the
+            # per-window ensemble-mean params (W, P), matching params_true (W, P).
+            per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
+            out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
         out["params_true"] = torch.cat(param_trues, dim=0).numpy()
         # Full-state initial conditions + clean forcing for the forecast-skill
         # metric (these must NOT be subsampled to the observed subspace).
@@ -561,6 +641,7 @@ def run_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -570,6 +651,7 @@ def run_inference(
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
     """
     return {
-        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer)
+        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
+                                  ens_then_head=ens_then_head)
         for case, dl in dataloaders.items()
     }

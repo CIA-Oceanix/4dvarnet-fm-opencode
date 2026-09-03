@@ -75,12 +75,15 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
-                         obs_var_indices=None):
+                         obs_var_indices=None, use_biased_params=False,
+                         resample_bias_draws=False, bias_max=0.2):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
-                 obs_var_indices=obs_var_indices)
+                 obs_var_indices=obs_var_indices,
+                 use_biased_params=use_biased_params,
+                 resample_bias_draws=resample_bias_draws, bias_max=bias_max)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
                             shuffle=True, **kw),
@@ -142,6 +145,25 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_loss_weight=jc.param_loss_weight,
             param_flow_channels=jc.get("param_flow_channels", None),
             train_tau_0_only=jc.train_tau_0_only,
+            param_ref=jc.get("param_ref", None),
+            param_flow_pool=jc.get("param_flow_pool", "mean"),
+        )
+    elif model_type == "joint_cfm_coupled":
+        from models.vanilla_cfm import JointCFMCoupled
+        jcc = cfg.model.joint_cfm_coupled
+        vc = cfg.model.vanilla_cfm
+        model = JointCFMCoupled(
+            state_dim=cfg.model.state_dim,
+            param_dim=jcc.param_dim,
+            hidden_channels=vc.hidden_channels,
+            time_emb_dim=vc.time_emb_dim,
+            N_outer=vc.N_outer,
+            sigma_prior=vc.sigma_prior,
+            dropout=vc.dropout,
+            param_loss_weight=jcc.param_loss_weight,
+            param_flow_channels=jcc.get("param_flow_channels", None),
+            param_ref=jcc.get("param_ref", None),
+            param_flow_pool=jcc.get("param_flow_pool", "mean"),
         )
     elif model_type == "joint_direct_unet":
         from models.direct_unet import JointDirectUNet
@@ -154,6 +176,44 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=dc.dropout,
             param_loss_weight=jdu.param_loss_weight,
             param_head_channels=jdu.get("param_head_channels", None),
+            param_ref=jdu.get("param_ref", None),
+            param_head_pool=jdu.get("param_head_pool", "mean"),
+            param_head_backbone=jdu.get("param_head_backbone", "cnn"),
+        )
+    elif model_type == "param_head":
+        from models.param_head import StateParamModel
+        ph = cfg.model.param_head
+        model = StateParamModel(
+            state_dim=cfg.model.state_dim,
+            param_dim=ph.param_dim,
+            state_checkpoint=ph.get("state_checkpoint", None),
+            state_model_type=ph.get("state_model_type", "direct_unet"),
+            state_hidden_channels=ph.get("state_hidden_channels", None),
+            state_cond_extra_dim=ph.get("state_cond_extra_dim", 0),
+            param_head_channels=ph.get("param_head_channels", None),
+            param_ref=ph.get("param_ref", None),
+            param_head_pool=ph.get("param_head_pool", "mean"),
+            state_source=ph.get("state_source", "l1b"),
+            augment_derivatives=ph.get("augment_derivatives", False),
+            device=device,
+        )
+    elif model_type == "param_head_unet":
+        from models.param_head import StateParamModel
+        ph = cfg.model.param_head_unet
+        model = StateParamModel(
+            state_dim=cfg.model.state_dim,
+            param_dim=ph.param_dim,
+            state_checkpoint=ph.get("state_checkpoint", None),
+            state_model_type=ph.get("state_model_type", "direct_unet"),
+            state_hidden_channels=ph.get("state_hidden_channels", None),
+            state_cond_extra_dim=ph.get("state_cond_extra_dim", 0),
+            param_head_channels=ph.get("param_head_channels", None),
+            param_ref=ph.get("param_ref", None),
+            param_head_pool=ph.get("param_head_pool", "mean"),
+            state_source=ph.get("state_source", "l1b"),
+            backbone="unet",
+            unet_hidden_channels=ph.get("hidden_channels", None),
+            device=device,
         )
     elif model_type == "predict_state_cfm":
         from models.vanilla_cfm import PredictStateCFM
@@ -191,30 +251,50 @@ def model_factory(cfg: DictConfig, device: torch.device):
 
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
-                     param_dim=4):
-    from data.dataloader import FlowMatchingBatch
+                     param_dim=4, use_biased_params=False, obs_var_indices=None):
+    from data.dataloader import FlowMatchingBatch, _l96_biased_param_vector
     states = w["true_state"].unsqueeze(0).to(device)
+    if obs_var_indices is not None and states.shape[-1] != len(obs_var_indices):
+        states = states[..., obs_var_indices]
     obs = w["obs"].unsqueeze(0).to(device)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
     if param_dim == 0:
         return FlowMatchingBatch(states, obs, mask, forcing)
-    params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
-                          dtype=torch.float32, device=device)
-    true_params = torch.tensor([[w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]],
+    if use_biased_params:
+        params = torch.tensor([_l96_biased_param_vector(w)],
+                              dtype=torch.float32, device=device)
+    else:
+        params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
+                              dtype=torch.float32, device=device)
+    if param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+        from data.dataloader import _l96_true_param_vector
+        true_param_vec = _l96_true_param_vector(w)
+    else:
+        true_param_vec = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+    true_params = torch.tensor([true_param_vec],
                                dtype=torch.float32, device=device)
     return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
 
 
+def _eval_true_param_list(w, param_names):
+    if list(param_names) == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
+        from data.dataloader import _l96_true_param_vector
+        return list(_l96_true_param_vector(w))
+    return [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+
+
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
                    param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                   obs_var_indices=None):
+                   obs_var_indices=None, use_biased_params=False):
     rmse_list = []
     param_list = []
     true_param_list = []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
+                                 use_biased_params=use_biased_params,
+                                 obs_var_indices=obs_var_indices)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -225,13 +305,25 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+            tp = _eval_true_param_list(w, param_names)
+            true_param_list.append(np.array(tp))
+        elif model_type == "joint_cfm_coupled":
+            pred, params = model.sample(batch, return_params=True)
+            pred = pred.detach().cpu().numpy()[0]
+            param_list.append(params.detach().cpu().numpy()[0])
+            tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
         elif model_type == "joint_direct_unet":
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
             param_list.append(params.detach().cpu().numpy()[0])
-            tp = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
+            tp = _eval_true_param_list(w, param_names)
+            true_param_list.append(np.array(tp))
+        elif model_type in ("param_head", "param_head_unet"):
+            pred, params = model(batch)
+            pred = pred.detach().cpu().numpy()[0]
+            param_list.append(params.detach().cpu().numpy()[0])
+            tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
         elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -264,11 +356,13 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 def save_trajectories(model, dataset, device, model_type, save_path,
                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None):
+                      obs_var_indices=None, use_biased_params=False):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
-        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
+        batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
+                                 use_biased_params=use_biased_params,
+                                 obs_var_indices=obs_var_indices)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type == "direct_unet":
@@ -277,8 +371,13 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "joint_cfm_coupled":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type in ("param_head", "param_head_unet"):
+            pred, _ = model(batch)
+            pred = pred.detach().cpu().numpy()[0]
         elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
@@ -438,8 +537,11 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_direct_unet")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet")),
             obs_var_indices=obs_var_indices,
+            use_biased_params=(model_type in ("param_head", "param_head_unet")),
+            resample_bias_draws=dc.get("resample_bias_draws", False),
+            bias_max=dc.get("bias_max", 0.2),
         )
     else:
         loaders = make_experiment_dataloaders(
@@ -449,7 +551,7 @@ def main(cfg: DictConfig):
             base_cfg=base_cfg,
             num_train_windows=dc.get("num_train_windows", 1000),
             data_setup=data_setup,
-            with_params=(model_type in ("joint_cfm", "joint_direct_unet")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet")),
         )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
@@ -503,6 +605,19 @@ def main(cfg: DictConfig):
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
             print(f"    Stage 2 done in {train_time-t0:.1f}s")
+        elif model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet") and epochs_s2 > 0:
+            t0 = time.time()
+            stage_cfg = cfg.training.stage2
+            lit = LitModel(model, model_type=model_type, stage=2,
+                           lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
+                           use_gradient_loss=cfg.training.loss.use_gradient,
+                           gradient_weight=cfg.training.loss.gradient_weight)
+            trainer = create_trainer(cfg, 2)
+            trainer.fit(lit, loaders["train"], loaders["val"])
+            path = cfg.paths.checkpoint_stage2
+            torch.save(lit.model.state_dict(), path)
+            train_time += time.time() - t0
+            print(f"    Stage 2 done in {train_time-t0:.1f}s")
     finally:
         os.chdir(orig_cwd)
     total_t = time.time() - total_t0
@@ -513,7 +628,7 @@ def main(cfg: DictConfig):
     t0 = time.time()
     results_metrics = {}
     param_metrics = {}
-    is_joint = model_type in ("joint_cfm", "joint_direct_unet")
+    is_joint = model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet")
     NO = dc.get("NO", 8)
     J = dc.get("J", 4)
     obs_j_local = dc.get("obs_j", 2)
@@ -523,13 +638,15 @@ def main(cfg: DictConfig):
         if is_joint:
             m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
                                          return_params=True, param_names=param_names,
-                                         param_dim=param_dim, obs_var_indices=obs_var_indices)
+                                         param_dim=param_dim, obs_var_indices=obs_var_indices,
+                                         use_biased_params=(model_type in ("param_head", "param_head_unet")))
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
             m, s = evaluate_model(model, datasets[key], device, model_type,
                                   param_names=param_names, param_dim=param_dim,
-                                  obs_var_indices=obs_var_indices)
+                                  obs_var_indices=obs_var_indices,
+                                  use_biased_params=(model_type in ("param_head", "param_head_unet")))
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -540,7 +657,8 @@ def main(cfg: DictConfig):
             save_trajectories(model, datasets[key], device, model_type,
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
                               param_names=param_names, param_dim=param_dim,
-                              obs_var_indices=obs_var_indices)
+                              obs_var_indices=obs_var_indices,
+                              use_biased_params=(model_type in ("param_head", "param_head_unet")))
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 
@@ -563,7 +681,7 @@ def main(cfg: DictConfig):
     cs4 = results_metrics.get("test_cs4")
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
-              else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm")
+              else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
               else cfg.model)
     result = {
         "experiment_id": exp_id,
