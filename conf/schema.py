@@ -184,6 +184,16 @@ class JointDirectUNetConfig:
     param_head_channels: Optional[List[int]] = None
     param_ref: Optional[List[float]] = None
     param_head_pool: str = "mean"
+    param_head_backbone: str = "cnn"
+
+
+@dataclass
+class JointCFMCoupledConfig:
+    param_dim: int = 4
+    param_loss_weight: float = 0.1
+    param_flow_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_flow_pool: str = "mean"
 
 
 @dataclass
@@ -251,6 +261,7 @@ class ModelConfig:
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
+    joint_cfm_coupled: JointCFMCoupledConfig = field(default_factory=JointCFMCoupledConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
     param_head: ParamHeadConfig = field(default_factory=ParamHeadConfig)
     param_head_unet: ParamHeadUNetConfig = field(default_factory=ParamHeadUNetConfig)

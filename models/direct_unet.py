@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.unet import AttentionPool1D, ConvBlock, UNet1D
+from models.unet import AttentionPool1D, ConvBlock, Down, Up, UNet1D
 
 
 class DirectUNet(nn.Module):
@@ -87,6 +87,68 @@ class ParamHeadCNN(nn.Module):
         return x.mean(dim=-1)
 
 
+class ParamHeadUNet(nn.Module):
+    """UNet backbone deterministic parameter regression head.
+
+    Replaces the shallow ``ParamHeadCNN`` backbone with a full encoder-decoder
+    (down / bottleneck / up with skip connections) so the head can extract
+    multi-scale temporal features -- including gradient/longer-timescale signal
+    -- from the raw state estimate directly, instead of a shallow ~7-step
+    receptive field. Same deterministic contract as ``ParamHeadCNN``:
+    ``forward(obs, forcing, x_hat) -> (B, param_dim)`` raw signed, no tau.
+    """
+
+    def __init__(self, param_dim=4, state_dim=24, hidden_channels=None, dropout=0.1,
+                 pool="mean"):
+        super().__init__()
+        if hidden_channels is None:
+            hidden_channels = [32, 64, 128]
+        self.param_dim = param_dim
+        self.pool = pool
+        in_c = state_dim + 1 + state_dim
+        self.enc_in = nn.Sequential(
+            nn.Conv1d(in_c, hidden_channels[0], 3, padding=1),
+            nn.SiLU(),
+        )
+        self.downs = nn.ModuleList()
+        in_cc = hidden_channels[0]
+        for out_c in hidden_channels:
+            self.downs.append(Down(in_cc, out_c, 0))
+            in_cc = out_c
+        self.bottleneck = ConvBlock(hidden_channels[-1], hidden_channels[-1], 0, dropout)
+        self.ups = nn.ModuleList()
+        for out_c in reversed(hidden_channels):
+            self.ups.append(Up(in_cc, out_c, 0))
+            in_cc = out_c
+        self.head = nn.Sequential(
+            nn.Conv1d(in_cc, in_cc, 3, padding=1),
+            nn.SiLU(),
+            nn.Conv1d(in_cc, param_dim, 1),
+        )
+        if pool == "attn":
+            self.attn_pool = AttentionPool1D(param_dim)
+
+    def forward(self, obs, forcing, x_hat):
+        obs_clean = torch.nan_to_num(obs, nan=0.0)
+        B, T, _ = obs_clean.shape
+        forcing_b = forcing.unsqueeze(-1).expand(B, T, 1)
+        x_hat_clean = torch.nan_to_num(x_hat, nan=0.0)
+        x = torch.cat([obs_clean, forcing_b, x_hat_clean], dim=-1)
+        x = x.transpose(1, 2)
+        h = self.enc_in(x)
+        skips = []
+        for down in self.downs:
+            skip, h = down(h, None)
+            skips.append(skip)
+        h = self.bottleneck(h, None)
+        for up in self.ups:
+            h = up(h, skips.pop(), None)
+        x = self.head(h)
+        if self.pool == "attn":
+            return self.attn_pool(x)
+        return x.mean(dim=-1)
+
+
 class JointDirectUNet(nn.Module):
     """Deterministic joint state+parameter estimator (L8).
 
@@ -99,7 +161,7 @@ class JointDirectUNet(nn.Module):
 
     def __init__(self, state_dim=3, hidden_channels=None, dropout=0.1, param_dim=4,
                  param_loss_weight=0.1, param_head_channels=None, param_ref=None,
-                 param_head_pool="mean"):
+                 param_head_pool="mean", param_head_backbone="cnn"):
         super().__init__()
         self.state_dim = state_dim
         self.param_dim = param_dim
@@ -119,7 +181,8 @@ class JointDirectUNet(nn.Module):
             dropout=dropout,
             output_dim=state_dim,
         )
-        self.param_head = ParamHeadCNN(
+        head_cls = ParamHeadUNet if param_head_backbone == "unet" else ParamHeadCNN
+        self.param_head = head_cls(
             param_dim=param_dim,
             state_dim=state_dim,
             hidden_channels=param_head_channels,

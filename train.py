@@ -148,6 +148,23 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_ref=jc.get("param_ref", None),
             param_flow_pool=jc.get("param_flow_pool", "mean"),
         )
+    elif model_type == "joint_cfm_coupled":
+        from models.vanilla_cfm import JointCFMCoupled
+        jcc = cfg.model.joint_cfm_coupled
+        vc = cfg.model.vanilla_cfm
+        model = JointCFMCoupled(
+            state_dim=cfg.model.state_dim,
+            param_dim=jcc.param_dim,
+            hidden_channels=vc.hidden_channels,
+            time_emb_dim=vc.time_emb_dim,
+            N_outer=vc.N_outer,
+            sigma_prior=vc.sigma_prior,
+            dropout=vc.dropout,
+            param_loss_weight=jcc.param_loss_weight,
+            param_flow_channels=jcc.get("param_flow_channels", None),
+            param_ref=jcc.get("param_ref", None),
+            param_flow_pool=jcc.get("param_flow_pool", "mean"),
+        )
     elif model_type == "joint_direct_unet":
         from models.direct_unet import JointDirectUNet
         jdu = cfg.model.joint_direct_unet
@@ -161,6 +178,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_head_channels=jdu.get("param_head_channels", None),
             param_ref=jdu.get("param_ref", None),
             param_head_pool=jdu.get("param_head_pool", "mean"),
+            param_head_backbone=jdu.get("param_head_backbone", "cnn"),
         )
     elif model_type == "param_head":
         from models.param_head import StateParamModel
@@ -289,6 +307,12 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
+        elif model_type == "joint_cfm_coupled":
+            pred, params = model.sample(batch, return_params=True)
+            pred = pred.detach().cpu().numpy()[0]
+            param_list.append(params.detach().cpu().numpy()[0])
+            tp = _eval_true_param_list(w, param_names)
+            true_param_list.append(np.array(tp))
         elif model_type == "joint_direct_unet":
             pred, params = model.sample(batch, return_params=True)
             pred = pred.detach().cpu().numpy()[0]
@@ -346,6 +370,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "vanilla_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "joint_cfm_coupled":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_direct_unet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -511,7 +537,7 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_direct_unet", "param_head", "param_head_unet")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet")),
             obs_var_indices=obs_var_indices,
             use_biased_params=(model_type in ("param_head", "param_head_unet")),
             resample_bias_draws=dc.get("resample_bias_draws", False),
@@ -525,7 +551,7 @@ def main(cfg: DictConfig):
             base_cfg=base_cfg,
             num_train_windows=dc.get("num_train_windows", 1000),
             data_setup=data_setup,
-            with_params=(model_type in ("joint_cfm", "joint_direct_unet")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet")),
         )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
@@ -579,7 +605,7 @@ def main(cfg: DictConfig):
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
             print(f"    Stage 2 done in {train_time-t0:.1f}s")
-        elif model_type in ("joint_cfm", "joint_direct_unet") and epochs_s2 > 0:
+        elif model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet") and epochs_s2 > 0:
             t0 = time.time()
             stage_cfg = cfg.training.stage2
             lit = LitModel(model, model_type=model_type, stage=2,
@@ -602,7 +628,7 @@ def main(cfg: DictConfig):
     t0 = time.time()
     results_metrics = {}
     param_metrics = {}
-    is_joint = model_type in ("joint_cfm", "joint_direct_unet", "param_head", "param_head_unet")
+    is_joint = model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet")
     NO = dc.get("NO", 8)
     J = dc.get("J", 4)
     obs_j_local = dc.get("obs_j", 2)
@@ -655,7 +681,7 @@ def main(cfg: DictConfig):
     cs4 = results_metrics.get("test_cs4")
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
-              else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm")
+              else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
               else cfg.model)
     result = {
         "experiment_id": exp_id,
