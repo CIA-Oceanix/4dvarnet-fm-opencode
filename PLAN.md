@@ -64,7 +64,14 @@ report + generator were on master).
   cols=4, 1% noise, lag 1.0) and writes per-scenario obs-days 2×2 panel + full-window
   obs Hovmöller, forcing, truth psi/q, analysis-vs-free-vs-truth, and a DA-cycle GIF to
   `reports/qg/outputs/figs/`. `generate_qg_s0s1_report.py` §8 embeds them
-  (`![](figs/...)`, still JSON-only).
+  (`![](figs/...)`, still JSON-only). The generator now (2026-09-03 fix) selects the
+  **first window with a non-zero wind amplitude** (the S1 wind-levels list starts at
+  0.0, so window 0 previously rendered a flat all-zero wind-curl forcing), draws the
+  **corrupted** wind-curl (so the S1 figure shows the actual corrupted moving storm),
+  fixes the DA-cycle GIF's per-panel `ax` handling (truth q₁ and DA-analysis q₁ panels
+  were blank), and rebuilds the obs Hovmöller as a time×column storm-track field with
+  cross-time interpolation (previously ~96% blank). Regenerated production figures
+  committed alongside the fix.
 - **Tests**: 7 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
   `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
   `test_qg_psi_state`) — all in the master CI gate.
