@@ -445,6 +445,53 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         md.append("---")
         md.append("")
 
+    # Per-parameter RMSE from the N=30 ensemble (read directly from the ens30 eval JSONs;
+    # the member-mean params used by --ens-then-head). This is where the L9-vs-L10 param
+    # comparison is clearest: L9's decoupled ens-then-head param head recovers every
+    # parameter (F 0.18, w1 0.034 at k=10) far better than L10's coupled head (F 0.42/0.57),
+    # and L10's params are essentially integration-invariant (k=10 ~ k=1).
+    for k in ENS_K_STEPS:
+        md.append(f"## Parameter RMSE — ens30 (n_members=30, k={k})")
+        md.append("")
+        md.append("Per-parameter RMSE from the **member-mean** parameters of the 30-member "
+                  "ensemble (`--ens-then-head`: average the member states, then estimate params "
+                  "once from the ensemble-mean state). L9's decoupled ens-then-head param head is "
+                  "the best param estimator here; L10's coupled head is integration-invariant "
+                  "(k=10 \u2248 k=1).")
+        md.append("")
+        for case, label in (("s0", "S0"), ("s1", "S1")):
+            header = f"| ID | {label} | " + " | ".join(PARAM_LIST) + " | mean |"
+            sep = "|---|---|" + "---|" * len(PARAM_LIST) + "---|"
+            md.append(header)
+            md.append(sep)
+            rows = []
+            for exp_name in MODEL_DEFS:
+                edir = exp_dir / exp_name
+                data = find_ens_eval(edir, 30, k) if edir.is_dir() else None
+                m = metrics_case(data, case)
+                if m is None:
+                    md.append(f"| {exp_name} | {label} | " + " | ".join(["--"] * len(PARAM_LIST)) + " | -- |")
+                    continue
+                prmse = m.get("param_rmse", {})
+                vals = [prmse.get(p) for p in PARAM_LIST]
+                vals.append(m.get("param_rmse_mean"))
+                rows.append((exp_name, vals))
+            best_idx = [
+                min((r[1][i] for r in rows if isinstance(r[1][i], float)), default=None)
+                for i in range(len(PARAM_LIST) + 1)
+            ]
+            for exp_name, vals in rows:
+                cells = [f"| {exp_name} | {label} |"]
+                for i, v in enumerate(vals):
+                    cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == best_idx[i]) else ''} |")
+                md.append("".join(cells))
+            md.append("")
+        md.append("*Best per cell (lowest RMSE) is bolded. Only ens30 runs present on disk are "
+                  "shown (L8/L12 are deterministic and not run as ensembles).*")
+        md.append("")
+        md.append("---")
+        md.append("")
+
     # NRMSE (normalized parameter RMSE) tables
     for case, label in (("s0", "S0"), ("s1", "S1")):
         md.append(f"## Normalized parameter RMSE (NRMSE) — {label} (single-sample)")
@@ -677,6 +724,34 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
               "deterministic solve so its ES is the N=1 MAE proxy (marked per the DA report). "
               "Lower is better for RMSE and ES. Rows are read from "
               "`experiments/l96_joint_comparison.json`.*")
+    md.append("")
+    md.append("---")
+    md.append("")
+
+    # Summary — parameter estimation (per-param, single-sample + ens30)
+    md.append("## Summary — parameter estimation")
+    md.append("")
+    md.append("Per-parameter RMSE (absolute, i.e. in the physical units of each parameter) tells "
+              "which params are recovered. The small-magnitude params are recovered near-exactly by "
+              "every joint model: `eps`/`w3`/`w4` RMSE \u2248 0.012\u20130.02 (true \u2272 0.4), `hx` \u2248 "
+              "0.04\u20130.09 (and S1-robust for the multi-τ models). The decisive, magnitude-heavy "
+              "params are **F** and **c1**; per-param RMSE is dominated by their F (large \u00b120% "
+              "bias, F\u22488).")
+    md.append("")
+    md.append("**Single-sample (mean per-param RMSE, S0 \u2192 S1):** L10 0.117 \u2192 0.180 — L10 recovers "
+              "every param well on S1 (`F 0.59, c1 0.36, hx 0.09, w 0.13\u20130.21, eps/w3/w4 \u2248 0.02`), "
+              "the most balanced S1 param profile of the joint models (vs L7 `F 1.51`, L12 `F 1.09`, "
+              "L8 `F 0.73`). L10's S1 `F`/`c1` are the weakest of its set, but its S1 degradation is "
+              "concentrated exactly there and stays far below the τ=0/deterministic schemes. L9 "
+              "single-sample S0 0.134 \u2192 S1 0.141 — the most S1-robust single-sample params "
+              "(`F 0.53 \u2192 0.53`).")
+    md.append("")
+    md.append("**Ens30 (member-mean params, k=10):** L9's decoupled ens-then-head param head is the "
+              "best **parameter** estimator — mean 0.058 (S0) / 0.061 (S1), recovering even `F 0.18` "
+              "and `w1 0.034`. L10's coupled head is mean 0.120 / 0.175, integration-invariant "
+              "(k=10 \u2248 k=1 bitwise-identical params): the multi-τ ODE-integration advantage "
+              "improves its **state** (0.640\u21920.571) but not its parameters. So L10 is the best "
+              "single-sample **state** estimator; L9 + ens30 is the best **parameter** estimator.")
     md.append("")
     md.append("---")
     md.append("")

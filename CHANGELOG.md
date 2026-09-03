@@ -49,6 +49,34 @@
 **Rationale:** The user's objective was to extend psi-state DA to cross-resolution and benchmark it vs the q-state+psi-obs reference. The H-mode operator is the minimal, correct way to make the trivial-index-lookup psi observation op work across grids (it reuses the already-cross-res-correct `_psi_h`). The result is a clean demonstration that while the psi-state formulation is well-suited to streamfunction observations, its q-field (PV) skill degrades under cross-resolution + S1 corruption due to the K² noise amplification of the psi→q conversion — a real modelling insight worth recording rather than papering over.
 
 **Verification:** `pytest tests/{test_qg_dynamics,test_qg_data,test_qg_baselines,test_qg_s0s1,test_qg_random_columns,test_qg1l_dynamics,test_qg_psi_state}.py -m "not slow"` — **109 passed, 8 deselected** (includes the 2 new cross-res tests). Same-res S1 psi_state re-run (job 51532) reproduces the cached index-mode result exactly (EV −2.925/EV_free −0.232). da_nx=32 psi_state run (job 51519, lag 1.0/2.0) COMPLETED exit 0. `ruff check` clean on `run_qg_baselines.py` + `test_qg_psi_state.py`; `bash -n` on the new sbatch.
+
+## 2026-09-03: Report — per-parameter parameter-estimation detail (ens30 RMSE tables + narrative)
+
+**Summary:** Complemented the L96 joint neural benchmark report with per-parameter parameter-estimation
+detail (this exercises the per-param RMSE the user asked for, not just the mean). Added **(1)** two new
+**"Parameter RMSE — ens30 (n_members=30, k=1/10)"** per-parameter tables (read from the ens30 eval JSONs)
+showing the L9-vs-L10 per-param comparison at the ensemble level — L9's decoupled ens-then-head param
+head is bold-best on every parameter (mean 0.058/0.061 at k=10) while L10's coupled head is 0.120/0.175
+and integration-invariant — and **(2)** a **"Summary — parameter estimation"** narrative section capturing
+the per-param takeaways: small-magnitude params (`eps`,`w3`,`w4`,`hx`) are recovered near-exactly by all
+joint models; the decisive, magnitude-heavy params are **F** and **c1**; L10 has the most balanced S1
+param profile (0.117→0.180, `F 0.59` on S1 vs L7 1.51 / L12 1.09 / L8 0.73) and is the best single-sample
+**state** estimator while **L9 + ens30 is the best parameter estimator** (multi-τ integration helps L10's
+state, not its params — k=10 ≈ k=1 params by construction).
+
+**Files modified:** `reports/l96/generate_l96_joint_neural_report.py` (ens30 per-param RMSE section +
+Summary narrative), `reports/l96/outputs/l96_joint_neural_benchmark.md` (regenerated), `CHANGELOG.md` —
+this entry.
+
+**Rationale:** The previous report showed only **mean** per-param RMSE at single-sample + per-param EV at
+ens30; it did not show the per-parameter RMSE for the ensemble runs (where L9 vs L10 is clearest) nor a
+narrative tying which parameters dominate. The user asked for the per-parameter metrics complemented into
+the report; these tables + narrative make the param-estimation comparison (esp. F/c1 as the decisive,
+bias-heavy params) explicit and auditable.
+
+**Verification:** `py_compile` on the generator; generator re-run exit 0 and idempotent (regen unchanged);
+`git diff --check` clean. No code/metric logic changed — report-generator + rendered markdown only.
+
 ## 2026-09-03: L10 JointCFMCoupled ens30 ensemble eval + report (unblanks ens30 rows)
 
 **Summary:** Ran the **N=30-member ensemble (ens30) evaluation** for **L10 `JointCFMCoupled`** at

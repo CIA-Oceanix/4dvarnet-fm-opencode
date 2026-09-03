@@ -168,6 +168,54 @@ Per-parameter RMSE (`F, c1, hx, eps, w1..w4`) and its mean across the 8 params.
 
 ---
 
+## Parameter RMSE — ens30 (n_members=30, k=1)
+
+Per-parameter RMSE from the **member-mean** parameters of the 30-member ensemble (`--ens-then-head`: average the member states, then estimate params once from the ensemble-mean state). L9's decoupled ens-then-head param head is the best param estimator here; L10's coupled head is integration-invariant (k=10 ≈ k=1).
+
+| ID | S0 | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| L7_joint_cfm_s0s1 | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L12_joint_direct_unet_unethead | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | S0 | 0.1522 ** | 0.0365 ** | 0.0470 ** | 0.0134 | 0.0926 ** | 0.1581 | 0.0157 | 0.0122 ** | 0.0660 ** |
+| L10_joint_cfm_coupled_multitau | S0 | 0.4169 | 0.1471 | 0.0739 | 0.0128 ** | 0.1333 | 0.1429 ** | 0.0155 ** | 0.0147 | 0.1196 |
+
+| ID | S1 | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| L7_joint_cfm_s0s1 | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L12_joint_direct_unet_unethead | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | S1 | 0.1595 ** | 0.0405 ** | 0.0484 ** | 0.0131 ** | 0.0980 ** | 0.1702 | 0.0184 | 0.0119 ** | 0.0700 ** |
+| L10_joint_cfm_coupled_multitau | S1 | 0.5702 | 0.3563 | 0.0831 | 0.0184 | 0.2034 | 0.1346 ** | 0.0154 ** | 0.0171 | 0.1748 |
+
+*Best per cell (lowest RMSE) is bolded. Only ens30 runs present on disk are shown (L8/L12 are deterministic and not run as ensembles).*
+
+---
+
+## Parameter RMSE — ens30 (n_members=30, k=10)
+
+Per-parameter RMSE from the **member-mean** parameters of the 30-member ensemble (`--ens-then-head`: average the member states, then estimate params once from the ensemble-mean state). L9's decoupled ens-then-head param head is the best param estimator here; L10's coupled head is integration-invariant (k=10 ≈ k=1).
+
+| ID | S0 | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| L7_joint_cfm_s0s1 | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L12_joint_direct_unet_unethead | S0 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | S0 | 0.1775 ** | 0.0792 ** | 0.0356 ** | 0.0115 ** | 0.0335 ** | 0.1038 ** | 0.0117 ** | 0.0116 ** | 0.0580 ** |
+| L10_joint_cfm_coupled_multitau | S0 | 0.4169 | 0.1471 | 0.0739 | 0.0128 | 0.1333 | 0.1429 | 0.0155 | 0.0147 | 0.1196 |
+
+| ID | S1 | F | c1 | hx | eps | w1 | w2 | w3 | w4 | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| L7_joint_cfm_s0s1 | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L8_joint_direct_unet_s0s1 | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L12_joint_direct_unet_unethead | S1 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | S1 | 0.1761 ** | 0.0726 ** | 0.0393 ** | 0.0114 ** | 0.0388 ** | 0.1219 ** | 0.0128 ** | 0.0121 ** | 0.0606 ** |
+| L10_joint_cfm_coupled_multitau | S1 | 0.5702 | 0.3563 | 0.0831 | 0.0184 | 0.2034 | 0.1346 | 0.0154 | 0.0171 | 0.1748 |
+
+*Best per cell (lowest RMSE) is bolded. Only ens30 runs present on disk are shown (L8/L12 are deterministic and not run as ensembles).*
+
+---
+
 ## Normalized parameter RMSE (NRMSE) — S0 (single-sample)
 
 Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes away the scale difference between parameters (e.g. F~8 vs eps~0.1) so each competes equally. Mean is across the 8 params; lower is better.
@@ -318,6 +366,16 @@ Joint augmented-state DA filters (state **and** 8 params) benchmarked on the sam
 | Joint-EnKF | 0.7263 | 0.3709 | 1.4592 | 0.8434 |
 
 *ES is the N=30 ensemble Energy Score for the filters; Joint-Strong-4DVar is a deterministic solve so its ES is the N=1 MAE proxy (marked per the DA report). Lower is better for RMSE and ES. Rows are read from `experiments/l96_joint_comparison.json`.*
+
+---
+
+## Summary — parameter estimation
+
+Per-parameter RMSE (absolute, i.e. in the physical units of each parameter) tells which params are recovered. The small-magnitude params are recovered near-exactly by every joint model: `eps`/`w3`/`w4` RMSE ≈ 0.012–0.02 (true ≲ 0.4), `hx` ≈ 0.04–0.09 (and S1-robust for the multi-τ models). The decisive, magnitude-heavy params are **F** and **c1**; per-param RMSE is dominated by their F (large ±20% bias, F≈8).
+
+**Single-sample (mean per-param RMSE, S0 → S1):** L10 0.117 → 0.180 — L10 recovers every param well on S1 (`F 0.59, c1 0.36, hx 0.09, w 0.13–0.21, eps/w3/w4 ≈ 0.02`), the most balanced S1 param profile of the joint models (vs L7 `F 1.51`, L12 `F 1.09`, L8 `F 0.73`). L10's S1 `F`/`c1` are the weakest of its set, but its S1 degradation is concentrated exactly there and stays far below the τ=0/deterministic schemes. L9 single-sample S0 0.134 → S1 0.141 — the most S1-robust single-sample params (`F 0.53 → 0.53`).
+
+**Ens30 (member-mean params, k=10):** L9's decoupled ens-then-head param head is the best **parameter** estimator — mean 0.058 (S0) / 0.061 (S1), recovering even `F 0.18` and `w1 0.034`. L10's coupled head is mean 0.120 / 0.175, integration-invariant (k=10 ≈ k=1 bitwise-identical params): the multi-τ ODE-integration advantage improves its **state** (0.640→0.571) but not its parameters. So L10 is the best single-sample **state** estimator; L9 + ens30 is the best **parameter** estimator.
 
 ---
 
