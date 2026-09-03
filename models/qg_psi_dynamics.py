@@ -24,6 +24,7 @@ class _PsiMixin:
 
     def psi_to_q(self, state: torch.Tensor) -> torch.Tensor:
         """Convert a physical psi-state (flattened layer-major) to q-state."""
+        state = state.to(self.device)
         single = state.dim() == 1
         state_b = state.unsqueeze(0) if single else state
         psi = self.inner._grid(state_b)
@@ -35,6 +36,7 @@ class _PsiMixin:
 
     def q_to_psi(self, state: torch.Tensor) -> torch.Tensor:
         """Convert a physical q-state (flattened layer-major) to psi-state."""
+        state = state.to(self.device)
         single = state.dim() == 1
         state_b = state.unsqueeze(0) if single else state
         q = self.inner._grid(state_b)

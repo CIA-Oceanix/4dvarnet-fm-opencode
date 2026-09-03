@@ -38,15 +38,30 @@ report + generator were on master).
   q-space physics is bit-identical to the q-state model (windows around the same
   `_rk4_step`/filter/clip), so free forecasts match to ~1e-6 relative and ETKF skill is
   comparable to the legacy H-function psi-obs. Works for same-resolution S0 + full-res
-  qg1l; cross-resolution S1 raises a clear `ValueError` (a psi index lookup needs the
-  DA and obs grids to match).
+  qg1l. **Cross-resolution S1 (da_nx 32/16) is now supported** (2026-09-03) via an H-mode
+  psi obs operator (`_psi_h` spectrally upsamples the DA-model psi-state to the obs grid
+  before column selection); same-res behavior is bit-identical (re-verified EV −2.925).
+  **Caveat:** psi_state DA gives a skilful **streamfunction** analysis (psi full EV +0.59
+  at da_nx=32) but a degenerate **PV (q) field** (q full EV −3.2 vs the q-state da_nx=32
+  ref +0.34): `forward_pv` (q ≈ ∇²ψ) amplifies high-wavenumber psi-analysis error by K²,
+  so the q-field skill score (which `expvar_full` reports) collapses while the psi field
+  itself is well-estimated. This is a physical psi↔q representation limitation, not a code
+  bug (free forecasts still match exactly). On S0 at the q-state-matching noise 0.01 the
+  psi-state q-field EV is 0.583 (q1 0.76 / q2 0.40) vs the q-state+psi-obs 0.752 (0.82/0.69),
+  while psi-state's streamfunction fields are the best per-field (psi1/psi2 ≈ 0.98); at
+  default 0.05 noise the S0 psi-state qall is 0.487 vs the q-state 0.660.
+  **Decision (2026-09-03): q-state is the default DA config** — recorded in the dedicated
+  report (`reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md`) and in
+  the `--obs-var` default (`'q'`) / help text of `run_qg_baselines.py` and
+  `sweep_qg_baselines.py`. psi_state/psi remain research alternatives.
 - **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
   JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
   governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,
   psi-obs focus). Dedicated `reports/qg/generate_qg1l_report.py` → `qg1l_report.md` for
   the reduced-gravity structural-error case (r-scale sweep).
-- **Tests**: 6 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
-  `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`) — all in the master CI gate.
+- **Tests**: 7 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
+  `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
+  `test_qg_psi_state`) — all in the master CI gate.
 - **sbatch**: 31 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps.
 - QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
 
