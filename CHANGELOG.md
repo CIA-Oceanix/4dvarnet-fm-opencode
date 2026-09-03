@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-03: L10 JointCFMCoupled ens30 ensemble eval + report (unblanks ens30 rows)
+
+**Summary:** Ran the **N=30-member ensemble (ens30) evaluation** for **L10 `JointCFMCoupled`** at
+both k=1 and k=10 Euler steps (batch `run_l96_joint_unet_ens30.sbatch`, job 51542, both tasks
+COMPLETED exit 0 in 9:26/11:51), mirroring the exact L9 CFM ens30 framework (`--ens-then-head`:
+average the 30 member states, then estimate params once from the ensemble-mean state). Wrote
+`joint_neural_eval_ens30_m30_k{1,10}.json`, then regenerated the joint neural benchmark so the
+L10 ens30 rows (and — by copying L9's ens30 JSONs into experiments/ — L9's ens30 state rows)
+populate the previously `--` ensemble tables. L10 is a `joint_cfm_coupled` model; the deterministic
+L12 is intentionally not run as an ensemble (like L8).
+
+**Results (canonical S0/S1, 200 windows, N=30):** L10 ens30 k=1 S0 0.6395 / S1 0.6438 (deg 1.007);
+**k=10 S0 0.5710 / S1 0.5752 (deg 1.007)** — the k=1→k=10 improvement (−10.7%) reproduces L3/L9's
+multi-τ ODE-integration advantage, confirming the coupled param-flow benefits from proper
+integration. L9 remains the ens30 state best (0.5251/0.5308 at k=10, its ens-then-head param
+recovery 0.058 vs L10's 0.120); L10's single-sample edge (deg 1.004 vs L9 1.011) persists.
+
+**Files modified:** `batch/run_l96_joint_unet_ens30.sbatch` (new), `reports/l96/outputs/l96_joint_neural_benchmark.md` (regenerated: L10 + L9 ens30 rows), `CHANGELOG.md` — this entry. (Data-side gitignored: L10 `joint_neural_eval_ens30_m30_k{1,10}.json`, L9 ens30 JSONs copied from master into experiments/.)
+
+**Rationale:** The merged #139 published only the single-sample L10 row; to follow the same ensemble
+framework as the other CFM schemes (L3/L9 ens30×10), L10 needed the N=30 ensemble eval. This makes
+the coupled-ODE model's ensemble behavior directly comparable head-to-head with L9 on master.
+
+**Verification:** jobs 51542_0/51542_1 COMPLETED exit 0; both L10 ens30 JSONs written; report
+regenerator runs clean (exit 0) with L10 ens30 rows populated and L9 ens30 rows unblanked; `git diff --check` on the committed/source files clean; no code logic changed (eval-only + report).
+
 ## 2026-09-03: UNet param-head JointDirectUNet (L12) + coupled JointCFM ODE (L10)
 
 **Summary:** Objective: replace the initial CNN param heads with a **UNet param head** across both
