@@ -1,3 +1,42 @@
+# Changelog
+
+## 2026-09-03: QG S0/S1 DA report illustrations — S0 + S1-QG2L da_nx=32 figure/animation generator
+
+**Summary:** Added `reports/qg/generate_qg_s0s1_figs.py`, a DA-cache-independent figure+animation
+generator for the QG S0/S1 DA report, and embedded its outputs into `generate_qg_s0s1_report.py`
+as a new **§8 Illustration** section (report stays JSON-only). For each of **S0** and **S1-QG2L
+da_nx=32**, the generator runs a single-window production ETKF (nx=64, N=80, psi-obs, cols=4, 1%
+noise, lag 1.0) and writes to `reports/qg/outputs/figs/`: aggregated per-day obs (2×2 panel),
+full-window obs Hovmöller, moving-storm forcing (curl + amplitude), ground-truth ψ/q, and a
+truth-vs-free-forecast-vs-DA analysis panel, plus a 15-frame **DA-cycle GIF**.
+
+**Key fix (root cause of the earlier ETKF "hang"):** the production figure path passed
+`loc_Lx_t`/`loc_Ly_t` into the `ETKF(...)` constructor (from `_build_qg_col_loc_matrices`),
+bypassing `ETKF.__init__`'s generic `_build_loc_matrices` Python double-loop (`sd×od` iterations)
+— the actual cause of the multi-minute stall. With the columns-localization precomputed and passed
+in, the full 360-step production window ETKF runs in seconds (nx=32/N=20 ≈ 18 s CPU; production
+nx=64/N=80 ≈ 37 s GPU per scenario).
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_figs.py` — new figure/animation generator (obs-days, obs-Hovmöller,
+  forcing, truth-psi/q, analysis, DA-cycle GIF; `--quick` CPU smoke mode)
+- `reports/qg/outputs/figs/qg_{s0,s1x32}_{obs_days,obs_hovmoller,forcing,forcing_amp,truth_psi_q,analysis}.png` + `qg_{s0,s1x32}_dacycle.gif` — 14 generated figures
+- `reports/qg/generate_qg_s0s1_report.py` — new §8 Illustration section (per-scenario embed tables,
+  missing-figure fallback, JSON-only preserved)
+- `reports/qg/outputs/qg_s0s1_report.md` — regenerated with §8
+- `PLAN.md` — QG section Illustration bullet; `CHANGELOG.md` — this entry
+
+**Rationale:** The revised QG S0/S1 report (§1–7) is all-metric tables; the user asked for an
+illustrated rendering of the S0 and S1-QG2L da_nx=32 case studies (obs aggregation, forcing, truth
+fields, DA reconstruction, DA-cycle animation) so the DA behaviour is visually verifiable alongside
+the numbers, without coupling the JSON-only report generator to the QG/DA code.
+
+**Verification:** full `--quick` smoke (nx=32 CPU, N=20, both scenarios) + production run (nx=64,
+N=80, lag 1.0, psi-obs, cols=4, GPU) both COMPLETED and wrote all 14 non-empty figures + GIFs
+(obs_days ~24 k unique colors, GIFs 15 frames); report generator runs clean (exit 0, no missing-JSON
+warning) with §8 embeds pointing at existing files; `py_compile` on both scripts; `ruff check` clean
+on the figure generator (only the repo-wide `EXE001` shebang convention remains, informational in CI).
+
 ## 2026-09-03: Consolidated q-state vs psi-state QG DA report + q-state declared the default DA config
 
 **Summary:** Added a dedicated JSON-only report generator `reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md` that consolidates the q-state vs psi-state DA comparison for S0 and S1 (same-res da_nx=64 + cross-res da_nx=32) with per-field explained variance (PV q1/q2/qall, streamfunction psi1/psi2). The report states the decision that **q-state is the default DA configuration**. The default is now explicit in the QG DA config entry points: `--obs-var` help in both `evaluation/run_qg_baselines.py` and `evaluation/sweep_qg_baselines.py` documents `'q'` (PV q-state) as the production-default representation, with `'psi'`/`'psi_state'` as research alternatives.
