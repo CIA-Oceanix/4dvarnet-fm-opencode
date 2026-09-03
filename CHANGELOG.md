@@ -1,4 +1,35 @@
-## 2026-09-03: Consolidated q-state vs psi-state QG DA report + q-state declared the default DA config
+## 2026-09-03: Obs-density report — Hovmöller reconstruction figures (obsj2 vs slow-only obsj0)
+
+**Summary:** Extended `reports/l96/generate_l96_obs_density_report.py` to render **Hovmöller
+reconstruction figures** for the obsj2 (24D) vs slow-only obsj0 (8D) DA-baseline comparison,
+mirroring the consolidated L96 report's reconstruction-example convention. For each
+case (S0/S1) × rank (worst/median/best), one figure with rows = Truth +
+{EnKF, ETKF, Strong-4DVar} × {obsj2, obsj0} and columns = state slow X / state fast Y /
+|error| slow X / |error| fast Y, with shared per-figure state color scales and a
+99.5th-percentile-capped error scale, obs-time markers on the truth row, and per-row
+window RMSE labels. Windows are ranked by the **obsj2** (reference) per-window 24D RMSE so
+both configurations are shown on the identical windows. The figures make visible that the
+slow-only obsj0 degradation concentrates in the **unobserved** obs_fast (fast Y) block.
+The report's Hovmöller section also carries a per-window RMSE table (`obsj2/obsj0` per method).
+
+**Files modified:**
+- `reports/l96/generate_l96_obs_density_report.py` — imports matplotlib/numpy/torch + `make_obs_j_indices`; new constants (`CANON_STATE_TRAJ`, `SLOW_STATE_TRAJ`, `DATASET_PATH`, `DEFAULT_FIGS_DIR`, `CASES`, `RANKS`, `NO`); helpers `load_state_trajs`, `per_window_rmse`, `select_windows`, `plot_obsdensity_hovmoller` (adapted from the consolidated report's `plot_hovmoller`), `build_hovmoller_section`; `write_report` gained a `hovm_section` argument; `main` builds the figures from the state-only DA trajectory npz + the obsj2 dataset (subsampled to the shared 24D eval subspace)
+- `reports/l96/outputs/figs_obs_density/obsdensity_hovm_{s0,s1}_{worst,median,best}.png` — 6 new figures
+- `reports/l96/outputs/l96_obs_density_da_baselines.md` — regenerated with the new Hovmöller section
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked whether the obs-density report could include Hovmöller figures like the
+`l96_consolidated_benchmark.md` report. The obsj2/obsj0 comparison is naturally visualised as
+per-method paired rows (obsj2 above obsj0) so the reader can directly see how slow-only observation
+degrades the fast-field reconstruction while the slow X field stays well-reconstructed — complementing
+the aggregate RMSE/EV tables already in the report.
+
+**Verification:** `python reports/l96/generate_l96_obs_density_report.py` runs clean (no missing-artifact
+warning), emits 6 figures (2400×1672), and the report + figures are **idempotent** (byte-identical across
+repeat runs). `py_compile` clean; `ruff check` on the generator = only the pre-existing EXE001 shebang
+convention. `pytest tests/test_lorenz96_training.py -m "not slow"` — 46 passed (regression, unchanged).
+
+
 
 **Summary:** Added a dedicated JSON-only report generator `reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md` that consolidates the q-state vs psi-state DA comparison for S0 and S1 (same-res da_nx=64 + cross-res da_nx=32) with per-field explained variance (PV q1/q2/qall, streamfunction psi1/psi2). The report states the decision that **q-state is the default DA configuration**. The default is now explicit in the QG DA config entry points: `--obs-var` help in both `evaluation/run_qg_baselines.py` and `evaluation/sweep_qg_baselines.py` documents `'q'` (PV q-state) as the production-default representation, with `'psi'`/`'psi_state'` as research alternatives.
 

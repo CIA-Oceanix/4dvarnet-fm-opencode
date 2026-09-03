@@ -63,3 +63,31 @@
 | Joint-Strong-4DVar / obsj2 | 0.3142 | 1.5396 | 0.1418 | 0.2674 | 0.0415 | 0.2624 | 0.2608 | 0.0000 | 0.0000 |
 | Joint-Strong-4DVar / obsj0 | 0.2725 | 1.1585 | 0.1106 | 0.2232 | 0.0254 | 0.3336 | 0.3285 | 0.0000 | 0.0000 |
 
+---
+
+## Reconstruction examples (Hovmöller): obsj2 vs slow-only obsj0
+
+Per case/rank, state and |error| maps for the slow X (8D) and fast Y (16D) blocks, with rows = Truth + {EnKF, ETKF, Strong-4DVar} × {obsj2, obsj0}. Windows are ranked by the **obsj2** (reference) per-window 24D RMSE so both observation configurations are shown on the identical windows. State colors share one scale per figure; error maps share one scale across all rows (99.5th-percentile cap). Dotted vertical lines on the truth row mark observation times. The slow-only obsj0 rows make visible the degradation concentrated in the **unobserved** obs_fast (fast Y) block.
+
+| Case | Rank | Window# | obsj2 RMSE* | Strong-4DVar·obsj2/Strong-4DVar·obsj0 | EnKF·obsj2/EnKF·obsj0 | ETKF·obsj2/ETKF·obsj0 |
+|---|---|---|---|---|---|---|
+| S0 | worst | 116 | 1.380 | 0.988/2.211 | 1.340/1.785 | 1.380/1.791 |
+![s0-worst](figs_obs_density/obsdensity_hovm_s0_worst.png)
+
+| S0 | median | 67 | 0.907 | 1.026/1.491 | 0.928/1.392 | 0.907/1.351 |
+![s0-median](figs_obs_density/obsdensity_hovm_s0_median.png)
+
+| S0 | best | 146 | 0.625 | 0.411/1.228 | 0.662/1.042 | 0.625/0.977 |
+![s0-best](figs_obs_density/obsdensity_hovm_s0_best.png)
+
+| S1 | worst | 67 | 2.039 | 1.950/2.414 | 2.074/2.424 | 2.039/2.441 |
+![s1-worst](figs_obs_density/obsdensity_hovm_s1_worst.png)
+
+| S1 | median | 23 | 1.507 | 1.486/1.803 | 1.544/1.866 | 1.507/1.852 |
+![s1-median](figs_obs_density/obsdensity_hovm_s1_median.png)
+
+| S1 | best | 35 | 0.980 | 0.977/1.198 | 1.026/1.225 | 0.980/1.233 |
+![s1-best](figs_obs_density/obsdensity_hovm_s1_best.png)
+
+*obsj2 RMSE = ETKF per-window 24D RMSE (window ranking reference). Cells are `method·obsj2/method·obsj0` per-window RMSE.*
+
