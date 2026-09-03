@@ -53,6 +53,9 @@ checkpoint_stage*.pt
 checkpoints/
 *.pt
 
+# QG dataset spinup cache (large generated tensors; not committed)
+reports/qg_cache/
+
 # Coverage
 .coverage
 .pytest_cache/
@@ -62,6 +65,8 @@ all_figures.pdf
 
 # SLURM logs
 sbatch_logs/
+# SLURM sbatch (%A/%a) stderr artifacts written to the repo root
+[0-9]*_[0-9]*.err
 
 # Reviewer PAT (never commit)
 .reviewer-token

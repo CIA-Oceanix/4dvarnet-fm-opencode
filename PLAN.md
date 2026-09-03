@@ -15,6 +15,41 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
 (`train_mix: cs1+cs2`, `state_dim=3` checkpoints). The **L-series** is the two-scale
 **Lorenz-96** benchmark (`system: lorenz96`, `state_dim=24` observed subspace).
 
+## QG (two-layer quasi-geostrophic) — integrated to master 2026-09-02
+
+DA-baseline case study on a two-layer Phillips channel (pyqg-compatible), now with
+the **full executable codebase integrated to master** (previously only the JSON-only
+report + generator were on master).
+
+- **Dynamics**: `models/qg_dynamics.py` (`QGDynamics`, 2-layer) + `models/qg1l_dynamics.py`
+  (`QG1LDynamics`, reduced-gravity 1-layer structural-error model) + `models/qg_interp.py`
+  (spectral resize). Native torch port of pyqg v0.4.0 (RK4, flux-form advection, pyqg
+  exponential filter, masked PV inversion), moving-storm wind-stress curl forcing.
+- **Data**: `data/qg.py` (`QGConfig`, `QGDataset`, `make_qg_s0_s1_datasets`) — S0/S1
+  along-track + random-column obs, corrupted wind/param bias, qg1l structural-error scenario.
+- **DA baselines**: `evaluation/run_qg_baselines.py` (+ `eval_qg1l_rscale_probe.py`,
+  `sweep_qg_baselines.py`) drive EnKF/ETKF on ψ/q. `evaluation/baselines.py` carries the
+  shared `ObsOperator` H-mode, `_build_qg_loc_matrices`/`_build_qg_col_loc_matrices`,
+  and per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble` in ETKF/EnKF, merged
+  with the L96/joint/ES work.
+- **Psi-state variant**: `models/qg_psi_dynamics.py` (`QGPsiDynamics`/`QG1LPsiDynamics`,
+  `wrap_psi`) integrates with the **streamfunction as the state variable**, so the psi
+  observation operator reduces to a trivial index lookup (`obs_var="psi_state"`). The
+  q-space physics is bit-identical to the q-state model (windows around the same
+  `_rk4_step`/filter/clip), so free forecasts match to ~1e-6 relative and ETKF skill is
+  comparable to the legacy H-function psi-obs. Works for same-resolution S0 + full-res
+  qg1l; cross-resolution S1 raises a clear `ValueError` (a psi index lookup needs the
+  DA and obs grids to match).
+- **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
+  JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
+  governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,
+  psi-obs focus). Dedicated `reports/qg/generate_qg1l_report.py` → `qg1l_report.md` for
+  the reduced-gravity structural-error case (r-scale sweep).
+- **Tests**: 6 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
+  `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`) — all in the master CI gate.
+- **sbatch**: 31 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps.
+- QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
@@ -345,6 +380,19 @@ on S1 (0.631) via its ≈1.00 bias robustness. **Joint-Strong-4DVar run 2026-08-
 beats vanilla Strong-4DVar (0.750/1.432) on both cases and is the **best DA row on S1**
 (ahead of Joint-EnKF 1.459 / Joint-ETKF 1.497); param RMSE mean 0.226 (S0) / 0.299
 (S1), weaker than the filters (F 0.85 dominates).
+
+**Multi-method reconstruction artifacts (merged 2026-09-01, PR #134)** —
+`eval_joint_comparison_l96.py` persists per-window reconstruction `.npz` arrays
+(`trajectories`, per-member `ensemble_variance`, `params`, `es`) for every benchmarked
+method, merged into `experiments/l96_joint_baselines_trajectories.npz`. Re-ran the 3
+joint methods (jobs 51098/51131) + vanilla Strong-4DVar (51294, so it appears in the
+comparator schema) on the canonical cached S0/S1 test set. `experiments/l96_joint_comparison.json`
+is now the full **6-method** comparison (vanilla ETKF/EnKF/Strong-4DVar + Joint-ETKF/EnKF/
+Strong-4DVar; fresh re-run values: Joint-ETKF S0 0.6348, Joint-EnKF 0.7244, Joint-Strong-4DVar
+0.7054/1.1999). Both joint reports regenerate against it, so the neural report's DA-baselines
+table now lists all 6 DA methods (incl. Joint-Strong-4DVar). Note the master committed DA
+report retains oracle-free neural values; a stale local regeneration against oracle-era JSONs
+on the master worktree was discarded in favor of the merged oracle-free content.
 
 ## Phases
 

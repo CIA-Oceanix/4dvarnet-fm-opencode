@@ -31,44 +31,6 @@ ROOT = Path(__file__).resolve().parents[2]
 L96_JOINT_PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
 PARAM_LIST = list(L96_JOINT_PARAM_NAMES)
 
-# True-parameter scale mean(|true_param|) of the canonical cached S0/S1 test set
-# (computed from `experiments/l96_datasets_obsj2_int100_nwin200.pt`, 200 windows each).
-# Used to convert absolute param RMSE -> NRMSE for rows whose source archives only the
-# absolute RMSE (the C1/C2/C3 cascade `results.json` and the joint-DA comparison JSON).
-PARAM_MEAN_TRUE = {
-    "s0": [8.0533, 0.9861, 0.9849, 0.0999, 1.0100, 1.0074, 0.1016, 0.0994],
-    "s1": [7.9628, 1.0030, 0.9971, 0.0996, 1.0069, 1.0038, 0.0983, 0.1006],
-}
-
-# Decoupled state->param cascade experiments: a param head fed by either the frozen
-# L1b state-only DirectUNet estimate (C1) or the exact true state (C2/C3, ablation),
-# with C3 adding a temporal-derivative channel + positive-only bias-resampled `*_da`
-# training. On the fixed per-param metric all three recover the fast weights well on S0;
-# C3's bias-resample trades a small S0 hit for the best S1 robustness (see findings).
-CASCADE_DEFS = {
-    "C1_stateparam_head_s1": {"short": "C1 (L1b state)",
-                              "arch": "StateParamHead (CNN)",
-                              "state_source": "frozen L1b state estimate (decoupled)"},
-    "C2_stateparam_head_state_true": {"short": "C2 (true state)",
-                                      "arch": "StateParamHead (CNN)",
-                                      "state_source": "exact true state (ablation)"},
-    "C3_param_head_true_deriv": {"short": "C3 (true state + derivative + bias-resample)",
-                                 "arch": "StateParamHead (CNN)",
-                                 "state_source": "exact true state + temporal-derivative channel, "
-                                                 "positive-only bias-resampled `*_da` training "
-                                                 "(2026-09-01)"},
-    "C4a_param_head_unet_true": {"short": "C4a (UNet, true state)",
-                                 "arch": "StateParamUNet (UNet)",
-                                 "state_source": "exact true state, UNet backbone (implicit "
-                                                 "multi-scale temporal features, no derivative "
-                                                 "channel)"},
-    "C4b_param_head_unet_l1b": {"short": "C4b (UNet, L1b state)",
-                                "arch": "StateParamUNet (UNet)",
-                                "state_source": "frozen L1b state estimate, UNet backbone (implicit "
-                                                "multi-scale temporal features, no derivative "
-                                                "channel)"},
-}
-
 # ID -> (eval file base name, type, tau mode, description)
 MODEL_DEFS = {
     "L7_joint_cfm_s0s1": {
@@ -145,11 +107,11 @@ def metrics_case(data, case):
     return metrics.get(case)
 
 
-def param_ev_from_npz(edir: Path, case: str, ens: int, k: int = 1) -> np.ndarray | None:
+def param_ev_from_npz(edir: Path, case: str, ens: int) -> np.ndarray | None:
     """Per-parameter EV ($EV_p = 1 - mean((pred-true)^2)/var(true)$) computed
     offline from the stored eval arrays (single-sample if ``ens=0``, else the
-    member-mean params of the ``ens``30 run at k Euler steps). Returns ``(8,)`` or None."""
-    suff = "" if not ens else f"_ens30_k{k}"
+    member-mean params of the ``ens``30 run). Returns ``(8,)`` or None."""
+    suff = "_ens30" if ens else ""
     npz = edir / f"joint_estimates_{case}{suff}.npz"
     if not npz.exists():
         return None
@@ -187,46 +149,6 @@ def da_param_rmse_tables(da_case) -> dict:
     return tables
 
 
-def cascade_param_rmse(exp_dir: Path, exp_name: str):
-    """Per-parameter absolute RMSE for the C1/C2/C3 cascade from its `results.json`
-    (train-script convention: keys `param_rmse_s0` / `param_rmse_s1`). Returns
-    ``{case: {param: float}}`` or {}."""
-    r = load_json(exp_dir / exp_name / "results.json")
-    if not r:
-        return {}
-    out = {}
-    for case in ("s0", "s1"):
-        pr = r.get(f"param_rmse_{case}")
-        if isinstance(pr, dict) and pr:
-            out[case] = {k: float(v) for k, v in pr.items() if k in PARAM_LIST}
-    return out
-
-
-def nrmse_from_rmse(per_param: dict, case: str):
-    """NRMSE values across PARAM_LIST from absolute per-param RMSE, using the cached
-    true-parameter scale. Returns ``{"vals": [...8...], "mean": float}`` or None."""
-    if not per_param:
-        return None
-    scale = PARAM_MEAN_TRUE.get(case)
-    if not scale:
-        return None
-    vals = [per_param.get(p) for p in PARAM_LIST]
-    if not any(isinstance(v, float) for v in vals):
-        return None
-    num = [v / s for v, s in zip(vals, scale) if isinstance(v, float) and s]
-    return {"vals": [v / s if (isinstance(v, float) and s) else None
-                     for v, s in zip(vals, scale)],
-            "mean": float(np.mean(num)) if num else None}
-
-
-def da_nrmse_values(per_case, case: str):
-    """NRMSE for a joint-DA method from its archived per-param RMSE (the true-param scale
-    comes from the cached dataset, not the comparison JSON). ``per_case`` keys are "S0"/"S1"."""
-    pr = (per_case.get(case.upper()) or {}) if per_case else {}
-    return nrmse_from_rmse(pr, case.lower())
-
-
-
 def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> None:
     md = []
     da_case = load_json(comparison_json)
@@ -254,19 +176,6 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     md.append("**Per-parameter detail:** `reports/l96/outputs/l96_joint_param_diagnostic.md` gives "
               "the full offline per-parameter RMSE / EV / NRMSE and free-forecast tables (single "
               "and ens30, all runs), recomputed from the stored eval arrays.")
-    md.append("")
-    md.append("**Cascade (decoupled state→param head, 2026-09-02):** the state→param head fed by "
-              "the frozen L1b state estimate (C1), the exact true state (C2), or the true state + "
-              "derivative channel with positive-only bias-resampled `*_da` training (C3) is "
-              "tabulated in the NRMSE / param-RMSE tables below. **The earlier \"fast-weight "
-              "failure\" (w1/w2 NRMSE ≈ 1.1-1.2) was an eval-metric bug**, not a model failure: "
-              "the train-script eval read scalar `true_w1..true_w4` keys that the cached test "
-              "windows don't have (they store `true_fast_weights` as a list), silently comparing "
-              "all four fast-weight channels against 0.0. With the list-aware extraction every "
-              "cascade model recovers the fast weights well on S0 (w1..w4 RMSE 0.011-0.013 for "
-              "C1/C2), and on the biased S1 setup C3's positive-bias resampling is the most "
-              "robust (w1/w2 0.04/0.10, F 0.52) while C1/C2 stay competitive on the fast weights "
-              "and degrade mainly on F. See CHANGELOG 2026-09-02.")
     md.append("")
     md.append("---")
     md.append("")
@@ -326,14 +235,6 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
     md.append("|---|---|---|---|")
     for exp_name, d in MODEL_DEFS.items():
         md.append(f"| {exp_name} | {d['type']} | {d['tau']} | {d['desc']} |")
-    for exp_name, d in CASCADE_DEFS.items():
-        src = d["state_source"]
-        has_res = bool(cascade_param_rmse(exp_dir, exp_name))
-        tail = ("training/eval pending (not yet evaluated)." if not has_res
-                else "With the corrected per-param metric all recover the "
-                     "fast weights on S0; C3's positive-bias training is the most S1-robust.")
-        md.append(f"| {exp_name} | {d['arch']} | n/a | Decoupled cascade: "
-                  f"param head fed by {src}. {tail} |")
     md.append("")
     md.append("---")
     md.append("")
@@ -452,8 +353,8 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
             md.append("".join(cells))
         md.append("")
         md.append("*Only ens30 runs present on disk are shown; missing runs render as -- (L8 is "
-                  "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
-                  "highest EV.*")
+              "deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, "
+              "highest EV.*")
         md.append("")
         md.append("---")
         md.append("")
@@ -475,7 +376,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         for exp_name in MODEL_DEFS:
             edir = exp_dir / exp_name
             for case in CASES:
-                ev = param_ev_from_npz(edir, case, ens=k, k=k) if edir.is_dir() else None
+                ev = param_ev_from_npz(edir, case, ens=k) if edir.is_dir() else None
                 rows.append((exp_name, case, ev))
         best_idx = [None] * (len(PARAM_LIST) + 1)
         for i in range(len(PARAM_LIST) + 1):
@@ -535,29 +436,9 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v, missing='--')} |")
             cells.append(f" {fmt_num(meanv, missing='--')} |")
             md.append("".join(cells))
-        # C1/C2/C3 cascade (separate sub-block, not part of the headline).
-        cascade_rows = [
-            (CASCADE_DEFS[exp]["short"], cascade_param_rmse(exp_dir, exp).get(case, {}))
-            for exp in CASCADE_DEFS
-        ]
-        if any(r[1] for r in cascade_rows):
-            md.append("")
-            md.append("*Cascade — decoupled state→param head:*")
-            for lbl, pr in cascade_rows:
-                if not pr:
-                    continue
-                vals = [pr.get(p) for p in PARAM_LIST]
-                meanv = np.mean([v for v in vals if v is not None]) if any(v is not None for v in vals) else None
-                cells = [f"| {lbl} |"]
-                for v in vals:
-                    cells.append(f" {fmt_num(v, missing='--')} |")
-                cells.append(f" {fmt_num(meanv, missing='--')} |")
-                md.append("".join(cells))
         md.append("")
         md.append("*Joint-DA rows are the co-estimated 8-param RMSE from `l96_joint_comparison.json` "
-                  "(S1 `w3`/`w4` are pinned to the reference prior, not estimated — their RMSE=0 is "
-                  "a masking artifact, **[not]** recovery; on the 6 genuinely-estimated params DA "
-                  "S1 mean NRMSE is ~0.10, i.e. parity with L9). Per-parameter "
+                  "(S1 `w3`/`w4` are pinned to the reference prior, not estimated). Per-parameter "
                   "EV and the free forecast are **not** stored for DA (the per-window predictions "
                   "were not archived), so those tables show DA as `--`.*")
         md.append("")
@@ -570,9 +451,7 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
         md.append("")
         md.append("Per-parameter NRMSE = `param_RMSE / mean(|true_param|)`, which normalizes "
                   "away the scale difference between parameters (e.g. F~8 vs eps~0.1) so each "
-                  "competes equally. Mean is across the 8 params; lower is better. This is the "
-                  "relevance metric: NRMSE ≲ 0.2 (≲20% relative error) marks an estimate that "
-                  "carries genuine information about the parameter.")
+                  "competes equally. Mean is across the 8 params; lower is better.")
         md.append("")
         header = "| ID | " + " | ".join(PARAM_LIST) + " | mean |"
         sep = "|---|" + "---|" * len(PARAM_LIST) + "---|"
@@ -584,76 +463,28 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
             data = find_single_eval(edir) if edir.is_dir() else None
             m = metrics_case(data, case)
             if m is None:
-                rows.append((exp_name, [None] * (len(PARAM_LIST) + 1), False))
+                rows.append((exp_name, [None] * (len(PARAM_LIST) + 1)))
                 continue
             nrmse = m.get("nrmse_param", {})
             vals = [nrmse.get(p) for p in PARAM_LIST]
             vals.append(m.get("nrmse_param_mean"))
-            rows.append((exp_name, vals, False))
-        # Joint-DA NRMSE rows (computed from archived per-param RMSE / cached true scale).
-        da_label = {}
-        for method, per_case in da_param_rmse.items():
-            nvals = da_nrmse_values(per_case, case)
-            if nvals is None:
-                continue
-            vals = nvals["vals"] + [nvals["mean"]]
-            rows.append((method, vals, False))
-            da_label[method] = True
-        # C1/C2/C3 cascade — shown separately, still participates in best-bold.
-        cascade_rows = []
-        for exp in CASCADE_DEFS:
-            pr = cascade_param_rmse(exp_dir, exp).get(case, {})
-            if not pr:
-                continue
-            nvals = nrmse_from_rmse(pr, case)
-            if nvals is None:
-                continue
-            lbl = CASCADE_DEFS[exp]["short"]
-            cascade_rows.append((lbl, nvals["vals"] + [nvals["mean"]]))
+            rows.append((exp_name, vals))
         best_idx = [
-            min((r[i] for _, r, _ in rows if isinstance(r[i], float)), default=None)
+            min((r[i] for _, r in rows if isinstance(r[i], float)), default=None)
             for i in range(len(PARAM_LIST) + 1)
         ]
-        for exp_name, vals, _ in rows:
+        for exp_name, vals in rows:
             cells = [f"| {exp_name} |"]
             for i, v in enumerate(vals):
                 best = best_idx[i]
                 cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == best) else ''} |")
             md.append("".join(cells))
-        if cascade_rows:
-            md.append("")
-            md.append("*Cascade — decoupled state→param head:*")
-            for lbl, vals in cascade_rows:
-                cells = [f"| {lbl} |"]
-                for i, v in enumerate(vals):
-                    best = best_idx[i]
-                    cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == best) else ''} |")
-                md.append("".join(cells))
+        for method in da_param_rmse:
+            md.append(f"| {method} | " + " | ".join(["--"] * (len(PARAM_LIST) + 1)) + " |")
         md.append("")
-        if case == "s1":
-            md.append("*Best per column (lowest NRMSE) is bolded. On S1 the relevant comparison: L9 "
-                      "(multi-τ joint flow) keeps **every** parameter at NRMSE ≤ 0.20 (F 0.07), i.e. "
-                      "≤20% relative error — genuine param recovery at parity with the joint DA "
-                      "filters on the params they actually estimate. The C1/C2/C3 cascade (2026-09-02 "
-                      "re-eval with the fixed list-aware fast-weight metric) recovers the fast weights "
-                      "well (C2 w1/w2 NRMSE 0.21/0.12; C3 w1/w2 0.04/0.10, F 0.52) — the earlier "
-                      "w1/w2 NRMSE ≈ 1.1-1.2 was an eval-metric artifact (fast-weight truth read as "
-                      "0.0), not a model failure. C3 remains the most S1-robust cascade member, but "
-                      "the coupled multi-τ flow (L9) and the joint-DA filters are still ahead on "
-                      "overall param recovery. Joint-DA S1 `w3`/`w4` NRMSE 0.00 is the pinned-to-prior "
-                      "masking artifact (they are **not** estimated), not recovery; DA mean NRMSE is "
-                      "0.07 incl. / 0.10 excl. those masked w3/w4. The DA NRMSE rows are derived from "
-                      "their archived per-param RMSE in `l96_joint_comparison.json` ÷ the cached "
-                      "true-param scale; per-window predictions (EV, free forecast) are not archived "
-                      "for DA.*")
-        else:
-            md.append("*Best per column (lowest NRMSE) is bolded. Joint-DA NRMSE rows are derived from "
-                      "their archived per-param RMSE ÷ the cached true-param scale. The C1/C2/C3 "
-                      "cascade (2026-09-02 re-eval) recovers the fast weights on S0 (C1/C2 w1..w4 "
-                      "NRMSE 0.01-0.02; F the main cost) — the earlier w1/w2 NRMSE ≈ 1.0 was an "
-                      "eval-metric artifact (fast-weight truth read as 0.0), not a model failure; "
-                      "C3's positive-bias training keeps S0 ≈ parity with C1/C2 on the fast weights "
-                      "and is the most S1-robust.*")
+        md.append("*Best per column (lowest NRMSE) is bolded. Joint-DA rows render as `--`: per-parameter "
+                  "NRMSE needs the true-parameter scale (`mean(|true|)`) which is not archived for DA "
+                  "(only the aggregated 8-param RMSE in `l96_joint_comparison.json`).*")
         md.append("")
         md.append("---")
         md.append("")
@@ -804,7 +635,8 @@ def write_report(exp_dir: Path, output_path: Path, comparison_json: Path) -> Non
                 cells.append(f" {fmt_num(v)}{' **' if (isinstance(v, float) and v == bv) else ''} |")
             md.append("".join(cells))
         md.append("")
-        md.append("*Best per column is bolded (highest EV, lowest RMSE).*")
+        md.append("*Best per column is bolded (highest EV, lowest RMSE). L8 is deterministic and not "
+                  "run as an ensemble → --.*")
         md.append("")
         md.append("---")
         md.append("")

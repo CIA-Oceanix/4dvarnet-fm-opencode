@@ -37,5 +37,5 @@ LAG=${LAGS[$SLURM_ARRAY_TASK_ID]}
     --band 0.25 \
     --obs-var psi \
     --scenarios test_s1 \
-    --outdir reports/outputs/qg_s1_da32_lag${LAG//./p} \
+    --outdir reports/qg/outputs/qg_s1_da32_lag${LAG//./p} \
     --tag s1_da32

@@ -212,6 +212,165 @@ three `results.json` (other fields preserved); report regenerated (exit 0) with 
 
 **Verification:** jobs 51313 (C1) + 51321 (C2) COMPLETED exit 0, 300 epochs. `pytest tests/test_param_head.py tests/test_joint_estimation_l96_neural.py tests/test_lorenz96_training.py tests/test_direct_unet.py tests/test_neural_inference.py -m "not slow"` — 108 passed. `python reports/l96/generate_l96_joint_neural_report.py` exit 0; labels + w3/w4 footnote render; `py_compile` clean; ruff on the generator = only pre-existing EXE001/UP032 (none introduced).
 
+## 2026-09-02: QG psi-state DA variant — streamfunction as the state (free-forecast + ETKF equivalence, incl. QG1L)
+
+**Summary:** Implemented a **psi-state** QG DA variant (`models/qg_psi_dynamics.py`:
+`QGPsiDynamics`/`QG1LPsiDynamics` + `wrap_psi`) that integrates with the **streamfunction
+ψ as the state variable** instead of PV `q`, wired it into `evaluation/run_qg_baselines.py`
+as a new `obs_var="psi_state"`, and verified two equivalence claims via
+`tests/test_qg_psi_state.py` (9 tests). The psi-state model holds ψ, converts ψ→q with a
+linear spectral operator (`forward_pv`, the exact inverse of `QGDynamics._invert`), runs
+the bit-identical q-space `_rk4_step` (incl. pyqg filter + `clip_range` clamp), then
+converts back q→ψ — so the q-space physics is unchanged, and the psi observation operator
+becomes a **trivial index lookup** (no per-step spectral inversion in `H`).
+
+**Results (verified):**
+- **Free forecast (Phase 1):** from the same physical init + wind, a 200-step ψ-state vs
+  q-state forecast agree in q-space to **2.4e-12 (2-layer) / 2.3e-13 (1-layer)** relative
+  to the initial |q| — identical up to the round-trip roundoff, as expected for a linear
+  representation change (chaotic divergence is absent because both integrate the same
+  q-space physics).
+- **ETKF DA (Phase 2):** on S0 (tiny nx=8 test config, random_columns, loc_radius=4),
+  ψ-state ETKF gives finite, skilful analyses (expvar 0.97) comparable to the legacy
+  H-function psi-obs (expvar 1.00) — similar skill, not bit-identical, because the
+  ensemble dispersion is expressed in ψ-units vs q-units.
+- **QG1L:** the 1-layer reduced-gravity structural-error scenario runs finite under
+  `psi_state`.
+- **Cross-resolution:** `obs_var="psi_state"` raises a clear `ValueError` on cross-res
+  S1 (a trivial index lookup requires DA and obs grids to match), paralleling the existing
+  `obs_var="q"` guard; use the legacy `obs_var="psi"` (H-function with spectral resample)
+  for cross-resolution.
+
+**Files modified:**
+- `models/qg_psi_dynamics.py` — new: `_PsiMixin`, `QGPsiDynamics`, `QG1LPsiDynamics`,
+  `wrap_psi`; `forward_pv` (2×2 spectral ψ→q inverse for 2-layer; `-(K2+rd^-2)` for
+  1-layer, both zeroed at the K2=0 mean mode), `psi_to_q`/`q_to_psi`, ψ-space `step`/
+  `rollout_trajectory`, identity `streamfunctions`.
+- `evaluation/run_qg_baselines.py` — `_build_dyn(..., psi_state=)` wraps in the ψ-state
+  model; `_make_obs_system` `psi_state` branch (index-mode obs-op + psi R_var +
+  `_build_qg_loc_matrices`); `_free_forecast_rmse(psi_state=)` (ψ→q before RMSE);
+  `run()` init→ψ conversion + ψ→q conversion of analysis/free-roll + cross-res guard;
+  `--obs-var psi_state` CLI choice.
+- `tests/test_qg_psi_state.py` — new: PV round-trip, free-forecast parity (2L + 1L),
+  `wrap_psi` dispatch, S0 finite/skill, legacy-psi parity, QG1L finite, cross-res rejection.
+- `.github/workflows/ci.yml` — added `test_qg_psi_state.py` to the pytest gate (17 test files).
+- `PLAN.md` — QG section ψ-state bullet.
+
+**Rationale:** Answering whether coding the QG forward model natively in ψ (so the
+observation operator on the streamfunction is a trivial lookup) is feasible, physically
+sound, and numerically equivalent to the q-state formulation. The implementation shows it
+is: equivalent by construction in q-space, with the benefit of an index-only `H` (no
+spectral inversion per DA step) and no cross-grid index ambiguity — at the cost of
+~4 spectral inversions per RK4 step. Every commit this session's earlier QG report claimed
+(psi-obs focus) is respected: the ψ-state is the direct-mapping natural extension.
+
+**Verification:** `pytest tests/test_qg_psi_state.py -m "not slow"` — 9 passed; full QG
+fast gate (7 files, 108 selected) green; `ruff check` clean on all three touched files.
+
+
+**Summary:** Reworked the QG consolidated report (`reports/qg/generate_qg_s0s1_report.py`
+→ `qg_s0s1_report.md`) to be readable and self-contained, and added a dedicated
+reduced-gravity/model-error report (`reports/qg/generate_qg1l_report.py` →
+`qg1l_report.md`). The revised S0/S1 report now leads with the governing equations of the
+two-layer Phillips QG system (and the 1-layer reduced-gravity model), a compact
+case-study table describing S0 and the two S1 configurations, and splits results into an
+**S0** section (error-free, psi-obs), an **S1-QG2L** section (model error = param bias +
+corrupted wind + cross-resolution at **da_nx = 16 / 32 / 64**), and an **S1-QG1L**
+section (structural 1-layer error, obs-var r-scale sweep). All sections report RMSE /
+free-forecast RMSE / forecast-improv / pooled-EV, per field (q/ψ) and per layer. The
+psi-obs focus means the q-obs runs are demoted to a local-PV reference in the QG1L
+section only. No new GPU runs: the full-S1 **da_nx=64** row exists on master as the
+`qg_s1_nores` ablation (param + wind corruption ON, resolution mismatch removed).
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_report.py` — rewritten: equations §1, case-study table §2,
+  base config §3, S0 §4, S1-QG2L da_nx 16/32/64 §5, S1-QG1L r-scale §6, interpretation §7.
+- `reports/qg/outputs/qg_s0s1_report.md` — regenerated.
+- `reports/qg/generate_qg1l_report.py` — new dedicated QG1L generator.
+- `reports/qg/outputs/qg1l_report.md` — new generated QG1L report.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The previous consolidated report was dense and hard to follow, mixing q- and
+psi-obs and cross-resolution variants without the system equations or a clear per-scenario
+structure. The user requested a revised version focused on psi-obs with one section per
+scenario (S0, S1-QG2L, S1-QG1L), the governing equations, and a dedicated QG1L report —
+stating that the full-S1 da_nx=64 result should exist from the ablation study and not to
+launch new jobs if it does. That result is the `qg_s1_nores` (da_nx=64) ablation committed
+on master, so the report covers da_nx 16/32/64 with existing data only.
+
+**Verification:** both generators run clean (`python reports/qg/generate_qg_s0s1_report.py`
+and `generate_qg1l_report.py`, exit 0, no missing-JSON warnings); `py_compile` on both;
+QG fast pytest gate `pytest tests/{test_qg_dynamics,test_qg1l_dynamics,test_qg_baselines,
+test_qg_s0s1,test_qg_random_columns,test_qg_data}.py -m "not slow"` — all passed
+(34 + 65); `ruff` on the two scripts: only pre-existing EXE001 shebang convention
+(informational in CI; the repo uses shebangs on all runnable scripts).
+
+## 2026-09-02: Integrate full QG (two-layer quasi-geostrophic) executable codebase to master
+
+**Summary:** Brought the complete QG case-study executable onto master, so master now
+has the code (not just the previously JSON-only report + generator) to reproduce the
+QG S0/S1 DA-baseline results. Merged the QG dynamics/data/DA-baseline code + 6 test
+files + 31 sbatch + result JSONs from the `feat/qg-s1-qg1l` / `feat/qg-case-study`
+branches, reconciled the shared `evaluation/baselines.py` (QG ObsOperator H-mode,
+QG localization matrices, per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble`
+in ETKF/EnKF, merged onto master's L96/joint/ES code), and folded all six QG test files
+into master's persistent CI gate (now triggering on `feat/qg-*` too). Report scripts +
+result JSONs relocated from the pre-restructure `reports/` root / `reports/outputs/`
+into the per-system `reports/qg/[outputs/]` layout matching master's convention, and the
+report generator's `--json-root` default updated to `reports/qg/outputs/`.
+
+**Files modified:**
+- `evaluation/baselines.py` — merged QG additions onto master's version: `_gc_matrix`,
+  `_build_qg_loc_matrices`, `_build_qg_col_loc_matrices`; `ObsOperator` H-mode +
+  `obs_indices_t`/`h`/`h_index_at`/`n_obs` + `h_mode()`/`index_at()`; ETKF/EnKF
+  `loc_Lx_t`/`loc_Ly_t` + `init_ensemble` + `_per_time(t)` + per-time localized branches
+  (scale-relative `etkf_ridge` ridge); preserves master's `_ESAccumulator`/L96/joint code.
+- `data/qg.py`, `models/qg_dynamics.py`, `models/qg1l_dynamics.py`, `models/qg_interp.py`,
+  `evaluation/run_qg_baselines.py`, `evaluation/sweep_qg_baselines.py` — new QG code.
+- `tests/test_qg_{dynamics,data,baselines,s0s1,random_columns}.py`, `tests/test_qg1l_dynamics.py` — 6 new QG test files (99 fast tests).
+- `batch/run_qg_*.sbatch` — 31 QG sbatch scripts.
+- `reports/qg/` — relocated QG report scripts (`animate/calibrate/diagnose/snapshots/
+  qg_s1_qg1l_rscale_probe.py`) + `reports/qg/outputs/` QG result JSONs + figures; the
+  pre-existing `reports/qg/generate_qg_s0s1_report.py` + `outputs/{qg_s0s1_report.md,
+  qg_settings.json}` kept.
+- `reports/qg/generate_qg_s0s1_report.py` — `--json-root` default → `reports/qg/outputs/`.
+- `.github/workflows/ci.yml` — `feat/qg-*` triggers + six QG test files in the pytest gate.
+- `PLAN.md` — new QG section; `CHANGELOG.md` — this entry.
+- `data/lorenz96.py` — cosmetic `obs_var_indices: np.ndarray | None` (unchanged behavior).
+- `.gitignore` — `reports/qg_cache/` + SLURM `[0-9]*_[0-9]*.err` patterns.
+
+**Rationale:** The QG epoch-2 deliverable was the report + JSON-only generator on master;
+the code that produces them lived only on topic branches. Landing the executable code
+makes the QG report reproducible on master and permanently protects the shared DA filter
+code (ObsOperator/ETKF/EnKF) via the CI gate — a real 3-way merge (master's L96/joint/ES
+rewrites vs the QG H-mode/localization additions). The six-file QG gate is a deliberate,
+persistent governance choice: it applies to every future master PR.
+
+**Verification:** `pytest` on the QG suite (99 passed) + the L96/ES/joint regression
+suite (91 passed) both green against the merged `baselines.py`; `python -m py_compile`
+clean; `reports/qg/generate_qg_s0s1_report.py --json-root reports/qg/outputs/` regenerates
+the report; ruff informational.
+
+## 2026-09-01: L96 joint-DA reconstruction artifacts + full 6-method comparison JSON
+
+**Summary:** Made `eval_joint_comparison_l96.py` persist per-window reconstruction `.npz` arrays (trajectories, per-member `ensemble_variance`, `params`, `es`) for every benchmarked method, merged incrementally into `experiments/l96_joint_baselines_trajectories.npz` on a per-case basis. Re-ran the 3 joint DA methods on the cached S0/S1 test set (Obs30, 200 windows) to produce their reconstructions — which were previously never saved and lost after each run: Run 1 = Joint-ETKF + Joint-EnKF at batch=10 (job 51098), Run 2 = Joint-Strong-4DVar at batch=200 (job 51131). Re-ran vanilla Strong-4DVar via the comparator (job 51294, batch=200) so it appears in the comparator schema, then assembled the full **6-method** `experiments/l96_joint_comparison.json` on master (vanilla ETKF/EnKF from master + fresh vanilla Strong-4DVar + the 3 joint rows) and regenerated both joint reports so they render all 6 DA methods.
+
+**Headline (cached S0/S1, Obs30, 200 windows):** Results reproduce the published rows — **S0 best = Joint-ETKF 0.6348** (EV 0.8207 / ES 0.2991); **S1 best DA = Joint-Strong-4DVar 1.1999** (EV 0.4132, ahead of vanilla Strong-4DVar 1.4319, Joint-EnKF 1.4602, Joint-ETKF 1.4976). Vanilla Strong-4DVar confirms the canonical cache (S0 0.7398/EV 0.7490, S1 1.4319/EV 0.2400). The joint npz holds exactly the 22 joint-method arrays (no vanilla keys — vanilla reconstructions already live on master's state-only cache).
+
+**Files modified:**
+- `eval_joint_comparison_l96.py` — per-method `trajectories`/`ensemble_variance`/`params`/`es` collection into a merged `l96_joint_baselines_trajectories.npz` (npz-merge preserves arrays from earlier/partial runs)
+- `batch/run_l96_joint_comparison.sbatch` — final config for the vanilla Strong-4DVar leg (`--methods Strong-4DVar --batch-size 200`)
+- `reports/l96/outputs/l96_joint_da_benchmark.md` — regenerated: now benchmarks all 6 DA methods (methods table, RMSE/EV/ES per case, joint-only per-param tables)
+- `reports/l96/outputs/l96_joint_neural_benchmark.md` — regenerated: DA-baselines section now includes Joint-Strong-4DVar
+- `CHANGELOG.md` — this entry
+- (gitignored artifacts copied to master: `experiments/l96_joint_comparison.json`, `experiments/l96_joint_baselines_trajectories.npz`, `experiments/l96_datasets_obsj2_int100_nwin200.pt`)
+
+**Rationale:** The joint DA baselines never saved their per-window reconstructions, so the joint state trajectories were lost after each run. Persisting them and running the 3 joint methods on the canonical cached test set gives the reconstructions needed for downstream trajectory/metrics/Hovmöller work. Assembling the full 6-method JSON and regenerating the reports makes the DA-vs-neural and joint-vs-vanilla comparison complete on master.
+
+**Verification:** Jobs 51098 (Joint-ETKF/EnKF, batch=10) + 51131 (Joint-Strong-4DVar, batch=200) + 51294 (vanilla Strong-4DVar, batch=200) all COMPLETED exit 0:0; all 200-window S0/S1 combos 200/200 finite; values match the published rows. npz = exactly 22 joint arrays, no vanilla. Both report generators run clean on master with the 6-method JSON.
+
+**Rebase resolution (2026-09-01, merged as #134):** this landed on master after PR #130 (oracle-free retrain). The PR's `819c72d` head had regenerated `l96_joint_neural_benchmark.md` from **oracle-era** eval JSONs (dated Aug 26 on the master worktree), which would have silently reverted #130's oracle-free fix. During the rebase onto `07d6abb`, all 16 conflict regions in the neural report were resolved to keep the **oracle-free** neural rows (L7 0.6332/param 0.1219, L8 0.6247/0.1167, L9 0.6619/0.7503) while taking the PR's fresh **6-method DA** rows (Joint-ETKF 0.6348, Joint-EnKF 0.7244, + new Joint-Strong-4DVar 0.7054/1.1999, ES 0.4575/0.8100) from `experiments/l96_joint_comparison.json`. The DA report's staged 6-method table and CHANGELOG were reconciled. Merged as `ffcc1e4`; a stale master-worktree local regeneration against oracle-era JSONs was discarded in favor of the merged oracle-free content (pytest CI green on the rebased head, review APPROVED by `rfablet-review`).
+
 ## 2026-08-31: QG S0/S1 DA baselines — consolidated report (cross-resolution S1)
 
 **Summary:** Added a consolidated QG S0/S1 DA-baseline report to master, matching the L63/L96 convention (`reports/qg/` generator + `outputs/*.md`). The report covers the error-free S0 baseline and the S1 cross-resolution case (truth 64×64 vs DA model at da_nx=16 and da_nx=32), with the full S0/S1 settings and per-field (q/psi, per-layer) RMSE/EV/improv tables. Because the QG code (`data/qg.py`, `models/*`) lives only on `feat/qg-case-study`, the generator is JSON-only: it reads the curated S0/S1 result JSONs (committed on `feat/qg-case-study`) and a `qg_settings.json` snapshot, and renders the self-contained Markdown. The 4 dataset-spinup caches are copied into the local master worktree under `reports/qg_cache/` (gitignored via `*.pt`, so local-only and non-committed) so the datasets are accessible from the local `origin/master`.
