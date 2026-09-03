@@ -1,12 +1,14 @@
+import json
 import os
 import sys
-import json
 import time
-import torch
+
 import numpy as np
+import torch
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz96 import Lorenz96Config
-from evaluation.baselines import Weak4DVar, Strong4DVar, EnKF, ETKF, ObsOperator
+from evaluation.baselines import ETKF, EnKF, ObsOperator, Strong4DVar, Weak4DVar
 from models.lorenz96_dynamics import Lorenz96Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -141,7 +143,8 @@ def _method_truth(truth: torch.Tensor, method, obs_var_indices) -> torch.Tensor:
     return truth
 
 
-def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1, da_J=None):
+def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_size=1, da_J=None,
+                      eval_var_indices=None):
     rmse_list = []
     results_list = []
     all_sq_err = []
@@ -150,13 +153,15 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
     use_corrupted = getattr(cfg, 'use_corrupted_forcing', True)
     force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
     obs_var_indices = cfg.obs_var_indices
+    if eval_var_indices is None:
+        eval_var_indices = obs_var_indices
 
     def _subsample_es(es, analysis_eval):
         if es is None:
             return None
         es = np.asarray(es)
-        if obs_var_indices is not None and es.shape[-1] > len(obs_var_indices):
-            return es[..., obs_var_indices]
+        if eval_var_indices is not None and es.shape[-1] > len(eval_var_indices):
+            return es[..., eval_var_indices]
         return es[..., :analysis_eval.shape[-1]]
 
     if batch_size > 1 and callable(getattr(method, 'assimilate_batch', None)):
@@ -168,14 +173,14 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             force = torch.stack([w[force_key].to(device) for w in batch], dim=0)
             pw = [_per_window_params(w, cfg, da_J=da_J) for w in batch]
             kw = _build_eval_kwargs(pw, device)
-            results = method.assimilate_batch(obs, mask, force, _method_truth(truth, method, obs_var_indices), **kw)
+            results = method.assimilate_batch(obs, mask, force, _method_truth(truth, method, eval_var_indices), **kw)
             for result_idx, result in enumerate(results):
                 analysis = result.trajectory
-                if obs_var_indices is not None:
-                    ref = truth[result_idx].detach().cpu().numpy()[..., obs_var_indices]
+                if eval_var_indices is not None:
+                    ref = truth[result_idx].detach().cpu().numpy()[..., eval_var_indices]
                     analysis_eval = analysis
-                    if analysis_eval.shape[-1] > len(obs_var_indices):
-                        analysis_eval = analysis_eval[..., obs_var_indices]
+                    if analysis_eval.shape[-1] > len(eval_var_indices):
+                        analysis_eval = analysis_eval[..., eval_var_indices]
                 else:
                     ref = truth[result_idx].detach().cpu().numpy()
                     analysis_eval = analysis
@@ -200,13 +205,13 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
             force = w[force_key].to(device)
             kw = _per_window_params(w, cfg, da_J=da_J)
             _to_tensor_kw(kw, device)
-            result = method.assimilate(obs, mask, force, _method_truth(truth, method, obs_var_indices), **kw)
+            result = method.assimilate(obs, mask, force, _method_truth(truth, method, eval_var_indices), **kw)
             analysis = result.trajectory
-            if obs_var_indices is not None:
-                ref = truth.numpy()[..., obs_var_indices]
+            if eval_var_indices is not None:
+                ref = truth.numpy()[..., eval_var_indices]
                 analysis_eval = analysis
-                if analysis_eval.shape[-1] > len(obs_var_indices):
-                    analysis_eval = analysis_eval[..., obs_var_indices]
+                if analysis_eval.shape[-1] > len(eval_var_indices):
+                    analysis_eval = analysis_eval[..., eval_var_indices]
             else:
                 ref = truth.numpy()
                 analysis_eval = analysis
@@ -245,7 +250,12 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
-                             obs_j=2, obs_interval=100, fw_randomized=False):
+                             obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
+                             fw_randomized=False):
+    if s1_j is None:
+        s1_j = obs_j
+    if eval_j is None:
+        eval_j = obs_j
     if da_window_steps is None:
         N = int(3.0 / 0.001)
     else:
@@ -258,6 +268,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         param_suffix += f"_etkf_inf{etkf_config['inflation']}"
     if obs_j is not None and obs_j < 4:
         param_suffix += f"_obsj{obs_j}"
+    if s1_j != obs_j:
+        param_suffix += f"_s1j{s1_j}"
     if obs_interval is not None:
         param_suffix += f"_int{obs_interval}"
     if fw_randomized:
@@ -285,13 +297,17 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     J_truth = 4
     obs_var_indices = make_obs_j_indices(NO, J_truth, obs_j)
     obs_dim = len(obs_var_indices) if obs_var_indices is not None else NO * (1 + J_truth)
+    eval_var_indices = make_obs_j_indices(NO, J_truth, eval_j)
 
     s0_obs_op = ObsOperator(NO + NO * J_truth, obs_var_indices)
     s0_dynamics = Lorenz96Dynamics(dt=dt_l96, coupling_exponent=1.6)
 
-    s1_J = obs_j
+    s1_J = s1_j
     s1_state_dim = NO + NO * s1_J
-    s1_obs_indices = list(range(s1_state_dim))
+    if obs_var_indices is not None and set(obs_var_indices) <= set(range(s1_state_dim)):
+        s1_obs_indices = list(obs_var_indices)
+    else:
+        s1_obs_indices = list(range(s1_state_dim))
     s1_obs_op = ObsOperator(s1_state_dim, s1_obs_indices)
     if s1_J != J_truth:
         s1_dynamics = Lorenz96Dynamics(dt=dt_l96, NO=NO, J=s1_J, h=1.0, hx=1.0, eps=0.1,
@@ -326,14 +342,15 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
                              obs_interval=obs_interval, obs_var_indices=obs_var_indices)
-    cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
+    cfg_s1 = Lorenz96Config(case=2, param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
                              obs_interval=obs_interval, obs_var_indices=obs_var_indices)
     cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:
         partial["config"] = {"T_max": 3.0, "da_window_steps": N, "obs_j": obs_j,
+                              "s1_j": s1_J, "eval_j": eval_j,
                               "obs_interval": obs_interval, "obs_dim": obs_dim,
-                              "s1_J": s1_J, "s1_state_dim": s1_state_dim}
+                              "s1_state_dim": s1_state_dim}
 
     total_t0 = time.time()
 
@@ -352,7 +369,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             print(f"    {label}/{name:<15} ...", end=" ", flush=True)
             t1 = time.time()
             da_J = J_truth if case_name == "s0" else s1_J
-            ((m, s), (ev_arr, _), (es_arr, es_std)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size, da_J=da_J)
+            ((m, s), (ev_arr, _), (es_arr, _es_std)), bl_results = evaluate_baseline(method, ds, cfg, device, return_trajs=True, batch_size=batch_size, da_J=da_J, eval_var_indices=eval_var_indices)
             elapsed = time.time() - t1
 
             if case_name not in partial:

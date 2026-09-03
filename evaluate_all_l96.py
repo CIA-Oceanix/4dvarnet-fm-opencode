@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """Lorenz96 S0/S1 baseline evaluation — data generation + DA baselines + RMSE table."""
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 import time
-import torch
+
 import numpy as np
+import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval, _generate_observations
-from evaluation.run_l96 import run_and_cache_baselines, _BASELINE_METHODS, _BASELINE_CASES, make_obs_j_indices
+from data.lorenz96 import (
+    Lorenz96Config,
+    _generate_observations,
+    make_l96_s0_s1_trainval,
+)
+from evaluation.run_l96 import (
+    _BASELINE_CASES,
+    _BASELINE_METHODS,
+    make_obs_j_indices,
+    run_and_cache_baselines,
+)
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")
@@ -20,7 +30,7 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
-                  obs_j=2, obs_interval=100, fw_randomized=False):
+                  obs_j=2, s1_j=None, eval_j=None, obs_interval=100, fw_randomized=False):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -33,6 +43,8 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        strong_config=strong_config,
                                        exclude_methods=exclude_methods,
                                        obs_j=obs_j,
+                                       s1_j=s1_j,
+                                       eval_j=eval_j,
                                        obs_interval=obs_interval,
                                        fw_randomized=fw_randomized)
     return results
@@ -87,7 +99,13 @@ def main():
                         help="Comma-separated list of params to randomize (e.g. 'F' or 'F,c1,h,hx,eps'). "
                              "Default: all 5 params randomized.")
     parser.add_argument("--obs-j", type=int, default=2,
-                        help="Number of fast vars observed per slow node (default: 2)")
+                        help="Number of fast vars observed per slow node (default: 2). 0 = slow-only.")
+    parser.add_argument("--s1-j", type=int, default=None,
+                        help="S1 reduced-dynamics J (default: equal to obs_j). Decouples the S1 "
+                             "state space from the observation count.")
+    parser.add_argument("--eval-j", type=int, default=None,
+                        help="Fast vars in the eval metric group slow/obs_fast/all_obs "
+                             "(default: equal to obs_j). 24D eval for obs_j=0 uses eval-j 2.")
     parser.add_argument("--regenerate-data", action="store_true", default=False,
                         help="Force dataset regeneration, ignoring cached .pt file")
     parser.add_argument("--randomize", type=str, default=None,                        help='JSON dict of per-param randomization, e.g. '
@@ -121,7 +139,7 @@ def main():
     obs_var_indices = base_cfg.obs_var_indices
     obs_dim = len(obs_var_indices) if obs_var_indices is not None else 40
     print(f"Config: NO={base_cfg.NO} J={base_cfg.J} F_true={base_cfg.F_true}")
-    print(f"  obs_j={args.obs_j} obs_dim={obs_dim}")
+    print(f"  obs_j={args.obs_j} obs_dim={obs_dim}  s1_j={args.s1_j if args.s1_j is not None else args.obs_j}  eval_j={args.eval_j if args.eval_j is not None else args.obs_j}")
     print(f"  R_var={args.r_var} obs_interval={args.obs_interval} dws={args.da_window_steps}")
     print(f"  enkf_inflation={args.enkf_inflation} etkf_inflation={args.etkf_inflation}")
     if obs_var_indices is not None:
@@ -181,6 +199,8 @@ def main():
                                       strong_config={"max_iter": 10, "lr": 0.2},
                                       exclude_methods=exclude,
                                       obs_j=args.obs_j,
+                                      s1_j=args.s1_j,
+                                      eval_j=args.eval_j,
                                       obs_interval=args.obs_interval,
                                       fw_randomized="fast_weights" in randomize)
 

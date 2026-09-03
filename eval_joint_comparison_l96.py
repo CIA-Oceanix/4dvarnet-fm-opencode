@@ -5,19 +5,24 @@ Runs the same cached test datasets used by DA baselines and the neural models,
 then compares vanilla EnKF/ETKF/Strong-4DVar against their joint counterparts
 that also estimate L96 parameters (F, c1, hx, eps + fast_weights, h fixed).
 """
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-import torch
+
 import numpy as np
+import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.lorenz96 import Lorenz96Config, make_l96_s0_s1_trainval
 from evaluation.baselines import (
-    EnKF, ETKF, Strong4DVar,
-    JointEnKFL96, JointETKFL96, JointStrong4DVarL96,
+    ETKF,
+    EnKF,
+    JointEnKFL96,
+    JointETKFL96,
+    JointStrong4DVarL96,
+    Strong4DVar,
 )
 from evaluation.metrics import param_rmse
 from evaluation.run_l96 import evaluate_baseline, make_obs_j_indices
@@ -51,6 +56,14 @@ def main():
     parser.add_argument("--da-window-steps", type=int, default=500)
     parser.add_argument("--obs-interval", type=int, default=100)
     parser.add_argument("--obs-j", type=int, default=2)
+    parser.add_argument("--s1-j", type=int, default=None,
+                        help="S1 reduced-dynamics J (default: obs_j). Decouples S1 state space "
+                             "from the observation count.")
+    parser.add_argument("--eval-j", type=int, default=None,
+                        help="Fast vars in the eval metric group slow/obs_fast/all_obs "
+                             "(default: obs_j). Use 2 for a 24D eval under obs_j=0.")
+    parser.add_argument("--out-json", type=str, default=None,
+                        help="Output JSON path (default: experiments/l96_joint_comparison.json)")
     parser.add_argument("--num-test-windows", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--methods", type=str, default=None,
@@ -67,9 +80,15 @@ def main():
 
     NO = 8
     J_truth = 4
+    s1_j = args.obs_j if args.s1_j is None else args.s1_j
+    eval_j = args.obs_j if args.eval_j is None else args.eval_j
     obs_var_indices = make_obs_j_indices(NO, J_truth, args.obs_j)
-    s1_state_dim = NO + NO * args.obs_j
-    s1_obs_indices = list(range(s1_state_dim))
+    eval_var_indices = make_obs_j_indices(NO, J_truth, eval_j)
+    s1_state_dim = NO + NO * s1_j
+    if obs_var_indices is not None and set(obs_var_indices) <= set(range(s1_state_dim)):
+        s1_obs_indices = list(obs_var_indices)
+    else:
+        s1_obs_indices = list(range(s1_state_dim))
 
     base_cfg = Lorenz96Config(
         case=1, dt=0.001, T_max=3.0, obs_interval=args.obs_interval,
@@ -79,7 +98,7 @@ def main():
         fast_weights=[1.0, 1.0, 0.1, 0.1],
         randomize={"fast_weights": {"randomized": False, "biased": True, "bias": 0.0}},
     )
-    print(f"Config: obs_j={args.obs_j}, obs_interval={args.obs_interval}, dws={args.da_window_steps}")
+    print(f"Config: obs_j={args.obs_j}, s1_j={s1_j}, eval_j={eval_j}, obs_interval={args.obs_interval}, dws={args.da_window_steps}")
 
     # Reuse cached test datasets (same as DA baselines); generate if missing.
     ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}.pt")
@@ -96,7 +115,7 @@ def main():
         torch.save(datasets, ds_cache)
     print(f"  test_s0: {len(datasets['test_s0'])} windows, test_s1: {len(datasets['test_s1'])} windows")
 
-    cases = [("S0", "test_s0", 1.6, 4), ("S1", "test_s1", 1.0, args.obs_j)]
+    cases = [("S0", "test_s0", 1.6, 4), ("S1", "test_s1", 1.0, s1_j)]
     if args.cases:
         keep_cases = {c.strip() for c in args.cases.split(",") if c.strip()}
         cases = [c for c in cases if c[0] in keep_cases]
@@ -137,17 +156,17 @@ def main():
             raise SystemExit(f"Unknown method(s): {sorted(missing)}")
         method_factories = {k: v for k, v in method_factories.items() if k in keep}
 
-    from models.lorenz96_dynamics import Lorenz96Dynamics
     from evaluation.baselines import ObsOperator
+    from models.lorenz96_dynamics import Lorenz96Dynamics
     s0_dyn = Lorenz96Dynamics(dt=0.001, coupling_exponent=1.6)
     s0_obs_op = ObsOperator(NO + NO * J_truth, obs_var_indices)
-    s1_dyn = Lorenz96Dynamics(dt=0.001, NO=NO, J=args.obs_j, h=1.0, hx=1.0, eps=0.1,
+    s1_dyn = Lorenz96Dynamics(dt=0.001, NO=NO, J=s1_j, h=1.0, hx=1.0, eps=0.1,
                               coupling_exponent=1.0)
     s1_obs_op = ObsOperator(s1_state_dim, s1_obs_indices)
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
                              obs_interval=args.obs_interval, obs_var_indices=obs_var_indices)
-    cfg_s1 = Lorenz96Config(param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
+    cfg_s1 = Lorenz96Config(case=2, param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
                              obs_interval=args.obs_interval, obs_var_indices=obs_var_indices)
     cfg_map = {"S0": cfg_s0, "S1": cfg_s1}
 
@@ -173,7 +192,8 @@ def main():
         for method_name, factory in method_factories.items():
             method = factory(dyn, op, J)
             (rmse_stats, expvar_stats, es_stats), bl_results = evaluate_baseline(
-                method, ds, cfg, device, return_trajs=True, batch_size=args.batch_size, da_J=da_J)
+                method, ds, cfg, device, return_trajs=True, batch_size=args.batch_size, da_J=da_J,
+                eval_var_indices=eval_var_indices)
             print(f"  [{method_name}] finite windows: {len(bl_results)}/{len(ds)}")
             mean_rmse = rmse_stats[0]
             ev_arr = expvar_stats[0]
@@ -231,7 +251,8 @@ def main():
 
         results[label] = case_results
 
-        traj_path = os.path.join(EXP_DIR, "l96_joint_baselines_trajectories.npz")
+        traj_suffix = f"_obsj{args.obs_j}_s1j{s1_j}"
+        traj_path = os.path.join(EXP_DIR, f"l96_joint_baselines_trajectories{traj_suffix}.npz")
         merged = dict(traj_arrays)
         if os.path.exists(traj_path):
             with np.load(traj_path, allow_pickle=False) as existing:
@@ -240,7 +261,7 @@ def main():
         print(f"  Saved {label} reconstructions to {traj_path} "
               f"({len(merged)} arrays)")
 
-    out_path = os.path.join(EXP_DIR, "l96_joint_comparison.json")
+    out_path = args.out_json or os.path.join(EXP_DIR, "l96_joint_comparison.json")
     # Merge into any existing results (e.g. when re-running only a method subset),
     # preserving entries for methods/cases not run this invocation.
     existing = {}
