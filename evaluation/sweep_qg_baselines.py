@@ -40,7 +40,11 @@ def main():
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--cols-per-day-list", default=None)
     ap.add_argument("--obs-noise-frac-list", default=None)
-    ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
+    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q",
+                    help="DA state representation: 'q' (PV q-state, the DEFAULT "
+                         "QG DA config), 'psi' (q-state with psi-obs H-function), "
+                         "or 'psi_state' (streamfunction as the state, a research "
+                         "alternative, not the default)")
     ap.add_argument("--obs-var-r-scale-list", default=None)
     ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--outdir", default="reports/qg/outputs/figs")

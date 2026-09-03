@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-09-03: Consolidated q-state vs psi-state QG DA report + q-state declared the default DA config
+
+**Summary:** Added a dedicated JSON-only report generator `reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md` that consolidates the q-state vs psi-state DA comparison for S0 and S1 (same-res da_nx=64 + cross-res da_nx=32) with per-field explained variance (PV q1/q2/qall, streamfunction psi1/psi2). The report states the decision that **q-state is the default DA configuration**. The default is now explicit in the QG DA config entry points: `--obs-var` help in both `evaluation/run_qg_baselines.py` and `evaluation/sweep_qg_baselines.py` documents `'q'` (PV q-state) as the production-default representation, with `'psi'`/`'psi_state'` as research alternatives.
+
+**Headline:** q-state wins on the PV q field in every case (S0 qall 0.752 vs psi-state 0.583; S1 same-res 0.428 vs −2.93; da_nx=32 0.340 vs −3.22); psi-state is competitive on the streamfunction field (S0 psi1/psi2 0.976/0.978, the best per-field result) but its q field collapses because the PV diagnostic q ≈ ∇²ψ amplifies high-wavenumber psi-analysis error by K². q-state keeps the scored PV field well-conditioned and is the robust default.
+
+**Files modified:**
+- `reports/qg/generate_qg_psi_state_report.py` — new JSON-only generator (Decision, Representations, per-case tables, summary, interpretation)
+- `reports/qg/outputs/qg_psi_state_report.md` — generated report
+- `evaluation/run_qg_baselines.py`, `evaluation/sweep_qg_baselines.py` — `--obs-var` help text states q-state is the default
+- `PLAN.md` — QG section QA bullet (default-config decision); `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked for a consolidated report summing the q-state vs psi-state comparison across S0/S1 and to record that q-state remains the default DA config (in the report and config). This delivers both and makes the default unambiguous in the DA entry points.
+
+**Verification:** report generator runs cleanly (no missing-JSON warning); `py_compile` on the generator + both eval files; `ruff check` clean on both eval files; `pytest tests/{test_qg_psi_state,test_qg_baselines}.py -m "not slow"` green.
+
+## 2026-09-03: S0 psi-state DA re-run at q-state-matching obs noise (0.01) — apples-to-apples per-field benchmark
+
+**Summary:** Re-ran the S0 psi-state DA ETKF benchmark at `--obs-noise-frac-list 0.01` (job 51541) so the S0 q-state vs psi-state comparison is apples-to-apples with full `metrics_per_field` (the committed default-noise 0.05 q-state reference `qg_s0_lag_sweep_psi` stores only the aggregate `qall`). Output: `reports/qg/outputs/qg_s0_psi_state_nz0p01_lag1p0/`. Adds `batch/run_qg_s0_psi_state_nz0p01.sbatch` (mirrors the S1 psi_state runners, S0-only, noise 0.01). The earlier S0 psi-state run at default 0.05 (`qg_s0_psi_state_lag1p0`, qall 0.487) is preserved.
+
+**Result (S0, 5-window ETKF, 4 cols/day, lag 1.0, noise 0.01):** psi-state **qall 0.583** (`q1` 0.762 / `q2` 0.403, rmse 6.74e-06), **psi1 0.976 / psi2 0.978**. Same-noise q-state psi-obs reference: **qall 0.752** (0.815/0.688), psi 0.966/0.971. At 0.01 noise the psi-state q-field is closer to q-state than at 0.05 (0.583 vs 0.487), but q-state still wins on every q metric (gap dominated by `q2` 0.403 vs 0.688); psi-state's streamfunction analysis is the best per-field on S0 (psi1/psi2 ≈ 0.98).
+
+**Files modified:**
+- `batch/run_qg_s0_psi_state_nz0p01.sbatch` — new S0 psi-state noise-0.01 runner
+- `reports/qg/outputs/qg_s0_psi_state_nz0p01_lag1p0/` — new result JSON
+- `CHANGELOG.md` — this entry
+
+**Rationale:** The user asked to benchmark psi-state S0 at the same noise level as the q-state DA (0.01) for a clean apples-to-apples per-field (q1/q2/qall, psi1/psi2) comparison, instead of the 0.05-vs-0.01 mismatch.
+
+**Verification:** Job 51541 COMPLETED exit 0 (3:23). JSON `metrics_per_field` q1/q2/qall 0.762/0.403/0.583, psi1/psi2 0.976/0.978; `bash -n` on the new sbatch.
+
+## 2026-09-03: QG psi-state DA extended to cross-resolution (S1, da_nx=32) — H-mode psi obs operator; q-field skill degeneracy isolates a psi↔q representation limitation
+
+**Summary:** Extended `obs_var="psi_state"` to **cross-resolution** QG DA (S1 with `da_nx=32` vs truth 64, same corruptions as the q-state `qg_s1_da32` case: param bias + corrupted wind). The psi-state branch of `_make_obs_system` is switched from the **index-mode** `ObsOperator` (valid only when the DA/obs grids match) to an **H-mode** operator `_psi_h`, which spectrally upsamples the DA-model psi-state to the obs grid before selecting the observed upper-layer columns — identical geometry to the `psi` path, but reading the psi-state directly (`_PsiMixin.streamfunctions` is the identity reshape). The cross-resolution `ValueError` guard for `psi_state` is removed (the `q` guard stays); `run()` now routes `psi_state` through the H-mode/`_build_qg_col_loc_matrices` block used by `psi`. Same-resolution behavior is **bit-identical** (re-verified: same-res S1 psi_state EV −2.925/EV_free −0.232 under the new code, exactly matching the cached index-mode result). Added 2 CPU cross-res tests (finite encrypted run + H-operator = manual `streamfunctions`+resize+column-select recomputation).
+
+**Result (S1, 5-window ETKF, cols=4, nz=0.01, N=80):** the cross-res psi_state DA is finite and the analysis **streamfunction field is skilful** (`metrics_per_field.psi.full.ev` = **+0.594** lag 1.0 / +0.49 lag 2.0), but the **PV (q) field — what `expvar_full` reports — collapses** (`q.full.ev` = **−3.216** lag 1.0 / −3.665 lag 2.0). This reproduces, at da_nx=32, the same-res S1 psi_state degeneracy (psi ev +0.606 / q ev −2.925). vs the cached q-state+psi-obs da_nx=32 reference (EV_full **+0.340**), the psi_state scheme is far worse **on the q-field**. **Root cause (physical, not a code bug):** `_free_forecast_rmse`/analysis metrics convert the psi analysis to PV via `forward_pv` (q ≈ ∇²ψ), which **amplifies high-wavenumber psi-analysis error by K²** — so a psi analysis that is good in bulk (dominated by large-scale structure, EV +0.6) has small-scale error that explodes under the PV conversion, destroying q-field EV. The psi-state representation is well-conditioned **for streamfunction observations** (trivial H, no per-step spectral inversion) but is intrinsically hostile to **PV-field skill scoring** because the metric is a K²-differentiated (noise-amplifying) view of the state. The free-forecast parity holds exactly (EV_free identical to the q-state run, confirming the dynamics are unchanged; the divergence is purely in the assimilated analysis q-field).
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — `_make_obs_system` psi_state branch → H-mode `_psi_h` + `_build_qg_col_loc_matrices`; removed psi_state cross-res guard (kept q guard); `run()` branch conditions (`q` index-block only for `q`; `psi`/`psi_state` shared H-block)
+- `tests/test_qg_psi_state.py` — replaced `test_s1_cross_res_psi_state_rejected` with `test_s1_cross_res_psi_state_finite` + new `test_psi_state_cross_res_obs_op_matches_manual_h`
+- `batch/run_qg_s1_psi_state_da32.sbatch` — new 2-task (lag 1.0/2.0) S1 da_nx=32 cross-res psi_state runner
+- `reports/qg/outputs/qg_s1_psi_state_da32_lag1p0/`, `.../lag2p0/` — result JSONs
+- `PLAN.md` — QG section psi-state bullet updated (cross-res supported; q-field degeneracy note)
+- `CHANGELOG.md` — this entry
+- (earlier-session psi_state work this builds on, already staged: `evaluation/baselines.py` `.cpu().numpy()` fix at 11 sites, `models/qg_psi_dynamics.py` device-anchored `psi_to_q`/`q_to_psi`, `evaluation/sweep_qg_baselines.py` `--obs-var` + psi_state choice, `batch/run_qg_psi_state_5w.sbatch`, `reports/qg/outputs/{qg_s0,qg_s1_nores}_psi_state_lag1p0/`)
+
+**Rationale:** The user's objective was to extend psi-state DA to cross-resolution and benchmark it vs the q-state+psi-obs reference. The H-mode operator is the minimal, correct way to make the trivial-index-lookup psi observation op work across grids (it reuses the already-cross-res-correct `_psi_h`). The result is a clean demonstration that while the psi-state formulation is well-suited to streamfunction observations, its q-field (PV) skill degrades under cross-resolution + S1 corruption due to the K² noise amplification of the psi→q conversion — a real modelling insight worth recording rather than papering over.
+
+**Verification:** `pytest tests/{test_qg_dynamics,test_qg_data,test_qg_baselines,test_qg_s0s1,test_qg_random_columns,test_qg1l_dynamics,test_qg_psi_state}.py -m "not slow"` — **109 passed, 8 deselected** (includes the 2 new cross-res tests). Same-res S1 psi_state re-run (job 51532) reproduces the cached index-mode result exactly (EV −2.925/EV_free −0.232). da_nx=32 psi_state run (job 51519, lag 1.0/2.0) COMPLETED exit 0. `ruff check` clean on `run_qg_baselines.py` + `test_qg_psi_state.py`; `bash -n` on the new sbatch.
+
 ## 2026-09-03: UNet param-head JointDirectUNet (L12) + coupled JointCFM ODE (L10)
 
 **Summary:** Objective: replace the initial CNN param heads with a **UNet param head** across both

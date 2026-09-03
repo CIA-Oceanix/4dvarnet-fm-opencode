@@ -246,17 +246,22 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
         return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
     if obs_var == "psi_state":
-        # Psi-state: the DA state itself is the streamfunction, so the
-        # observation operator is a trivial index lookup into the upper-layer
-        # psi entries (same geometry as q-obs, valid only for a same-resolution
-        # DA model; cross-resolution is rejected in run()).
+        # Psi-state: the DA state itself is the streamfunction. For a
+        # same-resolution DA model we could use a trivial index lookup, but to
+        # support cross-resolution (S1, da_nx < nx) we use the H-mode operator
+        # `_psi_h`, which spectrally upsamples the DA-model psi-state to the
+        # obs (truth) grid before selecting the observed upper-layer columns
+        # (identical geometry to the `psi` path, but reading the psi-state
+        # directly -- `_PsiMixin.streamfunctions` is the identity reshape).
         dyn = _build_dyn(cfg, window, device, psi_state=True)
+        obs_cols = _event_columns(cfg, window)
+        h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
         obs = window["obs"].to(device)
         r_var = (cfg.obs_noise_std_frac
                  * float(window["target_state_psi"].std())) ** 2
-        per_time = _q_obs_indices_t(cfg, window)
-        obs_operator = ObsOperator(dyn.state_dim, obs_indices_t=per_time)
-        return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
+        od = cfg.cols_per_day * cfg.ny
+        obs_op = ObsOperator(dyn.state_dim, h=h, h_index_at=None, n_obs=od)
+        return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_loc_matrices
     else:
         dyn = _build_dyn(cfg, window, device)
         obs_cols = _event_columns(cfg, window)
@@ -512,12 +517,6 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     "obs_var='q' is not supported for a cross-resolution DA model "
                     "(S1): the PV-obs indices select truth-grid points that have no "
                     "one-to-one mapping in the lower-res state. Use obs_var='psi'.")
-            if obs_var == "psi_state" and cross_res:
-                raise ValueError(
-                    "obs_var='psi_state' is not supported for a cross-resolution "
-                    "DA model (S1): a trivial index lookup of the psi-state needs "
-                    "the DA and obs grids to match. Use obs_var='psi' (which "
-                    "spectrally resamples in H) for cross-resolution.")
             obs, r_var, obs_op, _ = _make_obs_system(cfg, w,
                                                                device,
                                                                obs_var,
@@ -559,7 +558,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 init_ensemble = _ensemble_from_init(
                     shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
-            if obs_var in ("q", "psi_state"):
+            if obs_var == "q":
                 per_time = _q_obs_indices_t(cfg, w)
                 field_std = float(
                     (w["target_state_q"] if obs_var == "q"
@@ -582,7 +581,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
-            else:  # obs_var == "psi"
+            else:  # obs_var in ("psi", "psi_state")
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None:
@@ -738,7 +737,11 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--init", choices=["lagged", "white"], default="lagged")
     ap.add_argument("--geometry", choices=["alongtrack", "random_columns"], default="alongtrack")
-    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q")
+    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q",
+                    help="DA state representation: 'q' (PV q-state, the DEFAULT "
+                         "QG DA config), 'psi' (q-state with psi-obs H-function), "
+                         "or 'psi_state' (streamfunction as the state, a research "
+                         "alternative, not the default)")
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)

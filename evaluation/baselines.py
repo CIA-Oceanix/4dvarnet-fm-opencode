@@ -586,7 +586,7 @@ class Strong4DVar:
         H = self.obs_operator
 
         # ES accumulator for deterministic methods (N=1 -> ES = MAE)
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_acc = _ESAccumulator(num_steps, self.state_dim, 1) if ref_full is not None else None
@@ -713,7 +713,7 @@ class Strong4DVar:
             current_bg = final_traj[:, -1].detach()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
@@ -830,7 +830,7 @@ class ETKF:
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -953,7 +953,7 @@ class ETKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_accs = (
@@ -1147,7 +1147,7 @@ class EnKF:
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_acc = _ESAccumulator(num_steps, self.state_dim, self.N_ensemble) if ref_full is not None else None
@@ -1242,7 +1242,7 @@ class EnKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_accs = (
@@ -2269,7 +2269,7 @@ class JointEnKFL96(EnKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -2360,7 +2360,7 @@ class JointEnKFL96(EnKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_accs = (
@@ -2547,7 +2547,7 @@ class JointETKFL96(ETKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -2638,7 +2638,7 @@ class JointETKFL96(ETKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_accs = (
@@ -2774,7 +2774,7 @@ class JointStrong4DVarL96(Strong4DVar):
         n_est = self._n_scl + len(fw_full)
         param_est = np.zeros((num_steps, n_est))
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, 1) if ref_full is not None else None

@@ -104,13 +104,49 @@ def test_s1_qg1l_psi_state_finite():
     assert np.isfinite(s["expvar_full"])
 
 
-def test_s1_cross_res_psi_state_rejected():
-    """psi_state requires matching DA/obs grids; cross-resolution must raise."""
+def test_s1_cross_res_psi_state_finite():
+    """Cross-resolution psi_state (S1, da_nx < nx) is finite and skilful now
+    that it uses the H-mode obs operator (`_psi_h` spectrally resamples the
+    DA-model psi-state to the obs grid)."""
     from evaluation.run_qg_baselines import run
     cfg = _cfg(nx=8, da_nx=4)
     ds = make_qg_s0_s1_datasets(cfg)
-    with pytest.raises(ValueError, match="psi_state"):
-        run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
+    p = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=8,
             inflation=1.0, loc_radius=4.0, scenarios=("test_s1",),
             init="lagged", geometry="random_columns",
             obs_var="psi_state", init_lag_days=0.5, ds=ds)
+    s = p["scenarios"]["test_s1"]
+    assert np.isfinite(s["rmse_mean"])
+    assert np.isfinite(s["expvar_full"])
+    # Analyses are produced (upsampled to the truth grid) and the free
+    # forecast is computed via the psi->q cross-res path.
+    assert np.isfinite(s["forecast_rmse_mean"])
+
+
+def test_psi_state_cross_res_obs_op_matches_manual_h():
+    """The H-mode psi_state obs operator is exactly the psi-state
+    streamfunction (identity reshape) spectrally upsampled to the obs grid and
+    column-selected -- reproducing a manual recomputation on the same model."""
+    from evaluation.run_qg_baselines import _build_dyn, _event_columns, _make_obs_system
+    from models.qg_interp import spectral_resize_2d
+    cfg = _cfg(nx=8, da_nx=4)
+    ds = make_qg_s0_s1_datasets(cfg)
+    w = ds["test_s1"][0]
+    device = torch.device("cpu")
+    dyn = _build_dyn(cfg, w, device, psi_state=True)
+    obs_op = _make_obs_system(cfg, w, device, "psi_state",
+                              loc_radius=4.0)[2]
+    obs_cols = _event_columns(cfg, w)
+    assert obs_op.h_mode
+    psi_state = torch.randn(dyn.state_dim, dtype=torch.float64)
+    psi = dyn.inner.streamfunctions(psi_state)          # (2, da_nx, da_nx)
+    psi_r = spectral_resize_2d(psi, cfg.ny, cfg.nx)     # (2, ny, nx)
+    psi1 = psi_r[0]                                     # upper layer (ny, nx)
+    for t in w["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+        cols = obs_cols[t]
+        if cols is None:
+            continue
+        out = obs_op(psi_state, index=t)
+        want = torch.cat([psi1[:, c] for c in cols])
+        assert torch.allclose(out, want, atol=1e-9), (
+            f"t={t} psi_state H vs manual mismatch")
