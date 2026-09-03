@@ -1,5 +1,3 @@
-# Changelog
-
 ## 2026-09-03: Consolidated q-state vs psi-state QG DA report + q-state declared the default DA config
 
 **Summary:** Added a dedicated JSON-only report generator `reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md` that consolidates the q-state vs psi-state DA comparison for S0 and S1 (same-res da_nx=64 + cross-res da_nx=32) with per-field explained variance (PV q1/q2/qall, streamfunction psi1/psi2). The report states the decision that **q-state is the default DA configuration**. The default is now explicit in the QG DA config entry points: `--obs-var` help in both `evaluation/run_qg_baselines.py` and `evaluation/sweep_qg_baselines.py` documents `'q'` (PV q-state) as the production-default representation, with `'psi'`/`'psi_state'` as research alternatives.
@@ -453,6 +451,30 @@ persistent governance choice: it applies to every future master PR.
 suite (91 passed) both green against the merged `baselines.py`; `python -m py_compile`
 clean; `reports/qg/generate_qg_s0s1_report.py --json-root reports/qg/outputs/` regenerates
 the report; ruff informational.
+
+## 2026-09-02: Slow-only (obsj0) DA baselines + S1 corrupted-forcing fix
+
+**Summary:** Decoupled the L96 DA observation count from the S1 reduced-dynamics J and the eval metric group so a new **slow-only observation** configuration (obs_j=0, only the 8 slow X observed; no fast Y) can be benchmarked against the canonical obsj2 config on the **same** 200-window cached S0/S1 set. Ran state-only (EnKF/ETKF/Strong-4DVar) and joint state+param (Joint-EnKF/Joint-ETKF/Joint-Strong-4DVar) DA baselines in that config (4 GPU jobs). Separately, fixed a **S1 corrupted-forcing bug**: `cfg_s1` in both DA evaluation paths was built without `case=2`, so `evaluate_baseline` fed the DA the **true** forcing instead of the corrupted one on S1 (the `forcing_state_bias=0.1` corruption was silently dropped). Applied the fix, re-ran the canonical obsj2 S1 DA, swapped the caches (`.bak` backups), and regenerated the consolidated/joint DA/joint-neural reports. Added a new obs-density report comparing obsj0 vs obsj2.
+
+**Files modified:**
+- `evaluation/run_l96.py` — `run_and_cache_baselines(..., s1_j, eval_j)` decouples S1 dynamics J and the eval metric group from `obs_j`; S1 `ObsOperator` observes only the slow subset; `evaluate_baseline(..., eval_var_indices)` separates observation-fed dims from eval-subspace dims; `cfg_s1` now `case=2` (S1 DA feeds `forcing_corrupted`)
+- `evaluate_all_l96.py` — `--s1-j`/`--eval-j` args; slow-only dataset path; threads decoupling
+- `eval_joint_comparison_l96.py` — `--s1-j`/`--eval-j`/`--out-json` args; slow-only obs operators; separate trajectory npz; `cfg_s1` `case=2`
+- `batch/prep_l96_obsj0_cache.py` — new: re-observes the canonical obsj2 cache's `true_state` with slow-only indices → `l96_datasets_obsj0_int100_nwin200.pt` (same trajectories/params, reproducible obs noise)
+- `batch/run_l96_da_slowobs.sbatch`, `batch/run_l96_joint_comparison_slowobs.sbatch` — current-experiment slow-only DA runs
+- `batch/run_l96_da_s0c_s1fix.sbatch`, `batch/run_l96_joint_comparison_s1fix.sbatch` — canonical S1-fix re-runs (parallel `_s1cfix` outputs)
+- `tests/test_lorenz96_training.py` — 2 regression tests: `test_evaluate_baseline_obs_eval_decoupled_slow_only`, `test_s1_da_cfg_uses_corrupted_forcing`
+- `reports/l96/generate_l96_obs_density_report.py` + `outputs/l96_obs_density_da_baselines.md` — new obs-density report (obsj0 vs obsj2)
+- `reports/l96/outputs/{l96_consolidated_benchmark,l96_joint_da_benchmark,l96_joint_neural_benchmark}.md` — regenerated with corrected S1 DA rows
+- `PLAN.md` — this session's design/decisions + results recorded
+
+**Rationale:** (1) Expose how DA skill changes when only the slow scale is observed (the fast vars become unobserved stress-test targets), directly comparable to obsj2 via the shared 24D eval group. (2) The S1 DA forcing was silently wrong: `cfg_s1` used `case=1` so `use_corrupted_forcing=False` and `evaluate_baseline` selected `forcing_true` — every published S1 DA number (canonical + neighbor lineages) was computed on the true forcing, not the corrupted one the S1 design intends. The fix (case=2) makes S1 actually exercise forcing corruption.
+
+**Results (cached S0/S1, Obs30, 200 windows, 24D eval):** Slow-only obs degrades state RMSE vs obsj2 (S0 EnKF 1.27 vs 0.89, ETKF 1.25 vs 0.87, Joint-ETKF 1.19 vs 0.64; S1 EnKF 1.70 vs 1.51, Joint-ETKF 1.60 vs 1.51) but the **slow subgroup stays accurate** (S0 slow ≈ 0.41—0.46; the degradation lives in the unobserved obs_fast group). Joint-DA **parameter** recovery: S1 Joint-ETKF 0.130 → 0.158 (hx/F degrade, w1/w2 unchanged), S0 slightly improves (0.045 vs 0.054, driven by F). Corrupted-forcing fix changes S1 only mildly over forced-true (filters <1%, e.g. Joint-ETKF 1.4976→1.5125), i.e. the DA is robust to the forcing corruption; S0 reproduced within noise. Full tables: `reports/l96/outputs/l96_obs_density_da_baselines.md`.
+
+**Verification:** `pytest tests/{test_lorenz96_training,test_joint_estimation_l96,test_energy_score,test_baselines_hydra}.py -m "not slow"` — 87 passed. ruff clean on touched lines (only repo-wide EXE001 shebang debt remains). Consolidated report consistency checks PASS (DA max |Δ|=2.16e-04, neural truth 0.0). All 4 GPU jobs COMPLETED exit 0. S0 gate passed (<2% for all state-only methods, confirming the S1 fix did not disturb S0).
+
+
 
 ## 2026-09-01: L96 joint-DA reconstruction artifacts + full 6-method comparison JSON
 

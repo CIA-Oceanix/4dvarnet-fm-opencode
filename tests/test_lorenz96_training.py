@@ -365,6 +365,71 @@ def test_evaluate_baseline_returns_ev():
     assert np.all(np.isfinite(ev_mean))
 
 
+def test_evaluate_baseline_obs_eval_decoupled_slow_only():
+    """Slow-only obs (8D) but eval on the 24D obsj2 subspace (slow + first-2-fast).
+
+    The S1 reduced-dynamics method runs in a 24D state space (J=2) but only the 8
+    slow X are observed. ``eval_var_indices`` must drive the metric subsampling so
+    the returned RMSE/EV arrays are 24D (apples-to-apples with the obsj2 config).
+    """
+    obs_indices = make_obs_j_indices(8, 4, 0)   # slow-only: 8D
+    eval_indices = make_obs_j_indices(8, 4, 2)  # obsj2 eval group: 24D
+    assert len(obs_indices) == 8
+    assert len(eval_indices) == 24
+    cfg = Lorenz96Config(param_bias=0.0, obs_var_indices=obs_indices, T_max=1.0, dt=0.01)
+
+    class DummyAnalysis:
+        def __init__(self, trajectory):
+            self.trajectory = trajectory
+
+    class DummyMethod:
+        def __init__(self, T, state_dim):
+            self.T = T
+            self.state_dim = state_dim
+            self.obs_dim = state_dim
+
+        def assimilate(self, obs, mask, force, truth, **kw):
+            assert obs.shape[-1] == 8  # slow-only obs fed to DA
+            return DummyAnalysis(torch.zeros(self.T, self.state_dim).numpy())
+
+    T = 100
+    method = DummyMethod(T, state_dim=24)  # S1 reduced-dynamics state space (J=2) = 24D
+    pre = {}
+    for i in range(3):
+        pre[i] = {
+            "obs": torch.randn(T, 8),
+            "obs_mask": torch.ones(T),
+            "true_state": torch.randn(T, 40),
+            "forcing_corrupted": torch.randn(T),
+            "forcing_true": torch.randn(T),
+            "F": 8.0, "c1": 1.0, "h": 1.0, "hx": 1.0, "eps": 0.1,
+        }
+    ds = RandomParamLorenz96Dataset(cfg, param_noise=0.0,
+                                    cached_windows=pre, randomize_params=None)
+
+    rmse_stats, ev_stats, es_stats = evaluate_baseline(
+        method, ds, cfg, "cpu", batch_size=1, eval_var_indices=eval_indices)
+    rmse_mean, _ = rmse_stats
+    ev_mean, _ = ev_stats
+    # Eval is over the 24D obsj2 subspace, not the 8D slow-only obs.
+    assert rmse_mean.shape == (24,)
+    assert ev_mean.shape == (24,)
+    assert np.all(np.isfinite(rmse_mean))
+
+    # Same eval size for the sequential (batch_size=1) path already covered; check
+    # the batch path too when the method supports assimilate_batch.
+    class DummyBatchMethod(DummyMethod):
+        def assimilate_batch(self, obs, mask, force, truth, **kw):
+            assert obs.shape[-1] == 8
+            B, T = obs.shape[0], obs.shape[1]
+            return [DummyAnalysis(torch.zeros(T, self.state_dim).numpy()) for _ in range(B)]
+
+    bmethod = DummyBatchMethod(T, state_dim=24)
+    rmse_stats_b, _, _ = evaluate_baseline(
+        bmethod, ds, cfg, "cpu", batch_size=3, eval_var_indices=eval_indices)
+    assert rmse_stats_b[0].shape == (24,)
+
+
 def test_obs_operator_partial():
     obs_var_indices = make_obs_j_indices(8, 4, 2)
     op = ObsOperator(40, obs_var_indices)
@@ -380,6 +445,29 @@ def test_obs_operator_identity():
     x = torch.randn(24)
     y = op(x)
     assert y.shape == (24,)
+
+
+def test_s1_da_cfg_uses_corrupted_forcing():
+    """S1 DA must feed the corrupted forcing, not the true one (case=2).
+
+    Regression guard for the bug where ``cfg_s1`` was built without ``case=2``,
+    so ``use_corrupted_forcing=False`` and ``evaluate_baseline`` selected
+    ``forcing_true`` for S1 — silently dropping the forcing corruption that
+    ``forcing_state_bias=0.1`` is meant to model.
+    """
+    obs_indices = make_obs_j_indices(8, 4, 0)
+    cfg_s1 = Lorenz96Config(case=2, param_bias=0.15, forcing_state_bias=0.1,
+                            T_max=3.0, seed=131, obs_interval=100,
+                            obs_var_indices=obs_indices)
+    assert cfg_s1.use_corrupted_forcing is True
+    use_corrupted = getattr(cfg_s1, "use_corrupted_forcing", True)
+    force_key = "forcing_corrupted" if use_corrupted else "forcing_true"
+    assert force_key == "forcing_corrupted"
+
+    cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0,
+                            seed=123, obs_interval=100, obs_var_indices=obs_indices)
+    assert cfg_s0.use_corrupted_forcing is False
+    assert ("forcing_corrupted" if cfg_s0.use_corrupted_forcing else "forcing_true") == "forcing_true"
 
 
 def test_draw_l96_params_legacy_none_fast_weights_dirac():

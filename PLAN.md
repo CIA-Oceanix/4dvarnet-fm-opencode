@@ -409,6 +409,33 @@ table now lists all 6 DA methods (incl. Joint-Strong-4DVar). Note the master com
 report retains oracle-free neural values; a stale local regeneration against oracle-era JSONs
 on the master worktree was discarded in favor of the merged oracle-free content.
 
+### S1 DA corrupted-forcing fix (2026-09-02) + slow-only obsj0 DA baselines
+
+**S1 forcing bug fixed:** `cfg_s1` in both DA eval paths (`run_and_cache_baselines` and
+`eval_joint_comparison_l96.py`) was built without `case=2`, so `Lorenz96Config.use_corrupted_forcing`
+returned False and `evaluate_baseline` fed the DA the **true** forcing (`forcing_true`) on S1 —
+the `forcing_state_bias=0.1` corruption designed into S1 was silently never applied to the DA
+(the cached S1 windows *do* hold a genuine `forcing_corrupted`; it was just never read). Fixed by
+setting `case=2` in `cfg_s1` (S0 unchanged). Re-ran the canonical obsj2 S1 DA (state-only + joint)
+with the fix; **S1 changes only mildly** (filters <1%: Joint-ETKF 1.4976→1.5125, EnKF 1.5044→1.5123,
+Strong-4DVar 1.4319→1.4369) — the DA is robust to the forcing corruption. **S0 reproduced within
+noise** (S0 gate <2%), confirming the fix did not disturb S0. Canonical caches swapped (`.bak`
+backups: `l96_baselines_dws500_s0c_*_obsj2_int100_fw.json*` + `l96_joint_comparison.json`); the
+consolidated / joint-DA / joint-neural reports regenerated with the corrected S1 rows.
+
+**New slow-only obsj0 configuration (2026-09-02):** decoupled the observation count from the S1
+reduced-dynamics J and the eval metric group. Now `run_and_cache_baselines` / the comparator take
+`obs_j` (fast vars observed; 0 = slow-only), `s1_j` (S1 reduced dynamics J, kept=2 for the obsj0
+study), and `eval_j` (eval metric group, kept=2 → the same 24D slow+first-2-fast group) — all three
+independent. This lets a **slow-only** observation (only the 8 slow X) be scored on the identical
+24D eval subspace as the canonical obsj2 config, apples-to-apples. Ran state-only + joint DA
+baselines (obsj0, Obs30, 200 windows): S0 EnKF 1.27 / ETKF 1.25 / Strong-4DVar 1.44 / Joint-ETKF
+1.19; S1 EnKF 1.70 / ETKF 1.71 / Strong-4DVar 1.62 / Joint-ETKF 1.60. vs obsj2 the degradation is
+dominated by the **unobserved** obs_fast group (S0 obs_fast ≈ 1.6–1.95 vs 0.88–1.10 obsj2) while the
+**slow subgroup is preserved** (S0 slow ≈ 0.41–0.46). Joint-DA param recovery: S1 Joint-ETKF
+0.130→0.158 (hx/F degrade), S0 slightly improves (0.045 vs 0.054, F-driven). Full tables:
+`reports/l96/outputs/l96_obs_density_da_baselines.md`.
+
 ## Phases
 
 ### Phase 0: Plan
