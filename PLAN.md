@@ -59,6 +59,12 @@ report + generator were on master).
   governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,
   psi-obs focus). Dedicated `reports/qg/generate_qg1l_report.py` → `qg1l_report.md` for
   the reduced-gravity structural-error case (r-scale sweep).
+- **Illustrations (S0 / S1-QG2L da_nx=32)**: `reports/qg/generate_qg_s0s1_figs.py` (no
+  DA-cache dependency) runs a single-window production ETKF (nx=64, N=80, psi-obs,
+  cols=4, 1% noise, lag 1.0) and writes per-scenario obs-days 2×2 panel + full-window
+  obs Hovmöller, forcing, truth psi/q, analysis-vs-free-vs-truth, and a DA-cycle GIF to
+  `reports/qg/outputs/figs/`. `generate_qg_s0s1_report.py` §8 embeds them
+  (`![](figs/...)`, still JSON-only).
 - **Tests**: 7 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
   `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
   `test_qg_psi_state`) — all in the master CI gate.
