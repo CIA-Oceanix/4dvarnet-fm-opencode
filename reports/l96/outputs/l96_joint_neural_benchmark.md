@@ -66,8 +66,8 @@ State RMSE / explained variance (EV) / energy score (ES) over the observed subsp
 |---|---|---|---|---|---|---|
 | L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- |
-| L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- | -- | -- |
-| L10_joint_cfm_coupled_multitau | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | 0.6009 ** | 0.8642 ** | 0.3615 ** | 0.6037 ** | 0.8622 ** | 0.3636 ** |
+| L10_joint_cfm_coupled_multitau | 0.6395 | 0.8496 | 0.4077 | 0.6438 | 0.8466 | 0.4114 |
 | L12_joint_direct_unet_unethead | -- | -- | -- | -- | -- | -- |
 
 *Only ens30 runs present on disk are shown; missing runs render as -- (L8 is deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, highest EV.*
@@ -82,8 +82,8 @@ State RMSE / explained variance (EV) / energy score (ES) over the observed subsp
 |---|---|---|---|---|---|---|
 | L7_joint_cfm_s0s1 | -- | -- | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- | -- | -- |
-| L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- | -- | -- |
-| L10_joint_cfm_coupled_multitau | -- | -- | -- | -- | -- | -- |
+| L9_joint_cfm_s0s1_multitau | 0.5251 ** | 0.8932 ** | 0.3115 ** | 0.5308 ** | 0.8903 ** | 0.3153 ** |
+| L10_joint_cfm_coupled_multitau | 0.5710 | 0.8765 | 0.3651 | 0.5752 | 0.8737 | 0.3690 |
 | L12_joint_direct_unet_unethead | -- | -- | -- | -- | -- | -- |
 
 *Only ens30 runs present on disk are shown; missing runs render as -- (L8 is deterministic and is not run as an ensemble). Best per column: lowest RMSE/ES, highest EV.*
@@ -285,7 +285,7 @@ Same parameter-sensitivity metric computed on the **member-mean** parameter esti
 | L7_joint_cfm_s0s1 | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- |
 | L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- |
-| L10_joint_cfm_coupled_multitau | -- | -- | -- | -- |
+| L10_joint_cfm_coupled_multitau | 0.8378 ** | 0.5701 ** | 0.7813 ** | 0.6678 ** |
 | L12_joint_direct_unet_unethead | -- | -- | -- | -- |
 
 *Best per column is bolded (highest EV, lowest RMSE). L8 is deterministic and not run as an ensemble → --.*
@@ -301,7 +301,7 @@ Same parameter-sensitivity metric computed on the **member-mean** parameter esti
 | L7_joint_cfm_s0s1 | -- | -- | -- | -- |
 | L8_joint_direct_unet_s0s1 | -- | -- | -- | -- |
 | L9_joint_cfm_s0s1_multitau | -- | -- | -- | -- |
-| L10_joint_cfm_coupled_multitau | -- | -- | -- | -- |
+| L10_joint_cfm_coupled_multitau | 0.8378 ** | 0.5701 ** | 0.7813 ** | 0.6678 ** |
 | L12_joint_direct_unet_unethead | -- | -- | -- | -- |
 
 *Best per column is bolded (highest EV, lowest RMSE). L8 is deterministic and not run as an ensemble → --.*
