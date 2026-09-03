@@ -77,6 +77,20 @@ def _truth_inner(cfg, window, device) -> QGDynamics:
     ).to(device)
 
 
+def _first_stormy_window(windows) -> dict:
+    """Pick the first window with a genuinely non-zero wind-stress amplitude.
+
+    The S1 wind levels list starts at ``0.0``, so window 0 has no moving storm:
+    its ``wind_curl`` field is identically zero and the moving-storm wind-curl
+    figure would render as a constant flat panel. Return the first window whose
+    stored ``wind_amp`` is non-zero so the illustration shows an actual storm.
+    """
+    for w in windows:
+        if float(w["wind_amp"]) > 0.0:
+            return w
+    return windows[0]
+
+
 def run_single_window(cfg, scenario, device, N_ensemble, inflation,
                       loc_radius, init_lag_days, band_half, ds=None):
     """Run one ETKF assimilation of window 0 for a scenario.
@@ -93,7 +107,7 @@ def run_single_window(cfg, scenario, device, N_ensemble, inflation,
     if ds is None:
         ds = make_qg_s0_s1_datasets(
             cfg, cache_dir=os.path.join(ROOT, "reports/qg_cache"))
-    w = ds[scenario][0]
+    w = _first_stormy_window(ds[scenario])
     dyn = _build_dyn(cfg, w, device, psi_state=False)
     da_nx = _da_nx_for_window(cfg, w)
     nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
@@ -206,28 +220,46 @@ def fig_obs_days(w, truth_inner, per_scenario, device, out_dir):
 
 
 def fig_obs_hovmoller(w, truth_inner, per_scenario, out_dir):
-    ny = truth_inner.nx
-    obs = w["obs"].numpy()  # (T, C*ny)
+    ny = nx = truth_inner.nx
+    obs = w["obs"].numpy()          # (T, C*ny)
     mask = w["obs_mask"].numpy()
+    cols = w["obs_columns"].numpy()  # (T, C)
     T = obs.shape[0]
     days_per = round(86400.0 / truth_inner.dt)
     days = np.arange(T) / days_per
-    img = np.full((T, ny), np.nan)
-    steps = np.where(mask)[0]
-    cols = w["obs_columns"].numpy()
-    for t in steps:
-        for c in range(cols.shape[1]):
+    fills = np.full((T, nx), np.nan)
+    C = cols.shape[1]
+    for t in np.where(mask)[0]:
+        for c in range(C):
             xc = int(cols[t, c])
-            if 0 <= xc < ny:
-                img[t, :] = obs[t, c * ny: (c + 1) * ny]
-                break
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+            if 0 <= xc < nx:
+                col = obs[t, c * ny:(c + 1) * ny]
+                finite = np.isfinite(col)
+                fills[t, xc] = (np.mean(col[finite])
+                                if np.any(finite) else np.nan)
+    # Interpolate observed ψ₁ across time at each storm-column x so the
+    # moving columns render as continuous slanted tracks instead of a
+    # mostly-blank scatter of isolated points (obs occur ~once per day).
+    times = np.arange(T)
+    img = np.full((T, nx), np.nan)
+    for x in range(nx):
+        col = fills[:, x]
+        valid = np.isfinite(col)
+        n = int(valid.sum())
+        if n >= 2:
+            img[:, x] = np.interp(times, times[valid], col[valid])
+        elif n == 1:
+            img[:, x] = col[valid][0]
+    fig, ax = plt.subplots(figsize=(9, 5))
     vmax = float(np.nanmax(np.abs(img)))
+    if not np.isfinite(vmax):
+        vmax = 1.0
     m = ax.imshow(img.T, aspect="auto", cmap=CMAP, vmin=-vmax, vmax=vmax,
-                  extent=[days[0], days[-1], ny, 0])
+                  extent=[days[0], days[-1], nx, 0],
+                  interpolation="nearest")
     ax.set_xlabel("day")
-    ax.set_ylabel("meridional y")
-    ax.set_title(f"{per_scenario}: observation Hovmöller (ψ₁ column values)")
+    ax.set_ylabel("column x")
+    ax.set_title(f"{per_scenario}: obs ψ₁ Hovmöller over storm-column tracks")
     fig.colorbar(m, ax=ax, fraction=0.03, pad=0.02)
     fig.tight_layout()
     path = os.path.join(out_dir, f"qg_{per_scenario}_obs_hovmoller.png")
@@ -237,17 +269,22 @@ def fig_obs_hovmoller(w, truth_inner, per_scenario, out_dir):
 
 
 def fig_forcing(w, truth_inner, per_scenario, out_dir):
-    wind_curl = w["wind_curl"].numpy()  # (T,ny,nx)
     ws_true = w["wind_state_true"].numpy()
     ws_corrupt = w["wind_state_corrupted"].numpy()
+    # Wind-curl snapshots of the EXPECTED (corrupted) forcing the DA sees, so
+    # the S1 figure shows its actual moving storm (location jitter + amplitude
+    # bias) instead of the zero-amplitude `wind_curl` placeholder of window 0.
+    dev = truth_inner.device
+    ws_corrupt_t = torch.from_numpy(ws_corrupt).float().to(dev)
+    curl = truth_inner.wind_curl_field(ws_corrupt_t).detach().cpu().numpy()
     days_per = round(86400.0 / truth_inner.dt)
-    steps = np.linspace(0, wind_curl.shape[0] - 1, 3).astype(int)
+    steps = np.linspace(0, curl.shape[0] - 1, 3).astype(int)
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
     for ax, t in zip(axes.ravel(), steps):
-        wf = wind_curl[t]
-        vmax = max(np.abs(wf).max(), 1e-15)
+        wf = curl[t]
+        vmax = max(np.abs(wf).max(), 1e-30)
         ax.imshow(wf, cmap=CMAP, vmin=-vmax, vmax=vmax)
-        ax.set_title(f"wind curl day {t / days_per:.1f}")
+        ax.set_title(f"corrupted wind-curl day {t / days_per:.1f}")
         ax.set_xticks([])
         ax.set_yticks([])
     fig.tight_layout()
@@ -357,6 +394,7 @@ def fig_dacycle(data, per_scenario, out_dir, device, sample_days=2.0):
     frames = []
     for t in steps:
         fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))
+        # Panel 1: aggregated obs ψ₁ columns
         ax = axes[0]
         img = np.full((ny, nx), np.nan)
         if mask[t]:
@@ -372,10 +410,14 @@ def fig_dacycle(data, per_scenario, out_dir, device, sample_days=2.0):
                      + ("  [obs]" if mask[t] else "  [no obs]"))
         ax.set_xticks([])
         ax.set_yticks([])
+        # Panel 2: truth q₁
+        ax = axes[1]
         ax.imshow(truth[t, 0], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
         ax.set_title("truth q₁")
         ax.set_xticks([])
         ax.set_yticks([])
+        # Panel 3: DA analysis q₁
+        ax = axes[2]
         ax.imshow(analysis[t, 0], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
         ax.set_title("DA analysis q₁")
         ax.set_xticks([])

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-03: QG figure generator — meaningful S1 wind-curl, DA-cycle, and obs Hovmöller (empty/constant-figure fix)
+
+**Summary:** Fixed `reports/qg/generate_qg_s0s1_figs.py` so the S1-QG2L (da_nx=32) illustration figures are no longer empty/constant, and regenerated the committed production figures. Three root causes were confirmed and fixed:
+1. **Flat wind-curl forcing** — the generator used **window 0**, whose `wind_amp = _S1_WIND_LEVELS[0] = 0.0`, so `wind_curl_field` returned an all-zero field → a constant flat panel. Now `run_single_window` selects the **first window with non-zero `wind_amp`** (`_first_stormy_window`), and `fig_forcing` computes the **corrupted** wind-curl (`truth_inner.wind_curl_field(wind_state_corrupted)`) so the S1 figure shows the actual corrupted moving storm (verified: storm centroid moves across the three snapshots, s0 vs s1x32 differ in trajectory).
+2. **Blank DA-cycle panels** — `fig_dacycle` drew all three panels onto `axes[0]` (never reassigned `ax`), so the truth q₁ and DA-analysis q₁ panels rendered blank. Now `ax` advances through `axes[0]/1/2`; verified panels 2&3 populated (std ~35–38 vs ~26.5 previously).
+3. **~96% blank obs Hovmöller** — the old code filled one full horizontal stripe per obs step (30 of 360 steps), leaving the rest NaN. Rebuilt as a **time×column storm-track field**: at each obs step the observed ψ₁ at each column-x is recorded (mean over the column), then linearly interpolated across time so the moving columns render as continuous slanted tracks (colored fraction 0.042 → 0.59).
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_figs.py` — `_first_stormy_window` + window selection; `fig_forcing` corrupted-storm curl; `fig_dacycle` per-axis `ax`; `fig_obs_hovmoller` storm-track rebuild
+- `reports/qg/outputs/figs/qg_{s0,s1x32}_{obs_days,obs_hovmoller,forcing,forcing_amp,truth_psi_q,analysis}.png` + `qg_{s0,s1x32}_dacycle.gif` — regenerated production (nx=64) figures
+- `PLAN.md` — Illustration bullet updated; `CHANGELOG.md` — this entry
+
+**Rationale:** The S1 moving-storm figure, DA-cycle animation, and obs Hovmöller were illustrated as flat/blank/empty, defeating the user's request for a visually verifiable DA illustration. Fixing the window selection (S1's wind levels start at 0.0), drawing each DA-cycle panel on its own axis, and rendering a continuous storm-track Hovmöller makes the S1-QG2L row meaningful and consistent with S0.
+
+**Verification:** `pytest tests/{test_qg_dynamics,test_qg_data,test_qg_baselines,test_qg_s0s1,test_qg_random_columns,test_qg1l_dynamics,test_qg_psi_state}.py -m "not slow"` — **109 passed, 8 deselected**. `py_compile` clean; `ruff check` clean on the generator (only the repo-wide `EXE001` shebang convention, informational in CI). Quick nx=32 CPU + production nx=64 GPU runs both COMPLETED and wrote all 14 figures + GIFs; pixel analysis confirms forcing 0.72 non-flat, hovmoller 0.59 non-flat (was 0.042), dacycle panels 2&3 populated, storm centroid moves across snapshots.
+
 ## 2026-09-03: QG S0/S1 DA report illustrations — S0 + S1-QG2L da_nx=32 figure/animation generator
 
 **Summary:** Added `reports/qg/generate_qg_s0s1_figs.py`, a DA-cache-independent figure+animation
