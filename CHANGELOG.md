@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-09-03: UNet param-head JointDirectUNet (L12) + coupled JointCFM ODE (L10)
+
+**Summary:** Objective: replace the initial CNN param heads with a **UNet param head** across both
+joint model families, and give JointCFM a genuinely **coupled ODE** where both `x_τ` and `θ_τ`
+condition **both** velocity fields. Two new joint models built, trained, evaluated and benchmarked:
+- **L10 `JointCFMCoupled`** (`joint_cfm_coupled`, new class, NOT a flag on `JointCFM`): the state
+  flow `u_θ(x_τ, θ_τ, τ, obs, forcing)→(x1−x0)` and the param flow
+  `v_φ(x_τ, θ_τ, τ, obs, forcing)→(θ1−θ0)` both read both interpolants `x_τ=(1−τ)x0+τx1`,
+  `θ_τ=(1−τ)θ0+τθ1` (no one-way `detach` like the current `JointCFM`); UNet param flow
+  (`ParamFlowUNet`, `[32,64,128]`, attention pool) is the only param-flow option; multi-τ only
+  (no τ=0 smoke variant); state `[64,128,256]`, 400 epochs.
+- **L12 `JointDirectUNet`** with a UNet param head (`ParamHeadUNet`, `param_head_backbone: unet`,
+  `[32,64,128]`, attention pool) regressing the 8 params from `[obs, forcing, x̂_state]` (stop-grad),
+  replacing the default CNN head; state `[64,128,256]`, 200 epochs.
+- Lightweight-first param heads default to `[32,64,128]`. Wiring: `JointCFMCoupledConfig` +
+  `param_head_backbone/param_head_pool/param_flow_pool` in schema; `model_factory` +
+  `lightning_module` dispatch (`joint_cfm_coupled`→`param_flow` stage-2 optimizer/freeze); eval
+  loader (`resolve_model_class JOINTCFMCOUPLED`, `create_model` branches, head-backbone + channel
+  inference for UNet flows/heads, `param_head_backbone` inference); configs L10/L12; report
+  `MODEL_DEFS` registration (renders `--` until eval JSONs exist); training + eval sbatch arrays.
+  15 new tests (coupled/UNet-head shapes, oracle-gone, sample, grads, multi-τ no-shortcut; loader
+  round-trips for coupled, UNet-head, CNN-head back-compat).
+
+**Results (canonical cached S0/S1, Obs30, 200 windows, single-sample, n_outer=10):** the coupled
+ODE is the headline — **L10 S0 0.6511 / S1 0.6536, S1/S0 degradation 1.004** (EV 0.84/0.84),
+the **best state RMSE on both S0 and S1** of any joint neural model and essentially no S1
+degradation, edging L9 (0.6515/0.6589, deg 1.01). **L12** is deterministic-family: best S0
+paramRMSE (0.0965) but S1 state 1.551 / degradation 2.33 (like L8, not robust to parameter
+bias). Joint-ETKF DA: S0 0.633 / S1 1.497.
+
+**Files modified:** `models/vanilla_cfm.py` (ParamFlowUNet, JointCFMCoupled), `models/direct_unet.py`
+(ParamHeadUNet, param_head_backbone dispatch), `conf/schema.py`, `train.py`, `training/lightning_module.py`,
+`evaluation/neural_inference.py`, `config/experiment/L10_joint_cfm_coupled_multitau.yaml`, `config/experiment/L12_joint_direct_unet_unethead.yaml`,
+`batch/run_l96_joint_unet_{training,eval}.sbatch`, `reports/l96/generate_l96_joint_neural_report.py` +
+`reports/l96/outputs/l96_joint_neural_benchmark.md` (L10/L12 rows live), `tests/test_joint_estimation_l96_neural.py`, `tests/test_neural_inference.py`.
+
+**Rationale:** The initial CNN param heads have a small receptive field over the 3000-step
+trajectory; a UNet head captures multi-scale temporal features implicitly (as C4a/C4b showed for
+the decoupled cascade). Extending this to the joint models, plus a genuinely coupled multi-τ ODE,
+tests whether the coupling—rather than architecture alone—drives the multi-τ S1 robustness.
+
+**Verification:** e2e 1-epoch CPU smokes for L10 (2.5M) + L12 (2.4M) train stage1+stage2 + eval with
+param RMSE; real GPU training jobs 51479_0/51479_1 COMPLETED exit 0 (49:37 / 29:43) with full
+stage1/stage2 checkpoints; standalone evals 51512_0/51512_1 COMPLETED exit 0 write joint_neural_eval.json;
+`pytest tests/test_joint_estimation_l96_neural.py tests/test_neural_inference.py tests/test_direct_unet.py tests/test_vanilla_cfm.py -m "not slow"` —
+91 passed; broader 8-file gate 158 passed; report generator runs clean with populated L10/L12 rows.
+
 ## 2026-09-02: UNet cascade param heads (C4a true-state / C4b L1b-state) — architecture ablation
 
 **Summary:** Added `StateParamUNet`, a full encoder-decoder param-regression head with skip
