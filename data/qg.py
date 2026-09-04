@@ -196,15 +196,18 @@ def _generate_alongtrack_observations(
 def _generate_random_column_observations(
     dynamics, state: torch.Tensor, field: str, cfg: QGConfig, seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Random-column obs: `cols_per_day` distinct meridional columns per day.
+    """Random-column obs: `cols_per_day` independent meridional columns per day.
 
-    One simultaneous observation event at the first step of each day; within an
-    event the `cols_per_day` x-positions are sampled without replacement from
-    a seeded RNG (constellation-style rich sampling, near-complete domain
-    coverage over a window).
+    Each of the `cols_per_day` distinct x-columns selected for a day is observed
+    exactly once at its **own** randomly-sampled intra-day time step (rather than
+    a single simultaneous multi-column "constellation" event). Within a day the
+    columns are sampled without replacement (distinct x), preserving the
+    near-complete domain coverage over a window. No two observed columns share an
+    intra-day step: on a collision the later column is shifted to the next free
+    step within the day.
 
-    Returns (obs (T, C*ny), obs_mask (T,), obs_columns (T, C)) where
-    obs_columns holds the observed x indices and -1 on days without an event.
+    Returns (obs (T, ny), obs_mask (T,), obs_columns (T,)):
+    obs_columns[t] is the single observed x index at step t, -1 when no obs.
     """
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
     C = max(1, int(cfg.cols_per_day))
@@ -212,18 +215,23 @@ def _generate_random_column_observations(
     sigma = cfg.obs_noise_std_frac * float(f.std())
     steps_per_day = max(1, round(86400.0 / cfg.dt))
     rng = torch.Generator().manual_seed(seed)
-    obs = torch.full((T, C * ny), float("nan"))
+    obs = torch.full((T, ny), float("nan"))
     obs_mask = torch.zeros(T, dtype=torch.bool)
-    obs_cols = torch.full((T, C), -1, dtype=torch.long)
-    r = torch.rand(T // steps_per_day, generator=rng)
+    obs_cols = torch.full((T,), -1, dtype=torch.long)
+    r = torch.rand(T // steps_per_day, C, generator=rng)
     for day in range(T // steps_per_day):
-        t = day * steps_per_day + int(r[day] * steps_per_day)
         cols = torch.randperm(nx, generator=rng)[:C]
-        obs_cols[t] = cols
-        obs_mask[t] = True
-        noise = torch.randn(C * ny, generator=rng) * sigma
+        base = day * steps_per_day
+        taken = set()
         for c, x_col in enumerate(cols.tolist()):
-            obs[t, c * ny: (c + 1) * ny] = f[t, :, x_col] + noise[c * ny: (c + 1) * ny]
+            t = base + int(r[day, c] * steps_per_day)
+            while t in taken:
+                t = base + (t - base + 1) % steps_per_day
+            taken.add(t)
+            obs_mask[t] = True
+            obs_cols[t] = x_col
+            noise = torch.randn(ny, generator=rng) * sigma
+            obs[t] = f[t, :, x_col] + noise
     return obs, obs_mask, obs_cols
 
 
@@ -234,11 +242,9 @@ def expand_obs_to_grid(window: dict, cfg: QGConfig) -> torch.Tensor:
     if "obs_columns" in window:
         obs = window["obs"]
         for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
-            cols = window["obs_columns"][t]
-            for c, x_col in enumerate(cols.tolist()):
-                if x_col >= 0:
-                    grid[t, torch.arange(ny, dtype=torch.long) * nx + x_col] = \
-                        obs[t, c * ny: (c + 1) * ny]
+            x_col = int(window["obs_columns"][t])
+            if x_col >= 0:
+                grid[t, torch.arange(ny, dtype=torch.long) * nx + x_col] = obs[t]
     else:
         obs = window["obs"]
         idx_t = window["track_x_index"]
@@ -443,8 +449,14 @@ def _truth_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
     depends on the full config plus the number of windows; obs geometry/density
     do affect it (obs are generated inside `_generate_truth`), so the whole
     `QGConfig` is part of the key. Same config -> same seeded data -> cache hit.
+
+    `OBS_GEOMETRY_VERSION` is folded into the key so a change to the
+    obs-generation implementation (e.g. the per-column-independence rewrite)
+    invalidates caches that carry pre-change obs, even when `QGConfig` is
+    unchanged.
     """
-    payload = {"cfg": asdict(cfg), "n_windows": n}
+    OBS_GEOMETRY_VERSION = 2
+    payload = {"cfg": asdict(cfg), "n_windows": n, "obs_geom": OBS_GEOMETRY_VERSION}
     key = hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode()
     ).hexdigest()[:20]

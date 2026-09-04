@@ -136,15 +136,14 @@ def _q_alongtrack_obs(cfg, window, device):
             obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=torch.Generator().manual_seed(cfg.seed + 8000))
     elif "obs_columns" in window:
         cols_t = window["obs_columns"]
-        C = cols_t.shape[1]
-        obs = torch.full((T, C * ny), float("nan"))
+        obs = torch.full((T, ny), float("nan"))
         obs_mask = window["obs_mask"]
         obs_steps = obs_mask.nonzero(as_tuple=False).flatten().tolist()
         rng = torch.Generator().manual_seed(cfg.seed + 8000)
         for t in obs_steps:
-            for ci, x_col in enumerate(cols_t[t].tolist()):
-                if 0 <= x_col < nx:
-                    obs[t, ci * ny:(ci + 1) * ny] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+            x_col = int(cols_t[t])
+            if 0 <= x_col < nx:
+                obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
     else:
         obs = torch.full((T, ny), float("nan"))
     return obs.to(device), sigma ** 2, field_std
@@ -165,8 +164,20 @@ def _per_pass_indices(cfg, window):
 
 
 def _event_columns(cfg, window):
-    """Extract column lists per time for random_columns geometry."""
-    return window["obs_columns"]
+    """Extract column lists per time for random_columns geometry.
+
+    Each masked step observes exactly one x-column, so the per-time column list
+    is a singleton `[x_col]` at observed steps and `None` otherwise, matching
+    the H-operator contract (list of column lists per time, e.g. [[0], None, …]).
+    """
+    nx = cfg.nx
+    cols_t = window["obs_columns"]
+    per_time = [None] * cfg.num_steps
+    for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+        x_col = int(cols_t[t])
+        if 0 <= x_col < nx:
+            per_time[t] = [x_col]
+    return per_time
 
 
 def _psi_h(dyn, obs_cols, ny, nx, device):
@@ -217,15 +228,11 @@ def _q_obs_indices_t(cfg, window):
         return per_time
     elif "obs_columns" in window:
         cols_t = window["obs_columns"]
-        C = cols_t.shape[1]
         per_time = [None] * T
         for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
-            idx = []
-            for ci in range(C):
-                x_col = int(cols_t[t, ci])
-                if 0 <= x_col < nx:
-                    idx.extend([y * nx + x_col for y in range(ny)])
-            per_time[t] = idx if idx else None
+            x_col = int(cols_t[t])
+            if 0 <= x_col < nx:
+                per_time[t] = [y * nx + x_col for y in range(ny)]
         return per_time
     return [None] * T
 
@@ -259,7 +266,7 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         obs = window["obs"].to(device)
         r_var = (cfg.obs_noise_std_frac
                  * float(window["target_state_psi"].std())) ** 2
-        od = cfg.cols_per_day * cfg.ny
+        od = cfg.ny
         obs_op = ObsOperator(dyn.state_dim, h=h, h_index_at=None, n_obs=od)
         return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_loc_matrices
     else:
@@ -274,7 +281,7 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
 def _obs_spec_rc(cfg, window, device):
     obs = window["obs"].to(device)
     r_var = (cfg.obs_noise_std_frac * float(window["target_state_psi"].std())) ** 2
-    od = cfg.cols_per_day * cfg.ny
+    od = cfg.ny
     return obs, r_var, od
 
 

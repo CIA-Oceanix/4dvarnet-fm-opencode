@@ -258,7 +258,8 @@ def main() -> None:
     add("### 3.4 Observations")
     add("")
     add("- Geometry `random_columns`: `cols_per_day` distinct meridional columns "
-        "of the upper-layer field, one simultaneous event/day at a random step.")
+        "of the upper-layer field, each observed exactly once per day at its own "
+        "randomly-sampled intra-day step (no two columns of a day share a step).")
     add("- Observed field: upper-layer streamfunction ψ₁ (psi-obs) — the baseline "
         "`ObsOperator` inverts ψ to PV after spectral upsampling on the DA grid.")
     add("- Noise: `sigma = obs_noise_std_frac × std(field)`, `frac = 0.01` (1%).")
