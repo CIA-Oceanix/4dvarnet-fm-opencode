@@ -59,6 +59,9 @@ NEURAL_EXP_DIRS = [
     "L6_vanilla_cfm_s0s1_forcing_cond",
     "V2_tweedie_cfm_l96",
     "V3_predict_state_cfm_l96",
+    "SDA1_prior_l96",
+    "SDA2_cond_mixed_l96",
+    "SDA2_cond_nominal_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -83,6 +86,18 @@ ENS30_DIRS = {
     "V3_predict_state_cfm_l96": {
         "s0": "V3_predict_state_cfm_l96/ens30_no10",
         "s1": "V3_predict_state_cfm_l96/ens30_no10",
+    },
+    "SDA1_prior_l96": {
+        "s0": "SDA1_prior_l96/ens30_no10",
+        "s1": "SDA1_prior_l96/ens30_no10",
+    },
+    "SDA2_cond_mixed_l96": {
+        "s0": "SDA2_cond_mixed_l96/ens30_no10",
+        "s1": "SDA2_cond_mixed_l96/ens30_no10",
+    },
+    "SDA2_cond_nominal_l96": {
+        "s0": "SDA2_cond_nominal_l96/ens30_no10",
+        "s1": "SDA2_cond_nominal_l96/ens30_no10",
     },
 }
 
@@ -134,6 +149,29 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
      ("Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; "
       "400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); "
       "N_outer=10.")),
+    ("SDA1_prior_l96", "Neural (SDA prior + DPS guidance)",
+     ("Unconditional flow-matching prior p(x₁) -- no obs, params, or forcing conditioning at all, "
+      "trained on the same S0/S1 mix (`forcing_state_bias=0.1` in train/val, same as every other "
+      "L-series/V2/V3 config); hidden [64,128,256]; 400 epochs. State estimated at inference time "
+      "only, via DPS/Pi-GDM-style observation guidance (normalized-gradient step on the Tweedie "
+      "posterior-mean estimate, `evaluation/sda_sampler.py`) with N_outer=10 Euler steps, "
+      "guidance_weight=40 (picked by an S0 RMSE sweep over {0.3..400}), R_var=0.5 (matches "
+      "`data.R_var`); evaluated as a 30-member ensemble (fresh x₀ per member, `ens30×10`, N=30), "
+      "same convention as L3/V2/V3.")),
+    ("SDA2_cond_mixed_l96", "Neural (SDA prior, params+forcing cond. + DPS guidance)",
+     ("As SDA1 but the prior is additionally conditioned on the per-window physical params (F, c1, "
+      "hx, eps, w1-w4) and the corrupted forcing signal (`ConditionalPriorCFM`, `models/sda.py`) -- "
+      "obs is still never a network input, only the guidance term at inference conditions on it. "
+      "Trained on the identical S0/S1 mix as SDA1 (`forcing_state_bias=0.1`); hidden [64,128,256]; "
+      "400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble "
+      "(`ens30×10`, N=30).")),
+    ("SDA2_cond_nominal_l96", "Neural (SDA prior, params+forcing cond., nominal-only train)",
+     ("Identical architecture/inference to SDA2-mixed but trained with `forcing_state_bias=0.0` "
+      "(genuinely nominal-only train/val -- never sees the S1-level forcing corruption at training "
+      "time, unlike every other row in this table); hidden [64,128,256]; 400 epochs; "
+      "guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, "
+      "N=30). Tests whether the amortized S1/S0 resilience seen elsewhere in this table survives "
+      "when training-time exposure to model error is removed entirely.")),
 ]
 
 
@@ -157,6 +195,10 @@ def short_name(name: str) -> str:
         if variant:
             return "V2" + variant.replace("_", "-").strip("-")
         return "V2"
+    if name == "SDA2_cond_mixed_l96":
+        return "SDA2-mixed"
+    if name == "SDA2_cond_nominal_l96":
+        return "SDA2-nominal"
     return name.split("_")[0] if "_" in name else name
 
 

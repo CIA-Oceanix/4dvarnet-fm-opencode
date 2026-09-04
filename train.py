@@ -245,6 +245,29 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=tc.train_tau_0_only,
             cond_extra_dim=tc.cond_extra_dim,
         )
+    elif model_type == "sda_prior":
+        from models.sda import UnconditionalPriorCFM
+        sp = cfg.model.sda_prior
+        model = UnconditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=sp.hidden_channels,
+            time_emb_dim=sp.time_emb_dim,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+        )
+    elif model_type == "sda_prior_cond":
+        from models.sda import ConditionalPriorCFM
+        sp = cfg.model.sda_prior
+        model = ConditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            hidden_channels=sp.hidden_channels,
+            time_emb_dim=sp.time_emb_dim,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+        )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     return model.to(device)
@@ -329,6 +352,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type in ("sda_prior", "sda_prior_cond"):
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -381,6 +406,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "predict_state_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type in ("sda_prior", "sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -484,6 +511,7 @@ def main(cfg: DictConfig):
                     param_noise=dc.get("test_param_noise", 0.2),
                     bias_range=(0.0, dc.get("bias_max", 0.2)),
                     cached_datasets=cached_test,
+                    train_forcing_state_bias=dc.get("train_forcing_state_bias", 0.1),
                 )
                 test_keys = ["test_s0", "test_s1"]
         else:
@@ -537,7 +565,7 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond")),
             obs_var_indices=obs_var_indices,
             use_biased_params=(model_type in ("param_head", "param_head_unet")),
             resample_bias_draws=dc.get("resample_bias_draws", False),
@@ -682,6 +710,7 @@ def main(cfg: DictConfig):
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
+              else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
               else cfg.model)
     result = {
         "experiment_id": exp_id,

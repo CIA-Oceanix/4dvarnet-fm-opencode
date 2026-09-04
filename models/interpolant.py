@@ -25,6 +25,18 @@ class LinearInterpolant:
             b = b.unsqueeze(-1)
         return a * x0 + b * x1
 
+    def x1_hat(self, x_tau: torch.Tensor, v: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+        """Tweedie-style posterior-mean estimate x1_hat = x_tau + (1-tau)*v.
+
+        Direct consequence of the linear interpolant (x_tau = (1-tau)x0 + tau*x1,
+        v_target = x1 - x0 => x1 = x_tau + (1-tau)*v). Matches the formula
+        inlined in ``JointCFM.forward`` (``models/vanilla_cfm.py``).
+        """
+        b = self.alpha(tau)
+        while b.dim() < x_tau.dim():
+            b = b.unsqueeze(-1)
+        return x_tau + b * v
+
     def gain_matrix(self, tau: torch.Tensor) -> torch.Tensor:
         a = self.alpha(tau)
         b = self.beta(tau)

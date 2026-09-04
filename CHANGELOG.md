@@ -102,6 +102,29 @@ N=80, lag 1.0, psi-obs, cols=4, GPU) both COMPLETED and wrote all 14 non-empty f
 warning) with §8 embeds pointing at existing files; `py_compile` on both scripts; `ruff check` clean
 on the figure generator (only the repo-wide `EXE001` shebang convention remains, informational in CI).
 
+## 2026-09-03/04: L96 SDA-style score-based DA (SDA1 prior + SDA2 conditioned prior) + consolidated benchmark rows
+
+**Summary:** Implemented the third benchmark axis recommended in the 2026-09-02 publication-positioning discussion (score-based DA à la Rozet & Louppe 2023, orthogonal to sequential-Markov DA and end-to-end obs-conditioned CFM): an **unconditional** flow-matching prior `p(x_1)` (`UnconditionalPriorCFM`, SDA1) and a **params+forcing-conditioned** prior `p(x_1 | params, forcing)` (`ConditionalPriorCFM`, SDA2), neither ever seeing `obs` as a network input. State estimation goes entirely through a new DPS/Pi-GDM-style observation-guided Euler sampler (`sda_guided_sample`) that nudges each step by the *normalized* gradient of the observation cost evaluated at the interpolant's Tweedie posterior-mean estimate — this is where "Tweedie" is genuinely load-bearing, unlike the misnomer flagged for `TweedieCFM` (V2). Trained and evaluated all three variants (SDA1, SDA2 trained on the standard S0/S1 mix = "SDA2-mixed", and SDA2 trained with `forcing_state_bias=0.0` = genuinely nominal-only = "SDA2-nominal") and added their rows to the canonical L96 consolidated benchmark.
+
+**Headline:** All three SDA variants show S1/S0 RMSE degradation ≈ 1.00 (0.997–1.002), matching every other neural/CFM scheme and in sharp contrast to sequential-Markov DA (ETKF/EnKF/Strong-4DVar, 1.68–1.80×) — the amortized-vs-recursive-Markov narrative (Axis 1) survives even under this harder inference regime (guidance-only, no obs conditioning at training time). SDA2-nominal (never sees model error during training) shows the *same* ≈1.00 degradation as SDA2-mixed, i.e. the amortized S1/S0 resilience does not depend on training-time exposure to the S1 forcing corruption for this scheme. RMSE (S0 all_obs: SDA1 0.719, SDA2-mixed 0.708, SDA2-nominal 0.705) is worse than the best feed-forward CFM schemes (V2 0.510, V3 0.572) but still clearly better than every DA baseline (best: Strong-4DVar 0.812) — at a materially higher inference cost (N_outer=10 network evaluations + autograd per guided sample, vs. 1 forward pass for the L-series feed-forward schemes).
+
+**Files modified:**
+- `models/sda.py` — new: `UnconditionalPriorCFM` (SDA1), `ConditionalPriorCFM` (SDA2)
+- `evaluation/sda_sampler.py` — new: `guided_obs_cost` + `sda_guided_sample` (DPS-style normalized-gradient guidance, `guidance_weight==0` reduces exactly to unconditional `model.sample`)
+- `eval_sda_l96.py` — new: two-step inference entry point (mirrors `eval_neural_l96.py`), `--r-var`/`--guidance-weight`/`--n-outer` CLI knobs
+- `config/experiment/SDA1_prior_l96.yaml`, `SDA2_cond_mixed_l96.yaml`, `SDA2_cond_nominal_l96.yaml` — new training configs
+- `conf/schema.py` — `SDAPriorConfig`, `model_type` enum extended with `sda_prior`/`sda_prior_cond`
+- `models/interpolant.py` — `LinearInterpolant.x1_hat` (Tweedie posterior-mean estimate, shared with `sda_sampler`)
+- `train.py`, `training/lightning_module.py` — model-factory/eval/save-trajectories/loss-dispatch wiring for the two new model types
+- `evaluation/neural_inference.py` — checkpoint loading, `create_model`, and `_run_case_inference`/`run_inference` dispatch (`r_var`/`guidance_weight` params) for SDA models
+- `data/lorenz96.py` — `make_l96_s0_s1_trainval(..., train_forcing_state_bias=0.1)`: exposes the train/val forcing-corruption level so SDA2-nominal can train genuinely S1-blind (`=0.0`) while test_s0/test_s1 stay unaffected
+- `reports/l96/generate_l96_consolidated_report.py`, `reports/l96/outputs/l96_consolidated_benchmark.md` — SDA1/SDA2-mixed/SDA2-nominal rows (RMSE/EV/ES × all/slow/fast, ens30×10 convention) + scheme descriptions; benchmark figures refreshed from the current dataset cache
+- `tests/test_sda.py`, `tests/test_sda_sampler.py` — new: 15 unit tests (prior forward/loss/sample shapes, guidance-cost masking, `guidance_weight==0` exactness invariant)
+
+**Rationale:** `docs/research_notes_cfm_da_originality_and_benchmarking.md` (2026-09-02 publication-positioning discussion) identified score-based DA as the recommended third benchmark axis and the place where a "Tweedie" name is honest (V3's `x_hat_1` estimator = the SDA guidance estimator). This closes that gap with a working, tested implementation and real S0/S1 numbers rather than a design-doc placeholder.
+
+**Verification:** `pytest tests/test_sda.py tests/test_sda_sampler.py` — 15/15 passed. `pytest -m "not slow"` (full suite, excluding two pre-existing unrelated collection errors in `test_equiv_report.py`/`test_numerical_equivalence.py` predating this branch) — passed. Report regenerated via `reports/l96/generate_l96_consolidated_report.py`; consistency checks pass (DA cached vs recomputed-from-npz max |Δ| = 2.16e-04; neural stored truth vs dataset max |Δ| = 0.00e+00).
+
 ## 2026-09-03: Consolidated q-state vs psi-state QG DA report + q-state declared the default DA config
 
 **Summary:** Added a dedicated JSON-only report generator `reports/qg/generate_qg_psi_state_report.py` → `qg_psi_state_report.md` that consolidates the q-state vs psi-state DA comparison for S0 and S1 (same-res da_nx=64 + cross-res da_nx=32) with per-field explained variance (PV q1/q2/qall, streamfunction psi1/psi2). The report states the decision that **q-state is the default DA configuration**. The default is now explicit in the QG DA config entry points: `--obs-var` help in both `evaluation/run_qg_baselines.py` and `evaluation/sweep_qg_baselines.py` documents `'q'` (PV q-state) as the production-default representation, with `'psi'`/`'psi_state'` as research alternatives.

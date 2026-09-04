@@ -19,6 +19,9 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | L6 | Neural (CFM, τ=0) | As L2b plus corrupted-forcing conditioning (`cond_extra_dim=1`); tests the robustness value of forcing input. |
 | V2 | Neural (TweedieCFM) | Two-stage Tweedie CFM: stage-1 MeanEstimatorCell (obs → mean), stage-2 residual velocity UNet; hidden [64,128,256]; 100+400 epochs; multi-τ, **K_inner=1 (kinner1 variant)**; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); N_outer=10. The V2 row reports the **K_inner=1 ablation** (see the dedicated `l96_tweediecfm_benchmark.md` for the full V2 family). |
 | V3 | Neural (PredictStateCFM) | Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; 400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); N_outer=10. |
+| SDA1 | Neural (SDA prior + DPS guidance) | Unconditional flow-matching prior p(x₁) -- no obs, params, or forcing conditioning at all, trained on the same S0/S1 mix (`forcing_state_bias=0.1` in train/val, same as every other L-series/V2/V3 config); hidden [64,128,256]; 400 epochs. State estimated at inference time only, via DPS/Pi-GDM-style observation guidance (normalized-gradient step on the Tweedie posterior-mean estimate, `evaluation/sda_sampler.py`) with N_outer=10 Euler steps, guidance_weight=40 (picked by an S0 RMSE sweep over {0.3..400}), R_var=0.5 (matches `data.R_var`); evaluated as a 30-member ensemble (fresh x₀ per member, `ens30×10`, N=30), same convention as L3/V2/V3. |
+| SDA2-mixed | Neural (SDA prior, params+forcing cond. + DPS guidance) | As SDA1 but the prior is additionally conditioned on the per-window physical params (F, c1, hx, eps, w1-w4) and the corrupted forcing signal (`ConditionalPriorCFM`, `models/sda.py`) -- obs is still never a network input, only the guidance term at inference conditions on it. Trained on the identical S0/S1 mix as SDA1 (`forcing_state_bias=0.1`); hidden [64,128,256]; 400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, N=30). |
+| SDA2-nominal | Neural (SDA prior, params+forcing cond., nominal-only train) | Identical architecture/inference to SDA2-mixed but trained with `forcing_state_bias=0.0` (genuinely nominal-only train/val -- never sees the S1-level forcing corruption at training time, unlike every other row in this table); hidden [64,128,256]; 400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, N=30). Tests whether the amortized S1/S0 resilience seen elsewhere in this table survives when training-time exposure to model error is removed entirely. |
 
 Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the 24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what makes the DA-vs-neural comparison apples-to-apples.
 
@@ -28,9 +31,9 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 
 | Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast | S1/S0 |
 |---|---|---|---|---|---|---|---|
-| ETKF | 0.8889 | 0.4789 | 1.0939 | 1.4961 | 1.2468 | 1.6208 | 1.683 |
-| EnKF | 0.9124 | 0.4969 | 1.1202 | 1.5297 | 1.2567 | 1.6662 | 1.677 |
-| Strong-4DVar | 0.8253 | 0.4716 | 1.0022 | 1.4566 | 1.0792 | 1.6453 | 1.765 |
+| ETKF | 0.8883 | 0.4749 | 1.0950 | 1.4998 | 1.2394 | 1.6299 | 1.688 |
+| EnKF | 0.9131 | 0.4974 | 1.1210 | 1.5381 | 1.2490 | 1.6826 | 1.684 |
+| Strong-4DVar | 0.8116 | 0.4683 | 0.9833 | 1.4617 | 1.0760 | 1.6546 | 1.801 |
 | L1b | 0.6221 | 0.4019 | 0.7321 | 0.6256 | 0.4006 | 0.7381 | 1.006 |
 | L2b | 0.6330 | 0.4188 | 0.7401 | 0.6336 | 0.4154 | 0.7426 | 1.001 |
 | L3 | 0.5645 | 0.3325 | 0.6804 | 0.5668 | 0.3347 | 0.6829 | 1.004 |
@@ -39,6 +42,9 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 | L6 | 0.6390 | 0.4136 | 0.7517 | 0.6381 | 0.4097 | 0.7523 | 0.999 |
 | V2 | **0.5098** | **0.2637** | **0.6329** | **0.5154** | **0.2641** | **0.6410** | 1.011 |
 | V3 | 0.5716 | 0.3437 | 0.6856 | 0.5729 | 0.3424 | 0.6881 | 1.002 |
+| SDA1 | 0.7187 | 0.4432 | 0.8564 | 0.7169 | 0.4387 | 0.8560 | 0.998 |
+| SDA2-mixed | 0.7076 | 0.3864 | 0.8682 | 0.7052 | 0.3804 | 0.8676 | 0.997 |
+| SDA2-nominal | 0.7047 | 0.3802 | 0.8670 | 0.7035 | 0.3764 | 0.8671 | 0.998 |
 
 Note on conventions: the DA metric cache stores the **mean of per-window RMSEs** (evaluation/run_l96.py), while this table uses the **pooled** convention (`sqrt(mean sq err)` over all windows/timesteps) for every method — the same convention as the neural evaluation. Pooled RMSE is ≤ mean-of-window RMSE, so DA values here are slightly lower (more favorable) than in the legacy cache; both orderings agree.
 
@@ -48,9 +54,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 
 | Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast |
 |---|---|---|---|---|---|---|
-| ETKF | 0.6918 | 0.9385 | 0.5684 | 0.2204 | 0.5722 | 0.0445 |
-| EnKF | 0.6763 | 0.9338 | 0.5475 | 0.1832 | 0.5655 | -0.0079 |
-| Strong-4DVar | 0.7386 | 0.9403 | 0.6377 | 0.2399 | 0.6795 | 0.0200 |
+| ETKF | 0.6915 | 0.9395 | 0.5676 | 0.2149 | 0.5772 | 0.0338 |
+| EnKF | 0.6758 | 0.9337 | 0.5469 | 0.1717 | 0.5706 | -0.0278 |
+| Strong-4DVar | 0.7478 | 0.9412 | 0.6510 | 0.2330 | 0.6813 | 0.0089 |
 | L1b | 0.8567 | 0.9567 | 0.8067 | 0.8538 | 0.9558 | 0.8028 |
 | L2b | 0.8527 | 0.9530 | 0.8025 | 0.8510 | 0.9525 | 0.8003 |
 | L3 | 0.8787 | 0.9703 | 0.8330 | 0.8770 | 0.9691 | 0.8310 |
@@ -59,6 +65,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | L6 | 0.8489 | 0.9541 | 0.7963 | 0.8480 | 0.9538 | 0.7951 |
 | V2 | **0.8975** | **0.9813** | **0.8556** | **0.8944** | **0.9808** | **0.8511** |
 | V3 | 0.8764 | 0.9683 | 0.8305 | 0.8748 | 0.9677 | 0.8284 |
+| SDA1 | 0.8061 | 0.9473 | 0.7355 | 0.8054 | 0.9470 | 0.7347 |
+| SDA2-mixed | 0.8054 | 0.9600 | 0.7282 | 0.8049 | 0.9602 | 0.7273 |
+| SDA2-nominal | 0.8063 | 0.9612 | 0.7289 | 0.8055 | 0.9610 | 0.7278 |
 
 ## Energy Score (lower is better)
 
@@ -66,9 +75,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 
 | Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast |
 |---|---|---|---|---|---|---|
-| ETKF | 0.4545 | 0.2873 | 0.5381 | 0.8466 | 0.7637 | 0.8881 |
-| EnKF | 0.4592 | 0.2915 | 0.5430 | 0.8931 | 0.7947 | 0.9423 |
-| Strong-4DVar | 0.4909* | 0.3569* | 0.5579* | 0.9817* | 0.8169* | 1.0640* |
+| ETKF | 0.4548 | 0.2857 | 0.5393 | 0.8511 | 0.7626 | 0.8953 |
+| EnKF | 0.4599 | 0.2915 | 0.5440 | 0.9018 | 0.7942 | 0.9556 |
+| Strong-4DVar | 0.4850* | 0.3551* | 0.5499* | 0.9892* | 0.8197* | 1.0740* |
 | L1b | 0.3914* | 0.2704* | 0.4520* | 0.3949* | 0.2702* | 0.4572* |
 | L2b | 0.4056* | 0.2867* | 0.4650* | 0.4069* | 0.2850* | 0.4679* |
 | L3 | 0.2649 | 0.1749 | 0.3099 | 0.2671 | 0.1773 | 0.3120 |
@@ -77,12 +86,15 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | L6 | 0.4068* | 0.2814* | 0.4695* | 0.4071* | 0.2803* | 0.4706* |
 | V2 | **0.2438** | **0.1513** | **0.2900** | **0.2471** | **0.1516** | **0.2949** |
 | V3 | 0.2762 | 0.1884 | 0.3201 | 0.2766 | 0.1871 | 0.3214 |
+| SDA1 | 0.3570 | 0.2362 | 0.4175 | 0.3568 | 0.2329 | 0.4187 |
+| SDA2-mixed | 0.3299 | 0.1990 | 0.3953 | 0.3283 | 0.1949 | 0.3950 |
+| SDA2-nominal | 0.3332 | 0.1975 | 0.4011 | 0.3322 | 0.1938 | 0.4015 |
 
 `*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
 
 ## Consistency checks
 
-- DA cached metrics vs recomputed-from-npz (42 values): max |Δ| = 2.12e-04 → PASS
+- DA cached metrics vs recomputed-from-npz (42 values): max |Δ| = 2.16e-04 → PASS
 - Neural stored truth vs dataset true_state[:, obs_var_indices]: max |Δ| = 0.00e+00 → PASS
 
 ## Reconstruction examples (Hovmöller)
@@ -91,12 +103,12 @@ Windows ranked by per-window pooled 24D RMSE of Strong-4DVar (best DA scheme); e
 
 | Case | Rank | Window | 4DVar win-RMSE | Strong-4DVar | EnKF | ETKF | L4 | L2b |
 |---|---|---|---|---|---|---|---|---|
-| S0 | worst | 1 | 1.372 | 1.372 | 1.261 | 1.196 | 0.728 | 0.735 |
-| S0 | median | 24 | 0.824 | 0.824 | 0.890 | 0.850 | 0.576 | 0.593 |
-| S0 | best | 134 | 0.411 | 0.411 | 0.742 | 0.771 | 0.572 | 0.573 |
-| S1 | worst | 75 | 1.974 | 1.974 | 2.064 | 1.982 | 0.832 | 0.850 |
-| S1 | median | 178 | 1.475 | 1.475 | 1.528 | 1.502 | 0.661 | 0.655 |
-| S1 | best | 35 | 0.965 | 0.965 | 0.999 | 0.984 | 0.485 | 0.495 |
+| S0 | worst | 58 | 1.432 | 1.432 | 0.997 | 0.889 | 0.624 | 0.613 |
+| S0 | median | 187 | 0.794 | 0.794 | 0.995 | 0.939 | 0.640 | 0.677 |
+| S0 | best | 155 | 0.407 | 0.407 | 0.680 | 0.687 | 0.509 | 0.524 |
+| S1 | worst | 75 | 1.991 | 1.991 | 2.074 | 2.005 | 0.832 | 0.850 |
+| S1 | median | 198 | 1.482 | 1.482 | 1.529 | 1.507 | 0.615 | 0.624 |
+| S1 | best | 35 | 0.977 | 0.977 | 1.026 | 0.980 | 0.485 | 0.495 |
 
 ![s0-worst](figs/l96_hovm_s0_worst.png)
 

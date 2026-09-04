@@ -633,13 +633,23 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              bias_range=(0.0, 0.2),
                              cached_datasets: dict = None,
                              randomize_params: list = None,
-                             fast_generation: bool = True) -> Dict:
+                             fast_generation: bool = True,
+                             train_forcing_state_bias: float = 0.1) -> Dict:
     """Build the S0/S1 train/val/test datasets.
 
     `fast_generation=True` (default) uses the vectorized batched path for
     train/val (~57x speedup, ~3min vs ~4.5h for 1000 windows). Test splits
     always use the slow per-window path so the eval cache stays bitwise-
     reproducible.
+
+    `train_forcing_state_bias` (default 0.1) sets the ground-truth forcing
+    corruption for train/val -- matching `test_s1`'s level by default, which
+    is why every model trained this way already sees S1-like model error
+    during training (this is NOT an "S0-only" training regime despite
+    `param_bias=0.0` in the base cfg; that only affects the DA baselines'
+    biased forward model, never the true trajectory). Pass 0.0 for a
+    genuinely nominal-only training set (test_s0/test_s1 are unaffected
+    either way, so results stay comparable across both regimes).
     """
     dynamics = _make_lorenz96_dynamics(cfg)
 
@@ -651,13 +661,13 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
 
     train = _build("train", RandomBiasLorenz96Dataset,
                    {"seed": 42, "num_windows": num_train_windows, "case": 1,
-                    "param_bias": 0.0, "forcing_state_bias": 0.1},
+                    "param_bias": 0.0, "forcing_state_bias": train_forcing_state_bias},
                    fast_generation,
                    param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                    randomize_params=randomize_params)
     val = _build("val", RandomBiasLorenz96Dataset,
                  {"seed": 99, "num_windows": num_val_windows, "case": 1,
-                  "param_bias": 0.0, "forcing_state_bias": 0.1},
+                  "param_bias": 0.0, "forcing_state_bias": train_forcing_state_bias},
                  fast_generation,
                  param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                  randomize_params=randomize_params)
