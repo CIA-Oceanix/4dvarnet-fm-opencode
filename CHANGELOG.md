@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-04: QG DA-cycle obs panel — raw vertical obs at a fixed color scale (never blank)
+
+**Summary:** Follow-up fix to the QG DA-cycle animation's **obs panel** (`fig_dacycle` in
+`reports/qg/generate_qg_s0s1_figs.py`) addressing two issues the user reported after the
+2026-09-03 figure fix. (1) **Flipped / horizontal obs** — the panel plotted `img.T`
+(transposed), so the observed meridional columns rendered as horizontal stripes, rotated
+90° relative to the correctly-oriented truth q₁ / DA-analysis q₁ panels (2 & 3). Removed
+the transpose so observed columns now render **vertical**, matching the other two panels.
+(2) **Aggregated / not raw + blank frames** — each frame re-normalized its own color
+scale (`vmax_o` recomputed per frame) and, with `sample_days=2.0`, only ~half the frames
+landed on an obs step (the rest showing blank `[no obs]`). Now a single window-wide
+**fixed color scale** is computed once from all raw obs values (mirroring the global
+`vmax_q` used for truth/analysis), and each frame renders the **nearest preceding raw obs
+event** (its column profiles at their true x-locations, labeled with the actual obs day,
+falling back to the first obs event before any exists) so the panel is **never blank** and
+shows genuine raw magnitudes comparable across time.
+
+**Files modified:**
+- `reports/qg/generate_qg_s0s1_figs.py` — `fig_dacycle` obs panel: removed `img.T`,
+  hoisted `vmax_o` to a window-wide global scale, added nearest-preceding-obs-event
+  selection with day-accurate title
+- `reports/qg/outputs/figs/qg_{s0,s1x32}_dacycle.gif` — regenerated production DA-cycle animations
+- `PLAN.md` — Illustrations bullet updated; `CHANGELOG.md` — this entry
+
+**Rationale:** The 2026-09-03 fix made the DA-cycle panels populated but the obs panel was
+still visually wrong (horizontal stripes from the transpose) and inconsistent (per-frame
+color normalization, blank `[no obs]` frames). Rendering raw obs as vertical columns at a
+fixed global scale — consistent with how truth/analysis are drawn — makes the animation
+read as the genuine raw DA observations at each instant.
+
+**Verification:** QG fast gate `pytest tests/{test_qg_dynamics,test_qg_data,test_qg_baselines,test_qg_s0s1,test_qg_random_columns,test_qg1l_dynamics,test_qg_psi_state}.py -m "not slow"` — **109 passed, 8 deselected**. `py_compile` clean; `ruff` clean (only the repo-wide informational `EXE001`). Quick nx=32 + production nx=64 runs COMPLETE; pixel analysis of both GIFs: obs panel non-blank on all 15/15 frames (was ~half blank), fixed panel std ≈ truth/analysis (29.5 vs 30.9/30.0), raw sparse-column footprint (~0.13 colored, i.e. 4 observed columns out of nx).
+
 ## 2026-09-04: Automated PR review gate via claude-code-action (replaces manual/blocked self-approval)
 
 **Summary:** Added `.github/workflows/pr_llm_review.yml`, a GitHub Actions workflow that runs the official `anthropics/claude-code-action` on every PR against `master`/`feat/{l96,qg,sw}-*` and submits a real GitHub review (`gh pr review --approve`/`--request-changes`) rather than a plain comment. This closes the gap opencode's local `implementer -> reviewer -> verifier` loop (`AGENTS.md`, `scripts/open_pr.sh`) has when the implementer is a Claude Code Auto Mode session: Auto Mode's safety classifier blocks a session from using the `rfablet-review` PAT to approve its own PR, so that step had no automated path. This workflow performs the equivalent review (correctness/safety/hygiene, same criteria as opencode's `reviewer` subagent) on GitHub's infrastructure instead, where no live agent session is submitting its own approval.

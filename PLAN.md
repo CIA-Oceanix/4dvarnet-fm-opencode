@@ -71,7 +71,11 @@ report + generator were on master).
   fixes the DA-cycle GIF's per-panel `ax` handling (truth q₁ and DA-analysis q₁ panels
   were blank), and rebuilds the obs Hovmöller as a time×column storm-track field with
   cross-time interpolation (previously ~96% blank). Regenerated production figures
-  committed alongside the fix.
+  committed alongside the fix. A follow-up DA-cycle obs-panel fix (2026-09-04) renders
+  the **raw observations** (not a per-day aggregate): observed meridional columns are
+  drawn **vertical** (removed the `img.T` transpose that had rotated them horizontal),
+  at a single window-wide **fixed color scale** (previously re-normalized per frame),
+  and each frame shows the nearest preceding raw obs event so the panel is never blank.
 - **Tests**: 7 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
   `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
   `test_qg_psi_state`) — all in the master CI gate.
