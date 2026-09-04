@@ -62,6 +62,7 @@ NEURAL_EXP_DIRS = [
     "SDA1_prior_l96",
     "SDA2_cond_mixed_l96",
     "SDA2_cond_nominal_l96",
+    "FDV1_unrolled_unet_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -70,7 +71,7 @@ NEURAL_EXP_DIRS = [
 # DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
 N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
-                 "L6_vanilla_cfm_s0s1_forcing_cond"}
+                 "L6_vanilla_cfm_s0s1_forcing_cond", "FDV1_unrolled_unet_l96"}
 
 # Methods evaluated as N=30 ensembles (proper ensemble ES, not the N=1 MAE
 # proxy). L3, V2 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
@@ -172,6 +173,15 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, "
       "N=30). Tests whether the amortized S1/S0 resilience seen elsewhere in this table survives "
       "when training-time exposure to model error is removed entirely.")),
+    ("FDV1_unrolled_unet_l96", "Neural (4DVarNet-style unrolled solver)",
+     ("Unrolled solver: the update at each of N_outer=10 iterations is the output of a weight-tied "
+      "UNet1D fed `concat(state, obs)` (`update_input='obs+state'`, no gradient/cost term at all -- "
+      "see `models/fourdvarnet.py::FourDVarNetSolver`), `x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, "
+      "zero-initialized; hidden [64,128,256]; 400 epochs; loss = final-iteration MSE only. "
+      "Fully deterministic (no ensemble, no randomness anywhere) -- evaluated as a single pass (N=1), "
+      "same convention as Strong-4DVar/L1b/L2b. Design taxonomy (`update_input` string) traced to "
+      "CIA-Oceanix/4dvarnet-global-mapping's `ronan_devs` branch (`GradSolver_withStep`); "
+      "gradient-conditioned modes (`grad-only`/`grad+state`/`subgrad+state`) reserved for a future FDV2.")),
 ]
 
 
