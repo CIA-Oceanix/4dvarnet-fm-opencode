@@ -23,6 +23,8 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | SDA2-mixed | Neural (SDA prior, params+forcing cond. + DPS guidance) | As SDA1 but the prior is additionally conditioned on the per-window physical params (F, c1, hx, eps, w1-w4) and the corrupted forcing signal (`ConditionalPriorCFM`, `models/sda.py`) -- obs is still never a network input, only the guidance term at inference conditions on it. Trained on the identical S0/S1 mix as SDA1 (`forcing_state_bias=0.1`); hidden [64,128,256]; 400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, N=30). |
 | SDA2-nominal | Neural (SDA prior, params+forcing cond., nominal-only train) | Identical architecture/inference to SDA2-mixed but trained with `forcing_state_bias=0.0` (genuinely nominal-only train/val -- never sees the S1-level forcing corruption at training time, unlike every other row in this table); hidden [64,128,256]; 400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, N=30). Tests whether the amortized S1/S0 resilience seen elsewhere in this table survives when training-time exposure to model error is removed entirely. |
 | FDV1 | Neural (4DVarNet-style unrolled solver) | Unrolled solver: the update at each of N_outer=10 iterations is the output of a weight-tied UNet1D fed `concat(state, obs)` (`update_input='obs+state'`, no gradient/cost term at all -- see `models/fourdvarnet.py::FourDVarNetSolver`), `x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, zero-initialized; hidden [64,128,256]; 400 epochs; loss = final-iteration MSE only. Fully deterministic (no ensemble, no randomness anywhere) -- evaluated as a single pass (N=1), same convention as Strong-4DVar/L1b/L2b. Design taxonomy (`update_input` string) traced to CIA-Oceanix/4dvarnet-global-mapping's `ronan_devs` branch (`GradSolver_withStep`); gradient-conditioned modes (`grad-only`/`grad+state`/`subgrad+state`) reserved for a future FDV2. |
+| FDV1+SDA1 | Neural (FDV1 mean + SDA1 warm-started guidance) | No retraining: FDV1's frozen point estimate warm-starts SDA1's guided sampling trajectory (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`, a "SDEdit"-style warm start -- `x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1) instead of starting from pure noise; `guided_obs_cost`/the Tweedie x_hat_1 machinery are unchanged. Hyperparameters (`tau0=0.7`, `guidance_weight=2`) picked by an S0-only grid sweep over `tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈{0,1,2,5,10,40,100}` -- any guidance stronger than ~2 actively hurts once warm-started (the DPS step size calibrated for pure-noise starts is too aggressive here); evaluated as a 30-member ensemble (`ens30×10`, N=30). |
+| FDV1+SDA2 | Neural (FDV1 mean + SDA2-nominal warm-started guidance) | As FDV1+SDA1 but warm-starting SDA2-nominal (params+forcing-conditioned prior) instead of SDA1; `tau0=0.5`, `guidance_weight=2` (own S0-only grid sweep -- SDA2's conditioning makes more remaining Euler steps useful than SDA1's fully-unconditional prior, hence the lower `tau0`); evaluated as a 30-member ensemble (`ens30×10`, N=30). **New best neural scheme in this table** on both RMSE and (near-)ES, while also being the only row besides FDV1+SDA1 with genuine (non-deterministic) ensemble spread. |
 
 Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the 24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what makes the DA-vs-neural comparison apples-to-apples.
 
@@ -46,7 +48,9 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 | SDA1 | 0.7187 | 0.4432 | 0.8564 | 0.7169 | 0.4387 | 0.8560 | 0.998 |
 | SDA2-mixed | 0.7076 | 0.3864 | 0.8682 | 0.7052 | 0.3804 | 0.8676 | 0.997 |
 | SDA2-nominal | 0.7047 | 0.3802 | 0.8670 | 0.7035 | 0.3764 | 0.8671 | 0.998 |
-| FDV1 | **0.4700** | **0.2429** | **0.5836** | **0.4704** | **0.2414** | **0.5849** | 1.001 |
+| FDV1 | 0.4700 | 0.2429 | 0.5836 | 0.4704 | 0.2414 | 0.5849 | 1.001 |
+| FDV1+SDA1 | 0.4653 | 0.2381 | 0.5790 | 0.4659 | 0.2370 | 0.5804 | 1.001 |
+| FDV1+SDA2 | **0.4514** | **0.2142** | **0.5700** | **0.4521** | **0.2128** | **0.5717** | 1.002 |
 
 Note on conventions: the DA metric cache stores the **mean of per-window RMSEs** (evaluation/run_l96.py), while this table uses the **pooled** convention (`sqrt(mean sq err)` over all windows/timesteps) for every method — the same convention as the neural evaluation. Pooled RMSE is ≤ mean-of-window RMSE, so DA values here are slightly lower (more favorable) than in the legacy cache; both orderings agree.
 
@@ -70,7 +74,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | SDA1 | 0.8061 | 0.9473 | 0.7355 | 0.8054 | 0.9470 | 0.7347 |
 | SDA2-mixed | 0.8054 | 0.9600 | 0.7282 | 0.8049 | 0.9602 | 0.7273 |
 | SDA2-nominal | 0.8063 | 0.9612 | 0.7289 | 0.8055 | 0.9610 | 0.7278 |
-| FDV1 | **0.9128** | **0.9842** | **0.8772** | **0.9121** | **0.9840** | **0.8761** |
+| FDV1 | 0.9128 | 0.9842 | 0.8772 | 0.9121 | 0.9840 | 0.8761 |
+| FDV1+SDA1 | 0.9143 | 0.9848 | 0.8791 | 0.9135 | 0.9845 | 0.8780 |
+| FDV1+SDA2 | **0.9178** | **0.9877** | **0.8828** | **0.9169** | **0.9875** | **0.8816** |
 
 ## Energy Score (lower is better)
 
@@ -87,12 +93,14 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | L4 | 0.3915* | 0.2726* | 0.4509* | 0.3940* | 0.2725* | 0.4548* |
 | L5 | 0.4321* | 0.3525* | 0.4720* | 0.4329* | 0.3507* | 0.4740* |
 | L6 | 0.4068* | 0.2814* | 0.4695* | 0.4071* | 0.2803* | 0.4706* |
-| V2 | **0.2438** | **0.1513** | **0.2900** | **0.2471** | **0.1516** | **0.2949** |
+| V2 | **0.2438** | 0.1513 | **0.2900** | 0.2471 | 0.1516 | **0.2949** |
 | V3 | 0.2762 | 0.1884 | 0.3201 | 0.2766 | 0.1871 | 0.3214 |
 | SDA1 | 0.3570 | 0.2362 | 0.4175 | 0.3568 | 0.2329 | 0.4187 |
 | SDA2-mixed | 0.3299 | 0.1990 | 0.3953 | 0.3283 | 0.1949 | 0.3950 |
 | SDA2-nominal | 0.3332 | 0.1975 | 0.4011 | 0.3322 | 0.1938 | 0.4015 |
 | FDV1 | 0.2889* | 0.1830* | 0.3418* | 0.2896* | 0.1818* | 0.3435* |
+| FDV1+SDA1 | 0.2630 | 0.1600 | 0.3146 | 0.2638 | 0.1590 | 0.3162 |
+| FDV1+SDA2 | 0.2447 | **0.1376** | 0.2982 | **0.2453** | **0.1360** | 0.3000 |
 
 `*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
 

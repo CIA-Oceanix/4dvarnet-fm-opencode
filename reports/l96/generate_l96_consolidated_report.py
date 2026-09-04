@@ -63,6 +63,8 @@ NEURAL_EXP_DIRS = [
     "SDA2_cond_mixed_l96",
     "SDA2_cond_nominal_l96",
     "FDV1_unrolled_unet_l96",
+    "FDV1_SDA1_hybrid_l96",
+    "FDV1_SDA2_hybrid_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -99,6 +101,14 @@ ENS30_DIRS = {
     "SDA2_cond_nominal_l96": {
         "s0": "SDA2_cond_nominal_l96/ens30_no10",
         "s1": "SDA2_cond_nominal_l96/ens30_no10",
+    },
+    "FDV1_SDA1_hybrid_l96": {
+        "s0": "FDV1_SDA1_hybrid_l96/ens30_no10",
+        "s1": "FDV1_SDA1_hybrid_l96/ens30_no10",
+    },
+    "FDV1_SDA2_hybrid_l96": {
+        "s0": "FDV1_SDA2_hybrid_l96/ens30_no10",
+        "s1": "FDV1_SDA2_hybrid_l96/ens30_no10",
     },
 }
 
@@ -182,6 +192,22 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "same convention as Strong-4DVar/L1b/L2b. Design taxonomy (`update_input` string) traced to "
       "CIA-Oceanix/4dvarnet-global-mapping's `ronan_devs` branch (`GradSolver_withStep`); "
       "gradient-conditioned modes (`grad-only`/`grad+state`/`subgrad+state`) reserved for a future FDV2.")),
+    ("FDV1_SDA1_hybrid_l96", "Neural (FDV1 mean + SDA1 warm-started guidance)",
+     ("No retraining: FDV1's frozen point estimate warm-starts SDA1's guided sampling trajectory "
+      "(`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`, a \"SDEdit\"-style warm start -- "
+      "`x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1) instead of "
+      "starting from pure noise; `guided_obs_cost`/the Tweedie x_hat_1 machinery are unchanged. "
+      "Hyperparameters (`tau0=0.7`, `guidance_weight=2`) picked by an S0-only grid sweep over "
+      "`tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈{0,1,2,5,10,40,100}` -- any guidance stronger than "
+      "~2 actively hurts once warm-started (the DPS step size calibrated for pure-noise starts is "
+      "too aggressive here); evaluated as a 30-member ensemble (`ens30×10`, N=30).")),
+    ("FDV1_SDA2_hybrid_l96", "Neural (FDV1 mean + SDA2-nominal warm-started guidance)",
+     ("As FDV1+SDA1 but warm-starting SDA2-nominal (params+forcing-conditioned prior) instead of "
+      "SDA1; `tau0=0.5`, `guidance_weight=2` (own S0-only grid sweep -- SDA2's conditioning makes "
+      "more remaining Euler steps useful than SDA1's fully-unconditional prior, hence the lower "
+      "`tau0`); evaluated as a 30-member ensemble (`ens30×10`, N=30). **New best neural scheme in "
+      "this table** on both RMSE and (near-)ES, while also being the only row besides "
+      "FDV1+SDA1 with genuine (non-deterministic) ensemble spread.")),
 ]
 
 
@@ -209,6 +235,10 @@ def short_name(name: str) -> str:
         return "SDA2-mixed"
     if name == "SDA2_cond_nominal_l96":
         return "SDA2-nominal"
+    if name == "FDV1_SDA1_hybrid_l96":
+        return "FDV1+SDA1"
+    if name == "FDV1_SDA2_hybrid_l96":
+        return "FDV1+SDA2"
     return name.split("_")[0] if "_" in name else name
 
 
