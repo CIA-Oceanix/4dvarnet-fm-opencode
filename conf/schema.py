@@ -247,8 +247,17 @@ class TweedieCFMConfig:
 
 
 @dataclass
+class SDAPriorConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet" | "sda_prior" | "sda_prior_cond"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -267,6 +276,7 @@ class ModelConfig:
     param_head_unet: ParamHeadUNetConfig = field(default_factory=ParamHeadUNetConfig)
     predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
     tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
+    sda_prior: SDAPriorConfig = field(default_factory=SDAPriorConfig)
 
 
 @dataclass

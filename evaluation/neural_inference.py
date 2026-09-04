@@ -9,7 +9,9 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
+from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
+from evaluation.sda_sampler import sda_guided_sample
 
 
 class BatchDict:
@@ -154,6 +156,19 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 # TweedieCFM's velocity UNet uses obs_dim = 2*state_dim
                 # (context = cat([obs_clean, mean])); proj_in = state_dim + 2*state_dim + cond_extra_dim.
                 cond_extra_dim = proj_in - 3 * state_dim
+            elif model_type == "sda_prior":
+                # UnconditionalPriorCFM's UNet is built with use_obs=False (see
+                # models/sda.py) so ConditionEncoder.proj_in == state_dim only
+                # (no obs/cond_extra concatenation) -- the generic obs_dim=state_dim
+                # formula below does not apply.
+                cond_extra_dim = 0
+            elif model_type == "sda_prior_cond":
+                # ConditionalPriorCFM's UNet is built with use_obs=True,
+                # obs_dim=1+param_dim, cond_extra_dim=0 (see models/sda.py):
+                # proj_in = state_dim + 1 + param_dim, so what's recovered here
+                # is param_dim, not cond_extra_dim (which stays 0).
+                param_dim = proj_in - state_dim - 1
+                cond_extra_dim = 0
             else:
                 # cond_extra_dim = proj_in - 2*state_dim for obs_dim = state_dim
                 cond_extra_dim = proj_in - 2 * state_dim
@@ -249,6 +264,14 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                         m[key] = tc[key]
                 if len(tc) > 0:
                     m.tweedie_cfm = tc
+            sp = yaml_cfg.model.get("sda_prior", {})
+            if hasattr(sp, "get"):
+                m = cfg.model
+                for key in ("N_outer", "sigma_prior", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in sp:
+                        m[key] = sp[key]
+                if len(sp) > 0:
+                    m.sda_prior = sp
             for sub in ("joint_cfm", "joint_direct_unet"):
                 sub_cfg = yaml_cfg.model.get(sub, {})
                 if hasattr(sub_cfg, "get"):
@@ -284,6 +307,10 @@ def resolve_model_class(cfg: Any) -> tuple:
         return TweedieCFM, cfg
     elif model_type == "PREDICTSTATECFM":
         return PredictStateCFM, cfg
+    elif model_type == "SDAPRIOR":
+        return UnconditionalPriorCFM, cfg
+    elif model_type == "SDAPRIORCOND":
+        return ConditionalPriorCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -385,6 +412,43 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 0),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
+        )
+    elif model_class == UnconditionalPriorCFM:
+        sp = cfg.model.get("sda_prior", {})
+        sp_get = sp.get if hasattr(sp, "get") else None
+
+        def _sp(key, default):
+            val = sp_get(key) if sp_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=_sp("time_emb_dim", 64),
+            N_outer=_sp("N_outer", 10),
+            sigma_prior=_sp("sigma_prior", 0.5),
+            dropout=_sp("dropout", 0.1),
+        )
+    elif model_class == ConditionalPriorCFM:
+        sp = cfg.model.get("sda_prior", {})
+        sp_get = sp.get if hasattr(sp, "get") else None
+
+        def _sp(key, default):
+            val = sp_get(key) if sp_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            hidden_channels=hidden,
+            time_emb_dim=_sp("time_emb_dim", 64),
+            N_outer=_sp("N_outer", 10),
+            sigma_prior=_sp("sigma_prior", 0.5),
+            dropout=_sp("dropout", 0.1),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")
@@ -521,6 +585,8 @@ def _run_case_inference(
     n_members: int = 1,
     n_outer: int = 1,
     ens_then_head: bool = False,
+    r_var: float = 0.5,
+    guidance_weight: float = 1.0,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -568,6 +634,16 @@ def _run_case_inference(
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 elif isinstance(model, (PredictStateCFM, TweedieCFM)):
                     pred = model.sample(batch_obj, N_outer=n_outer)
+                elif isinstance(model, (UnconditionalPriorCFM, ConditionalPriorCFM)):
+                    # Neither SDA prior is conditioned on obs by construction
+                    # (ConditionalPriorCFM adds params/forcing conditioning
+                    # but still never sees obs) -- state estimation requires
+                    # the observation-guided sampler (evaluation/sda_sampler.py),
+                    # not model.sample().
+                    pred, _ = sda_guided_sample(model, batch_obj, R_var=r_var,
+                                                N_outer=n_outer,
+                                                guidance_weight=guidance_weight,
+                                                n_members=1)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
@@ -642,6 +718,8 @@ def run_inference(
     n_members: int = 1,
     n_outer: int = 1,
     ens_then_head: bool = False,
+    r_var: float = 0.5,
+    guidance_weight: float = 1.0,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -649,9 +727,14 @@ def run_inference(
     ``trajectories``/``truth`` arrays (plus ``members`` when ``n_members > 1``;
     no metrics). To produce scores, pass these to the generic evaluator
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
+
+    ``r_var``/``guidance_weight`` only affect ``UnconditionalPriorCFM``
+    (SDA-style) models -- see ``evaluation/sda_sampler.sda_guided_sample``;
+    every other model type ignores them.
     """
     return {
         case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
-                                  ens_then_head=ens_then_head)
+                                  ens_then_head=ens_then_head, r_var=r_var,
+                                  guidance_weight=guidance_weight)
         for case, dl in dataloaders.items()
     }
