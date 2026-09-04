@@ -53,6 +53,27 @@ class TestGuidedObsCost:
         cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5)
         assert torch.allclose(cost, torch.tensor(0.0), atol=1e-6)
 
+    def test_obs_indices_restricts_which_channels_count(self):
+        B, T, D = 1, 6, 3
+        obs_mask = torch.zeros(B, T, dtype=torch.bool)
+        obs_mask[:, [1, 3]] = True
+        x_hat_1 = torch.randn(B, T, D)
+        y = x_hat_1.clone()
+        y[:, :, 2] += 1000.0  # channel 2 wildly mismatched
+        cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_indices=[0, 1])
+        assert torch.allclose(cost, torch.tensor(0.0), atol=1e-4), \
+            "excluded channel's mismatch must not enter the cost"
+
+    def test_obs_indices_all_channels_matches_none(self):
+        B, T, D = 1, 6, 3
+        obs_mask = torch.zeros(B, T, dtype=torch.bool)
+        obs_mask[:, [1, 3]] = True
+        x_hat_1 = torch.randn(B, T, D)
+        y = torch.randn(B, T, D)
+        cost_none = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_indices=None)
+        cost_all = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_indices=[0, 1, 2])
+        assert torch.allclose(cost_none, cost_all)
+
 
 class TestSdaGuidedSample:
     def test_guidance_weight_zero_matches_unconditional_sample(self):
@@ -118,6 +139,49 @@ class TestSdaGuidedSample:
         got, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3,
                                    guidance_weight=lambda _tau: 2.0)
         assert torch.allclose(got, expected)
+
+    def test_obs_indices_restricts_guidance_to_subset_of_channels(self):
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, obs_every=2)
+
+        torch.manual_seed(7)
+        guided_full, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=5,
+                                           guidance_weight=5.0)
+        torch.manual_seed(7)
+        guided_partial, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=5,
+                                              guidance_weight=5.0, obs_indices=[0])
+
+        # Guiding on all 3 channels vs. only channel 0 must diverge (different
+        # gradient direction/normalization at every step).
+        assert not torch.allclose(guided_full, guided_partial)
+
+        torch.manual_seed(7)
+        unguided, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=5,
+                                        guidance_weight=0.0)
+
+        # Restricting guidance to channel 0 must pull channel 0 closer to its
+        # observations than the fully-unguided prior sample, while channel 1
+        # (never in obs_indices) is not specifically optimized for.
+        cost_partial_ch0 = guided_obs_cost(
+            guided_partial, batch.obs, batch.obs_mask, R_var=0.1, obs_indices=[0])
+        cost_unguided_ch0 = guided_obs_cost(
+            unguided, batch.obs, batch.obs_mask, R_var=0.1, obs_indices=[0])
+        assert cost_partial_ch0 < cost_unguided_ch0
+
+    def test_obs_indices_none_unchanged_from_baseline(self):
+        """obs_indices=None (the default) must reproduce pre-existing behavior
+        exactly -- guards against the state_dim-based `x` init changing
+        results for the common (obs_dim == state_dim) case."""
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=1, T=20, D=3)
+        torch.manual_seed(3)
+        a, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3, guidance_weight=1.0)
+        torch.manual_seed(3)
+        b, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3, guidance_weight=1.0,
+                                 obs_indices=None)
+        assert torch.allclose(a, b)
 
     def test_runs_under_caller_no_grad(self):
         """The guidance step must work even if the caller wraps the eval loop
