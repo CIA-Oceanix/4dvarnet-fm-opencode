@@ -297,7 +297,10 @@ class _ESAccumulator:
         self.t = 0
 
     def step(self, ensemble_t: torch.Tensor, ref_t) -> None:
-        ens = ensemble_t.detach().cpu().numpy()  # (N, sd)
+        if isinstance(ensemble_t, torch.Tensor):
+            ens = ensemble_t.detach().cpu().numpy()  # (N, sd)
+        else:
+            ens = np.asarray(ensemble_t)
         if isinstance(ref_t, torch.Tensor):
             ref = ref_t.detach().cpu().numpy()
         else:
@@ -405,6 +408,12 @@ class Weak4DVar:
         interp_obs = _interp_observations(observations.unsqueeze(0), obs_mask.unsqueeze(0))[0]
         current_bg = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device)
 
+        # ES accumulator for deterministic methods (N=1 -> ES = MAE = CRPS)
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
+        es_acc = _ESAccumulator(num_steps, sd, 1) if ref_full is not None else None
+
         for w in range(num_windows):
             start = w * self.da_window_steps
             end = start + self.da_window_steps
@@ -442,10 +451,16 @@ class Weak4DVar:
             )
             current_bg = next_forecast[-1].detach()
 
+            if es_acc is not None:
+                for t in range(self.da_window_steps):
+                    analysis_t = analysis[start + t, :].reshape(1, -1)
+                    es_acc.step(analysis_t, ref_full[start + t])
+
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse)
+        es = es_acc.es() if es_acc is not None else None
+        return BaselineResult(trajectory=analysis, rmse=rmse, es=es)
 
     def _forward_weak(self, x0, q, steps, start_idx, forcing, clip_range=50.0, **kwargs):
         traj = [x0]
@@ -528,11 +543,18 @@ class Weak4DVar:
             current_bg = next_forecast[:, -1].detach()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref_full = true_state.numpy() if (
+            true_state is not None and true_state.shape[-1] == sd
+        ) else None
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
-            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b))
+            es_b = (
+                np.mean(np.abs(analysis[b] - ref_full[b]), axis=0)
+                if ref_full is not None else None
+            )
+            results.append(BaselineResult(trajectory=analysis[b], rmse=rmse_b, es=es_b))
         return results
 
 
@@ -731,7 +753,7 @@ class Strong4DVar:
 class ETKF:
     def __init__(
         self,
-        N_ensemble: int = 30,
+        N_ensemble: int = 50,
         R_var: float = 0.5,
         inflation: float = 1.0,
         dt: float = 0.01,
@@ -827,8 +849,10 @@ class ETKF:
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
+        ens_hist = np.zeros((N, num_steps, sd))
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
+        ens_hist[:, 0] = ensemble.cpu().numpy()
 
         ref_full = true_state.numpy() if (
             true_state is not None and true_state.shape[-1] == sd
@@ -905,11 +929,13 @@ class ETKF:
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
+            ens_hist[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
-        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        per_member_rmse = np.sqrt(np.mean((ens_hist - ref[np.newaxis, :, :]) ** 2, axis=1))  # (N, sd)
+        rmse = np.mean(per_member_rmse, axis=0)  # mean RMSE across ensemble members
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_hist, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
     def assimilate_batch(
         self,
         observations: torch.Tensor,
@@ -1054,7 +1080,7 @@ class ETKF:
 class EnKF:
     def __init__(
         self,
-        N_ensemble: int = 30,
+        N_ensemble: int = 50,
         R_var: float = 0.5,
         inflation: float = 1.0,
         dt: float = 0.01,
@@ -1144,8 +1170,10 @@ class EnKF:
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
+        ens_hist = np.zeros((self.N_ensemble, num_steps, self.state_dim))
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
+        ens_hist[:, 0] = ensemble.cpu().numpy()
 
         ref_full = true_state.numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
@@ -1195,11 +1223,13 @@ class EnKF:
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
+            ens_hist[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
-        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        per_member_rmse = np.sqrt(np.mean((ens_hist - ref[np.newaxis, :, :]) ** 2, axis=1))  # (N, sd)
+        rmse = np.mean(per_member_rmse, axis=0)  # mean RMSE across ensemble members
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_hist, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
 
     def assimilate_batch(
         self,
