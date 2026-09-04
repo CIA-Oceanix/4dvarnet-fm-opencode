@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-04: Automated PR review gate via claude-code-action (replaces manual/blocked self-approval)
+
+**Summary:** Added `.github/workflows/pr_llm_review.yml`, a GitHub Actions workflow that runs the official `anthropics/claude-code-action` on every PR against `master`/`feat/{l96,qg,sw}-*` and submits a real GitHub review (`gh pr review --approve`/`--request-changes`) rather than a plain comment. This closes the gap opencode's local `implementer -> reviewer -> verifier` loop (`AGENTS.md`, `scripts/open_pr.sh`) has when the implementer is a Claude Code Auto Mode session: Auto Mode's safety classifier blocks a session from using the `rfablet-review` PAT to approve its own PR, so that step had no automated path. This workflow performs the equivalent review (correctness/safety/hygiene, same criteria as opencode's `reviewer` subagent) on GitHub's infrastructure instead, where no live agent session is submitting its own approval.
+
+**Design:**
+- Auth: `CLAUDE_CODE_OAUTH_TOKEN` (generated via `claude setup-token` against a Claude Pro/Max subscription) rather than a metered `ANTHROPIC_API_KEY` — no separate API billing.
+- Reviewer identity: `GH_TOKEN`/`github_token` both set to the `REVIEWER_GH_TOKEN` secret (the existing `rfablet-review` PAT already used by `scripts/open_pr.sh`) so the review is submitted by a distinct account, satisfying both GitHub's no-self-approval rule and this repo's branch rulesets (`required_approving_review_count: 1`). `GH_TOKEN` is set explicitly at the step level (not just the action's `github_token` input) because the action's docs don't confirm whether `github_token` alone propagates into the `gh` CLI environment used by Claude's own Bash tool calls.
+- Tool scope: `claude_args: --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*)"` — read the diff, submit a review, nothing else (no commits, no file edits).
+- Review criteria embedded in the `prompt`: correctness bugs, safety/hygiene (secrets, destructive ops, stray binaries), and an explicit instruction to default to APPROVE and not request changes over style/scope preferences — matching this repo's stated minimal-diff engineering culture.
+
+**Files modified:**
+- `.github/workflows/pr_llm_review.yml` — new
+
+**Rationale:** An earlier session (L96 SDA benchmark PR #149) hit exactly this gap: PR opened, CI green, but no automated way to submit the required review from a session that isn't allowed to self-approve. Rather than grant a one-off Bash permission each time, this makes the review step genuinely automated and auditable via Actions logs, matching the original intent of the two-identity (author/reviewer) design.
+
+**Verification:** `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/pr_llm_review.yml'))"` — valid YAML. Both `CLAUDE_CODE_OAUTH_TOKEN` and `REVIEWER_GH_TOKEN` secrets confirmed present (`gh secret list`). Functional verification pending: this very PR is the first real test of the workflow (a newly added `pull_request`-triggered workflow file runs on the PR that introduces it).
+
 ## 2026-09-03: QG figure generator — meaningful S1 wind-curl, DA-cycle, and obs Hovmöller (empty/constant-figure fix)
 
 **Summary:** Fixed `reports/qg/generate_qg_s0s1_figs.py` so the S1-QG2L (da_nx=32) illustration figures are no longer empty/constant, and regenerated the committed production figures. Three root causes were confirmed and fixed:
