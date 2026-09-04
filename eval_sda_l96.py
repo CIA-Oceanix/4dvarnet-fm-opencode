@@ -18,6 +18,16 @@ guidance term. ``r_var`` defaults to the same observation-noise variance
 ``r_var``, ``guidance_weight`` is a free DPS-style step-size knob with no
 principled default (see ``evaluation/sda_sampler.py``) -- pick it via a small
 sweep on S0 before trusting S1 numbers.
+
+``--guidance-obs-j`` (distinct from ``--obs-j``, which stays pinned to the
+checkpoint's native/eval dimension) restricts what the guidance cost is
+allowed to see, mirroring the DA baselines' obs_j/eval_j decoupling
+(``evaluation/run_l96.py``) without any retraining or new dataset cache: the
+model still generates a full checkpoint-native-D sample and is scored on the
+same subspace as always, but only the first ``NO + guidance_obs_j*NO``
+channels of the existing cached observation (slow vars first, then the
+canonical ordering's per-node fast vars) enter the guidance term. Pass 0 for
+slow-only observation density.
 """
 import argparse
 import json
@@ -40,6 +50,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def guidance_obs_indices(guidance_obs_j: int | None, canonical_obs_j: int, NO: int = 8):
+    """Map a reduced fast-vars-per-node density onto index positions within
+    the canonical (``canonical_obs_j``-built) 24D observed-subspace ordering.
+
+    Mirrors ``evaluation/run_l96.py::make_obs_j_indices``'s (X-vars first,
+    then per-node-interleaved Y-vars) layout, but computes positions *within*
+    that already-built 24D array rather than the original 40D truth space.
+    Returns ``None`` (no restriction) when ``guidance_obs_j`` is unset or
+    already covers everything the canonical array has.
+    """
+    if guidance_obs_j is None or guidance_obs_j >= canonical_obs_j:
+        return None
+    slow = list(range(NO))
+    fast = [NO + canonical_obs_j * k + j for k in range(NO) for j in range(guidance_obs_j)]
+    return slow + fast
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the SDA prior on the L96 S0/S1 test dataset")
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint .ckpt")
@@ -48,6 +75,9 @@ def main():
     parser.add_argument("--num-windows", type=int, default=200, help="Number of test windows")
     parser.add_argument("--obs-interval", type=int, default=100, help="Observation interval")
     parser.add_argument("--obs-j", type=int, default=2, help="Fast vars observed per slow node (default: 2)")
+    parser.add_argument("--guidance-obs-j", type=int, default=None,
+                        help="Restrict the guidance cost to this many fast vars/node "
+                             "(0 = slow-only), independent of --obs-j (default: unrestricted)")
     parser.add_argument("--batch-size", type=int, default=200, help="Batch size")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="Device")
     parser.add_argument("--n-members", type=int, default=1,
@@ -91,17 +121,21 @@ def main():
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
+    guide_indices = guidance_obs_indices(args.guidance_obs_j, args.obs_j)
+
     # Step 1: guided inference -> estimates
     torch.manual_seed(args.seed)
     logger.info(
         f"Running guided inference (step 1): cases={args.cases} n_members={args.n_members} "
         f"n_outer={args.n_outer} r_var={args.r_var} guidance_weight={args.guidance_weight} "
+        f"guidance_obs_j={args.guidance_obs_j} ({len(guide_indices) if guide_indices else 'all'} dims) "
         f"seed={args.seed}"
     )
     estimates = run_inference(
         model, dataloaders, device, obs_var_indices,
         n_members=args.n_members, n_outer=args.n_outer,
         r_var=args.r_var, guidance_weight=args.guidance_weight,
+        obs_indices=guide_indices,
     )
 
     # Save per-case .npz estimates + truth, and compute generic metrics (step 2)
@@ -143,6 +177,8 @@ def main():
             "n_outer": args.n_outer,
             "r_var": args.r_var,
             "guidance_weight": args.guidance_weight,
+            "guidance_obs_j": args.guidance_obs_j,
+            "guidance_obs_indices": guide_indices,
             "seed": args.seed,
             "cases": list(args.cases),
         },

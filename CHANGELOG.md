@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-04: SDA slow-only (obsj0) observation-density benchmark — no retraining, guidance-cost restriction
+
+**Summary:** Extended the L96 SDA (score-based DA) benchmark to the slow-only (obsj0) observation-density axis already established for the DA baselines (`reports/l96/outputs/l96_obs_density_da_baselines.md`, PR #144): only the 8 slow `X` variables are observed (no fast `Y`), while scoring stays on the identical 24D eval subspace. Unlike the DA baselines, this required **no new dataset cache and no retraining** — SDA's guidance term is the only thing that ever reads `obs` (the generative network never sees it), so restricting which channels the DPS guidance cost is allowed to see is enough to simulate the sparser observation density on top of the existing obsj2-trained checkpoints and cached test set.
+
+**Headline:** All three SDA variants beat every DA baseline under slow-only observation too (S0 mean RMSE: best DA = ETKF 1.248 vs best SDA = SDA2-nominal 1.110), and their S1/S0 degradation stays ~1.00–1.003× versus DA's 1.12–1.37× under the same sparse-observation stress test — the amortized/marginal-inference-vs-recursive-Markov narrative (Axis 1) holds up even as observations get much sparser, not just at the canonical density.
+
+**Files modified:**
+- `evaluation/sda_sampler.py` — `guided_obs_cost`/`sda_guided_sample` gain an `obs_indices` param that restricts the cost to a channel subset (e.g. `range(8)` for slow-only); `x`'s initial shape now derives from `model.state_dim` rather than `batch.obs.shape` (previously implicitly assumed equal, now correct even if they diverge)
+- `evaluation/neural_inference.py` — threads `obs_indices` through `_run_case_inference`/`run_inference` to the SDA guidance call (no-op for every other model type)
+- `eval_sda_l96.py` — new `--guidance-obs-j` flag + `guidance_obs_indices()` helper mapping a reduced fast-vars-per-node density onto positions within the canonical 24D ordering (mirrors `evaluation/run_l96.py::make_obs_j_indices`'s layout, but within the already-built 24D array); recorded in the output JSON's `sampling` block
+- `reports/l96/generate_l96_obs_density_report.py` — new "Neural (SDA)" table (obsj2 vs obsj0, S0/S1, mean/slow/obs_fast) alongside the existing DA-baseline tables; `reports/l96/outputs/l96_obs_density_da_baselines.md` regenerated (additive only — the pre-existing DA sections are byte-identical)
+- `tests/test_sda_sampler.py` — `obs_indices` channel-restriction tests + a regression guard that `obs_indices=None` reproduces the pre-existing (obs_dim==state_dim) behavior exactly
+- `tests/test_eval_sda_l96.py` (new) — unit tests for `guidance_obs_indices`' index arithmetic (slow-only, unrestricted, and the general per-node-interleaved case)
+
+**Results (ens30×10, guidance_weight=40, r_var=0.5 — same hyperparameters as the obsj2 runs; not re-swept for this density):**
+
+| Method | obsj2 S0 | obsj0 S0 | obsj2 S1 | obsj0 S1 | obsj0 degradation |
+|---|---|---|---|---|---|
+| SDA1 | 0.7185 | 1.1350 | 0.7168 | 1.1369 | 1.0017 |
+| SDA2-mixed | 0.7074 | 1.1158 | 0.7051 | 1.1187 | 1.0026 |
+| SDA2-nominal | 0.7046 | 1.1098 | 0.7033 | 1.1121 | 1.0020 |
+
+**Rationale:** The DA-baselines' obsj0 report already established slow-only observation as a meaningful stress-test axis; extending it to SDA closes the comparison and tests whether guidance-based state estimation (as opposed to feed-forward obs-conditioned CFM) degrades gracefully as its only source of ground truth (the guidance term) gets sparser. It does.
+
+**Verification:** `pytest tests/test_sda.py tests/test_sda_sampler.py tests/test_eval_sda_l96.py` — 22/22 passed. Three ens30×10 eval runs (SDA1, SDA2-mixed, SDA2-nominal) completed against the existing obsj2 checkpoints with `--guidance-obs-j 0`; report regenerated with no warnings once the DA-baseline JSON paths were reachable.
+
 ## 2026-09-04: QG DA-cycle obs panel — raw vertical obs at a fixed color scale (never blank)
 
 **Summary:** Follow-up fix to the QG DA-cycle animation's **obs panel** (`fig_dacycle` in

@@ -587,6 +587,7 @@ def _run_case_inference(
     ens_then_head: bool = False,
     r_var: float = 0.5,
     guidance_weight: float = 1.0,
+    obs_indices=None,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -643,7 +644,8 @@ def _run_case_inference(
                     pred, _ = sda_guided_sample(model, batch_obj, R_var=r_var,
                                                 N_outer=n_outer,
                                                 guidance_weight=guidance_weight,
-                                                n_members=1)
+                                                n_members=1,
+                                                obs_indices=obs_indices)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
@@ -720,6 +722,7 @@ def run_inference(
     ens_then_head: bool = False,
     r_var: float = 0.5,
     guidance_weight: float = 1.0,
+    obs_indices=None,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -728,13 +731,18 @@ def run_inference(
     no metrics). To produce scores, pass these to the generic evaluator
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
 
-    ``r_var``/``guidance_weight`` only affect ``UnconditionalPriorCFM``
-    (SDA-style) models -- see ``evaluation/sda_sampler.sda_guided_sample``;
-    every other model type ignores them.
+    ``r_var``/``guidance_weight``/``obs_indices`` only affect ``SDA``-style
+    models (``UnconditionalPriorCFM``/``ConditionalPriorCFM``) -- see
+    ``evaluation/sda_sampler.sda_guided_sample``; every other model type
+    ignores them. ``obs_indices`` is unrelated to this function's own
+    ``obs_var_indices`` param (that one restricts what truth gets scored
+    against; ``obs_indices`` restricts what the SDA guidance cost is allowed
+    to see, within that same 24D subspace -- e.g. ``range(8)`` for
+    slow-only-observed).
     """
     return {
         case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
                                   ens_then_head=ens_then_head, r_var=r_var,
-                                  guidance_weight=guidance_weight)
+                                  guidance_weight=guidance_weight, obs_indices=obs_indices)
         for case, dl in dataloaders.items()
     }

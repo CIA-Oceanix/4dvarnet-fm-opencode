@@ -16,6 +16,12 @@ Consumes (all produced by this session's runs with the S1 ``case=2`` corrupted-
 forcing fix):
 * state-only DA: ``l96_baselines_dws500_*_obsj{2,0}_int100*.json``
 * joint  DA:     ``l96_joint_comparison{,_slowobs}.json``
+* SDA (score-based DA, guidance-only): ``{SDA1_prior_l96,SDA2_cond_mixed_l96,
+  SDA2_cond_nominal_l96}{,_slowobs}/ens30_no10/neural_eval.json`` -- no
+  retraining or new dataset needed for the slow-only variant (see
+  ``evaluation/sda_sampler.py``'s ``obs_indices``): the same obsj2 checkpoint
+  and cached test set are reused, restricting only which channels the DPS
+  guidance cost is allowed to see.
 
 Generates ``reports/l96/outputs/l96_obs_density_da_baselines.md``.
 """
@@ -43,6 +49,13 @@ DEFAULT_OUT = ROOT / "reports/l96/outputs/l96_obs_density_da_baselines.md"
 PARAM_NAMES = ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]
 STATE_ONLY_METHODS = ["Strong-4DVar", "EnKF", "ETKF"]
 JOINT_METHODS = ["Joint-EnKF", "Joint-ETKF", "Joint-Strong-4DVar"]
+
+# SDA (score-based DA): (display name, canonical/obsj2 exp dir, slow-only/obsj0 exp dir)
+NEURAL_METHODS = [
+    ("SDA1", "SDA1_prior_l96", "SDA1_prior_l96_slowobs"),
+    ("SDA2-mixed", "SDA2_cond_mixed_l96", "SDA2_cond_mixed_l96_slowobs"),
+    ("SDA2-nominal", "SDA2_cond_nominal_l96", "SDA2_cond_nominal_l96_slowobs"),
+]
 
 
 def load_json(path: Path):
@@ -82,6 +95,45 @@ def joint_state_row(joint_data, case, method):
     pr = entry.get("param_rmse")
     pmean = (sum(pr.values()) / len(pr)) if pr else None
     return (sr.get("mean"), sr.get("slow"), sr.get("obs_fast"), ev.get("mean"), pmean)
+
+
+def neural_row(neural_data, case):
+    """Returns (rmse, slow, obs_fast) from an eval_sda_l96.py ens30 neural_eval.json."""
+    entry = (neural_data or {}).get("metrics", {}).get(case)
+    if not entry:
+        return None
+    g = entry.get("groups", {})
+    return (entry.get("rmse"), g.get("slow"), g.get("obs_fast"))
+
+
+def build_neural_table():
+    lines = []
+    lines.append("## Neural (SDA, score-based DA) — same obsj2 checkpoint, guidance-only restriction")
+    lines.append("")
+    lines.append("No retraining and no new dataset: the slow-only column restricts which channels "
+                 "the DPS guidance cost may see (`evaluation/sda_sampler.py`'s `obs_indices`), reusing "
+                 "the identical obsj2-trained checkpoint and cached test set. All rows are the "
+                 "30-member-ensemble (`ens30×10`) convention, same as the consolidated benchmark.")
+    lines.append("")
+    lines.append("| Case | Method | obsj2 mean | obsj0 mean | Δ mean | obsj2 slow | obsj0 slow | obsj2 obs_fast | obsj0 obs_fast |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+    for case_label, case_key in (("S0", "s0"), ("S1", "s1")):
+        for name, canon_dir, slow_dir in NEURAL_METHODS:
+            canon = load_json(ROOT / f"experiments/{canon_dir}/ens30_no10/neural_eval.json")
+            slow = load_json(ROOT / f"experiments/{slow_dir}/ens30_no10/neural_eval.json")
+            c = neural_row(canon, case_key)
+            s = neural_row(slow, case_key)
+            if c is None and s is None:
+                continue
+            delta = (s[0] - c[0]) if (c and s) else None
+            lines.append(
+                f"| {case_label} | {name} | {fmt_num(c[0]) if c else '--'} | "
+                f"{fmt_num(s[0]) if s else '--'} | {fmt_num(delta) if delta is not None else '--'} | "
+                f"{fmt_num(c[1]) if c else '--'} | {fmt_num(s[1]) if s else '--'} | "
+                f"{fmt_num(c[2]) if c else '--'} | {fmt_num(s[2]) if s else '--'} |"
+            )
+    lines.append("")
+    return lines
 
 
 def build_state_table(canon, slow):
@@ -185,6 +237,9 @@ def write_report(canon_state, canon_joint, slow_state, slow_joint, output_path: 
     md.append("---")
     md.append("")
     md.extend(build_joint_param_table(canon_joint, slow_joint))
+    md.append("---")
+    md.append("")
+    md.extend(build_neural_table())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(md) + "\n")
