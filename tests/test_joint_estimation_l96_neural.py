@@ -218,7 +218,7 @@ def test_model_factory_joint_l96(l96_joint_cfg):
 
     def build(name):
         with initialize(version_base="1.3", config_path="../config"):
-            cfg = compose(config_name="experiment/" + name)
+            cfg = compose(config_name="models/" + name)
         return model_factory(cfg, torch.device("cpu"))
 
     for name, cls in [("L7_joint_cfm_s0s1", JointCFM),

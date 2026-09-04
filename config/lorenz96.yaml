@@ -1,0 +1,83 @@
+defaults:
+  - baselines
+  - _self_
+
+data:
+  system: lorenz96
+  state_names: ["X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"]
+  param_names: ["F"]
+  dt: 0.001
+  T_max: 3.0
+  obs_interval: 100
+  R_var: 0.5
+  B_var: 2.0
+  num_train_windows: 2000
+  num_val_windows: 200
+  num_test_windows: 200
+  window_spacing: 2000
+  spinup_steps: 10000
+  seed: 42
+  NO: 8
+  J: 4
+  h: 1.0
+  hx: 1.0
+  eps: 0.1
+  F_true: 8.0
+  F_da: 8.0
+  gamma: 0.05
+  W_L_bar: 0.0
+  c1: 1.0
+  c2: 0.1
+  sigma_0: 0.08
+  sigma_L: 0.20
+  tau_eta: 5.0
+  sigma_eta: 0.7071067811865476
+  coupling_exponent_truth: 1.6  # ground-truth coupling exponent (same for all splits/cases)
+  obs_j: 2
+  fast_weights: [1.0, 1.0, 0.1, 0.1]
+  randomize:
+    fast_weights:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    F:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    c1:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    h:
+      randomized: false
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    hx:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+    eps:
+      randomized: true
+      noise: 0.2
+      biased: false
+      bias: 0.0
+
+baselines:
+  da_window_steps: 500
+  batch_size: 16
+
+cases:
+  s0:
+    param_bias: 0.0
+    forcing_state_bias: 0.0
+    coupling_exponent_da: 1.6
+
+  s1:
+    param_bias: 0.1
+    forcing_state_bias: 0.1
+    coupling_exponent_da: 1.0

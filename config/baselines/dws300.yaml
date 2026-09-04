@@ -1,7 +1,0 @@
-# @package _global_
-defaults:
-  - /lorenz63_default
-  - _self_
-
-baselines:
-  da_window_steps: 300

@@ -1,0 +1,42 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+note: >
+  Originally trained on CS2 (biased/corrupted forcing) data only via the
+  legacy cs1/cs2 pipeline, which has been retired in favor of the unified
+  S0/S1 pipeline. The S0/S1 train split is a randomized mix (RandomBiasLorenz63Dataset),
+  not case-restricted, so there is no direct "S1-only" equivalent; this
+  config now runs the standard S0/S1 mixed training instead of biased-only
+  training. Kept for reference; likely superseded by the S-series s0s1 configs.
+data:
+  data_setup: s0_s1
+model:
+  state_dim: 3
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  K_inner: 5
+  N_outer: 10
+  nu: 1.0
+  use_obs: true
+  use_energy: true
+  dropout: 0.1
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 1.0
+  batch_size: 32
+  loss:
+    use_gradient: true
+    gradient_weight: 0.1
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  checkpoint_stage2: checkpoints/stage2.pt
+  outputs_dir: outputs

@@ -1,0 +1,41 @@
+defaults:
+  - baselines
+  - _self_
+
+data:
+  system: lorenz63
+  state_names: ["X", "Y", "Z"]
+  param_names: ["sigma", "rho", "beta", "c1"]
+  dt: 0.01
+  T_max: 3.0
+  obs_interval: 30
+  R_var: 0.5
+  B_var: 2.0
+  num_train_windows: 2000
+  num_val_windows: 200
+  num_test_windows: 200
+  window_spacing: 2000
+  spinup_steps: 10000
+  seed: 42
+  sigma_true: 10.0
+  rho_true: 28.0
+  beta_true: 2.6666666666666665
+  gamma: 0.05
+  W_L_bar: 0.0
+  c1: 1.0
+  c2: 0.1
+  sigma_0: 0.08
+  sigma_L: 0.20
+  tau_eta: 5.0
+  sigma_eta: 0.7071067811865476
+  coupling_exponent_truth: 1.6  
+
+cases:
+  s0:
+    param_bias: 0.0
+    forcing_state_bias: 0.0
+    coupling_exponent_da: 1.6
+  s1:
+    param_bias: 0.15
+    forcing_state_bias: 0.1
+    coupling_exponent_da: 1.0

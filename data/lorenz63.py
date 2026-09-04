@@ -1,3 +1,4 @@
+import math
 import torch
 import numpy as np
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ class Lorenz63Config:
     case: int = 1
     dt: float = 0.01
     T_max: float = 3.0
-    obs_interval: int = 20
+    obs_interval: int = 30
     R_var: float = 0.5
     B_var: float = 2.0
     param_bias: float = 0.0
@@ -64,10 +65,12 @@ class Lorenz63Config:
         return self.case == 2
 
 
-def _coupling(W, c1, exponent):
+def _coupling_scalar(W: float, c1: float, exponent: float) -> float:
     if exponent == 1.0:
         return c1 * W
-    return c1 * torch.sign(W) * torch.abs(W)**exponent
+    if W == 0.0:
+        return 0.0
+    return c1 * math.copysign(abs(W) ** exponent, W)
 
 
 def generate_long_trajectory(
@@ -84,31 +87,41 @@ def generate_long_trajectory(
     for attempt in range(max_retries):
         current_seed = base_seed + attempt
         rng = torch.Generator(device=device).manual_seed(current_seed)
-        trajectory = torch.zeros(num_steps, 4, device=device)
-        state = torch.tensor([1.0, 1.0, 20.0, 0.0], device=device)
-        trajectory[0] = state
 
+        # The Euler-Maruyama recurrence below is inherently sequential (state[t]
+        # depends on state[t-1]), so it's kept as a plain Python loop. It uses
+        # plain floats + a numpy buffer rather than per-step torch tensor
+        # indexing/construction, which previously dominated the runtime with
+        # dispatcher/object-creation overhead. Noise is still drawn from
+        # torch's RNG (vectorized, so seeding/determinism is unaffected) and
+        # only converted to numpy once.
         sqrt_dt = np.sqrt(dt)
-        noise = torch.randn((num_steps, 3), device=device, generator=rng) * sqrt_dt
+        noise = (torch.randn((num_steps, 3), device=device, generator=rng) * sqrt_dt).cpu().numpy()
+
+        trajectory = np.zeros((num_steps, 4), dtype=np.float32)
+        X, Y, Z, W_L = 1.0, 1.0, 20.0, 0.0
+        trajectory[0] = (X, Y, Z, W_L)
 
         for t in range(1, num_steps):
-            X, Y, Z, W_L = trajectory[t - 1]
             dW1, dW2, dW3 = noise[t]
 
-            dX = sigma * (Y - X) + _coupling(W_L, c1, coupling_exponent)
+            dX = sigma * (Y - X) + _coupling_scalar(W_L, c1, coupling_exponent)
             dY = X * (rho - Z) - Y
             dZ = X * Y - beta * Z
             dW_L_term = -gamma * (W_L - W_L_bar) + c2 * X
 
-            X_next = X + dX * dt
-            Y_next = Y + dY * dt + sigma_0 * Y * dW1
-            Z_next = Z + dZ * dt + sigma_0 * Z * dW2
-            W_L_next = W_L + dW_L_term * dt + sigma_L * dW3
+            X = X + dX * dt
+            Y = Y + dY * dt + sigma_0 * Y * dW1
+            Z = Z + dZ * dt + sigma_0 * Z * dW2
+            W_L = W_L + dW_L_term * dt + sigma_L * dW3
 
-            trajectory[t] = torch.tensor([X_next, Y_next, Z_next, W_L_next], device=device)
+            trajectory[t, 0] = X
+            trajectory[t, 1] = Y
+            trajectory[t, 2] = Z
+            trajectory[t, 3] = W_L
 
-        if torch.isfinite(trajectory).all():
-            return trajectory
+        if np.isfinite(trajectory).all():
+            return torch.from_numpy(trajectory).to(device)
 
     raise RuntimeError(
         f"generate_long_trajectory diverged after {max_retries} retries "
@@ -217,18 +230,6 @@ class Lorenz63Dataset:
         return self.windows[idx]["forcing_true"]
 
 
-def make_datasets(cfg: Lorenz63Config) -> Dict[str, Lorenz63Dataset]:
-    train_cfg = Lorenz63Config(**{**cfg.__dict__, "seed": 42, "num_windows": 2000})
-    val_cfg = Lorenz63Config(**{**cfg.__dict__, "seed": 99, "num_windows": 200})
-    test_cfg_cs1 = Lorenz63Config(**{**cfg.__dict__, "seed": 123, "num_windows": 200, "case": 1, "param_bias": 0.0})
-    test_cfg_cs2 = Lorenz63Config(**{**cfg.__dict__, "seed": 123, "num_windows": 200, "case": 2, "param_bias": cfg.param_bias})
-
-    return {
-        "train": Lorenz63Dataset(train_cfg),
-        "val": Lorenz63Dataset(val_cfg),
-        "test_cs1": Lorenz63Dataset(test_cfg_cs1),
-        "test_cs2": Lorenz63Dataset(test_cfg_cs2),
-    }
 
 
 def _cfg_to_data_dict(cfg: Lorenz63Config) -> dict:
@@ -276,7 +277,9 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
                           num_val_windows: int,
                           num_test_windows: int,
                           param_noise: float,
-                          bias_range: Tuple[float, float]) -> str:
+                          bias_range: Tuple[float, float],
+                          train_seed: int, val_seed: int,
+                          s0_seed: int, s1_seed: int) -> str:
     import hashlib
     key_data = {
         "num_train_windows": num_train_windows,
@@ -284,6 +287,8 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
         "num_test_windows": num_test_windows,
         "param_noise": param_noise,
         "bias_range": bias_range,
+        "train_seed": train_seed, "val_seed": val_seed,
+        "s0_seed": s0_seed, "s1_seed": s1_seed,
         "dt": cfg.dt, "T_max": cfg.T_max,
         "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
         "spinup_steps": cfg.spinup_steps, "window_spacing": cfg.window_spacing,
@@ -304,30 +309,48 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                         num_val_windows: int = 100,
                         num_test_windows: int = 200,
                         param_noise: float = 0.2,
-                        bias_range: Tuple[float, float] = (0.0, 0.2)) -> Dict[str, "Lorenz63Dataset"]:
+                        bias_range: Tuple[float, float] = (0.0, 0.2),
+                        train_seed: int = None, val_seed: int = None,
+                        s0_seed: int = None, s1_seed: int = None,
+                        require_cache: bool = False) -> Dict[str, "Lorenz63Dataset"]:
     import os
     from data.random_param_dataset import RandomParamLorenz63Dataset
     from data.random_bias_dataset import RandomBiasLorenz63Dataset
+    train_seed = 42 if train_seed is None else train_seed
+    val_seed = 99 if val_seed is None else val_seed
+    s0_seed = 123 if s0_seed is None else s0_seed
+    s1_seed = 131 if s1_seed is None else s1_seed
     base = cfg.__dict__.copy()
 
-    train_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 42,
+    train_cfg = Lorenz63Config(**{**base, "case": 1, "seed": train_seed,
         "num_windows": num_train_windows, "param_bias": 0.0,
         "forcing_state_bias": 0.0})
-    val_cfg = Lorenz63Config(**{**base, "case": 1, "seed": 99,
+    val_cfg = Lorenz63Config(**{**base, "case": 1, "seed": val_seed,
         "num_windows": num_val_windows, "param_bias": 0.0,
         "forcing_state_bias": 0.0})
     test_s0_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
-        "forcing_state_bias": 0.0, "seed": 123, "num_windows": num_test_windows})
+        "forcing_state_bias": 0.0, "seed": s0_seed, "num_windows": num_test_windows})
     test_s1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.15,
-        "forcing_state_bias": 0.1, "seed": 131, "num_windows": num_test_windows})
+        "forcing_state_bias": 0.1, "seed": s1_seed, "num_windows": num_test_windows})
 
-    cache_dir = os.path.join(os.path.dirname(__file__), "..", "dataset_cache")
+    cache_dir = os.path.join(os.path.dirname(__file__), "..", "dataset_cache", "l63")
     os.makedirs(cache_dir, exist_ok=True)
     cache_key = _make_s0_s1_cache_key(
         cfg, num_train_windows=num_train_windows,
         num_val_windows=num_val_windows, num_test_windows=num_test_windows,
-        param_noise=param_noise, bias_range=bias_range)
+        param_noise=param_noise, bias_range=bias_range,
+        train_seed=train_seed, val_seed=val_seed,
+        s0_seed=s0_seed, s1_seed=s1_seed)
     cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
+
+    if require_cache and not os.path.exists(cache_path):
+        raise FileNotFoundError(
+            f"Could not find a cached dataset for data config hash {cache_key[:12]} "
+            f"(expected at {cache_path}). Generate it first with:\n"
+            f"    python generate_dataset.py\n"
+            f"or, for an experiment-specific data config:\n"
+            f"    python generate_dataset.py --config-name models/<your_config>"
+        )
 
     if os.path.exists(cache_path):
         print(f"  Loading cached datasets ({cache_key[:12]}...)")

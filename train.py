@@ -5,7 +5,11 @@ Supports TweedieSolver, DirectUNet, and VanillaCFM models.
 
 Usage:
     python train.py                                               # defaults (TweedieSolver)
-    python train.py --config-name experiment/E1_direct_unet_default  # experiment preset
+    python train.py --config-name models/E1_direct_unet_default  # model preset
+
+The on-disk dataset cache (dataset_cache/) can be pre-warmed independently
+of a training run with:
+    python generate_dataset.py --config-name models/<name>
 """
 import os
 import sys
@@ -22,9 +26,8 @@ torch.set_float32_matmul_precision('medium')
 
 logger = logging.getLogger(__name__)
 
-from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
-from data.random_param_dataset import RandomParamLorenz63Dataset
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm
+from data.dataloader import FlowMatchingDataset, collate_fm
+from data.build import build_datasets
 from torch.utils.data import DataLoader
 from models.solver import TweedieSolver
 from models.direct_unet import DirectUNet
@@ -37,39 +40,14 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")
 
 
-def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
-                                num_workers=4, randomize_params=False, param_noise=0.2,
-                                base_cfg=None, num_train_windows=1000,
-                                data_setup="legacy", with_params=False):
+def make_experiment_dataloaders(datasets, batch_size=32, num_workers=4,
+                                base_cfg=None, with_params=False):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=num_workers, pin_memory=True)
-    if data_setup == "s0_s1":
-        obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
-        return {
-            "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg), shuffle=True, **kw),
-            "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg), shuffle=False, **kw),
-        }
-    if randomize_params and base_cfg is not None:
-        train_cs1 = RandomParamLorenz63Dataset(
-            Lorenz63Config(**{**base_cfg.__dict__, "case": 1, "param_bias": 0.0,
-                              "seed": 42, "num_windows": num_train_windows}), param_noise=param_noise)
-        train_cs2 = RandomParamLorenz63Dataset(
-            Lorenz63Config(**{**base_cfg.__dict__, "case": 2, "param_bias": 0.15,
-                              "forcing_state_bias": 0.15, "forcing_coupling": "quartic",
-                              "seed": 42, "num_windows": num_train_windows}), param_noise=param_noise)
-        train_sources = {"cs1_rand+cs2_rand": [train_cs1, train_cs2]}
-    else:
-        train_sources = {
-            "cs1+cs2": [datasets["train_cs1"], datasets["train_cs2"]],
-            "cs1_only": [datasets["train_cs1"]],
-            "cs2_only": [datasets["train_cs2"]],
-        }
-    sources = train_sources.get(train_mix, next(iter(train_sources.values())))
+    obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
     return {
-        "train": DataLoader(ConcatFMDataset(sources), shuffle=True, **kw),
-        "val": DataLoader(
-            ConcatFMDataset([datasets["val_cs1"], datasets["val_cs2"]]),
-            shuffle=False, **kw),
+        "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg), shuffle=True, **kw),
+        "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg), shuffle=False, **kw),
     }
 
 
@@ -293,7 +271,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
                         truths=np.stack(truths, axis=0))
 
 
-@hydra.main(config_path="config", config_name="lorenz63_default", version_base="1.3")
+@hydra.main(config_path="config", config_name="lorenz63", version_base="1.3")
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
 
@@ -302,15 +280,11 @@ def main(cfg: DictConfig):
     print(f"Device: {device} ({dev_name})")
 
     model_type = cfg.model.get("model_type", "tweedie")
-    train_mix = cfg.data.get("train_mix", "cs1+cs2")
-    randomize_params = cfg.data.get("randomize_params", False)
-    param_noise = cfg.data.get("param_noise", 0.2)
-    data_setup = cfg.data.get("data_setup", "legacy")
     exp_id = cfg.get("experiment_id", f"{model_type}_custom")
     from hydra.core.hydra_config import HydraConfig
     hcfg = HydraConfig.get()
-    if hcfg and hcfg.job.config_name and hcfg.job.config_name.startswith("experiment/"):
-        exp_id = hcfg.job.config_name.replace("experiment/", "")
+    if hcfg and hcfg.job.config_name and hcfg.job.config_name.startswith("models/"):
+        exp_id = hcfg.job.config_name.replace("models/", "")
 
     exp_dir = os.path.join(EXP_DIR, exp_id)
     os.makedirs(exp_dir, exist_ok=True)
@@ -323,116 +297,8 @@ def main(cfg: DictConfig):
 
     # Data
     dc = cfg.data
-    system = dc.get("system", "lorenz63")
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
-    if system == "lorenz96":
-        from data.lorenz96 import (Lorenz96Config, make_l96_s0_s1_trainval,
-                                   make_datasets as make_l96_datasets)
-        NO = dc.get("NO", 8)
-        J = dc.get("J", 4)
-        obs_j = dc.get("obs_j", 2)
-        obs_var_indices = None
-        if obs_j < J:
-            X_idx = list(range(NO))
-            Y_idx = []
-            for k in range(NO):
-                for j in range(obs_j):
-                    Y_idx.append(NO + k * J + j)
-            obs_var_indices = tuple(X_idx + Y_idx)
-        base_cfg = Lorenz96Config(
-            case=dc.get("case", 1), dt=dc.dt, T_max=dc.T_max,
-            obs_interval=dc.obs_interval, R_var=dc.R_var, B_var=dc.B_var,
-            param_bias=dc.get("param_bias", 0.0),
-            num_windows=dc.num_windows, window_spacing=dc.window_spacing,
-            spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
-            NO=dc.get("NO", 8), J=dc.get("J", 4),
-            h=dc.get("h", 1.0), hx=dc.get("hx", 1.0), eps=dc.get("eps", 0.1),
-            F_true=dc.get("F_true", 8.0), F_da=dc.get("F_da", 8.0),
-            gamma=dc.get("gamma", 0.05), W_L_bar=dc.get("W_L_bar", 0.0),
-            c1=dc.get("c1", 1.0), c2=dc.get("c2", 0.1),
-            sigma_0=dc.get("sigma_0", 0.08), sigma_L=dc.get("sigma_L", 0.20),
-            tau_eta=dc.get("tau_eta", 5.0),
-            sigma_eta=dc.get("sigma_eta", np.sqrt(0.5)),
-            forcing_state_bias=dc.get("forcing_state_bias", 0.0),
-            forcing_coupling=dc.get("forcing_coupling", "linear"),
-            coupling_exponent_truth=dc.get("coupling_exponent_truth", 1.6),
-            coupling_exponent_da=dc.get("coupling_exponent_da", 1.0),
-            fast_weights=list(dc.get("fast_weights", [1.0, 1.0, 0.1, 0.1])),
-            randomize=dict(dc.get("randomize", {})),
-            obs_var_indices=obs_var_indices,
-        )
-        if data_setup == "s0_s1":
-            smoke_cached_data = dc.get("smoke_cached_data", None)
-            if smoke_cached_data is not None:
-                logger.info(f"Loading cached data from: {smoke_cached_data}")
-                cached = torch.load(smoke_cached_data, weights_only=False)
-                datasets = cached
-                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
-                test_keys = ["test_s0", "test_s1"]
-            else:
-                test_cache_path = dc.get("test_cache", None)
-                cached_test = None
-                if test_cache_path and os.path.exists(test_cache_path):
-                    logger.info(f"Reusing cached test splits from {test_cache_path}")
-                    cached_full = torch.load(test_cache_path, weights_only=False)
-                    cached_test = {k: cached_full[k] for k in ("test_s0", "test_s1")
-                                   if k in cached_full}
-                datasets = make_l96_s0_s1_trainval(
-                    base_cfg,
-                    num_train_windows=dc.get("num_train_windows", 1000),
-                    num_val_windows=dc.get("num_val_windows", 100),
-                    num_test_windows=dc.get("num_test_windows", 200),
-                    param_noise=dc.get("test_param_noise", 0.2),
-                    bias_range=(0.0, dc.get("bias_max", 0.2)),
-                    cached_datasets=cached_test,
-                )
-                test_keys = ["test_s0", "test_s1"]
-        else:
-            datasets = make_l96_datasets(base_cfg)
-            test_keys = ["test_cs1", "test_cs2"]
-    else:
-        base_cfg = Lorenz63Config(
-            dt=dc.dt, T_max=dc.T_max, obs_interval=dc.obs_interval,
-            R_var=dc.R_var, B_var=dc.B_var,
-            num_windows=dc.num_windows, window_spacing=dc.window_spacing,
-            spinup_steps=dc.spinup_steps, seed=dc.get("seed", 42),
-            sigma_true=dc.sigma_true, rho_true=dc.rho_true, beta_true=dc.beta_true,
-            gamma=dc.gamma, W_L_bar=dc.W_L_bar, c1=dc.c1, c2=dc.c2,
-            sigma_0=dc.sigma_0, sigma_L=dc.sigma_L,
-            tau_eta=dc.tau_eta, sigma_eta=dc.sigma_eta,
-            param_bias=dc.get("param_bias", 0.0),
-            forcing_state_bias=dc.get("forcing_state_bias", 0.0),
-            forcing_coupling=dc.get("forcing_coupling", "linear"),
-        )
-        if data_setup == "s0_s1":
-            smoke_cached_data = dc.get("smoke_cached_data", None)
-            if smoke_cached_data is not None:
-                logger.info(f"Loading cached data from: {smoke_cached_data}")
-                cached = torch.load(smoke_cached_data, weights_only=False)
-                datasets = cached
-                logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
-                test_keys = ["test_s0", "test_s1"]
-            else:
-                bias_max = dc.get("bias_max", 0.2)
-                datasets = make_s0_s1_trainval(
-                    base_cfg,
-                    num_train_windows=dc.get("num_train_windows", 1000),
-                    num_val_windows=dc.get("num_val_windows", 100),
-                    num_test_windows=dc.get("num_test_windows", 200),
-                    param_noise=dc.get("test_param_noise", 0.2),
-                    bias_range=(0.0, bias_max),
-                )
-                test_keys = ["test_s0", "test_s1"]
-        else:
-            datasets = make_mixed_datasets(
-                base_cfg,
-                num_train_windows=dc.get("num_train_windows", 1000),
-                num_val_windows=dc.get("num_val_windows", 100),
-                num_test_windows=dc.get("num_test_windows", 200),
-                include_randparam_test=dc.get("test_randparam", True),
-                param_noise=dc.get("test_param_noise", 0.2),
-            )
-            test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
+    datasets, test_keys, base_cfg, system, obs_var_indices = build_datasets(cfg)
     if system == "lorenz96":
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
@@ -444,11 +310,7 @@ def main(cfg: DictConfig):
     else:
         loaders = make_experiment_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
-            train_mix=train_mix, num_workers=4,
-            randomize_params=randomize_params, param_noise=param_noise,
-            base_cfg=base_cfg,
-            num_train_windows=dc.get("num_train_windows", 1000),
-            data_setup=data_setup,
+            num_workers=4, base_cfg=base_cfg,
             with_params=(model_type in ("joint_cfm", "joint_direct_unet")),
         )
 
@@ -557,10 +419,6 @@ def main(cfg: DictConfig):
 
     s0 = results_metrics.get("test_s0")
     s1 = results_metrics.get("test_s1")
-    cs1 = results_metrics.get("test_cs1")
-    cs2 = results_metrics.get("test_cs2")
-    cs3 = results_metrics.get("test_cs3")
-    cs4 = results_metrics.get("test_cs4")
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm")
@@ -571,9 +429,6 @@ def main(cfg: DictConfig):
         "config": {
             "hidden_channels": list(hc_src.hidden_channels) if hc_src is not None and "hidden_channels" in hc_src else list(cfg.model.hidden_channels),
             "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie", "tweedie_cfm") else 0),
-            "train_mix": train_mix,
-            "randomize_params": randomize_params,
-            "data_setup": data_setup,
         },
         "total_time_seconds": total_t,
         "train_time_seconds": train_time,
@@ -583,20 +438,8 @@ def main(cfg: DictConfig):
         result["fm_s0"] = _rmse_entry(*s0)
     if s1:
         result["fm_s1"] = _rmse_entry(*s1)
-    if cs1:
-        result["fm_cs1"] = _rmse_entry(*cs1)
-    if cs2:
-        result["fm_cs2"] = _rmse_entry(*cs2)
-    if cs3:
-        result["fm_cs3"] = _rmse_entry(*cs3)
-    if cs4:
-        result["fm_cs4"] = _rmse_entry(*cs4)
     if s0 and s1:
         result["fm_degradation"] = float(np.mean(s1[0]) / (np.mean(s0[0]) + 1e-10))
-    if cs1 and cs2:
-        result["fm_degradation_cs1cs2"] = float(np.mean(cs2[0]) / (np.mean(cs1[0]) + 1e-10))
-    if cs3 and cs4:
-        result["fm_degradation_cs3cs4"] = float(np.mean(cs4[0]) / (np.mean(cs3[0]) + 1e-10))
     if is_joint:
         if "test_s0" in param_metrics:
             result["param_rmse_s0"] = _param_entry(param_metrics["test_s0"])
@@ -623,12 +466,6 @@ def main(cfg: DictConfig):
         print(f"  S1: {_fmt_rmse(m1)}")
         if groups1:
             print(f"       slow={groups1['slow']:.4f}  obs_fast={groups1['obs_fast']:.4f}  all_obs={groups1['all_obs']:.4f}")
-    if cs1:
-        m1, s1 = cs1
-        print(f"  CS1: {_fmt_rmse(m1)}")
-    if cs2:
-        m2, s2 = cs2
-        print(f"  CS2: {_fmt_rmse(m2)}")
     if is_joint:
         for k in ["test_s0", "test_s1"]:
             if k in param_metrics:

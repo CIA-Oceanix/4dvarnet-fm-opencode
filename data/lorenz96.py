@@ -187,19 +187,6 @@ class Lorenz96Dataset:
         return self.windows[idx]["forcing_true"]
 
 
-def make_datasets(cfg: Lorenz96Config) -> Dict[str, Lorenz96Dataset]:
-    train_cfg = Lorenz96Config(**{**cfg.__dict__, "seed": 42, "num_windows": 2000})
-    val_cfg = Lorenz96Config(**{**cfg.__dict__, "seed": 99, "num_windows": 200})
-    test_cfg_cs1 = Lorenz96Config(**{**cfg.__dict__, "seed": 123, "num_windows": 200, "case": 1, "param_bias": 0.0})
-    test_cfg_cs2 = Lorenz96Config(**{**cfg.__dict__, "seed": 123, "num_windows": 200, "case": 2, "param_bias": cfg.param_bias})
-    return {
-        "train": Lorenz96Dataset(train_cfg),
-        "val": Lorenz96Dataset(val_cfg),
-        "test_cs1": Lorenz96Dataset(test_cfg_cs1),
-        "test_cs2": Lorenz96Dataset(test_cfg_cs2),
-    }
-
-
 def _make_obs(cfg, true_fluid, obs_seed, device=None):
     device = device or torch.device("cpu")
     return _generate_observations(true_fluid, cfg.obs_interval, cfg.R_var, obs_seed, device,
@@ -625,6 +612,39 @@ def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
     }
 
 
+def _make_l96_s0_s1_cache_key(cfg: Lorenz96Config, *,
+                              num_train_windows: int,
+                              num_val_windows: int,
+                              num_test_windows: int,
+                              param_noise: float,
+                              bias_range,
+                              train_seed: int, val_seed: int,
+                              s0_seed: int, s1_seed: int) -> str:
+    import hashlib
+    key_data = {
+        "num_train_windows": num_train_windows,
+        "num_val_windows": num_val_windows,
+        "num_test_windows": num_test_windows,
+        "param_noise": param_noise,
+        "bias_range": bias_range,
+        "train_seed": train_seed, "val_seed": val_seed,
+        "s0_seed": s0_seed, "s1_seed": s1_seed,
+        "dt": cfg.dt, "T_max": cfg.T_max,
+        "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
+        "spinup_steps": cfg.spinup_steps, "window_spacing": cfg.window_spacing,
+        "seed": cfg.seed,
+        "NO": cfg.NO, "J": cfg.J, "h": cfg.h, "hx": cfg.hx, "eps": cfg.eps,
+        "F_true": cfg.F_true, "F_da": cfg.F_da,
+        "gamma": cfg.gamma, "W_L_bar": cfg.W_L_bar,
+        "c1": cfg.c1, "c2": cfg.c2,
+        "sigma_0": cfg.sigma_0, "sigma_L": cfg.sigma_L,
+        "coupling_exponent_truth": cfg.coupling_exponent_truth,
+        "param_bias": cfg.param_bias,
+        "forcing_state_bias": cfg.forcing_state_bias,
+    }
+    return hashlib.sha256(str(sorted(key_data.items())).encode()).hexdigest()
+
+
 def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              num_train_windows: int = 1000,
                              num_val_windows: int = 100,
@@ -633,46 +653,107 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              bias_range=(0.0, 0.2),
                              cached_datasets: dict = None,
                              randomize_params: list = None,
-                             fast_generation: bool = True) -> Dict:
+                             fast_generation: bool = True,
+                             train_seed: int = None, val_seed: int = None,
+                             s0_seed: int = None, s1_seed: int = None,
+                             require_cache: bool = False) -> Dict:
     """Build the S0/S1 train/val/test datasets.
 
     `fast_generation=True` (default) uses the vectorized batched path for
     train/val (~57x speedup, ~3min vs ~4.5h for 1000 windows). Test splits
     always use the slow per-window path so the eval cache stays bitwise-
     reproducible.
+
+    The four splits are additionally persisted to an on-disk cache under
+    `dataset_cache/` (keyed by a hash of the data config), so repeated runs
+    and `generate_dataset.py` pre-warming avoid regenerating trajectories.
+    An explicit `cached_datasets` (e.g. a test-only cache loaded by the
+    caller) takes priority over the on-disk cache for the keys it supplies.
     """
+    import os
     dynamics = _make_lorenz96_dynamics(cfg)
+    train_seed = 42 if train_seed is None else train_seed
+    val_seed = 99 if val_seed is None else val_seed
+    s0_seed = 123 if s0_seed is None else s0_seed
+    s1_seed = 131 if s1_seed is None else s1_seed
+
+    cache_dir = os.path.join(os.path.dirname(__file__), "..", "dataset_cache", "l96")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_key = _make_l96_s0_s1_cache_key(
+        cfg, num_train_windows=num_train_windows,
+        num_val_windows=num_val_windows, num_test_windows=num_test_windows,
+        param_noise=param_noise, bias_range=bias_range,
+        train_seed=train_seed, val_seed=val_seed,
+        s0_seed=s0_seed, s1_seed=s1_seed)
+    cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
+    disk_cache_exists = os.path.exists(cache_path)
+
+    if require_cache and not disk_cache_exists and not (
+            cached_datasets and all(k in cached_datasets for k in
+                                    ("train", "val", "test_s0", "test_s1"))):
+        raise FileNotFoundError(
+            f"Could not find a cached dataset for data config hash {cache_key[:12]} "
+            f"(expected at {cache_path}). Generate it first with:\n"
+            f"    python generate_dataset.py\n"
+            f"or, for an experiment-specific data config:\n"
+            f"    python generate_dataset.py --config-name models/<your_config>"
+        )
+
+    effective_cached = dict(cached_datasets) if cached_datasets else {}
+    if disk_cache_exists:
+        print(f"  Loading cached L96 datasets ({cache_key[:12]}...)")
+        cached_full = torch.load(cache_path)
+        for k, v in cached_full.items():
+            effective_cached.setdefault(k, v)
 
     def _build(key, cls, cfg_kwargs, fast, **cls_kwargs):
         sub_cfg = Lorenz96Config(**{**cfg.__dict__, **cfg_kwargs})
-        if cached_datasets is not None and key in cached_datasets:
-            return cls(sub_cfg, cached_windows=cached_datasets[key], dynamics=dynamics, **cls_kwargs)
+        if key in effective_cached:
+            return cls(sub_cfg, cached_windows=effective_cached[key], dynamics=dynamics, **cls_kwargs)
         return cls(sub_cfg, dynamics=dynamics, fast_generation=fast, **cls_kwargs)
 
     train = _build("train", RandomBiasLorenz96Dataset,
-                   {"seed": 42, "num_windows": num_train_windows, "case": 1,
+                   {"seed": train_seed, "num_windows": num_train_windows, "case": 1,
                     "param_bias": 0.0, "forcing_state_bias": 0.1},
                    fast_generation,
                    param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                    randomize_params=randomize_params)
     val = _build("val", RandomBiasLorenz96Dataset,
-                 {"seed": 99, "num_windows": num_val_windows, "case": 1,
+                 {"seed": val_seed, "num_windows": num_val_windows, "case": 1,
                   "param_bias": 0.0, "forcing_state_bias": 0.1},
                  fast_generation,
                  param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                  randomize_params=randomize_params)
     test_s0 = _build("test_s0", RandomParamLorenz96Dataset,
-                     {"seed": 123, "num_windows": num_test_windows, "case": 1,
+                     {"seed": s0_seed, "num_windows": num_test_windows, "case": 1,
                       "param_bias": 0.0, "forcing_state_bias": 0.0},
                      False,
                      param_noise=param_noise,
                      randomize_params=randomize_params)
     test_s1 = _build("test_s1", RandomBiasLorenz96Dataset,
-                     {"seed": 131, "num_windows": num_test_windows, "case": 1,
+                     {"seed": s1_seed, "num_windows": num_test_windows, "case": 1,
                       "param_bias": 0.1, "forcing_state_bias": 0.1},
                      False,
                      param_noise=param_noise, bias_mode="fixed",
                      randomize_params=randomize_params)
+
+    if not disk_cache_exists:
+        def _strip_obs(w):
+            w = dict(w)
+            w.pop("obs", None)
+            w.pop("obs_mask", None)
+            return w
+
+        tmp_path = cache_path + ".tmp"
+        torch.save({
+            "train": [_strip_obs(w) for w in train.windows],
+            "val": [_strip_obs(w) for w in val.windows],
+            "test_s0": [_strip_obs(w) for w in test_s0.windows],
+            "test_s1": [_strip_obs(w) for w in test_s1.windows],
+        }, tmp_path)
+        os.rename(tmp_path, cache_path)
+        print(f"  Cached L96 datasets ({cache_key[:12]}...)")
+
     return {
         "train": train,
         "val": val,

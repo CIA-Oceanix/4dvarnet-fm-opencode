@@ -15,7 +15,7 @@ class DataConfig:
     system: str = "lorenz63"
     dt: float = 0.01
     T_max: float = 3.0
-    obs_interval: int = 20
+    obs_interval: int = 30
     R_var: float = 0.5
     B_var: float = 2.0
     num_windows: int = 2000
@@ -40,9 +40,6 @@ class DataConfig:
     forcing_coupling: str = "linear"
     param_bias: float = 0.0
     case: int = 1
-    train_mix: str = "cs1+cs2"
-    randomize_params: bool = False
-    param_noise: float = 0.2
     test_randparam: bool = True
     test_param_noise: float = 0.2
 
@@ -61,6 +58,14 @@ class DataConfig:
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
     test_cache: Optional[str] = None
+
+    # s0/s1 dataset-cache seeding (None falls back to the historical
+    # hardcoded defaults: train=42, val=99, s0=123, s1=131)
+    train_seed: Optional[int] = None
+    val_seed: Optional[int] = None
+    s0_seed: Optional[int] = None
+    s1_seed: Optional[int] = None
+    require_cache: bool = False
 
     # Device
     device: str = "cpu"
@@ -105,7 +110,6 @@ class DataConfig:
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
             coupling_exponent_truth=self.coupling_exponent_truth,
-            coupling_exponent_da=self.coupling_exponent_da,
             fast_weights=list(self.fast_weights),
             randomize={k: {"randomized": v.randomized, "noise": v.noise,
                            "biased": v.biased, "bias": v.bias}
@@ -142,6 +146,7 @@ class DataConfig:
             tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
+            coupling_exponent_truth=self.coupling_exponent_truth,
         )
 
 
@@ -266,12 +271,14 @@ class Strong4DVarConfig:
 
 @dataclass
 class EnKFConfig:
+    N_ensemble: int = 50
     inflation: float = 1.0
     loc_radius: float = -1.0
 
 
 @dataclass
 class ETKFConfig:
+    N_ensemble: int = 50
     inflation: float = 1.0
     loc_radius: float = -1.0
     loc_mode: str = "square_root"
@@ -280,32 +287,11 @@ class ETKFConfig:
 @dataclass
 class BaselinesConfig:
     da_window_steps: int = 300
-    N_ensemble: int = 30
     batch_size: int = 128
     weak4dvar: Weak4DVarConfig = field(default_factory=Weak4DVarConfig)
     strong4dvar: Strong4DVarConfig = field(default_factory=Strong4DVarConfig)
     enkf: EnKFConfig = field(default_factory=EnKFConfig)
     etkf: ETKFConfig = field(default_factory=ETKFConfig)
-
-
-@dataclass
-class CaseStudyConfig:
-    param_bias: float = 0.0
-    forcing_state_bias: float = 0.0
-    forcing_coupling: str = "linear"
-
-
-@dataclass
-class CS1Config:
-    param_bias: float = 0.0
-    forcing_coupling: str = "linear"
-
-
-@dataclass
-class CS2Config:
-    param_bias: float = 0.15
-    forcing_state_bias: float = 0.15
-    forcing_coupling: str = "quartic"
 
 
 @dataclass
@@ -315,5 +301,3 @@ class ExperimentConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
-    cs1: CS1Config = field(default_factory=CS1Config)
-    cs2: CS2Config = field(default_factory=CS2Config)

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets
 from evaluation.run import run_and_cache_baselines, EXP_DIR
 
-# Match defaults from config/lorenz63_default.yaml
+# Match defaults from config/lorenz63.yaml
 base_cfg = Lorenz63Config(
     dt=0.01, T_max=3.0, obs_interval=20, R_var=0.5, B_var=2.0,
     num_windows=2000, window_spacing=2000, spinup_steps=10000, seed=42,

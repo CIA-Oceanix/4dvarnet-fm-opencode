@@ -1,0 +1,52 @@
+# @package _global_
+defaults:
+  - /lorenz96
+  - _self_
+
+experiment_id: L3_smoke
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 10
+  num_val_windows: 5
+  num_test_windows: 10
+  test_param_noise: 0.2
+model:
+  state_dim: 24
+  param_dim: 0
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  K_inner: 5
+  N_outer: 10
+  nu: 1.0
+  use_obs: true
+  use_energy: true
+  dropout: 0.1
+  model_type: vanilla_cfm
+  vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 0
+training:
+  stage1:
+    epochs: 1
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+    lr: 0.001
+    gradient_clip_val: 1.0
+  batch_size: 16
+  loss:
+    use_gradient: true
+    gradient_weight: 0.1
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  checkpoint_stage2: checkpoints/stage2.pt
+  outputs_dir: outputs
+smoke_cached_data: experiments/l96_datasets_obsj2_int100_nwin200.pt

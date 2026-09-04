@@ -1,0 +1,44 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  test_param_noise: 0.2
+model:
+  state_dim: 3
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  K_inner: 5
+  N_outer: 10
+  nu: 1.0
+  use_obs: true
+  use_energy: true
+  dropout: 0.1
+  model_type: vanilla_cfm
+  vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+    lr: 0.001
+    gradient_clip_val: 1.0
+  batch_size: 32
+  loss:
+    use_gradient: true
+    gradient_weight: 0.1
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  checkpoint_stage2: checkpoints/stage2.pt
+  outputs_dir: outputs
