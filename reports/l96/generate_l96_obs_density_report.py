@@ -106,54 +106,47 @@ def neural_row(neural_data, case):
     return (entry.get("rmse"), g.get("slow"), g.get("obs_fast"))
 
 
-def build_neural_table():
+def _state_only_row_providers(canon_state, slow_state):
+    """Unified (name, canon_row_fn, slow_row_fn) list across DA and SDA state-only
+    methods -- both ultimately produce (mean, slow, obs_fast) tuples, so they can
+    share one comparison table (DA never produces a `neural_eval.json`, SDA never
+    a `run_and_cache_baselines` JSON, but the row *shape* is identical)."""
+    providers = []
+    for m in STATE_ONLY_METHODS:
+        providers.append((m, lambda case, m=m: state_row(canon_state, case, m),
+                          lambda case, m=m: state_row(slow_state, case, m)))
+    for name, canon_dir, slow_dir in NEURAL_METHODS:
+        canon_json = load_json(ROOT / f"experiments/{canon_dir}/ens30_no10/neural_eval.json")
+        slow_json = load_json(ROOT / f"experiments/{slow_dir}/ens30_no10/neural_eval.json")
+        providers.append((name, lambda case, d=canon_json: neural_row(d, case),
+                          lambda case, d=slow_json: neural_row(d, case)))
+    return providers
+
+
+def build_state_table(canon_state, slow_state):
     lines = []
-    lines.append("## Neural (SDA, score-based DA) — same obsj2 checkpoint, guidance-only restriction")
+    lines.append("## State-only: DA baselines vs. SDA (score-based DA) (S0/S1)")
     lines.append("")
-    lines.append("No retraining and no new dataset: the slow-only column restricts which channels "
-                 "the DPS guidance cost may see (`evaluation/sda_sampler.py`'s `obs_indices`), reusing "
-                 "the identical obsj2-trained checkpoint and cached test set. All rows are the "
-                 "30-member-ensemble (`ens30×10`) convention, same as the consolidated benchmark.")
+    lines.append("Directly comparable: every row here produces a state estimate with no joint "
+                 "parameter estimation, scored on the identical 24D subspace at both densities. "
+                 "SDA's obsj0 column needed **no retraining and no new dataset** -- the DPS guidance "
+                 "cost (the only thing that ever reads `obs`) is restricted to the 8 slow channels "
+                 "(`evaluation/sda_sampler.py`'s `obs_indices`) on the same obsj2-trained checkpoint "
+                 "and cached test set; DA baselines required a dedicated obsj0 cache and re-run. SDA "
+                 "rows are the 30-member-ensemble (`ens30×10`) convention, same as the consolidated "
+                 "benchmark; DA rows are deterministic (N=1).")
     lines.append("")
     lines.append("| Case | Method | obsj2 mean | obsj0 mean | Δ mean | obsj2 slow | obsj0 slow | obsj2 obs_fast | obsj0 obs_fast |")
     lines.append("|---|---|---|---|---|---|---|---|---|")
     for case_label, case_key in (("S0", "s0"), ("S1", "s1")):
-        for name, canon_dir, slow_dir in NEURAL_METHODS:
-            canon = load_json(ROOT / f"experiments/{canon_dir}/ens30_no10/neural_eval.json")
-            slow = load_json(ROOT / f"experiments/{slow_dir}/ens30_no10/neural_eval.json")
-            c = neural_row(canon, case_key)
-            s = neural_row(slow, case_key)
+        for name, canon_fn, slow_fn in _state_only_row_providers(canon_state, slow_state):
+            c = canon_fn(case_key)
+            s = slow_fn(case_key)
             if c is None and s is None:
                 continue
             delta = (s[0] - c[0]) if (c and s) else None
             lines.append(
                 f"| {case_label} | {name} | {fmt_num(c[0]) if c else '--'} | "
-                f"{fmt_num(s[0]) if s else '--'} | {fmt_num(delta) if delta is not None else '--'} | "
-                f"{fmt_num(c[1]) if c else '--'} | {fmt_num(s[1]) if s else '--'} | "
-                f"{fmt_num(c[2]) if c else '--'} | {fmt_num(s[2]) if s else '--'} |"
-            )
-    lines.append("")
-    return lines
-
-
-def build_state_table(canon, slow):
-    lines = []
-    lines.append("## State-only DA baselines (S0/S1)")
-    lines.append("")
-    lines.append("| Case | Method | obsj2 mean | obsj0 mean | Δ mean | obsj2 slow | obsj0 slow | obsj2 obs_fast | obsj0 obs_fast |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
-    for case in ("s0", "S0"):
-        pass
-    cases = [("S0", "s0"), ("S1", "s1")]
-    for case_label, case_key in cases:
-        for m in STATE_ONLY_METHODS:
-            c = state_row(canon, case_key, m)
-            s = state_row(slow, case_key, m)
-            if c is None and s is None:
-                continue
-            delta = (s[0] - c[0]) if (c and s) else None
-            lines.append(
-                f"| {case_label} | {m} | {fmt_num(c[0]) if c else '--'} | "
                 f"{fmt_num(s[0]) if s else '--'} | {fmt_num(delta) if delta is not None else '--'} | "
                 f"{fmt_num(c[1]) if c else '--'} | {fmt_num(s[1]) if s else '--'} | "
                 f"{fmt_num(c[2]) if c else '--'} | {fmt_num(s[2]) if s else '--'} |"
@@ -237,9 +230,6 @@ def write_report(canon_state, canon_joint, slow_state, slow_joint, output_path: 
     md.append("---")
     md.append("")
     md.extend(build_joint_param_table(canon_joint, slow_joint))
-    md.append("---")
-    md.append("")
-    md.extend(build_neural_table())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(md) + "\n")

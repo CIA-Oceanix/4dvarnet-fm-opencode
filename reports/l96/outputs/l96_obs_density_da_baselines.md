@@ -12,16 +12,24 @@
 
 ---
 
-## State-only DA baselines (S0/S1)
+## State-only: DA baselines vs. SDA (score-based DA) (S0/S1)
+
+Directly comparable: every row here produces a state estimate with no joint parameter estimation, scored on the identical 24D subspace at both densities. SDA's obsj0 column needed **no retraining and no new dataset** -- the DPS guidance cost (the only thing that ever reads `obs`) is restricted to the 8 slow channels (`evaluation/sda_sampler.py`'s `obs_indices`) on the same obsj2-trained checkpoint and cached test set; DA baselines required a dedicated obsj0 cache and re-run. SDA rows are the 30-member-ensemble (`ens30×10`) convention, same as the consolidated benchmark; DA rows are deterministic (N=1).
 
 | Case | Method | obsj2 mean | obsj0 mean | Δ mean | obsj2 slow | obsj0 slow | obsj2 obs_fast | obsj0 obs_fast |
 |---|---|---|---|---|---|---|---|---|
 | S0 | Strong-4DVar | 0.7383 | 1.4382 | 0.6998 | 0.4539 | 0.4131 | 0.8805 | 1.9507 |
 | S0 | EnKF | 0.8943 | 1.2735 | 0.3792 | 0.4892 | 0.4491 | 1.0968 | 1.6858 |
 | S0 | ETKF | 0.8662 | 1.2481 | 0.3819 | 0.4677 | 0.4607 | 1.0655 | 1.6418 |
+| S0 | SDA1 | 0.7185 | 1.1350 | 0.4165 | 0.4431 | 0.4543 | 0.8562 | 1.4753 |
+| S0 | SDA2-mixed | 0.7074 | 1.1158 | 0.4084 | 0.3863 | 0.4066 | 0.8679 | 1.4704 |
+| S0 | SDA2-nominal | 0.7046 | 1.1098 | 0.4052 | 0.3801 | 0.4040 | 0.8668 | 1.4627 |
 | S1 | Strong-4DVar | 1.4369 | 1.6165 | 0.1796 | 1.0522 | 0.5262 | 1.6293 | 2.1616 |
 | S1 | EnKF | 1.5123 | 1.6978 | 0.1855 | 1.2298 | 0.5958 | 1.6535 | 2.2488 |
 | S1 | ETKF | 1.4748 | 1.7073 | 0.2325 | 1.2202 | 0.6229 | 1.6021 | 2.2495 |
+| S1 | SDA1 | 0.7168 | 1.1369 | 0.4201 | 0.4387 | 0.4514 | 0.8558 | 1.4797 |
+| S1 | SDA2-mixed | 0.7051 | 1.1187 | 0.4136 | 0.3803 | 0.4021 | 0.8674 | 1.4769 |
+| S1 | SDA2-nominal | 0.7033 | 1.1121 | 0.4087 | 0.3763 | 0.4020 | 0.8669 | 1.4671 |
 
 ---
 
@@ -62,19 +70,4 @@
 | Joint-ETKF / obsj0 | 0.1579 | 0.8244 | 0.1007 | 0.1002 | 0.0102 | 0.1134 | 0.1141 | 0.0000 | 0.0000 |
 | Joint-Strong-4DVar / obsj2 | 0.3142 | 1.5396 | 0.1418 | 0.2674 | 0.0415 | 0.2624 | 0.2608 | 0.0000 | 0.0000 |
 | Joint-Strong-4DVar / obsj0 | 0.2725 | 1.1585 | 0.1106 | 0.2232 | 0.0254 | 0.3336 | 0.3285 | 0.0000 | 0.0000 |
-
----
-
-## Neural (SDA, score-based DA) — same obsj2 checkpoint, guidance-only restriction
-
-No retraining and no new dataset: the slow-only column restricts which channels the DPS guidance cost may see (`evaluation/sda_sampler.py`'s `obs_indices`), reusing the identical obsj2-trained checkpoint and cached test set. All rows are the 30-member-ensemble (`ens30×10`) convention, same as the consolidated benchmark.
-
-| Case | Method | obsj2 mean | obsj0 mean | Δ mean | obsj2 slow | obsj0 slow | obsj2 obs_fast | obsj0 obs_fast |
-|---|---|---|---|---|---|---|---|---|
-| S0 | SDA1 | 0.7185 | 1.1350 | 0.4165 | 0.4431 | 0.4543 | 0.8562 | 1.4753 |
-| S0 | SDA2-mixed | 0.7074 | 1.1158 | 0.4084 | 0.3863 | 0.4066 | 0.8679 | 1.4704 |
-| S0 | SDA2-nominal | 0.7046 | 1.1098 | 0.4052 | 0.3801 | 0.4040 | 0.8668 | 1.4627 |
-| S1 | SDA1 | 0.7168 | 1.1369 | 0.4201 | 0.4387 | 0.4514 | 0.8558 | 1.4797 |
-| S1 | SDA2-mixed | 0.7051 | 1.1187 | 0.4136 | 0.3803 | 0.4021 | 0.8674 | 1.4769 |
-| S1 | SDA2-nominal | 0.7033 | 1.1121 | 0.4087 | 0.3763 | 0.4020 | 0.8669 | 1.4671 |
 

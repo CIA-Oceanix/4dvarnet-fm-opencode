@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-04: Combine DA-baseline and SDA state-only obs-density tables into one
+
+**Summary:** Merged the separate "State-only DA baselines" and "Neural (SDA)" tables in `l96_obs_density_da_baselines.md` into a single table (`build_state_table`, via a new `_state_only_row_providers` helper that unifies the DA (`state_row`) and SDA (`neural_row`) row-fetchers behind one interface, since both ultimately produce the same `(mean, slow, obs_fast)` shape). All 6 state-only methods (Strong-4DVar, EnKF, ETKF, SDA1, SDA2-mixed, SDA2-nominal) now appear together per case (S0/S1), for direct side-by-side comparison instead of two separately-scanned tables. The joint state-parameter DA table stays separate (SDA has no joint/parameter-estimation counterpart to merge with it).
+
+**Files modified:**
+- `reports/l96/generate_l96_obs_density_report.py` — `_state_only_row_providers` (new), `build_state_table` extended to include `NEURAL_METHODS`, `build_neural_table` removed (folded in)
+- `reports/l96/outputs/l96_obs_density_da_baselines.md` — regenerated
+
+**Rationale:** Requested as a follow-up to the previous slow-only-obs SDA benchmark entry: the two families were easier to compare side by side in one table than by cross-referencing two separate ones.
+
+**Verification:** `pytest tests/test_sda.py tests/test_sda_sampler.py tests/test_eval_sda_l96.py` — 22/22 passed (unaffected by this report-only change). Report regenerated with no missing-JSON warnings; diff confirmed additive/reorganizing only (same 12 data rows, no numeric changes).
+
 ## 2026-09-04: SDA slow-only (obsj0) observation-density benchmark — no retraining, guidance-cost restriction
 
 **Summary:** Extended the L96 SDA (score-based DA) benchmark to the slow-only (obsj0) observation-density axis already established for the DA baselines (`reports/l96/outputs/l96_obs_density_da_baselines.md`, PR #144): only the 8 slow `X` variables are observed (no fast `Y`), while scoring stays on the identical 24D eval subspace. Unlike the DA baselines, this required **no new dataset cache and no retraining** — SDA's guidance term is the only thing that ever reads `obs` (the generative network never sees it), so restricting which channels the DPS guidance cost is allowed to see is enough to simulate the sparser observation density on top of the existing obsj2-trained checkpoints and cached test set.
