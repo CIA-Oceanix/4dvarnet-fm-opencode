@@ -391,23 +391,33 @@ def fig_dacycle(data, per_scenario, out_dir, device, sample_days=2.0):
     truth = _q_fields(data["ref"], ny, nx)
     vt = np.nanmax(np.abs(truth[:, 0])) * 0.9
     vmax_q = max(np.nanmax(np.abs(analysis[:, 0])), vt) * 0.9
+    obs_steps = np.where(mask)[0]
+    obs_vals = np.abs(obs[np.isfinite(obs)])
+    vmax_o = float(obs_vals.max()) if obs_vals.size else 1.0
     frames = []
     for t in steps:
         fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))
-        # Panel 1: aggregated obs ψ₁ columns
+        # Panel 1: raw obs ψ₁ columns, vertical, at a fixed global scale.
+        # Each raw obs event samples `cols_per_day` meridional columns; when
+        # the frame's own step is not an obs step, show the nearest preceding
+        # raw obs event so the panel is never blank and reads as raw (not a
+        # per-day aggregate with a drifting per-frame color scale).
         ax = axes[0]
+        prior = obs_steps[obs_steps <= t]
+        if prior.size:
+            t_obs = int(prior[-1])
+        elif obs_steps.size:
+            t_obs = int(obs_steps[0])
+        else:
+            t_obs = t
         img = np.full((ny, nx), np.nan)
-        if mask[t]:
-            for c in range(cols.shape[1]):
-                xc = int(cols[t, c])
-                if 0 <= xc < nx:
-                    img[:, xc] = obs[t, c * ny:(c + 1) * ny]
-        finite = np.isfinite(img)
-        vmax_o = float(np.nanmax(np.abs(img[finite]))) if np.any(finite) else 1.0
-        ax.imshow(img.T, cmap=CMAP, vmin=-vmax_o, vmax=vmax_o,
+        for c in range(cols.shape[1]):
+            xc = int(cols[t_obs, c])
+            if 0 <= xc < nx:
+                img[:, xc] = obs[t_obs, c * ny:(c + 1) * ny]
+        ax.imshow(img, cmap=CMAP, vmin=-vmax_o, vmax=vmax_o,
                   interpolation="nearest")
-        ax.set_title(f"obs aggregate (day {t / days_per:.1f})"
-                     + ("  [obs]" if mask[t] else "  [no obs]"))
+        ax.set_title(f"raw obs ψ₁ columns (event day {t_obs / days_per:.1f})")
         ax.set_xticks([])
         ax.set_yticks([])
         # Panel 2: truth q₁
