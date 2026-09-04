@@ -11,7 +11,6 @@ class TestBaselinesConfigDefaults:
     def test_default_values(self):
         bc = BaselinesConfig()
         assert bc.da_window_steps == 300
-        assert bc.N_ensemble == 30
         assert bc.batch_size == 128
 
     def test_weak4dvar_defaults(self):
@@ -26,25 +25,23 @@ class TestBaselinesConfigDefaults:
 
     def test_enkf_defaults(self):
         e = EnKFConfig()
+        assert e.N_ensemble == 50
         assert e.inflation == 1.0
 
 
 class TestBaselinesConfigYaml:
-    def test_dws20_preset(self):
+    def test_baselines_default_group(self):
+        """The s0/s1 baseline profile is the project's sole default (no separate variant)."""
         from hydra.core.global_hydra import GlobalHydra
         GlobalHydra.instance().clear()
         import hydra
         with hydra.initialize_config_dir(config_dir=os.path.join(os.path.dirname(__file__), "..", "config")):
-            cfg = hydra.compose(config_name="baselines/dws20")
-            assert cfg.baselines.da_window_steps == 20
-
-    def test_dws100_preset(self):
-        from hydra.core.global_hydra import GlobalHydra
-        GlobalHydra.instance().clear()
-        import hydra
-        with hydra.initialize_config_dir(config_dir=os.path.join(os.path.dirname(__file__), "..", "config")):
-            cfg = hydra.compose(config_name="baselines/dws100")
-            assert cfg.baselines.da_window_steps == 100
+            cfg = hydra.compose(config_name="lorenz63")
+            assert cfg.baselines.da_window_steps == 50
+            assert cfg.baselines.enkf.N_ensemble == 50
+            assert cfg.baselines.enkf.inflation == 2.0
+            assert cfg.baselines.etkf.N_ensemble == 50
+            assert cfg.baselines.etkf.inflation == 2.0
 
     def test_dws_override(self):
         from hydra.core.global_hydra import GlobalHydra
@@ -52,7 +49,7 @@ class TestBaselinesConfigYaml:
         import hydra
         with hydra.initialize_config_dir(config_dir=os.path.join(os.path.dirname(__file__), "..", "config")):
             cfg = hydra.compose(
-                config_name="lorenz63_default",
+                config_name="lorenz63",
                 overrides=["baselines.da_window_steps=50"],
             )
             assert cfg.baselines.da_window_steps == 50
@@ -63,7 +60,7 @@ class TestBaselinesConfigYaml:
         import hydra
         with hydra.initialize_config_dir(config_dir=os.path.join(os.path.dirname(__file__), "..", "config")):
             cfg = hydra.compose(
-                config_name="lorenz63_default",
+                config_name="lorenz63",
                 overrides=["baselines.batch_size=256"],
             )
             assert cfg.baselines.batch_size == 256
