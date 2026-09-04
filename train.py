@@ -268,6 +268,17 @@ def model_factory(cfg: DictConfig, device: torch.device):
             sigma_prior=sp.sigma_prior,
             dropout=sp.dropout,
         )
+    elif model_type == "fourdvarnet":
+        from models.fourdvarnet import FourDVarNetSolver
+        fdv = cfg.model.fdv
+        model = FourDVarNetSolver(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=fdv.hidden_channels,
+            time_emb_dim=fdv.time_emb_dim,
+            N_outer=fdv.N_outer,
+            dropout=fdv.dropout,
+            update_input=fdv.update_input,
+        )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     return model.to(device)
@@ -354,6 +365,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type in ("sda_prior", "sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "fourdvarnet":
+            pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -408,6 +421,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type in ("sda_prior", "sda_prior_cond"):
+            pred = model.sample(batch).detach().cpu().numpy()[0]
+        elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
@@ -711,6 +726,7 @@ def main(cfg: DictConfig):
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
+              else cfg.model.get("fdv") if model_type == "fourdvarnet"
               else cfg.model)
     result = {
         "experiment_id": exp_id,

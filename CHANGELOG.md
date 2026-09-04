@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-04: FDV1 — unrolled 4DVarNet-style solver for L96 (new best neural scheme)
+
+**Summary:** Implements the first member of a new "4DVarNet-style" model lineage for the L96 benchmark: `FourDVarNetSolver` (`models/fourdvarnet.py`), an unrolled solver where each of `N_outer=10` iterations' update is the output of a single weight-tied `UNet1D` fed `concat(state, obs)` (`update_input='obs+state'`), with **no explicit variational cost or gradient term** — `x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, zero-initialized, trained on final-iteration MSE only. Researched three external sources first (`ocean4dvarnet`'s `GradSolver`/`ConvLstmGradModel`, `4dvarnet-global-mapping` main, and its `ronan_devs` branch) — the `update_input` config-string taxonomy (`obs+state`/`obs-only`/`grad-only`/`grad+state`/`subgrad+state`) is traced directly to `ronan_devs`'s `GradSolver_withStep`, confirming `obs+state` is a deliberate, previously-explored simplification rather than an oversight. Only the two gradient-free modes are implemented now; the gradient-based modes raise `NotImplementedError`, reserved for a future FDV2 that ports `obs_cost`/`prior_cost` from `ocean4dvarnet`.
+
+**Headline result: FDV1 is now the best neural scheme in the L96 benchmark.** S0/S1 RMSE 0.470/0.470 (degradation 1.0008), beating the previous best (V2 TweedieCFM, 0.510/0.515) by ~8%, and every other DA baseline and neural scheme in the consolidated report. Deterministic (N=1, no ensemble) — its ES is reported with the same `*` marker as other deterministic rows (Strong-4DVar, L1b/L2b), not directly comparable to ensemble-scored methods' ES.
+
+**Files modified:**
+- `models/fourdvarnet.py` — new: `FourDVarNetSolver`
+- `conf/schema.py` — `FourDVarNetConfig`; `ModelConfig.fdv`; `model_type` enum extended with `"fourdvarnet"`
+- `train.py`, `training/lightning_module.py` — model-factory/eval/save-trajectories/loss-dispatch wiring, following the SDA1/SDA2 integration pattern exactly
+- `evaluation/neural_inference.py` — `resolve_model_class`/`create_model`/checkpoint shape-inference/`_run_case_inference` dispatch for `fourdvarnet`
+- `config/experiment/FDV1_unrolled_unet_l96.yaml` — new training config (400 epochs, canonical obsj2, `update_input: obs+state`)
+- `eval_fdv1_l96.py` — new standalone eval script (mirrors `eval_sda_l96.py`; no guidance/ensemble flags needed, model is fully deterministic)
+- `batch/run_l96_fdv1_train.sbatch` — new training sbatch script (reuses the canonical cached 200-window test split via `++data.test_cache`, same convention as the V2/V3 training sbatch)
+- `tests/test_fourdvarnet.py` — new: 13 unit tests (shape/finiteness at real `state_dim=24`, weight-tying param-count invariant, `N_outer=0` degenerate case, obs-conditioning is load-bearing, `obs+state` vs `obs-only` differ, unsupported `update_input` raises, loss/gradient-flow/determinism checks, soft train-loss-monotonicity vs. `N_outer`)
+- `reports/l96/generate_l96_consolidated_report.py`, `reports/l96/outputs/l96_consolidated_benchmark.md` — FDV1 row (RMSE/EV/ES × all/slow/fast) + scheme description; regenerated report is additive (only change to existing rows: V2 loses its now-superseded bold "best" markers)
+
+**Rationale:** Continues this session's L96 benchmark work (DA baselines, V2/V3 CFM, SDA1/SDA2) toward a fourth axis — 4DVarNet-style architectures — per `docs/research_notes_cfm_da_originality_and_benchmarking.md`'s own flagged next steps. Scoped deliberately to the simplest gradient-free variant first, per explicit user request, with the class architected (config-selectable `update_input`) so gradient-conditioned and energy-based-CFM-hybrid follow-ups are config/branch additions rather than new classes.
+
+**Verification:** `pytest tests/test_fourdvarnet.py tests/test_hydra_config.py tests/test_neural_inference.py -m "not slow"` — 52/52 passed. Full 400-epoch training completed via sbatch (job 51856, 12617s ≈ 3.5h) on the canonical S0/S1 obsj2 config; `eval_fdv1_l96.py` run against the trained checkpoint and the canonical cached 200-window test set; report regenerated with no missing-JSON warnings, diff confirmed additive (new row + description only, existing rows' numbers unchanged).
+
 ## 2026-09-04: Combine DA-baseline and SDA state-only obs-density tables into one
 
 **Summary:** Merged the separate "State-only DA baselines" and "Neural (SDA)" tables in `l96_obs_density_da_baselines.md` into a single table (`build_state_table`, via a new `_state_only_row_providers` helper that unifies the DA (`state_row`) and SDA (`neural_row`) row-fetchers behind one interface, since both ultimately produce the same `(mean, slow, obs_fast)` shape). All 6 state-only methods (Strong-4DVar, EnKF, ETKF, SDA1, SDA2-mixed, SDA2-nominal) now appear together per case (S0/S1), for direct side-by-side comparison instead of two separately-scanned tables. The joint state-parameter DA table stays separate (SDA has no joint/parameter-estimation counterpart to merge with it).

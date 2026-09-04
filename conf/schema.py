@@ -256,8 +256,17 @@ class SDAPriorConfig:
 
 
 @dataclass
+class FourDVarNetConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    dropout: float = 0.1
+    update_input: str = "obs+state"
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet" | "sda_prior" | "sda_prior_cond"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet" | "sda_prior" | "sda_prior_cond" | "fourdvarnet"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -277,6 +286,7 @@ class ModelConfig:
     predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
     tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
     sda_prior: SDAPriorConfig = field(default_factory=SDAPriorConfig)
+    fdv: FourDVarNetConfig = field(default_factory=FourDVarNetConfig)
 
 
 @dataclass
