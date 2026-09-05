@@ -39,7 +39,8 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
 
 def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
                        guidance_weight=1.0, n_members: int = 1,
-                       interpolant: LinearInterpolant = None, obs_indices=None):
+                       interpolant: LinearInterpolant = None, obs_indices=None,
+                       mean_estimate=None, tau0: float = 0.0):
     """DPS/Pi-GDM-style guided sampling from an unconditional prior.
 
     At each Euler step, nudges the prior's ODE update by the *normalized*
@@ -75,14 +76,34 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
     Euler loop, no autograd/detach overhead) -- this is the key correctness
     invariant, checked in ``tests/test_sda_sampler.py``.
 
+    ``mean_estimate``/``tau0`` implement a "SDEdit"-style warm start: instead
+    of starting the trajectory from pure noise at tau=0, start from
+    ``interpolant.mix(noise, mean_estimate, tau0)`` at ``tau0`` and only run
+    the Euler loop from there to tau=1 (fewer steps -- cheaper NFE too).
+    ``tau0`` is snapped to the existing ``step/N_outer`` discretization
+    (``step0 = round(tau0*N_outer)``) so the warm-started point lands exactly
+    on a training-time-valid interpolant point rather than an arbitrary
+    off-grid tau, keeping it in-distribution for the network. This is how a
+    much better initial guess (e.g. from a deterministic 4DVarNet-style
+    solver -- see ``models/fourdvarnet.py``) than pure noise can anchor the
+    guidance term throughout the trajectory without changing
+    ``guided_obs_cost`` at all -- only the trajectory's starting point
+    changes, everything downstream is untouched. ``mean_estimate=None`` (the
+    default) reproduces the pre-existing behavior exactly (``step0=0``,
+    ``x`` starts at pure noise) -- this is the key regression invariant for
+    this extension, checked in ``tests/test_sda_sampler.py`` alongside the
+    ``guidance_weight==0`` one above.
+
     Runs under ``torch.enable_grad()`` internally so it also works when the
     caller wraps the surrounding eval loop in ``torch.no_grad()`` (as
     ``evaluation/neural_inference.py``'s inference helpers do).
 
     Returns ``(x_1, n_forward)`` where ``x_1`` has shape ``(B, T, D)`` for
     ``n_members == 1`` or ``(B, T, D, n_members)`` otherwise, and
-    ``n_forward`` is the number of network evaluations per sample (== N_outer)
-    -- the NFE/cost accounting knob for the report's cost table.
+    ``n_forward`` is the number of network evaluations per sample --
+    ``N_outer`` normally, or ``N_outer - step0`` when warm-starting (fewer
+    steps run, so a warm-started sample is cheaper, not just better) -- the
+    NFE/cost accounting knob for the report's cost table.
     """
     if interpolant is None:
         interpolant = _INTERPOLANT
@@ -92,10 +113,15 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
     B, T, _ = obs.shape
     device = obs.device
     dt = 1.0 / N_outer
+    step0 = int(round(tau0 * N_outer)) if mean_estimate is not None else 0
 
     def _run_one():
-        x = torch.randn(B, T, model.state_dim, device=device) * model.sigma_prior
-        for step in range(N_outer):
+        noise = torch.randn(B, T, model.state_dim, device=device) * model.sigma_prior
+        if step0 > 0:
+            x = interpolant.mix(noise, mean_estimate, torch.full((B,), step0 / N_outer, device=device))
+        else:
+            x = noise
+        for step in range(step0, N_outer):
             tau_val = step / N_outer
             tau = torch.full((B,), tau_val, device=device)
             w = weight_fn(tau_val)
@@ -116,7 +142,8 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
                 x = (x + dt * v - (w / grad_norm) * grad).detach()
         return x
 
+    n_forward = N_outer - step0
     if n_members == 1:
-        return _run_one(), N_outer
+        return _run_one(), n_forward
     samples = [_run_one() for _ in range(n_members)]
-    return torch.stack(samples, dim=-1), N_outer
+    return torch.stack(samples, dim=-1), n_forward
