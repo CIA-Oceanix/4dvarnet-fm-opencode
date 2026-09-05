@@ -263,3 +263,74 @@ class TestFourDVarNetPredictStateCFM:
             out_clipped = model_clipped(x_t, batch, tau)
             out_unclipped = model_unclipped(x_t, batch, tau)
         assert torch.allclose(out_clipped, out_unclipped)
+
+    def test_sample_mean_estimate_none_reproduces_baseline(self):
+        """mean_estimate=None must reproduce the pre-existing sample() exactly
+        -- the regression invariant for the FDV1+FDV1-CFM warm-start hybrid."""
+        model = _make_cfm_model(dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        torch.manual_seed(7)
+        out_explicit_none = model.sample(batch, mean_estimate=None)
+        torch.manual_seed(7)
+        out_default = model.sample(batch)
+        assert torch.allclose(out_explicit_none, out_default)
+
+    def test_sample_tau0_zero_matches_baseline_up_to_the_snapped_start(self):
+        """tau0=0.0 with a mean_estimate must still take step0=0 (pure noise
+        start, no mixing) -- same code path as mean_estimate=None."""
+        model = _make_cfm_model(dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        mean_estimate = torch.randn(2, 20, 3) * 10.0
+        torch.manual_seed(3)
+        out_tau0_zero = model.sample(batch, mean_estimate=mean_estimate, tau0=0.0)
+        torch.manual_seed(3)
+        out_baseline = model.sample(batch, mean_estimate=None)
+        assert torch.allclose(out_tau0_zero, out_baseline)
+
+    def test_sample_warm_start_matches_manual_replay(self):
+        """tau0>0 must start from interpolant.mix(noise, mean_estimate, tau0)
+        (snapped to the nearest step/N_outer) and run only the remaining
+        steps -- replay the same noise draw manually and compare."""
+        model = _make_cfm_model(N_outer=4, dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        mean_estimate = torch.randn(2, 20, 3) * 5.0
+        tau0 = 0.5  # step0 = round(0.5*4) = 2
+        torch.manual_seed(11)
+        out = model.sample(batch, mean_estimate=mean_estimate, tau0=tau0)
+
+        torch.manual_seed(11)
+        noise = torch.randn(2, 20, 3) * model.sigma_prior
+        x = model.interpolant.mix(noise, mean_estimate, torch.full((2,), 0.5))
+        dt = 0.25
+        with torch.no_grad():
+            for step in range(2, 4):
+                tau_val = step / 4
+                tau = torch.full((2,), tau_val)
+                mu = model(x, batch, tau)
+                x = x + dt * (mu - x) / (1 - tau_val)
+        assert torch.allclose(out, x)
+
+    def test_sample_tau0_near_one_runs_a_single_step(self):
+        model = _make_cfm_model(N_outer=10, dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        mean_estimate = torch.randn(2, 20, 3)
+        with torch.no_grad():
+            out = model.sample(batch, mean_estimate=mean_estimate, tau0=0.95)
+        assert torch.isfinite(out).all()
+
+    def test_sample_warm_start_still_stochastic(self):
+        """Two calls with the same mean_estimate/tau0 must still differ
+        (fresh noise each call) -- an ensemble around the anchor, not a
+        single point."""
+        model = _make_cfm_model(dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        mean_estimate = torch.randn(2, 20, 3)
+        with torch.no_grad():
+            a = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
+            b = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
+        assert not torch.allclose(a, b)

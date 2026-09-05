@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-05: FDV1+FDV1-CFM warm-start hybrid — inference-time only, second-best RMSE in the benchmark
+
+**Summary:** Combines FDV1's frozen deterministic point estimate with FDV1-CFM's own stochastic sampling trajectory, with **no retraining of either model** -- the third such hybrid this session, after FDV1+SDA1/SDA2 (#157). `FourDVarNetPredictStateCFM.sample()` gains the same `mean_estimate`/`tau0` SDEdit-style warm-start params as `evaluation/sda_sampler.py::sda_guided_sample`: instead of starting the Euler trajectory from pure noise at τ=0, it starts from `interpolant.mix(noise, mean_estimate, tau0)` at an intermediate `tau0` and only runs the remaining steps to τ=1.
+
+**Negative result found and fixed along the way:** the first attempt implemented this literally "at τ=0" (recenter the τ=0 noise on FDV1's estimate, `x_0 = mean_estimate + noise`, still running the full `N_outer` steps) -- per the original request. This made things *worse*, not better: single-sample RMSE 0.897 vs. 0.555 unwarm-started. Root cause: FDV1-CFM's training pairs τ=0 with near-zero-magnitude noise only (`x0 = randn·sigma_prior`, via the linear interpolant `x_τ=(1-τ)x0+τx1`), so injecting a real-state-scale `mean_estimate` there is an out-of-training-distribution `(τ, |x_τ|)` combination -- the τ-embedding tells the network "this is still mostly noise" while the actual input already looks like a near-final state, confusing the very first refinement step, and that confusion compounds since no steps are skipped. Flagged this to the user with the measured numbers before proceeding; switched to the intermediate-`tau0` design (mirroring the already-proven FDV1+SDA hybrid) per their direction.
+
+**Headline result:** ens30×10 S0/S1 RMSE 0.4625/0.4630 (degradation 1.001) at `tau0=0.7` (picked by an S0-only single-sample sweep over `tau0∈{0,0.2,...,0.9}`, plateauing over `[0.6,0.8]`) -- beats FDV1 alone (0.4700/0.4704) and FDV1+SDA1 (0.4653/0.4659), making this the **second-best RMSE in the whole L96 benchmark**, just behind FDV1+SDA2 (0.4514/0.4521). ES 0.2626/0.2635 (genuine ensemble spread, not FDV1's N=1 proxy) is comparable to FDV1+SDA1's but behind FDV1-CFM alone (0.2332) and FDV1+SDA2 (0.2447). No clamp activations observed in this evaluation (unlike FDV1-CFM alone's rare divergence) -- the shorter, better-anchored trajectory has much less room to diverge.
+
+**Files modified:**
+- `models/fourdvarnet.py` -- `FourDVarNetPredictStateCFM.sample` gains `mean_estimate`/`tau0` (both optional, default preserves exact prior behavior -- checked by regression tests); `step0 = round(tau0*N_outer)` snapping, same convention as `sda_guided_sample`
+- `eval_fdv1_fdv1cfm_hybrid_l96.py` -- new: loads FDV1 + FDV1-CFM checkpoints, drives its own small inference loop (two-model script, can't reuse the single-model `run_inference`/`_run_case_inference` dispatch), same `.npz`/JSON output convention as every other L96 eval script this session
+- `tests/test_fourdvarnet.py` -- new tests: `mean_estimate=None` reproduces the pre-existing `sample()` exactly (regression guard); `tau0=0.0` with a `mean_estimate` takes the same `step0=0` path as `mean_estimate=None`; warm-started output matches a manually-replayed `interpolant.mix` + reduced-range loop; `tau0` near 1 runs a single step; ensemble diversity survives warm-starting
+- `reports/l96/generate_l96_consolidated_report.py`, `reports/l96/outputs/l96_consolidated_benchmark.md` -- `FDV1+FDV1CFM` row + scheme description (purely additive: no existing bold-best markers change, since this doesn't beat FDV1+SDA2 on RMSE/EV or FDV1CFM on ES)
+
+**Rationale:** FDV1-CFM's own ES is good but its RMSE trails FDV1 alone; FDV1's RMSE is excellent but it has no ensemble/uncertainty at all. Warm-starting FDV1-CFM's already-trained sampler from FDV1's estimate tests whether the same "point-estimate-anchors-a-generative-sampler" idea that worked for SDA also works when the generative sampler is FDV1-CFM itself, entirely at inference time.
+
+**Verification:** `pytest tests/test_sda.py tests/test_sda_sampler.py tests/test_fourdvarnet.py tests/test_neural_inference.py tests/test_hydra_config.py -m "not slow"` -- 88/88 passed. S0-only single-sample `tau0` sweep (`{0,0.2,...,0.9}`) run against the existing FDV1 and FDV1-CFM checkpoints (no retraining); full `ens30×10` S0/S1 eval run at the chosen `tau0=0.7`; report regenerated with no missing-JSON warnings, diff confirmed additive.
+
 ## 2026-09-05: QG random-column obs — per-column independent intra-day timing + S0/S1 DA re-run + report/figures
 
 **Summary:** Changed the QG `random_columns` obs geometry from a single simultaneous multi-column

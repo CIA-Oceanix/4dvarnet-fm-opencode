@@ -187,13 +187,49 @@ class FourDVarNetPredictStateCFM(nn.Module):
         mu_pred = self.forward(x_tau, batch, tau)
         return F.mse_loss(mu_pred, batch.states)
 
-    def sample(self, batch, N_outer=None):
+    def sample(self, batch, N_outer=None, mean_estimate=None, tau0: float = 0.0):
+        """Sample via forward ODE integration, ``N_outer`` steps.
+
+        ``mean_estimate``/``tau0`` implement a "SDEdit"-style warm start
+        (same mechanism and naming as ``evaluation/sda_sampler.py``'s
+        ``sda_guided_sample``): instead of starting the trajectory from pure
+        noise at tau=0, start from ``interpolant.mix(noise, mean_estimate,
+        tau0)`` at ``tau0`` and only run the Euler loop from there to tau=1
+        (fewer steps -- cheaper NFE too). ``tau0`` is snapped to the existing
+        ``step/N_outer`` discretization (``step0 = round(tau0*N_outer)``) so
+        the warm-started point lands on a training-time-valid interpolant
+        point.
+
+        A naive version of this warm start that instead set ``x_0 =
+        mean_estimate + noise`` *at* tau=0 (running the full ``N_outer``-step
+        trajectory, no steps skipped) was tried and empirically made things
+        *worse* than no warm start at all (measured RMSE 0.897 vs. 0.555 for
+        a single unwarm-started sample, on the canonical S0 test set): CFM
+        training pairs tau=0 with near-zero-magnitude noise only (``x0 =
+        randn*sigma_prior``), so injecting a real-state-scale ``mean_estimate``
+        there is an out-of-training-distribution (tau, |x_tau|) combination
+        that confuses rather than helps the first refinement step -- and that
+        confusion compounds since no steps are skipped. Warm-starting at an
+        intermediate ``tau0`` (this implementation) avoids this exactly the
+        way the FDV1+SDA hybrid already does, since the interpolant's blend at
+        ``tau0>0`` is consistent with what the network saw in training at
+        that ``tau0``.
+
+        ``mean_estimate=None`` (the default) reproduces the pre-existing
+        behavior exactly (``step0=0``, ``x`` starts at pure noise) -- the key
+        regression invariant, checked in ``tests/test_fourdvarnet.py``.
+        """
         N = self.N_outer if N_outer is None else N_outer
         B, T, D = batch.obs.shape
         device = batch.obs.device
-        x = torch.randn(B, T, self.state_dim, device=device) * self.sigma_prior
+        noise = torch.randn(B, T, self.state_dim, device=device) * self.sigma_prior
+        step0 = int(round(tau0 * N)) if mean_estimate is not None else 0
+        if step0 > 0:
+            x = self.interpolant.mix(noise, mean_estimate, torch.full((B,), step0 / N, device=device))
+        else:
+            x = noise
         dt = 1.0 / N
-        for step in range(N):
+        for step in range(step0, N):
             tau_val = step / N
             tau = torch.full((B,), tau_val, device=device)
             mu = self.forward(x, batch, tau)
