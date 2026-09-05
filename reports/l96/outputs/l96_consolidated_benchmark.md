@@ -26,6 +26,7 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | FDV1CFM | Neural (4DVarNet-CFM, PredictStateCFM + FDV1 backbone) | V3 (`PredictStateCFM`) CFM parameterization -- predicts μ = E[x1|x_τ,y] at a randomly-sampled outer flow-time τ, trained via MSE(μ,x1), sampled by forward ODE integration `x += dt*(μ-x)/(1-τ)` over N_outer=10 steps -- but μ is computed by FDV1's own K_inner=5-step weight-tied unrolled `obs+state` refinement (`models/fourdvarnet.py::FourDVarNetPredictStateCFM`), started from the current x_τ, instead of a single UNet1D forward pass as plain V3 uses. Total NFE per sample = N_outer×K_inner = 50 (5x V3's 10, 5x FDV1's 10). hidden [64,128,256]; 400 epochs, single random τ per training batch (cheaper to train than FDV1 itself, which backprops through its full 10-step unroll every batch). A rare (~1-in-several-thousand ens30 samples) divergence of the inner unroll on out-of-distribution x_τ is guarded with a `clip_range=50.0` clamp after each inner step (same convention as this codebase's L96/QG dynamics integrators) -- inactive for in-distribution trajectories (|x|<10). Evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30). |
 | FDV1+SDA1 | Neural (FDV1 mean + SDA1 warm-started guidance) | No retraining: FDV1's frozen point estimate warm-starts SDA1's guided sampling trajectory (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`, a "SDEdit"-style warm start -- `x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1) instead of starting from pure noise; `guided_obs_cost`/the Tweedie x_hat_1 machinery are unchanged. Hyperparameters (`tau0=0.7`, `guidance_weight=2`) picked by an S0-only grid sweep over `tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈{0,1,2,5,10,40,100}` -- any guidance stronger than ~2 actively hurts once warm-started (the DPS step size calibrated for pure-noise starts is too aggressive here); evaluated as a 30-member ensemble (`ens30×10`, N=30). |
 | FDV1+SDA2 | Neural (FDV1 mean + SDA2-nominal warm-started guidance) | As FDV1+SDA1 but warm-starting SDA2-nominal (params+forcing-conditioned prior) instead of SDA1; `tau0=0.5`, `guidance_weight=2` (own S0-only grid sweep -- SDA2's conditioning makes more remaining Euler steps useful than SDA1's fully-unconditional prior, hence the lower `tau0`); evaluated as a 30-member ensemble (`ens30×10`, N=30). **New best neural scheme in this table on RMSE/EV** (FDV1CFM above still has the best ES). |
+| FDV1+FDV1CFM | Neural (FDV1 mean + FDV1-CFM warm-started sampling) | No retraining: FDV1's frozen point estimate warm-starts FDV1-CFM's own sampling trajectory via the same `mean_estimate`/`tau0` SDEdit-style mechanism as the FDV1+SDA hybrids (`models/fourdvarnet.py::FourDVarNetPredictStateCFM.sample`) -- `x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1. A literal τ0=0 warm start (recentering the τ=0 noise on FDV1's estimate, still running the full N_outer steps) was tried first and made things *worse* (single-sample RMSE 0.897 vs. 0.555 unwarm-started): CFM training pairs τ=0 with near-zero-magnitude noise only, so injecting a real-state-scale mean there is an out-of-training-distribution (τ, |x_τ|) combination that confuses the first refinement step, and that confusion compounds since no steps are skipped. `tau0=0.7` (picked by an S0-only sweep over `tau0∈{0,0.2,...,0.9}`, single-sample RMSE, plateauing over `tau0∈[0.6,0.8]`) avoids this the same way the FDV1+SDA hybrids do. Evaluated as a 30-member ensemble (`ens30×10`, N=30); no clamp activations observed in this evaluation (unlike FDV1CFM alone) since the shorter, better-anchored trajectory has much less room to diverge. |
 
 Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the 24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what makes the DA-vs-neural comparison apples-to-apples.
 
@@ -53,6 +54,7 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 | FDV1CFM | 0.4965 | 0.2461 | 0.6217 | 0.4954 | 0.2413 | 0.6225 | 0.998 |
 | FDV1+SDA1 | 0.4653 | 0.2381 | 0.5790 | 0.4659 | 0.2370 | 0.5804 | 1.001 |
 | FDV1+SDA2 | **0.4514** | **0.2142** | **0.5700** | **0.4521** | **0.2128** | **0.5717** | 1.002 |
+| FDV1+FDV1CFM | 0.4625 | 0.2371 | 0.5753 | 0.4630 | 0.2360 | 0.5765 | 1.001 |
 
 Note on conventions: the DA metric cache stores the **mean of per-window RMSEs** (evaluation/run_l96.py), while this table uses the **pooled** convention (`sqrt(mean sq err)` over all windows/timesteps) for every method — the same convention as the neural evaluation. Pooled RMSE is ≤ mean-of-window RMSE, so DA values here are slightly lower (more favorable) than in the legacy cache; both orderings agree.
 
@@ -80,6 +82,7 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | FDV1CFM | 0.9015 | 0.9837 | 0.8603 | 0.9009 | 0.9840 | 0.8594 |
 | FDV1+SDA1 | 0.9143 | 0.9848 | 0.8791 | 0.9135 | 0.9845 | 0.8780 |
 | FDV1+SDA2 | **0.9178** | **0.9877** | **0.8828** | **0.9169** | **0.9875** | **0.8816** |
+| FDV1+FDV1CFM | 0.9154 | 0.9849 | 0.8807 | 0.9147 | 0.9847 | 0.8796 |
 
 ## Energy Score (lower is better)
 
@@ -105,6 +108,7 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | FDV1CFM | **0.2332** | 0.1423 | **0.2787** | **0.2328** | 0.1390 | **0.2796** |
 | FDV1+SDA1 | 0.2630 | 0.1600 | 0.3146 | 0.2638 | 0.1590 | 0.3162 |
 | FDV1+SDA2 | 0.2447 | **0.1376** | 0.2982 | 0.2453 | **0.1360** | 0.3000 |
+| FDV1+FDV1CFM | 0.2626 | 0.1609 | 0.3134 | 0.2635 | 0.1602 | 0.3151 |
 
 `*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
 

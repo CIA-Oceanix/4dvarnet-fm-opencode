@@ -66,6 +66,7 @@ NEURAL_EXP_DIRS = [
     "FDV1CFM_predict_state_l96",
     "FDV1_SDA1_hybrid_l96",
     "FDV1_SDA2_hybrid_l96",
+    "FDV1_FDV1CFM_hybrid_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -114,6 +115,10 @@ ENS30_DIRS = {
     "FDV1_SDA2_hybrid_l96": {
         "s0": "FDV1_SDA2_hybrid_l96/ens30_no10",
         "s1": "FDV1_SDA2_hybrid_l96/ens30_no10",
+    },
+    "FDV1_FDV1CFM_hybrid_l96": {
+        "s0": "FDV1_FDV1CFM_hybrid_l96/ens30_no10",
+        "s1": "FDV1_FDV1CFM_hybrid_l96/ens30_no10",
     },
 }
 
@@ -225,6 +230,21 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "more remaining Euler steps useful than SDA1's fully-unconditional prior, hence the lower "
       "`tau0`); evaluated as a 30-member ensemble (`ens30×10`, N=30). **New best neural scheme in "
       "this table on RMSE/EV** (FDV1CFM above still has the best ES).")),
+    ("FDV1_FDV1CFM_hybrid_l96", "Neural (FDV1 mean + FDV1-CFM warm-started sampling)",
+     ("No retraining: FDV1's frozen point estimate warm-starts FDV1-CFM's own sampling trajectory "
+      "via the same `mean_estimate`/`tau0` SDEdit-style mechanism as the FDV1+SDA hybrids "
+      "(`models/fourdvarnet.py::FourDVarNetPredictStateCFM.sample`) -- "
+      "`x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1. A literal "
+      "τ0=0 warm start (recentering the τ=0 noise on FDV1's estimate, still running the full "
+      "N_outer steps) was tried first and made things *worse* (single-sample RMSE 0.897 vs. 0.555 "
+      "unwarm-started): CFM training pairs τ=0 with near-zero-magnitude noise only, so injecting a "
+      "real-state-scale mean there is an out-of-training-distribution (τ, |x_τ|) combination that "
+      "confuses the first refinement step, and that confusion compounds since no steps are skipped. "
+      "`tau0=0.7` (picked by an S0-only sweep over `tau0∈{0,0.2,...,0.9}`, single-sample RMSE, "
+      "plateauing over `tau0∈[0.6,0.8]`) avoids this the same way the FDV1+SDA hybrids do. "
+      "Evaluated as a 30-member ensemble (`ens30×10`, N=30); no clamp activations observed in this "
+      "evaluation (unlike FDV1CFM alone) since the shorter, better-anchored trajectory has much less "
+      "room to diverge.")),
 ]
 
 
@@ -256,6 +276,8 @@ def short_name(name: str) -> str:
         return "FDV1+SDA1"
     if name == "FDV1_SDA2_hybrid_l96":
         return "FDV1+SDA2"
+    if name == "FDV1_FDV1CFM_hybrid_l96":
+        return "FDV1+FDV1CFM"
     return name.split("_")[0] if "_" in name else name
 
 
