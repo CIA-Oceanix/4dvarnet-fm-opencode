@@ -157,12 +157,12 @@ def test_psi_h_matches_manual_inversion_slice():
     psi1 = dyn.inner.streamfunctions(x)
     manual = torch.cat([psi1[0, :, c] for c in cols])
     auto = h(x, index=t)
-    assert auto.shape == (cfg.cols_per_day * cfg.ny,)
+    assert auto.shape == (cfg.ny,)
     assert torch.allclose(auto, manual, atol=1e-6)
     # batched path
     xb = torch.randn(7, dyn.state_dim)
     ab = h(xb, index=t)
-    assert ab.shape == (7, cfg.cols_per_day * cfg.ny)
+    assert ab.shape == (7, cfg.ny)
 
 
 def test_psi_h_per_time_columns():

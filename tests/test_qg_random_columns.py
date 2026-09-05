@@ -12,51 +12,55 @@ def _cfg(**kw):
     return QGConfig(**base)
 
 
+def _masked_steps(w):
+    return w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
+
+
 def test_random_columns_has_obs_columns_key():
     cfg = _cfg()
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
     assert "obs_columns" in w
-    T, C = w["obs_columns"].shape
-    assert C == cfg.cols_per_day
-    assert T == cfg.num_steps
-    assert w["obs"].shape == (T, C * cfg.ny)
+    assert w["obs_columns"].shape == (cfg.num_steps,)
+    assert w["obs"].shape == (cfg.num_steps, cfg.ny)
 
 
-def test_random_columns_one_event_per_day_and_mask():
+def test_random_columns_independent_steps_per_day_and_mask():
+    """Each of `cols_per_day` columns is observed once at its own intra-day
+    step: every day carries exactly `cols_per_day` distinct masked steps inside
+    its [day*spd, (day+1)*spd) window, each observing a single column."""
     cfg = _cfg()
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
     spd = round(86400.0 / cfg.dt)
-    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
-    # One event per day, placed at a random sub-daily offset within that day
-    # (PR #94 "random sub-daily obs"): no two events share a day, and each
-    # event lies inside its day's [day*spd, (day+1)*spd) window.
-    assert len(ev) == w["obs_mask"].shape[0] // spd
-    for i, t in enumerate(ev):
-        assert i * spd <= t < (i + 1) * spd
-        assert int((w["obs_columns"][t] >= 0).all())
+    C = cfg.cols_per_day
+    ev = _masked_steps(w)
+    assert len(ev) == (w["obs_mask"].shape[0] // spd) * C
+    for day in range(w["obs_mask"].shape[0] // spd):
+        day_steps = [t for t in ev if day * spd <= t < (day + 1) * spd]
+        assert len(day_steps) == C
+        assert len(set(day_steps)) == C
+        for t in day_steps:
+            assert 0 <= int(w["obs_columns"][t]) < cfg.nx
 
 
 def test_random_columns_distinct_within_day():
+    """No two columns of the same day share an x-location."""
     cfg = _cfg()
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
-    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
-    for t in ev:
-        cols = w["obs_columns"][t].tolist()
+    spd = round(86400.0 / cfg.dt)
+    for day in range(w["obs_mask"].shape[0] // spd):
+        day_steps = [t for t in _masked_steps(w) if day * spd <= t < (day + 1) * spd]
+        cols = [int(w["obs_columns"][t]) for t in day_steps]
         assert len(set(cols)) == len(cols)
-        assert all(0 <= c < cfg.nx for c in cols)
 
 
 def test_random_columns_near_full_coverage():
     cfg = _cfg(window_days=30.0)
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
-    seen = set()
-    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
-    for t in ev:
-        seen.update(w["obs_columns"][t].tolist())
+    seen = {int(w["obs_columns"][t]) for t in _masked_steps(w)}
     assert len(seen) / cfg.nx > 0.9
 
 
@@ -65,10 +69,10 @@ def test_random_columns_obs_noise_scale():
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
     psi = w["target_state_psi"].reshape(cfg.num_steps, cfg.ny, cfg.nx)
-    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
+    ev = _masked_steps(w)
     t = ev[0]
-    cols = w["obs_columns"][t].tolist()
-    clean = torch.cat([psi[t, :, c] for c in cols])
+    xc = int(w["obs_columns"][t])
+    clean = psi[t, :, xc]
     noisy = w["obs"][t]
     resid = noisy - clean
     sigma = cfg.obs_noise_std_frac * float(psi.std())
@@ -81,13 +85,11 @@ def test_expand_obs_to_grid_random_columns_roundtrip():
     w = ds["test_s0"][0]
     g = expand_obs_to_grid(w, cfg)
     assert g.shape == (cfg.num_steps, cfg.ny * cfg.nx)
-    ev = w["obs_mask"].nonzero(as_tuple=False).flatten().tolist()
-    t = ev[0]
-    cols = w["obs_columns"][t].tolist()
-    for c, x_col in enumerate(cols):
-        assert torch.allclose(
-            g[t, torch.arange(cfg.ny) * cfg.nx + x_col],
-            w["obs"][t, c * cfg.ny: (c + 1) * cfg.ny])
+    t = _masked_steps(w)[0]
+    xc = int(w["obs_columns"][t])
+    assert torch.allclose(
+        g[t, torch.arange(cfg.ny) * cfg.nx + xc],
+        w["obs"][t])
 
 
 def test_random_columns_deterministic():

@@ -27,6 +27,14 @@ report + generator were on master).
   exponential filter, masked PV inversion), moving-storm wind-stress curl forcing.
 - **Data**: `data/qg.py` (`QGConfig`, `QGDataset`, `make_qg_s0_s1_datasets`) — S0/S1
   along-track + random-column obs, corrupted wind/param bias, qg1l structural-error scenario.
+  **Random-column geometry (2026-09-05):** `cols_per_day` distinct meridional columns are now
+  each observed exactly once per day at its **own** randomly-sampled intra-day step (no two
+  columns of a day share a step) — `obs (T,ny)`, `obs_columns (T,)`, `OBS_GEOMETRY_VERSION=2`
+  folded into the truth-cache key so a geometry change auto-invalidates old obs caches.
+  DA re-run vs the old single-simultaneous-event-per-day constellation: S0 cols=8/lag 1.0
+  clearly improves (RMSE −7.7%, EV +0.777→+0.812), cols=4 essentially unchanged; S1 da_nx
+  32/64 slightly degrades (RMSE +6–7%, EV −9 to −12 pts) since dispersing the simultaneous
+  multi-column updates reduces each update's spatial info under model error.
 - **DA baselines**: `evaluation/run_qg_baselines.py` (+ `eval_qg1l_rscale_probe.py`,
   `sweep_qg_baselines.py`) drive EnKF/ETKF on ψ/q. `evaluation/baselines.py` carries the
   shared `ObsOperator` H-mode, `_build_qg_loc_matrices`/`_build_qg_col_loc_matrices`,
@@ -79,7 +87,8 @@ report + generator were on master).
 - **Tests**: 7 QG test files (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
   `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
   `test_qg_psi_state`) — all in the master CI gate.
-- **sbatch**: 31 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps.
+- **sbatch**: 32 `batch/run_qg_*.sbatch` for the S0/S1 matrix + S1-resolution + qg1l sweeps
+  (+ `run_qg_figs.sbatch`, the illustration/DA-cycle regeneration job).
 - QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18

@@ -176,13 +176,17 @@ def _obs_panel(w, ny, nx, truth_inner, device):
     psi1 = psi[:, 0]  # (T,ny,nx) upper layer
     mask = w["obs_mask"].numpy()
     steps = np.where(mask)[0]
-    cols = w["obs_columns"].numpy()  # (T,C)
+    cols = w["obs_columns"].numpy()  # (T,)
     days_per = round(86400.0 / truth_inner.dt)
     days = steps / days_per
-    obs = w["obs"].numpy()
+    obs = w["obs"].numpy()  # (T, ny)
     col_sets = []
     for t in steps:
-        col_sets.append([int(c) for c in cols[t] if 0 <= int(c) < nx])
+        xc = int(cols[t])
+        if 0 <= xc < nx:
+            col_sets.append([xc])
+        else:
+            col_sets.append([])
     return steps, days, col_sets, psi1, truth_q, obs, int(mask.sum())
 
 
@@ -198,19 +202,17 @@ def fig_obs_days(w, truth_inner, per_scenario, device, out_dir):
         t = steps[idx]
         vmax_p = _symmetric_vmax(psi1[t])
         ax.imshow(psi1[t], cmap=CMAP, vmin=-vmax_p, vmax=vmax_p)
-        C = w["obs_columns"].shape[1]
-        for c in range(C):
-            xc = int(w["obs_columns"][t, c])
-            if 0 <= xc < nx:
-                colvals = obs[t, c * ny: (c + 1) * ny]
-                vmax_o = max(np.abs(colvals).max(), 1e-30)
-                ax.scatter(np.full(ny, xc), np.arange(ny), c=np.clip(
-                    colvals, -vmax_o, vmax_o), cmap=CMAP, s=14,
-                    vmin=-vmax_o, vmax=vmax_o, edgecolors="k", linewidths=0.4)
-        ax.set_title(f"day {days[idx]:.1f} — obs cols {col_sets[idx]}")
+        xc = int(w["obs_columns"][t])
+        if 0 <= xc < nx:
+            colvals = obs[t]
+            vmax_o = max(np.abs(colvals).max(), 1e-30)
+            ax.scatter(np.full(ny, xc), np.arange(ny), c=np.clip(
+                colvals, -vmax_o, vmax_o), cmap=CMAP, s=14,
+                vmin=-vmax_o, vmax=vmax_o, edgecolors="k", linewidths=0.4)
+        ax.set_title(f"day {days[idx]:.1f} — obs col {col_sets[idx]}")
         ax.set_xticks([])
         ax.set_yticks([])
-    fig.suptitle(f"{per_scenario}: per-day observed ψ₁ columns over truth",
+    fig.suptitle(f"{per_scenario}: per-step observed ψ₁ columns over truth",
                  fontsize=11)
     fig.tight_layout()
     path = os.path.join(out_dir, f"qg_{per_scenario}_obs_days.png")
@@ -220,23 +222,21 @@ def fig_obs_days(w, truth_inner, per_scenario, device, out_dir):
 
 
 def fig_obs_hovmoller(w, truth_inner, per_scenario, out_dir):
-    ny = nx = truth_inner.nx
-    obs = w["obs"].numpy()          # (T, C*ny)
+    nx = truth_inner.nx
+    obs = w["obs"].numpy()          # (T, nx) (square grid, ny == nx)
     mask = w["obs_mask"].numpy()
-    cols = w["obs_columns"].numpy()  # (T, C)
+    cols = w["obs_columns"].numpy()  # (T,)
     T = obs.shape[0]
     days_per = round(86400.0 / truth_inner.dt)
     days = np.arange(T) / days_per
     fills = np.full((T, nx), np.nan)
-    C = cols.shape[1]
     for t in np.where(mask)[0]:
-        for c in range(C):
-            xc = int(cols[t, c])
-            if 0 <= xc < nx:
-                col = obs[t, c * ny:(c + 1) * ny]
-                finite = np.isfinite(col)
-                fills[t, xc] = (np.mean(col[finite])
-                                if np.any(finite) else np.nan)
+        xc = int(cols[t])
+        if 0 <= xc < nx:
+            col = obs[t]
+            finite = np.isfinite(col)
+            fills[t, xc] = (np.mean(col[finite])
+                            if np.any(finite) else np.nan)
     # Interpolate observed ψ₁ across time at each storm-column x so the
     # moving columns render as continuous slanted tracks instead of a
     # mostly-blank scatter of isolated points (obs occur ~once per day).
@@ -397,11 +397,12 @@ def fig_dacycle(data, per_scenario, out_dir, device, sample_days=2.0):
     frames = []
     for t in steps:
         fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))
-        # Panel 1: raw obs ψ₁ columns, vertical, at a fixed global scale.
-        # Each raw obs event samples `cols_per_day` meridional columns; when
-        # the frame's own step is not an obs step, show the nearest preceding
-        # raw obs event so the panel is never blank and reads as raw (not a
-        # per-day aggregate with a drifting per-frame color scale).
+        # Panel 1: raw obs ψ₁ column, vertical, at a fixed global scale.
+        # Each of `cols_per_day` columns is observed once per day at its own
+        # intra-day step, so a masked step carries exactly one column. When the
+        # frame's own step is not an obs step, show the nearest preceding raw
+        # obs column so the panel is never blank and reads as raw (not an
+        # aggregate with a drifting per-frame color scale).
         ax = axes[0]
         prior = obs_steps[obs_steps <= t]
         if prior.size:
@@ -411,13 +412,13 @@ def fig_dacycle(data, per_scenario, out_dir, device, sample_days=2.0):
         else:
             t_obs = t
         img = np.full((ny, nx), np.nan)
-        for c in range(cols.shape[1]):
-            xc = int(cols[t_obs, c])
-            if 0 <= xc < nx:
-                img[:, xc] = obs[t_obs, c * ny:(c + 1) * ny]
+        xc = int(cols[t_obs])
+        if 0 <= xc < nx:
+            img[:, xc] = obs[t_obs]
         ax.imshow(img, cmap=CMAP, vmin=-vmax_o, vmax=vmax_o,
                   interpolation="nearest")
-        ax.set_title(f"raw obs ψ₁ columns (event day {t_obs / days_per:.1f})")
+        ax.set_title(
+            f"raw obs ψ₁, 1 col/event (day {t_obs / days_per:.2f}, col {xc})")
         ax.set_xticks([])
         ax.set_yticks([])
         # Panel 2: truth q₁
