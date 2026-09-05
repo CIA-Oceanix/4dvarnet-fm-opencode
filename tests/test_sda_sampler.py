@@ -193,3 +193,79 @@ class TestSdaGuidedSample:
             samples, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3,
                                            guidance_weight=1.0)
         assert torch.isfinite(samples).all()
+
+
+class TestSdaGuidedSampleWarmStart:
+    def test_tau0_zero_matches_no_mean_estimate(self):
+        """tau0=0.0 with a mean_estimate given must be identical to passing no
+        mean_estimate at all -- the key regression invariant for this
+        extension, same spirit as the obs_indices=None guard above."""
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, obs_every=2)
+        mean_est = torch.randn(2, 20, 3)
+
+        torch.manual_seed(11)
+        baseline, n_fwd_baseline = sda_guided_sample(model, batch, R_var=0.1, N_outer=5,
+                                                      guidance_weight=5.0)
+        torch.manual_seed(11)
+        warm, n_fwd_warm = sda_guided_sample(model, batch, R_var=0.1, N_outer=5,
+                                             guidance_weight=5.0,
+                                             mean_estimate=mean_est, tau0=0.0)
+        assert torch.allclose(baseline, warm)
+        assert n_fwd_baseline == n_fwd_warm == 5
+
+    def test_warm_start_init_matches_interpolant_mix(self):
+        """With guidance_weight=0 (purely unconditional Euler steps), the
+        warm-started trajectory must equal manually replaying the same
+        interpolant-mix init + reduced-range loop."""
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        mean_est = torch.randn(2, 20, 3)
+        N_outer, tau0 = 10, 0.5
+        step0 = round(tau0 * N_outer)
+        interpolant = LinearInterpolant(nu=1.0)
+
+        torch.manual_seed(3)
+        got, n_fwd = sda_guided_sample(model, batch, R_var=0.1, N_outer=N_outer,
+                                       guidance_weight=0.0,
+                                       mean_estimate=mean_est, tau0=tau0)
+
+        torch.manual_seed(3)
+        noise = torch.randn(2, 20, model.state_dim) * model.sigma_prior
+        x = interpolant.mix(noise, mean_est, torch.full((2,), step0 / N_outer))
+        dt = 1.0 / N_outer
+        with torch.no_grad():
+            for step in range(step0, N_outer):
+                tau = torch.full((2,), step / N_outer)
+                v = model.forward(x, batch, tau)
+                x = x + dt * v
+
+        assert torch.allclose(got, x)
+        assert n_fwd == N_outer - step0
+
+    def test_tau0_near_one_runs_a_single_step(self):
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=1, T=20, D=3)
+        mean_est = torch.randn(1, 20, 3)
+        samples, n_fwd = sda_guided_sample(model, batch, R_var=0.1, N_outer=10,
+                                           guidance_weight=1.0,
+                                           mean_estimate=mean_est, tau0=0.9)
+        assert n_fwd == 1
+        assert samples.shape == (1, 20, 3)
+        assert torch.isfinite(samples).all()
+
+    def test_ensemble_diversity_preserved_with_warm_start(self):
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=1, T=20, D=3)
+        mean_est = torch.randn(1, 20, 3)
+        samples, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=10,
+                                       guidance_weight=1.0, n_members=4,
+                                       mean_estimate=mean_est, tau0=0.5)
+        assert samples.shape == (1, 20, 3, 4)
+        members = [samples[..., m] for m in range(4)]
+        assert not all(torch.allclose(members[0], m) for m in members[1:]), \
+            "members should differ (fresh noise per member) despite sharing mean_estimate"
