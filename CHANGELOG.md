@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-05: QG random-column obs — per-column independent intra-day timing + S0/S1 DA re-run + report/figures
+
+**Summary:** Changed the QG `random_columns` obs geometry from a single simultaneous multi-column
+"constellation" event per day to **per-column independent intra-day timing**: each of the
+`cols_per_day` distinct x-columns is observed exactly once at its **own** randomly-sampled step
+(`obs (T,ny)`, `obs_columns (T,)`, no two columns of a day share a step, collision-shifted otherwise).
+`OBS_GEOMETRY_VERSION=2` is folded into the truth-cache hash so a geometry change auto-invalidates
+cached obs. Re-ran the S0 (cols∈{4,8}, lags 1.0/2.0, psi-obs) and S1 cross-resolution (da_nx
+16/32/64, lag 1.0) DA matrix under the new geometry (5 jobs, all COMPLETED on shared-NFS worktree),
+regenerated the report (`reports/qg/outputs/qg_s0s1_report.md`) + illustrations, and added the
+`batch/run_qg_figs.sbatch` regeneration job.
+
+**New-vs-old (pooled):** **S0** cols=8/lag 1.0 clearly improves — RMSE 5.18e-06→**4.78e-06** (−7.7%),
+EV +0.777→**+0.812**; cols=8/lag 2.0 and cols=4 essentially unchanged (≤ +2.3% RMSE). **S1**
+da_nx=16/32/64 lag 1.0 modestly degrades — RMSE +1.1%/+6.5%/+7.3%, EV −3.4/−11.6/−9.3 pts —
+dispersing the simultaneous multi-column updates reduces each update's spatial information under
+model error. S1 lag-2.0 row retains the old-geometry value (S1 re-run at lag 1.0 only; caveat
+recorded in the report §7).
+
+**Files modified:**
+- `data/qg.py` — `_generate_random_column_observations` per-column timing, `obs (T,ny)`/`obs_columns (T,)`; `expand_obs_to_grid` 1D-column path; `_truth_cache_path` folds `OBS_GEOMETRY_VERSION=2` into the key.
+- `evaluation/run_qg_baselines.py` — `_event_columns` singleton per-time column lists; `_q_alongtrack_obs`, `_q_obs_indices_t`, `_make_obs_system`, `_obs_spec_rc` updated to the (T,ny)/single-column contract (`od = cfg.ny`).
+- `reports/qg/generate_qg_s0s1_figs.py` — fig obs panel/Hovmöller/DA-cycle adapted to per-column geometry.
+- `reports/qg/generate_qg_s0s1_report.py` — §3.4 geometry wording + §7 interpretation rewritten with the new-vs-old comparison and the S1 lag-2.0 caveat.
+- `reports/qg/outputs/qg_s0s1_report.md` — regenerated; `reports/qg/outputs/figs/*` — regenerated illustrations.
+- `reports/qg/outputs/qg_matrix_c{4,8}_psi/*.json`, `qg_s1_lag1p0/*.json`, `qg_s1_da32_lag1p0/*.json`, `qg_s1_nores_lag1p0/*.json` — new-geometry re-run results (old baselines preserved as `.old_geometry` untracked backups).
+- `tests/test_qg_random_columns.py`, `tests/test_qg_baselines.py` — updated to the per-column contract.
+- `batch/run_qg_figs.sbatch` — new; `PLAN.md` — QG geometry note; `CHANGELOG.md` — this entry.
+
+**Rationale:** The `random_columns` geometry previously placed all `cols_per_day` columns
+simultaneously at one random sub-daily step, which correlated their observational timing and lost
+temporal diversity. Observing each column at its own random step better resembles real along-track
+satellite sampling and gives the DA more temporally-separated spatial information. The S0 cols=8
+gain confirms the approach is favorable on the error-free case; the mild S1 degradation is the
+expected cost of the more temporally-dispersed (per-window lower-information) updates under model
+error.
+
+**Verification:** QG fast pytest gate on the 7 QG test files (`test_qg_dynamics`, `test_qg_data`,
+`test_qg_baselines`, `test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`,
+`test_qg_psi_state`) — 109 passed (none slow). Report generator re-run is deterministic (bit-identical
+output). Fig generator CPU `--quick` smoke clean; production figs regenerated as a GPU job
+(`run_qg_figs.sbatch`, job 51968). `bash -n batch/run_qg_figs.sbatch` OK.
+
 ## 2026-09-05: FDV1-CFM — V3 (PredictStateCFM) parameterization with FDV1's unrolled refinement as backbone
 
 **Summary:** Combines the two most recent L96 model families into a new hybrid: `FourDVarNetPredictStateCFM` (`models/fourdvarnet.py`) uses V3's (`PredictStateCFM`) CFM contract — predict `μ = E[x1|x_τ,y]` at a randomly-sampled outer flow-time `τ`, train via `MSE(μ,x1)`, sample by forward ODE integration `x += dt*(μ-x)/(1-τ)` over `N_outer=10` steps — but `μ` is computed by FDV1's own `K_inner=5`-step weight-tied unrolled `obs+state` refinement (started from the current `x_τ`) instead of a single `UNet1D` forward pass. Deliberately does not compose via a nested `FourDVarNetSolver` instance (would break `evaluation/neural_inference.py`'s checkpoint-introspection, hardcoded to flat `model.unet.*`/`model.velocity_unet.*` names) — instead owns a flat `self.unet` and re-implements the ~8-line inner-refinement loop body inline. Total NFE per sample = `N_outer×K_inner=50` (5x V3's 10, 5x FDV1's 10); training is cheaper than FDV1's own despite the nesting, since only one random `τ` (hence `K_inner=5` UNet calls) is touched per batch, vs. FDV1's own training backpropping through its full 10-step unroll every batch.

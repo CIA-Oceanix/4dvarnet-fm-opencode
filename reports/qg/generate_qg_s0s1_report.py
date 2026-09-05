@@ -433,18 +433,26 @@ def main() -> None:
 
     add("## 7. Interpretation")
     add("")
-    add("- **S0 (error-free, psi-obs):** increasing columns (4 → 8) and shorter "
-        "lag (2.0 → 1.0) both improve skill; psi-obs at cols=8/lag 1.0 is the "
-        "best S0 DA (improv ~1.42, EV_full ~+0.78). EV remains positive for the "
-        "psi-obs matrix.")
+    add("- **S0 (error-free, psi-obs, new per-column timing):** increasing "
+        "columns (4 → 8) and shorter lag (2.0 → 1.0) both improve skill; "
+        "psi-obs at cols=8/lag 1.0 is the best S0 DA (improv ~1.53, "
+        "EV_full ~+0.81), improved by the per-column timing vs the old "
+        "simultaneous-constellation geometry (was improv ~1.42 / EV ~+0.78). "
+        "cols=4 is essentially unchanged (improv ~1.14 vs 1.16). EV remains "
+        "positive for the psi-obs matrix.")
     add("- **S1-QG2L resolution trend (16 → 32 → 64):** forecast-improv rises "
-        "monotonically (~1.10 → ~1.48 → ~1.55) and pooled EV flips from negative "
-        "at da_nx=16 (-0.11) to strongly positive at da_nx=64 (+0.43) — the milder "
-        "the cross-resolution mismatch, the easier the DA. At da_nx=32/64 the PV q "
-        "field improves across layers (q₁ improv ~1.49–1.60).")
+        "monotonically (~1.08 → ~1.38 → ~1.44) and pooled EV flips from "
+        "negative at da_nx=16 (-0.14) to positive at da_nx=64 (+0.34) — the "
+        "milder the cross-resolution mismatch, the easier the DA. The "
+        "per-column timing is slightly worse than the old constellation S1 "
+        "skill (da32/da64 RMSE +6–7%, EV −9 to −12 pts), since dispersing the "
+        "simultaneous multi-column updates reduces each update's spatial "
+        "information under model error.")
     add("- **S1-QG2L lag trend (da_nx=16):** lag 2.0 is slightly worse than lag "
-        "1.0 (improv 1.10 vs 1.11) — longer window broadens the free forecast "
-        "without adding DA skill, so the shortest assimilated lag is preferred.")
+        "1.0 (improv 1.08 vs 1.11) — longer window broadens the free forecast "
+        "without adding DA skill, so the shortest assimilated lag is preferred. "
+        "(S1 re-run at lag 1.0 only; the lag-2.0 row retains the old-geometry "
+        "value.)")
     add("- **S1-QG1L structural error:** at default R the 1-layer filter is worse "
         "than the free forecast (improv ~0.39, negative EV) because the nonlocal "
         "psi observations are mutually inconsistent with the 1-layer model and "
