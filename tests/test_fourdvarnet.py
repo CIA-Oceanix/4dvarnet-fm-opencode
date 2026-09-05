@@ -1,6 +1,7 @@
 import torch
+import torch.nn.functional as F
 
-from models.fourdvarnet import FourDVarNetSolver
+from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
 
 
 class _MockBatch:
@@ -145,3 +146,120 @@ class TestFourDVarNetSolver:
             f"N_outer=5 fit loss ({loss_5}) should not be much worse than "
             f"N_outer=1 ({loss_1}) after equal optimizer steps"
         )
+
+
+def _make_cfm_model(**kwargs):
+    defaults = dict(state_dim=3, hidden_channels=[4, 8], N_outer=3, K_inner=2)
+    defaults.update(kwargs)
+    return FourDVarNetPredictStateCFM(**defaults)
+
+
+class TestFourDVarNetPredictStateCFM:
+    def test_forward_shape_and_finite(self):
+        model = _make_cfm_model()
+        batch = _MockBatch(B=2, T=50, D=3)
+        x_tau = torch.randn(2, 50, 3)
+        tau = torch.rand(2)
+        mu = model(x_tau, batch, tau)
+        assert mu.shape == (2, 50, 3)
+        assert torch.isfinite(mu).all()
+
+    def test_compute_loss_matches_manual_formula(self):
+        model = _make_cfm_model(dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=50, D=3)
+
+        torch.manual_seed(5)
+        loss = model.compute_loss(batch)
+
+        torch.manual_seed(5)
+        B, device = batch.states.shape[0], batch.states.device
+        tau = torch.rand(B, device=device)
+        x0 = torch.randn_like(batch.states) * model.sigma_prior
+        x_tau = model.interpolant.mix(x0, batch.states, tau)
+        mu_pred = model(x_tau, batch, tau)
+        expected = F.mse_loss(mu_pred, batch.states)
+
+        assert torch.allclose(loss, expected)
+
+    def test_sample_shape_finite_and_stochastic(self):
+        model = _make_cfm_model()
+        model.eval()
+        batch = _MockBatch(B=2, T=30, D=3)
+        with torch.no_grad():
+            a = model.sample(batch)
+            b = model.sample(batch)
+        assert a.shape == (2, 30, 3)
+        assert torch.isfinite(a).all()
+        assert not torch.allclose(a, b), "sample() must be stochastic (fresh noise init each call)"
+
+    def test_k_inner_one_matches_fourdvarnet_solver_n_outer_one(self):
+        """K_inner=1 degenerates to a single UNet call, structurally identical
+        to FourDVarNetSolver with N_outer=1 -- same formula, just starting
+        from an arbitrary x_t instead of a hardcoded zero state."""
+        cfm = _make_cfm_model(K_inner=1, dropout=0.0)
+        cfm.eval()
+        solver = FourDVarNetSolver(state_dim=3, hidden_channels=[4, 8], N_outer=1, dropout=0.0)
+        solver.eval()
+        solver.unet.load_state_dict(cfm.unet.state_dict())
+        batch = _MockBatch(B=2, T=20, D=3)
+        x_t = torch.zeros(2, 20, 3)  # matches FourDVarNetSolver's own x_0 = 0
+        tau = torch.rand(2)
+        with torch.no_grad():
+            mu = cfm(x_t, batch, tau)
+            solver_out = solver(batch)
+        assert torch.allclose(mu, solver_out)
+
+    def test_unimplemented_update_input_raises(self):
+        try:
+            _make_cfm_model(update_input="grad-only")
+            raise AssertionError("expected NotImplementedError")
+        except NotImplementedError:
+            pass
+
+    def test_gradients_flow_through_inner_unroll(self):
+        model = _make_cfm_model(K_inner=4)
+        batch = _MockBatch(B=2, T=20, D=3)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        for name, p in model.named_parameters():
+            assert p.grad is not None, f"no gradient reached {name}"
+            assert torch.isfinite(p.grad).all(), f"non-finite gradient at {name}"
+
+    def test_forward_output_bounded_by_clip_range(self):
+        """Regression guard for a rare (~1-in-several-thousand ens30 samples)
+        divergence found during FDV1-CFM's first full evaluation: an
+        out-of-distribution x_t can make the K_inner unroll blow up within a
+        handful of steps, corrupting the ensemble-mean point estimate. Force
+        the pathological regime with untrained (large-scale) weights and an
+        adversarial x_t, and check forward() never exceeds clip_range."""
+        torch.manual_seed(0)
+        model = FourDVarNetPredictStateCFM(
+            state_dim=3, hidden_channels=[4, 8], N_outer=3, K_inner=5, clip_range=50.0,
+        )
+        with torch.no_grad():
+            for p in model.unet.parameters():
+                p.mul_(20.0)
+        batch = _MockBatch(B=4, T=20, D=3, seed=1)
+        x_t = torch.randn(4, 20, 3) * 1000.0
+        tau = torch.rand(4)
+        mu = model(x_t, batch, tau)
+        assert torch.isfinite(mu).all()
+        assert mu.abs().max().item() <= 50.0 + 1e-4
+
+    def test_clip_range_inactive_in_distribution(self):
+        """The clamp must not perturb ordinary, in-distribution behavior --
+        rerunning test_k_inner_one_matches_fourdvarnet_solver_n_outer_one-style
+        inputs should give identical output whether or not clip_range binds."""
+        model_clipped = _make_cfm_model(dropout=0.0, clip_range=50.0)
+        model_unclipped = _make_cfm_model(dropout=0.0, clip_range=1e6)
+        model_unclipped.load_state_dict(model_clipped.state_dict())
+        model_clipped.eval()
+        model_unclipped.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        x_t = torch.randn(2, 20, 3)
+        tau = torch.rand(2)
+        with torch.no_grad():
+            out_clipped = model_clipped(x_t, batch, tau)
+            out_unclipped = model_unclipped(x_t, batch, tau)
+        assert torch.allclose(out_clipped, out_unclipped)

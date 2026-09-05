@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
-from models.fourdvarnet import FourDVarNetSolver
+from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
 from evaluation.sda_sampler import sda_guided_sample
@@ -170,14 +170,15 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 # is param_dim, not cond_extra_dim (which stays 0).
                 param_dim = proj_in - state_dim - 1
                 cond_extra_dim = 0
-            elif model_type == "fourdvarnet":
-                # FourDVarNetSolver builds its UNet1D with use_obs=False and an
-                # already-doubled state_dim=2*D for "obs+state" (proj_in=2D,
-                # output_dim=D) or plain D for "obs-only" (proj_in=D=output_dim)
-                # -- either way there is no *extra* conditioning tensor beyond
-                # what's already folded into that doubled/plain state_dim, so
-                # cond_extra_dim=0 always (the generic proj_in-2*state_dim
-                # formula below would wrongly give -D for "obs-only").
+            elif model_type in ("fourdvarnet", "fourdvarnet_cfm"):
+                # FourDVarNetSolver/FourDVarNetPredictStateCFM both build their
+                # UNet1D with use_obs=False and an already-doubled state_dim=2*D
+                # for "obs+state" (proj_in=2D, output_dim=D) or plain D for
+                # "obs-only" (proj_in=D=output_dim) -- either way there is no
+                # *extra* conditioning tensor beyond what's already folded into
+                # that doubled/plain state_dim, so cond_extra_dim=0 always (the
+                # generic proj_in-2*state_dim formula below would wrongly give
+                # -D for "obs-only").
                 cond_extra_dim = 0
             else:
                 # cond_extra_dim = proj_in - 2*state_dim for obs_dim = state_dim
@@ -290,6 +291,14 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                         m[key] = fdv[key]
                 if len(fdv) > 0:
                     m.fdv = fdv
+            fc = yaml_cfg.model.get("fdv_cfm", {})
+            if hasattr(fc, "get"):
+                m = cfg.model
+                for key in ("N_outer", "sigma_prior", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in fc:
+                        m[key] = fc[key]
+                if len(fc) > 0:
+                    m.fdv_cfm = fc
             for sub in ("joint_cfm", "joint_direct_unet"):
                 sub_cfg = yaml_cfg.model.get(sub, {})
                 if hasattr(sub_cfg, "get"):
@@ -331,6 +340,8 @@ def resolve_model_class(cfg: Any) -> tuple:
         return ConditionalPriorCFM, cfg
     elif model_type == "FOURDVARNET":
         return FourDVarNetSolver, cfg
+    elif model_type == "FOURDVARNETCFM":
+        return FourDVarNetPredictStateCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -487,6 +498,28 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             N_outer=_fdv("N_outer", 10),
             dropout=_fdv("dropout", 0.1),
             update_input=_fdv("update_input", "obs+state"),
+        )
+    elif model_class == FourDVarNetPredictStateCFM:
+        fc = cfg.model.get("fdv_cfm", {})
+        fc_get = fc.get if hasattr(fc, "get") else None
+
+        def _fc(key, default):
+            val = fc_get(key) if fc_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=_fc("time_emb_dim", 64),
+            N_outer=_fc("N_outer", 10),
+            K_inner=_fc("K_inner", 5),
+            sigma_prior=_fc("sigma_prior", 0.5),
+            dropout=_fc("dropout", 0.1),
+            train_tau_0_only=_fc("train_tau_0_only", False),
+            update_input=_fc("update_input", "obs+state"),
+            clip_range=_fc("clip_range", 50.0),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")
@@ -684,7 +717,7 @@ def _run_case_inference(
                                                 guidance_weight=guidance_weight,
                                                 n_members=1,
                                                 obs_indices=obs_indices)
-                elif isinstance(model, FourDVarNetSolver):
+                elif isinstance(model, (FourDVarNetSolver, FourDVarNetPredictStateCFM)):
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
