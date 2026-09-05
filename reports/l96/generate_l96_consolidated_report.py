@@ -63,6 +63,7 @@ NEURAL_EXP_DIRS = [
     "SDA2_cond_mixed_l96",
     "SDA2_cond_nominal_l96",
     "FDV1_unrolled_unet_l96",
+    "FDV1CFM_predict_state_l96",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -99,6 +100,10 @@ ENS30_DIRS = {
     "SDA2_cond_nominal_l96": {
         "s0": "SDA2_cond_nominal_l96/ens30_no10",
         "s1": "SDA2_cond_nominal_l96/ens30_no10",
+    },
+    "FDV1CFM_predict_state_l96": {
+        "s0": "FDV1CFM_predict_state_l96/ens30_no10",
+        "s1": "FDV1CFM_predict_state_l96/ens30_no10",
     },
 }
 
@@ -182,6 +187,19 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "same convention as Strong-4DVar/L1b/L2b. Design taxonomy (`update_input` string) traced to "
       "CIA-Oceanix/4dvarnet-global-mapping's `ronan_devs` branch (`GradSolver_withStep`); "
       "gradient-conditioned modes (`grad-only`/`grad+state`/`subgrad+state`) reserved for a future FDV2.")),
+    ("FDV1CFM_predict_state_l96", "Neural (4DVarNet-CFM, PredictStateCFM + FDV1 backbone)",
+     ("V3 (`PredictStateCFM`) CFM parameterization -- predicts μ = E[x1|x_τ,y] at a randomly-sampled "
+      "outer flow-time τ, trained via MSE(μ,x1), sampled by forward ODE integration "
+      "`x += dt*(μ-x)/(1-τ)` over N_outer=10 steps -- but μ is computed by FDV1's own K_inner=5-step "
+      "weight-tied unrolled `obs+state` refinement (`models/fourdvarnet.py::FourDVarNetPredictStateCFM`), "
+      "started from the current x_τ, instead of a single UNet1D forward pass as plain V3 uses. "
+      "Total NFE per sample = N_outer×K_inner = 50 (5x V3's 10, 5x FDV1's 10). hidden [64,128,256]; "
+      "400 epochs, single random τ per training batch (cheaper to train than FDV1 itself, which "
+      "backprops through its full 10-step unroll every batch). A rare (~1-in-several-thousand ens30 "
+      "samples) divergence of the inner unroll on out-of-distribution x_τ is guarded with a "
+      "`clip_range=50.0` clamp after each inner step (same convention as this codebase's L96/QG "
+      "dynamics integrators) -- inactive for in-distribution trajectories (|x|<10). Evaluated as a "
+      "30-member ensemble with 10 Euler steps (`ens30×10`, N=30).")),
 ]
 
 
