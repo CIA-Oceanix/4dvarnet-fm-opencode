@@ -32,6 +32,24 @@ report + generator were on master).
   shared `ObsOperator` H-mode, `_build_qg_loc_matrices`/`_build_qg_col_loc_matrices`,
   and per-time `loc_Lx_t`/`loc_Ly_t` localization + `init_ensemble` in ETKF/EnKF, merged
   with the L96/joint/ES work.
+- **Reference-case DA benchmark (2026-09):** `QG4DVar` (strong- and weak-constraint; psi-obs H
+  with absolute time index, whitened control, Adam/LBFGS) added to `run_qg_baselines.py`, plus
+  dedicated EnKF/Strong/Weak-4DVar reference runs. At the reference case (S0, c4, psi-obs,
+  nx=64, 1% noise, N=80, loc 6.0, lags 1.0/2.0) the report's §4.1 now lists **all four** DA
+  methods: ETKF/EnKF (≈1.16/0.75 lag1, ≈1.61/0.65 lag2), Strong-4DVar (LBFGS w=60: 1.33/0.725
+  lag1, 1.43/0.322 lag2), and **Weak-4DVar** (LBFGS w60 q=0.1: **lag1 1.43/0.788 — best lag-1.0
+  row**, lag2 1.44/0.370). Weak uses per-step model-error controls
+  `q_t = dyn(q_{t-1}) + Lq·u_t`, `Jq = 0.5Σu[1:]²`; LBFGS over 5-day windows + `q_var_scale=0.1`
+  is the robust config (Adam diverges, q<0.1 under-fits, q=1.0 drops below free forecast).
+  **S1 (2026-09-05, job 52087):** Weak-4DVar at da_nx=64 (nores) beats the ETKF reference on the
+  S1 model-error case — §5.6: improv **1.92**/EV 0.398 (lag1) and 1.64/EV 0.023 (lag2) vs ETKF
+  1.55/0.428 (lag1) — the per-step model-error controls absorb the S1 param/wind bias.
+  **Obs-protocol repro note:** the archived reference-case JSONs (and this table's numbers)
+  were produced with the **pre-#156 constellation-style random-columns obs** (`(T, C·ny)`,
+  simultaneous multi-column events). Master's `data/qg.py` (PR #156) switched to per-column
+  independent intra-day timing (`(T, ny)`), so re-running the reference rows against current
+  `origin/master` would shift these values. The JSONs are kept as-archived (they render
+  consistently in the report); re-running under the new protocol is a distinct follow-up.
 - **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
   JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
   governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,

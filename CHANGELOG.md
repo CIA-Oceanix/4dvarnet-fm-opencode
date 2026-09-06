@@ -1,5 +1,127 @@
 # Changelog
 
+## 2026-09-05: QG weak-constraint 4D-Var (Weak-4DVar) reference rows — the 4th DA method at the reference case
+
+**Summary:** Completed the weak-constraint leg of the QG multi-method DA benchmark at the
+reference case (S0, random-columns c4, psi-obs, lags 1.0/2.0, nx=64): ran the **Weak-4DVar**
+reference rows with the already-implemented-but-unbenchmarked `QG4DVar(mode="weak")`
+(whitened background control + per-step model-error controls `q_t = dyn(q_{t-1}) + Lq·u_t`,
+`J = 0.5Jo/r_var + 0.5‖w‖² + 0.5Σ‖u[1:]‖²`), so the consolidated report now has **all four**
+DA methods (ETKF/EnKF/Strong-4DVar/Weak-4DVar) at both lags.
+
+**Headline (S0, c4, psi-obs, nx=64, 1% noise, N=80, loc 6.0, forecast improvement
+DA-RMSE / free-RMSE):**
+
+| method | lag 1.0 (improv / EV) | lag 2.0 (improv / EV) |
+|---|---|---|
+| ETKF | 1.16 / 0.752 | 1.61 / 0.652 |
+| EnKF | 1.17 / 0.754 | 1.61 / 0.655 |
+| Strong-4DVar (LBFGS, w=60) | 1.33 / 0.725 | 1.43 / 0.322 |
+| **Weak-4DVar (LBFGS, w=60, q=0.1)** | **1.43 / 0.788** | 1.44 / 0.370 |
+
+Weak-4DVar at lag 1.0 (improv 1.43 / EV 0.788) is the **best DA row at lag 1.0**, marginally
+ahead of Strong-4DVar (1.33/0.725) — the per-step model-error freedom helps win the
+30-day-window solve even in the error-free S0 case. At lag 2.0 weak (1.44/0.370) ≈ strong
+(1.43/0.322); both beat the free forecast but trail the ensemble filters (ETKF/EnKF ≈ 1.61),
+which exploit the many small-error assimilation steps. Per-field weak4dvar lag1: ψ1 improv 1.90,
+PV-q full 1.48 (upper-q 1.50); lower-q layer weak (0.95, unobserved), matching the other 4DVar rows.
+
+**S1 extension (job 52087) — Weak-4DVar on the S1 model-error case at da_nx=64 (nores),**
+psi-obs, c4, nx=64, lags 1.0/2.0, same LBFGS w60 q=0.1 config (the S1 analogue of the S0
+reference; free forecast here is genuinely bad — EV_free negative from the param + wind bias).
+New §5.6 in the report, ETKF (da_nx=64) for reference:
+
+| lag | method | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|
+| 1.0 | weak4dvar | 8.88e-06 | 1.70e-05 | **1.92** | +0.398 | -0.232 |
+| 2.0 | weak4dvar | 1.13e-05 | 1.86e-05 | **1.64** | +0.023 | -0.416 |
+| 1.0 | etkf | 1.10e-05 | 1.70e-05 | 1.55 | +0.428 | -0.232 |
+
+Weak-4DVar's forecast improvement on S1 (improv 1.92 lag1 / 1.64 lag2) **beats the ETKF reference
+(1.55)** at da_nx=64 — the per-step model-error controls absorb the S1 param/wind bias, delivering
+stronger loss-recovery than the hard-constraint filter in the model-error case (weak's lower DA RMSE
+8.88e-6 vs ETKF 1.10e-5; ETKF retains a marginally higher pooled EV 0.428 vs 0.398).
+
+**Tuning finding:** mirroring Strong-4DVar, **LBFGS over the 5-day (w=60) window** is the robust
+weak config (high-lr Adam diverged; short w=12 windows under-fit). The model-error penalty
+**q-var-scale = 0.1** is optimal: sweep at LBFGS w60 lr1.0 gave improv 1.12 (q=0.01) / **1.15**
+(q=0.1) / 0.94 (q=1.0, drops below the free forecast) on the single-window probe. Reference
+full-run wall time ~31 min/lag (5×30-day windows over 5-day solve windows).
+
+**Files modified:**
+- `batch/run_qg_weak4dvar_probe.sbatch`, `batch/run_qg_weak4dvar_tune.sbatch`, `batch/run_qg_weak4dvar_ref.sbatch` — new: weak-4DVar sizing probe (Adam+w12 / LBFGS+w12,w60), q-var-scale tune array (q ∈ {0.01,0.1,1.0}), and S0 reference runner (LBFGS w60, `QVAR` env default 0.1).
+- `batch/run_qg_weak4dvar_s1_ref.sbatch` — new: S1 reference runner (`--scenarios test_s1 --da-nx 64`, same LBFGS w60 q=0.1).
+- `reports/qg/outputs/qg_matrix_c4_psi/` — 2 Weak-4DVar result JSONs (`qg_qgmatrix_weak4dvar_..._lag{1.0,2.0}..._rs1_w60_lr1.0_b1.0_q0.1.json`).
+- `reports/qg/outputs/qg_s1_weak4dvar_nores/` — 2 S1 Weak-4DVar result JSONs.
+- `reports/qg/generate_qg_s0s1_report.py`, `reports/qg/outputs/qg_s0s1_report.md` — new §5.6 "Weak-4DVar on S1 (da_nx=64, nores)" method-comparison table; weak4dvar in §4.1 headline + §4.2 per-field; report regenerated.
+- `CHANGELOG.md` — this entry.
+
+**Rationale:** The weak-4DVar row was the documented open item ("implemented + tested but not yet
+benchmarked at nx=64"). Adding it completes the 4-method DA comparison table at the reference case
+on S0, and extends it to the S1 model-error case where the weak formulation's per-step freedom is
+most valuable (best DA forecast improvement on S1, beating ETKF).
+**Obs-protocol repro note:** all reference-case JSONs (ETKF/EnKF/Strong/Weak, S0 + S1) in this
+branch were produced under the **pre-#156 constellation-style random-columns obs** (`(T, C·ny)`,
+simultaneous multi-column events); master's `data/qg.py` (PR #156) switched to per-column
+independent intra-day timing (`(T, ny)`). The JSONs are kept as-archived — they render consistently
+in the report — but re-running the reference rows against current `origin/master` would shift values.
+Re-running under the new protocol is a distinct follow-up.
+
+**Verification:** full 7-file QG gate via sbatch (job 52067) **103 passed / 8 deselected** (weak
+smoke + q-index weak tests green). Probe (52050) + tune (52058) + S0 reference (52066) + S1
+reference (52087) all COMPLETED exit 0. Report regenerates clean (exit 0): weak4dvar rows render
+in §4.1/§4.2 (S0) and §5.6 (S1, da_nx=64), no missing-JSON warnings. `bash -n` on the 4 new
+sbatch OK. No `.py` code logic touched in this pass (the weak mode was already implemented);
+the probe/tune scratch lives in the gitignored `reports/qg/outputs/qg_tune_4dvar/`.
+
+
+
+**Summary:** Implemented a QG analogue of the L96 multi-method DA benchmark for the
+reference case study (S0, random-columns c4, psi-obs, lags 1.0/2.0, nx=64): added a
+dedicated `QG4DVar` (strong- and weak-constraint) to `evaluation/run_qg_baselines.py`,
+ran the **EnKF** and **Strong-4DVar** reference rows, and generalized the consolidated
+report to per-method rows (ETKF/EnKF/Strong-4DVar). Fixed a latent **EnKF CUDA bug**
+(`true_state.numpy()` on a GPU tensor) surfaced by the first EnKF reference run.
+
+**Headline (S0, c4, psi-obs, nx=64, 1% noise, N=80, loc 6.0, forecast improvement
+DA-RMSE / free-RMSE):**
+
+| method | lag 1.0 (improv / EV) | lag 2.0 (improv / EV) |
+|---|---|---|
+| ETKF | 1.16 / 0.752 | 1.61 / 0.652 |
+| EnKF | 1.17 / 0.754 | 1.61 / 0.655 |
+| Strong-4DVar (LBFGS, w=60) | **1.33** / 0.725 | 1.43 / 0.322 |
+
+EnKF tracks ETKF closely (the plan's cross-check: a large divergence would flag a bug).
+Strong-4DVar gives the best lag-1.0 improvement and recovers the observed upper-layer
+streamfunction very well (per-field ψ1 improv 1.80 @ lag1 / 2.22 @ lag2) though the
+unobserved lower-q layer is weaker (improv ≈ 0.83-0.84).
+
+**Files modified:**
+- `evaluation/run_qg_baselines.py` — new `QG4DVar` class (daily-cycled strong/weak, absolute-index H, whitened control `x0=xb+L·w`, Adam/LBFGS, configurable `grad_clip`); `run()` enkf/etkf/strong4dvar/weak4dvar dispatch; new CLI flags `--da-window-steps --fourdvar-optimizer --fourdvar-max-iter --fourdvar-opt-steps --fourdvar-lr --b-var-scale --q-var-scale --fourdvar-grad-clip`.
+- `evaluation/sweep_qg_baselines.py` — 4DVar list-knobs + pass-through.
+- `evaluation/baselines.py` — `ref_full = true_state.detach().cpu().numpy()` in 11 DA classes (fixes CUDA `numpy()` crash; was only hit once EnKF ran at the reference psi settings).
+- `reports/qg/generate_qg_s0s1_report.py` — method-aware row discovery (`find_json_method`), S0 §4.1 headline + §4.2 per-field iterate over `{etkf, enkf, strong4dvar, weak4dvar}`.
+- `reports/qg/outputs/qg_matrix_c4_psi/` — 2 EnKF + 2 Strong-4DVar result JSONs; `qg_s0s1_report.md` regenerated.
+- `tests/test_qg_baselines_4dvar.py` — new (4 tests: strong/weak run-smoke, psi-H absolute-index, q-index weak).
+- `batch/run_qg_{baselines_4dvar_tests,enkf_ref,4dvar_probe,4dvar_tune,4dvar_stable,4dvar_ref}.sbatch` — test gate + reference/probe/tune runners.
+- `.gitignore` — bare `[0-9]*.err` + `reports/qg/outputs/qg_tune_4dvar/` scratch.
+- `PLAN.md` — QG 4DVar section status → implemented/run; corrected stale line-ref claims.
+
+**Rationale:** The committed plan (3296c3a) identified EnKF as already-wired-but-unbenchmarked and
+4DVar as unwired. This lands the EnKF reference, the dedicated QG 4DVar (generic
+`Strong4DVar`/`Weak4DVar` cannot express the QG psi-obs H which needs the absolute time
+index), and the first strong-4DVar reference rows. Weak-4DVar is implemented + tested but
+not yet benchmarked at nx=64 (stretch).
+
+**Verification:** full 7-file QG gate via sbatch (job 52016) **103 passed / 0 failed**,
+re-run green for `test_qg_baselines_4dvar` after the grad-clip refactor (153s); ruff clean
+on the touched `.py`; report regenerates (exit 0). EnKF (52020), Strong-4DVar (52035)
+COMPLETED exit 0. Tuning finding: high-lr Adam strong-4DVar diverges (EV ~ −3e5) while
+**LBFGS over 5-day windows** (w=60, max_iter=60) converges and beats the free forecast
+(single-window probe improv 1.14/EV 0.85 → full reference improv 1.33).
+
+
 ## 2026-09-02: Revised readable QG DA report (equations + S0/S1-QG2L/S1-QG1L sections, psi-obs focus) + dedicated QG1L report
 
 **Summary:** Reworked the QG consolidated report (`reports/qg/generate_qg_s0s1_report.py`

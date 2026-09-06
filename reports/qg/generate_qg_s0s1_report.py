@@ -151,6 +151,32 @@ def find_json(root: Path, subdir: str, lag: float) -> dict | None:
     return None
 
 
+DA_METHODS = ("etkf", "enkf", "strong4dvar", "weak4dvar")
+
+
+def find_json_method(root: Path, subdir: str, method: str, lag: float) -> dict | None:
+    """Return the result JSON in ``subdir`` for a specific DA ``method`` + lag.
+
+    Conservative: matches on the file's own ``method`` field (not the filename)
+    and on the requested lag being present in the name.
+    """
+    d = root / subdir
+    if not d.is_dir():
+        return None
+    lag_lbl = f"lag{lag:g}"
+    for p in sorted(d.glob("*.json")):
+        if lag_lbl not in p.name:
+            continue
+        try:
+            payload = load_json(p)
+        except (ValueError, OSError):
+            continue
+        if payload.get("method") == method:
+            return payload
+    return None
+
+
+
 def find_json_dir(root: Path, subdir: str) -> dict | None:
     """Return the (single) result JSON in a lag-specific ``subdir``."""
     d = root / subdir
@@ -285,31 +311,45 @@ def main() -> None:
     # 4.1 headline matrix (psi)
     add("### 4.1 Headline (psi-obs)")
     add("")
-    add("| obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
-    add("|---|---|---|---|---|---|---|---|")
+    add("| method | obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|---|---|---|")
     for obsvar in ("psi",):
         for cols in ("4", "8"):
             for lag in (1.0, 2.0):
-                d = find_json(root, f"qg_matrix_c{cols}_{obsvar}", lag)
-                if d is None:
+                found_any = False
+                for method in DA_METHODS:
+                    d = find_json_method(
+                        root, f"qg_matrix_c{cols}_{obsvar}", method, lag)
+                    if d is None:
+                        continue
+                    s0 = d["scenarios"].get("test_s0", {})
+                    if not s0:
+                        continue
+                    found_any = True
+                    add(f"| {method} | {obsvar} | {cols} | {lag:.1f} | "
+                        f"{fmt_rmse(s0['rmse_mean'])} | "
+                        f"{fmt_rmse(s0['forecast_rmse_mean'])} | "
+                        f"{fmt_improv(s0['forecast_improvement'])} | "
+                        f"{fmt_ev(s0['expvar_full'])} | {fmt_ev(s0['expvar_free'])} |")
+                if not found_any:
                     missing.append(f"qg_matrix_c{cols}_{obsvar} lag{lag}")
-                    continue
-                s0 = d["scenarios"].get("test_s0", {})
-                add(f"| {obsvar} | {cols} | {lag:.1f} | "
-                    f"{fmt_rmse(s0['rmse_mean'])} | "
-                    f"{fmt_rmse(s0['forecast_rmse_mean'])} | "
-                    f"{fmt_improv(s0['forecast_improvement'])} | "
-                    f"{fmt_ev(s0['expvar_full'])} | {fmt_ev(s0['expvar_free'])} |")
     add("")
-    # 4.2 per-field (S0 psi cols=4 lag1)
+    # 4.2 per-field (S0 psi cols=4 lag1, per method)
     add("### 4.2 Per-field (psi-obs, cols=4, lag 1.0)")
     add("")
-    d = find_json(root, "qg_matrix_c4_psi", 1.0)
-    if d is not None:
-        s0 = d["scenarios"]["test_s0"]
+    for method in DA_METHODS:
+        d = find_json_method(root, "qg_matrix_c4_psi", method, 1.0)
+        if d is None:
+            continue
+        s0 = d["scenarios"].get("test_s0", {})
+        if not s0 or not s0.get("metrics_per_field"):
+            continue
+        add(f"**{method}**")
+        add("")
         add("| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |")
         add("|---|---|---|---|---|---|---|")
         add("\n".join(_per_field_table(s0)))
+        add("")
     add("")
 
     # ---- Section 5: S1-QG2L ----
@@ -370,6 +410,34 @@ def main() -> None:
         add("|---|---|---|---|---|---|---|")
         add("\n".join(_per_field_table(s1)))
         add("")
+
+    # 5.6 Weak-4DVar on S1 (da_nx=64, nores) — method comparison at lags 1.0/2.0
+    add("### 5.6 Weak-4DVar on S1 (da_nx=64, nores)")
+    add("")
+    add("Weak-4DVar (LBFGS w60, q-var-scale=0.1) on the S1 model-error case with the "
+        "resolution-mismatch component removed (`da_nx=64 == truth`), so the DA model "
+        "faces only the param bias + corrupted wind. Lags 1.0 and 2.0, psi-obs, cols=4, "
+        "1% noise. ETKF (same da_nx=64) shown for reference.")
+    add("")
+    add("| lag | method | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|---|")
+    rows_s1 = [("qg_s1_weak4dvar_nores", "weak4dvar", 1.0),
+               ("qg_s1_weak4dvar_nores", "weak4dvar", 2.0),
+               ("qg_s1_nores_lag1p0", "etkf", 1.0)]
+    for subdir, method, lag in rows_s1:
+        d = (find_json_method(root, subdir, method, lag)
+             if method == "weak4dvar" else find_json_dir(root, subdir))
+        if d is None:
+            missing.append(f"{subdir} {method} lag{lag}")
+            continue
+        s1 = d["scenarios"].get("test_s1", {})
+        if not s1:
+            continue
+        add(f"| {lag:.1f} | {method} | {fmt_rmse(s1['rmse_mean'])} | "
+            f"{fmt_rmse(s1['forecast_rmse_mean'])} | "
+            f"{fmt_improv(s1['forecast_improvement'])} | "
+            f"{fmt_ev(s1['expvar_full'])} | {fmt_ev(s1['expvar_free'])} |")
+    add("")
 
     # ---- Section 6: S1-QG1L ----
     add("## 6. S1-QG1L metrics (structural error, r-scale sweep)")
