@@ -24,6 +24,10 @@ from models.qg_interp import spectral_resize_2d
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# State clip applied by the DA dynamics constructors (see `_build_dyn`); the
+# 4D-Var control-fwd clips to the same envelope so trajectories stay finite.
+_QG_STATE_CLIP = 1e-3
+
 
 class WindStateAdapter(DynamicsBase):
     """Adapter exposing QG wind as the generic baseline `forcing` channel.
@@ -453,12 +457,216 @@ def per_layer_for(cfg):
     return cfg.ny * cfg.nx
 
 
+class _QG4DVarResult:
+    __slots__ = ("trajectory",)
+
+    def __init__(self, trajectory):
+        self.trajectory = trajectory
+
+
+class QG4DVar:
+    """Strong/Weak-constraint 4D-Var for the QG q-state, daily-cycled.
+
+    q-state control with either q (index-mode) or psi (H-mode) observations,
+    cycling the background every ``da_window_steps`` (default 12 = 1 day at
+    dt=7200s). This deliberately does NOT reuse the generic
+    ``Strong4DVar``/``Weak4DVar`` in ``evaluation/baselines.py``: their closure
+    calls ``H(state)`` without the absolute time index, but the QG psi-obs
+    H-function (``_psi_h``) selects per-time columns via ``index``, and they
+    seed the background from an obs-interpolation heuristic rather than the
+    run's shared lagged init.
+
+    The control is whitened (``x0 = xb + L*w`` with ``L = b_var_scale*sigma``
+    and background cost ``0.5||w||^2``) so the solve is well-conditioned despite
+    the ~1e9 q<->psi scale gap introduced by spectral PV inversion. Weak mode
+    adds per-step whitened model-error controls ``q_t = dyn(q_{t-1}) + Lq*u_t``
+    with penalty ``0.5||u||^2``.
+    """
+
+    def __init__(self, cfg, dyn, obs_operator, da_window_steps=12,
+                 b_var_scale=1.0, q_var_scale=1.0, optimizer="adam",
+                 opt_steps=150, max_iter=40, lr=0.05, mode="strong",
+                 grad_clip=100.0, device=None):
+        self.cfg = cfg
+        self.dyn = dyn
+        self.obs_operator = obs_operator
+        self.da_window_steps = int(da_window_steps)
+        self.b_var_scale = float(b_var_scale)
+        self.q_var_scale = float(q_var_scale)
+        self.optimizer = optimizer
+        self.opt_steps = int(opt_steps)
+        self.max_iter = int(max_iter)
+        self.lr = float(lr)
+        self.mode = mode
+        self.grad_clip = float(grad_clip)
+        self.device = device or torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.state_dim = dyn.state_dim
+        self.x0_bg = None
+        self.r_var = 1.0
+
+    def _forward_strong(self, x0, win, force, clip):
+        traj = [x0]
+        for t in range(1, win):
+            s = self.dyn.step(traj[-1], force[t - 1])
+            if clip is not None:
+                s = torch.clamp(s, -clip, clip)
+            traj.append(s)
+        return torch.stack(traj)
+
+    def _forward_weak(self, x0, u, win, force, Lq, clip):
+        traj = [x0]
+        for t in range(1, win):
+            s = self.dyn.step(traj[-1], force[t - 1])
+            s = s + Lq * u[t]
+            if clip is not None:
+                s = torch.clamp(s, -clip, clip)
+            traj.append(s)
+        return torch.stack(traj)
+
+    def _obs_cost(self, traj, win_obs, win_mask, start):
+        Jo = torch.zeros((), device=self.device, dtype=torch.float32)
+        for t in range(self.da_window_steps):
+            if win_mask[t]:
+                diff = self.obs_operator(
+                    traj[t], index=start + t) - win_obs[t]
+                Jo = Jo + torch.sum(diff ** 2)
+        return Jo
+
+    @staticmethod
+    def _reset_nan(params, bg):
+        with torch.no_grad():
+            for p in params:
+                p.fill_(0.0)
+
+    def _optimize(self, loss_fn, params, bg):
+        if self.optimizer == "lbfgs":
+            opt = torch.optim.LBFGS(
+                params, lr=self.lr, max_iter=self.max_iter, history_size=10)
+
+            def closure():
+                opt.zero_grad()
+                J, _ = loss_fn()
+                if not torch.isfinite(J).all():
+                    return J
+                J.backward()
+                return J
+
+            opt.step(closure)
+            if any(not torch.isfinite(p).all() for p in params):
+                self._reset_nan(params, bg)
+            return
+        opt = torch.optim.Adam(params, lr=self.lr)
+        for _ in range(self.opt_steps):
+            opt.zero_grad()
+            J, _ = loss_fn()
+            if not torch.isfinite(J).all():
+                self._reset_nan(params, bg)
+                break
+            J.backward()
+            for p in params:
+                if p.grad is not None:
+                    p.grad = torch.nan_to_num(
+                        p.grad.detach(), nan=0.0, posinf=0.0, neginf=0.0)
+                    p.grad = torch.clamp(
+                        p.grad, -self.grad_clip, self.grad_clip)
+            opt.step()
+
+    def _solve_window(self, xb, win_obs, win_mask, start, win_force):
+        sd = self.state_dim
+        win = self.da_window_steps
+        sigma = float(xb.std().clamp_min(1e-12))
+        L = self.b_var_scale * sigma
+        bg = xb
+
+        if self.mode == "strong":
+            w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+            params = [w_ctrl]
+
+            def loss_fn():
+                x0 = bg + L * w_ctrl
+                traj = self._forward_strong(
+                    x0, win, win_force, clip=_QG_STATE_CLIP)
+                Jb = 0.5 * torch.sum(w_ctrl ** 2)
+                Jo = self._obs_cost(traj, win_obs, win_mask, start)
+                return 0.5 * Jo / self.r_var + Jb, traj
+
+            self._optimize(loss_fn, params, bg)
+            x_ctrl = bg + L * w_ctrl.detach()
+            return self._forward_strong(
+                x_ctrl, win, win_force, clip=_QG_STATE_CLIP).detach()
+
+        Lq = self.q_var_scale * sigma
+        w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+        u = torch.zeros((win, sd), device=self.device, requires_grad=True)
+        params = [w_ctrl, u]
+
+        def loss_fn():
+            x0 = bg + L * w_ctrl
+            traj = self._forward_weak(
+                x0, u, win, win_force, Lq, clip=_QG_STATE_CLIP)
+            Jb = 0.5 * torch.sum(w_ctrl ** 2)
+            Jq = 0.5 * torch.sum(u[1:] ** 2)
+            Jo = self._obs_cost(traj, win_obs, win_mask, start)
+            return 0.5 * Jo / self.r_var + Jb + Jq, traj
+
+        self._optimize(loss_fn, params, bg)
+        x0 = bg + L * w_ctrl.detach()
+        return self._forward_weak(
+            x0, u.detach(), win, win_force, Lq,
+            clip=_QG_STATE_CLIP).detach()
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None):
+        obs = observations.to(self.device)
+        mask = obs_mask.to(self.device)
+        force = forcing.to(self.device)
+        T = obs.shape[0]
+        sd = self.state_dim
+        win = self.da_window_steps
+
+        if self.x0_bg is not None:
+            xb = self.x0_bg.detach().to(self.device).float()
+        else:
+            xb = torch.zeros(sd, device=self.device)
+
+        num_windows = max(1, T // win)
+        analysis = torch.zeros(T, sd, device=self.device)
+        current_bg = xb
+        for wnd in range(num_windows):
+            start = wnd * win
+            end = min(start + win, T)
+            wlen = end - start
+            if wlen < 1:
+                break
+            win_obs = obs[start:end]
+            win_mask = mask[start:end]
+            win_force = force[start:end]
+            if wlen != win:
+                # last partial window: run at its actual length by temporarily
+                # shrinking the cycle window.
+                saved = self.da_window_steps
+                self.da_window_steps = wlen
+                traj = self._solve_window(
+                    current_bg, win_obs, win_mask, start, win_force)
+                self.da_window_steps = saved
+            else:
+                traj = self._solve_window(
+                    current_bg, win_obs, win_mask, start, win_force)
+            analysis[start:end] = traj
+            current_bg = traj[-1].detach()
+
+        return _QG4DVarResult(trajectory=analysis.detach().cpu().numpy())
+
+
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         loc_radius=None, scenarios=("test_s0", "test_s1"),
         out_path=None, init="lagged", geometry="random_columns",
         obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
         etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25,
-        save_traj=None, obs_var_r_scale=1.0):
+        save_traj=None, obs_var_r_scale=1.0,
+        da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
+        fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
+        q_var_scale=1.0, fourdvar_grad_clip=100.0):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -528,7 +736,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 per_time = _q_obs_indices_t(cfg, w)
                 field_std = float(w["target_state_q"].std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None:
+                if loc_radius is not None and method_name in ("enkf", "etkf"):
                     Lx_t, Ly_t = _build_qg_loc_matrices(
                         dyn.state_dim, per_time, 2, cfg.ny, cfg.nx,
                         loc_radius, device)
@@ -538,17 +746,30 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                else:
+                elif method_name == "etkf":
                     method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
+                elif method_name in ("strong4dvar", "weak4dvar"):
+                    method = QG4DVar(
+                        cfg, dyn, obs_op, da_window_steps=da_window_steps,
+                        b_var_scale=b_var_scale, q_var_scale=q_var_scale,
+                        optimizer=optimizer, opt_steps=fourdvar_opt_steps,
+                        max_iter=fourdvar_max_iter, lr=fourdvar_lr,
+                        grad_clip=fourdvar_grad_clip,
+                        mode="strong" if method_name == "strong4dvar" else "weak",
+                        device=device)
+                    method.r_var = float(r_var)
+                    method.x0_bg = shared_init if init == "lagged" else None
+                else:
+                    raise ValueError(f"unknown method_name: {method_name}")
             else:  # obs_var == "psi"
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None:
+                if loc_radius is not None and method_name in ("enkf", "etkf"):
                     cols_t = _event_columns(cfg, w)
                     Lx_t, Ly_t = _build_qg_col_loc_matrices(
                         dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
@@ -559,13 +780,26 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                else:
+                elif method_name == "etkf":
                     method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
+                elif method_name in ("strong4dvar", "weak4dvar"):
+                    method = QG4DVar(
+                        cfg, dyn, obs_op, da_window_steps=da_window_steps,
+                        b_var_scale=b_var_scale, q_var_scale=q_var_scale,
+                        optimizer=optimizer, opt_steps=fourdvar_opt_steps,
+                        max_iter=fourdvar_max_iter, lr=fourdvar_lr,
+                        grad_clip=fourdvar_grad_clip,
+                        mode="strong" if method_name == "strong4dvar" else "weak",
+                        device=device)
+                    method.r_var = float(r_var)
+                    method.x0_bg = shared_init if init == "lagged" else None
+                else:
+                    raise ValueError(f"unknown method_name: {method_name}")
             res = _evaluate_window(cfg, w, method, device, obs=obs,
                                    forcing=forcing, init_ensemble=init_ensemble)
             mean_init_lag_list.append(init_lag_val)
@@ -696,6 +930,14 @@ def main():
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--obs-var-r-scale", type=float, default=1.0)
+    ap.add_argument("--da-window-steps", type=int, default=12)
+    ap.add_argument("--fourdvar-optimizer", choices=["adam", "lbfgs"], default="adam")
+    ap.add_argument("--fourdvar-max-iter", type=int, default=40)
+    ap.add_argument("--fourdvar-opt-steps", type=int, default=150)
+    ap.add_argument("--fourdvar-lr", type=float, default=0.05)
+    ap.add_argument("--b-var-scale", type=float, default=1.0)
+    ap.add_argument("--q-var-scale", type=float, default=1.0)
+    ap.add_argument("--fourdvar-grad-clip", type=float, default=100.0)
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
@@ -711,7 +953,13 @@ def main():
             scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
             init=args.init, geometry=args.geometry, obs_var=args.obs_var,
             init_lag_days=args.init_lag_days, band_half=args.band_half,
-            obs_var_r_scale=args.obs_var_r_scale)
+            obs_var_r_scale=args.obs_var_r_scale,
+            da_window_steps=args.da_window_steps, optimizer=args.fourdvar_optimizer,
+            fourdvar_max_iter=args.fourdvar_max_iter,
+            fourdvar_opt_steps=args.fourdvar_opt_steps,
+            fourdvar_lr=args.fourdvar_lr,
+            b_var_scale=args.b_var_scale, q_var_scale=args.q_var_scale,
+            fourdvar_grad_clip=args.fourdvar_grad_clip)
 
 
 if __name__ == "__main__":
