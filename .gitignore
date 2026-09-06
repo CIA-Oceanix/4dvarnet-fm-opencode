@@ -67,6 +67,9 @@ all_figures.pdf
 sbatch_logs/
 # SLURM sbatch (%A/%a) stderr artifacts written to the repo root
 [0-9]*_[0-9]*.err
+[0-9]*.err
+# Strong-4DVar tuning scratch probes (single-window; not in the report)
+reports/qg/outputs/qg_tune_4dvar/
 
 # Reviewer PAT (never commit)
 .reviewer-token

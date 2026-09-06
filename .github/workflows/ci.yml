@@ -64,4 +64,5 @@ jobs:
             tests/test_qg_random_columns.py \
             tests/test_qg1l_dynamics.py \
             tests/test_qg_psi_state.py \
+            tests/test_qg_baselines_4dvar.py \
             -m "not slow" -q

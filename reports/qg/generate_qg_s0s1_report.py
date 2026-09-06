@@ -151,6 +151,32 @@ def find_json(root: Path, subdir: str, lag: float) -> dict | None:
     return None
 
 
+DA_METHODS = ("etkf", "enkf", "strong4dvar", "weak4dvar")
+
+
+def find_json_method(root: Path, subdir: str, method: str, lag: float) -> dict | None:
+    """Return the result JSON in ``subdir`` for a specific DA ``method`` + lag.
+
+    Conservative: matches on the file's own ``method`` field (not the filename)
+    and on the requested lag being present in the name.
+    """
+    d = root / subdir
+    if not d.is_dir():
+        return None
+    lag_lbl = f"lag{lag:g}"
+    for p in sorted(d.glob("*.json")):
+        if lag_lbl not in p.name:
+            continue
+        try:
+            payload = load_json(p)
+        except (ValueError, OSError):
+            continue
+        if payload.get("method") == method:
+            return payload
+    return None
+
+
+
 def find_json_dir(root: Path, subdir: str) -> dict | None:
     """Return the (single) result JSON in a lag-specific ``subdir``."""
     d = root / subdir
@@ -206,7 +232,7 @@ def main() -> None:
 
     add("# QG DA Baselines — Consolidated Report (psi-obs focus)")
     add("")
-    add("**Date:** 2026-09-02")
+    add("**Date:** 2026-09-02 (multi-method + S1 extension: 2026-09-06)")
     add("**Branch (report):** master")
     add("**Scope:** psi-obs configurations (upper-layer streamfunction) only; "
         "S0 (error-free), S1-QG2L (param + forcing + cross-resolution error) and "
@@ -214,7 +240,22 @@ def main() -> None:
     add("**Provenance (jobs, A40 `sl-mee-br-205`):** "
         "S0 1%-noise matrix (`qg_matrix_c{4,8}_psi`, lags 1/2); "
         "S1 @ da_nx=16 (`qg_s1`), da_nx=32 (`qg_s1_da32`), da_nx=64 (`qg_s1_nores`, "
-        "lag 1.0); S1-QG1L r-scale probe (`qg_s1_qg1l_rscale`).")
+        "lag 1.0); S1-QG1L r-scale probe (`qg_s1_qg1l_rscale`); S1 cross-res "
+        "4-method (`qg_s1_da32_4method`) and S1-QG1L 4-method "
+        "(`qg_s1_qg1l_4method`), both job 52169/52090.")
+    add("")
+    add("**Obs-protocol reproducibility note (2026-09-06):** PR #156 changed the "
+        "random-columns obs geometry (per-column independent intra-day timing vs "
+        "the older constellation-style simultaneous-column events the §4.1/§4.2 "
+        "S0 matrix and most of §5's da_nx=16/64 numbers below were archived "
+        "under). Re-running the exact S0 reference case (cols=4, lag=1.0) under "
+        "current `origin/master` gives small shifts, no qualitative change -- "
+        "ETKF 1.16->1.14/EV 0.752->0.747, EnKF 1.17->1.16/EV 0.754->0.749, "
+        "Strong-4DVar 1.33->1.44/EV 0.725->0.773, Weak-4DVar 1.43->1.50/EV "
+        "0.788->0.805 (`reports/qg/outputs/qg_repro_validation/`, job 52174; see "
+        "PLAN.md for detail). The da_nx=32 and QG1L sections (§5.7, §6.4) below "
+        "were generated fresh under the current geometry, so need no such "
+        "caveat.")
     add("")
     add("## 1. System and governing equations")
     add("")
@@ -286,31 +327,45 @@ def main() -> None:
     # 4.1 headline matrix (psi)
     add("### 4.1 Headline (psi-obs)")
     add("")
-    add("| obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
-    add("|---|---|---|---|---|---|---|---|")
+    add("| method | obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|---|---|---|")
     for obsvar in ("psi",):
         for cols in ("4", "8"):
             for lag in (1.0, 2.0):
-                d = find_json(root, f"qg_matrix_c{cols}_{obsvar}", lag)
-                if d is None:
+                found_any = False
+                for method in DA_METHODS:
+                    d = find_json_method(
+                        root, f"qg_matrix_c{cols}_{obsvar}", method, lag)
+                    if d is None:
+                        continue
+                    s0 = d["scenarios"].get("test_s0", {})
+                    if not s0:
+                        continue
+                    found_any = True
+                    add(f"| {method} | {obsvar} | {cols} | {lag:.1f} | "
+                        f"{fmt_rmse(s0['rmse_mean'])} | "
+                        f"{fmt_rmse(s0['forecast_rmse_mean'])} | "
+                        f"{fmt_improv(s0['forecast_improvement'])} | "
+                        f"{fmt_ev(s0['expvar_full'])} | {fmt_ev(s0['expvar_free'])} |")
+                if not found_any:
                     missing.append(f"qg_matrix_c{cols}_{obsvar} lag{lag}")
-                    continue
-                s0 = d["scenarios"].get("test_s0", {})
-                add(f"| {obsvar} | {cols} | {lag:.1f} | "
-                    f"{fmt_rmse(s0['rmse_mean'])} | "
-                    f"{fmt_rmse(s0['forecast_rmse_mean'])} | "
-                    f"{fmt_improv(s0['forecast_improvement'])} | "
-                    f"{fmt_ev(s0['expvar_full'])} | {fmt_ev(s0['expvar_free'])} |")
     add("")
-    # 4.2 per-field (S0 psi cols=4 lag1)
+    # 4.2 per-field (S0 psi cols=4 lag1, per method)
     add("### 4.2 Per-field (psi-obs, cols=4, lag 1.0)")
     add("")
-    d = find_json(root, "qg_matrix_c4_psi", 1.0)
-    if d is not None:
-        s0 = d["scenarios"]["test_s0"]
+    for method in DA_METHODS:
+        d = find_json_method(root, "qg_matrix_c4_psi", method, 1.0)
+        if d is None:
+            continue
+        s0 = d["scenarios"].get("test_s0", {})
+        if not s0 or not s0.get("metrics_per_field"):
+            continue
+        add(f"**{method}**")
+        add("")
         add("| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |")
         add("|---|---|---|---|---|---|---|")
         add("\n".join(_per_field_table(s0)))
+        add("")
     add("")
 
     # ---- Section 5: S1-QG2L ----
@@ -372,6 +427,63 @@ def main() -> None:
         add("\n".join(_per_field_table(s1)))
         add("")
 
+    # 5.6 Weak-4DVar on S1 (da_nx=64, nores) — method comparison at lags 1.0/2.0
+    add("### 5.6 Weak-4DVar on S1 (da_nx=64, nores)")
+    add("")
+    add("Weak-4DVar (LBFGS w60, q-var-scale=0.1) on the S1 model-error case with the "
+        "resolution-mismatch component removed (`da_nx=64 == truth`), so the DA model "
+        "faces only the param bias + corrupted wind. Lags 1.0 and 2.0, psi-obs, cols=4, "
+        "1% noise. ETKF (same da_nx=64) shown for reference.")
+    add("")
+    add("| lag | method | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|---|")
+    rows_s1 = [("qg_s1_weak4dvar_nores", "weak4dvar", 1.0),
+               ("qg_s1_weak4dvar_nores", "weak4dvar", 2.0),
+               ("qg_s1_nores_lag1p0", "etkf", 1.0)]
+    for subdir, method, lag in rows_s1:
+        d = (find_json_method(root, subdir, method, lag)
+             if method == "weak4dvar" else find_json_dir(root, subdir))
+        if d is None:
+            missing.append(f"{subdir} {method} lag{lag}")
+            continue
+        s1 = d["scenarios"].get("test_s1", {})
+        if not s1:
+            continue
+        add(f"| {lag:.1f} | {method} | {fmt_rmse(s1['rmse_mean'])} | "
+            f"{fmt_rmse(s1['forecast_rmse_mean'])} | "
+            f"{fmt_improv(s1['forecast_improvement'])} | "
+            f"{fmt_ev(s1['expvar_full'])} | {fmt_ev(s1['expvar_free'])} |")
+    add("")
+
+    # 5.7 all-4-methods comparison at da_nx=32 (cross-resolution + bias)
+    add("### 5.7 Multi-method comparison @ da_nx=32 (psi-obs, cols=4, lag 1.0)")
+    add("")
+    add("All four DA methods at the cross-resolution S1 case (`da_nx=32`, 2:1 vs "
+        "the 64x64 truth), same param+wind bias as the rest of S1-QG2L. Strong/"
+        "Weak-4DVar use the S0-reference hyperparameters (LBFGS, `da_window_steps="
+        "60`, `b_var_scale=1.0`[, `q_var_scale=0.1` for weak]) as a first pass, "
+        "not yet retuned for the cross-res case.")
+    add("")
+    add("| method | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|")
+    for method in DA_METHODS:
+        d = find_json_method(root, "qg_s1_da32_4method", method, 1.0)
+        if d is None:
+            missing.append(f"qg_s1_da32_4method {method} lag1.0")
+            continue
+        s1 = d["scenarios"].get("test_s1", {})
+        if not s1:
+            continue
+        add(f"| {method} | {fmt_rmse(s1['rmse_mean'])} | "
+            f"{fmt_rmse(s1['forecast_rmse_mean'])} | "
+            f"{fmt_improv(s1['forecast_improvement'])} | "
+            f"{fmt_ev(s1['expvar_full'])} | {fmt_ev(s1['expvar_free'])} |")
+    add("")
+    add("Same pattern as the da_nx=64 (no-res) case, more pronounced: Weak-4DVar "
+        "clearly beats Strong-4DVar, but neither yet matches ETKF/EnKF here -- "
+        "cross-resolution adds its own difficulty on top of the bias effect.")
+    add("")
+
     # ---- Section 6: S1-QG1L ----
     add("## 6. S1-QG1L metrics (structural error, r-scale sweep)")
     add("")
@@ -429,6 +541,42 @@ def main() -> None:
             add("|---|---|---|---|---|---|---|")
             add("\n".join(_per_field_table(s1)))
             add("")
+    add("")
+
+    # 6.4 all-4-methods comparison, r_scale=1 default -- finds the scenario
+    # itself broken for every method, not just 4DVar.
+    add("### 6.4 Multi-method comparison @ default r_scale=1 (psi-obs, cols=4, lag 1.0)")
+    add("")
+    add("**Finding: this scenario is broken for every DA method at these "
+        "settings, not a 4DVar-specific issue.** ETKF and EnKF -- the "
+        "established, trusted baselines -- are also catastrophically bad here, "
+        "and even the free forecast is already worse than climatology before "
+        "any DA is applied.")
+    add("")
+    add("| method | DA RMSE | Free RMSE | improv | EV_full | EV_free |")
+    add("|---|---|---|---|---|---|")
+    for method in DA_METHODS:
+        d = find_json_method(root, "qg_s1_qg1l_4method", method, 1.0)
+        if d is None:
+            missing.append(f"qg_s1_qg1l_4method {method} lag1.0")
+            continue
+        s1 = d["scenarios"].get("test_s1_qg1l", {})
+        if not s1:
+            continue
+        add(f"| {method} | {fmt_rmse(s1['rmse_mean'])} | "
+            f"{fmt_rmse(s1['forecast_rmse_mean'])} | "
+            f"{fmt_improv(s1['forecast_improvement'])} | "
+            f"{fmt_ev(s1['expvar_full'])} | {fmt_ev(s1['expvar_free'])} |")
+    add("")
+    add("Strong-4DVar diverges to NaN on 2/5 windows, so its pooled row above is "
+        "all-NaN; Weak-4DVar gets finite, roughly ETKF/EnKF-scale per-window RMSE "
+        "on 4/5 windows (NaN on the 5th, so its pooled row is also NaN despite "
+        "being the least-broken 4DVar method here) -- not uniquely broken, in "
+        "the same boat as the ensemble methods. This "
+        "reduced-gravity structural mismatch at 4 cols/day is evidently too "
+        "severe for any of these methods to correct at the default r_scale; the "
+        "r-scale sweep above (§6.1) is the right lever, not further DA-side "
+        "hyperparameter tuning.")
     add("")
 
     add("## 7. Interpretation")

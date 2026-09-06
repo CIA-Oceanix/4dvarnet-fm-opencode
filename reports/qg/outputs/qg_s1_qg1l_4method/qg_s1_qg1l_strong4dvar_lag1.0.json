@@ -1,0 +1,61 @@
+{
+  "method": "strong4dvar",
+  "nx": 64,
+  "N_ensemble": 60,
+  "inflation": 1.05,
+  "loc_radius": null,
+  "scenarios": {
+    "test_s1_qg1l": {
+      "rmse_mean": NaN,
+      "rmse_list": [
+        1.890123631723425e-05,
+        3.231407346744905e-05,
+        6.964112481528995e-05,
+        NaN,
+        NaN
+      ],
+      "forecast_rmse_mean": 2.9339047250687146e-05,
+      "forecast_improvement": NaN,
+      "expvar_full": NaN,
+      "expvar_upper_q": NaN,
+      "expvar_free": -0.49597251415252686,
+      "metrics_per_field": {
+        "q": {
+          "layer1": {
+            "rmse": NaN,
+            "rmse_free": 3.126911906292662e-05,
+            "improv": NaN,
+            "ev": NaN,
+            "ev_free": -0.49597251415252686
+          },
+          "full": {
+            "rmse": NaN,
+            "rmse_free": 3.126911906292662e-05,
+            "improv": NaN,
+            "ev": NaN,
+            "ev_free": -0.49597251415252686
+          }
+        },
+        "psi": {
+          "layer1": {
+            "rmse": NaN,
+            "rmse_free": 5892.29443359375,
+            "improv": NaN,
+            "ev": NaN,
+            "ev_free": -0.516938328742981
+          },
+          "full": {
+            "rmse": NaN,
+            "rmse_free": 5892.29443359375,
+            "improv": NaN,
+            "ev": NaN,
+            "ev_free": -0.516938328742981
+          }
+        }
+      },
+      "traj_path": null,
+      "mean_init_lag_days": 0.7527411074843258,
+      "spread_t0_mean": 1.0931263841484905e-05
+    }
+  }
+}
