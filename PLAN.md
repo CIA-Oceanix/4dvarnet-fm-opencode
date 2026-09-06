@@ -74,12 +74,40 @@ report + generator were on master).
   **S1 (2026-09-05, job 52087):** Weak-4DVar at da_nx=64 (nores) beats the ETKF reference on the
   S1 model-error case — §5.6: improv **1.92**/EV 0.398 (lag1) and 1.64/EV 0.023 (lag2) vs ETKF
   1.55/0.428 (lag1) — the per-step model-error controls absorb the S1 param/wind bias.
-  **Obs-protocol repro note:** the archived reference-case JSONs (and this table's numbers)
-  were produced with the **pre-#156 constellation-style random-columns obs** (`(T, C·ny)`,
-  simultaneous multi-column events). Master's `data/qg.py` (PR #156) switched to per-column
-  independent intra-day timing (`(T, ny)`), so re-running the reference rows against current
-  `origin/master` would shift these values. The JSONs are kept as-archived (they render
-  consistently in the report); re-running under the new protocol is a distinct follow-up.
+  **S1 extension, cross-res + QG1L (2026-09-06, `feature/qg-da-integration`):**
+  - *S1-cross-res* (`da_nx=32` vs truth `nx=64`, param+wind bias on top of the resolution
+    mismatch): ETKF/EnKF 1.47x-1.48x/0.34; Strong-4DVar 1.25x/-0.94; Weak-4DVar 1.39x/**-0.23**.
+    Same pattern as S1-no-res, more pronounced: Weak-4DVar clearly beats Strong-4DVar but
+    neither yet matches ETKF/EnKF here — cross-resolution adds its own difficulty on top of
+    the bias effect. Open follow-up: tune Weak-4DVar's `b_var_scale`/`q_var_scale`
+    specifically for the cross-res case (only the S1-no-res values have been tried).
+  - *S1-QG1L* (structural error, full-res 1-layer DA model) — **the scenario itself is
+    broken for every method at these settings, not a 4DVar-specific bug**: ETKF gets
+    EV=-11.2, EnKF gets EV=-13.3, and even the **free forecast** gets EV=-0.496 (already
+    worse than climatology before any DA). Weak-4DVar gets finite, roughly ETKF/EnKF-scale
+    per-window RMSE on 4/5 windows (NaN on the 5th) — not uniquely broken, same boat as the
+    ensemble methods. Points to the pre-existing `qg_s1_qg1l_rscale_probe.py`/
+    `generate_qg1l_report.py` (r-scale sweep) as the right lever, not further DA-side
+    hyperparameter tuning.
+  **Obs-protocol reproducibility validation (2026-09-06, `feature/qg-da-integration`,
+  job 52174) — DONE, results hold:** the archived reference-case JSONs above were
+  produced with the **pre-#156 constellation-style random-columns obs** (`(T, C·ny)`,
+  simultaneous multi-column events); `data/qg.py` (PR #156) switched to per-column
+  independent intra-day timing (`(T, ny)`). Re-ran all four methods at the exact
+  reference settings (S0, c4, psi-obs, lag=1.0) under current `origin/master`:
+
+  | method | archived (pre-#156) | current master (PR #156 geometry) |
+  |---|---|---|
+  | ETKF | 1.16 / 0.752 | 1.14 / 0.747 |
+  | EnKF | 1.17 / 0.754 | 1.16 / 0.749 |
+  | Strong-4DVar | 1.33 / 0.725 | **1.44 / 0.773** |
+  | Weak-4DVar | 1.43 / 0.788 | **1.50 / 0.805** |
+
+  Small shifts throughout, no qualitative change — if anything the conclusion
+  strengthens: both 4DVar methods improved under the new geometry (Strong-4DVar now
+  also beats ETKF/EnKF, not just Weak-4DVar), while ETKF/EnKF softened marginally.
+  Archived JSONs are superseded by `reports/qg/outputs/qg_repro_validation/*.json`
+  as the current reference numbers; the archived ones are kept for provenance only.
 - **Report**: `reports/qg/generate_qg_s0s1_report.py` (JSON-only) renders from the result
   JSONs under `reports/qg/outputs/` → `reports/qg/outputs/qg_s0s1_report.md` (revised:
   governing equations, case-study table, S0 / S1-QG2L da_nx 16/32/64 / S1-QG1L sections,

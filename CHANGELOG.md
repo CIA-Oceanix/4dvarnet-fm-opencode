@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-09-06: QG DA integration — merge two independent 4DVar implementations, validate reproducibility, extend S1
+
+**Summary:** Reconciles two independently-developed QG 4DVar implementations (this
+session's `evaluation/baselines.py` extensions on `feature/qg-da-baselines-enkf-4dvar-shared`,
+and the concurrent session's bespoke `QG4DVar` class on `feature/qg-4dvar-reference-benchmark`)
+onto a single integration branch built from the latter (self-contained, CI-tested, better
+sweep tooling). Both implementations independently converged on the same core fixes
+(no gradient clipping inside an LBFGS closure; the ES-accumulator `.cpu()` bug) and
+produced matching numbers wherever both were tested — cross-validation of both.
+
+**Reproducibility validated (job 52174):** PR #156 changed the random-columns obs
+geometry (per-column independent intra-day timing vs the old constellation-style
+simultaneous events the archived reference numbers were computed under). Re-ran all
+four methods (ETKF/EnKF/Strong-4DVar/Weak-4DVar) at the exact S0 reference settings
+under current `origin/master`: small shifts throughout, no qualitative change — ETKF
+1.16→1.14/EV 0.752→0.747, EnKF 1.17→1.16/EV 0.754→0.749, Strong-4DVar 1.33→1.44/EV
+0.725→0.773, Weak-4DVar 1.43→1.50/EV 0.788→0.805. The headline conclusion (Weak-4DVar
+best, 4DVar methods competitive with the ensemble filters) holds and strengthens.
+
+**S1 extended to cross-resolution and QG1L** (previously only S1-no-res was
+benchmarked): S1-cross-res (`da_nx=32`) — ETKF/EnKF 1.47-1.48x/EV 0.34, Strong-4DVar
+1.25x/EV -0.94, Weak-4DVar 1.39x/EV -0.23 (same pattern as S1-no-res, more pronounced,
+neither 4DVar method yet matches ETKF/EnKF there). S1-QG1L (structural error) —
+**found that ETKF (EV -11.2), EnKF (EV -13.3), and even the free forecast (EV -0.496)
+are all catastrophically bad at these settings**, reframing the earlier "Strong-4DVar
+diverges on QG1L" finding as a scenario-level issue, not a 4DVar bug; points to the
+existing r-scale probe as the right lever rather than further DA-side tuning.
+
+**Files modified:**
+- `tests/test_qg_baselines_4dvar.py` — fixed a stale `obs_dim == cols_per_day * ny`
+  assertion (pre-#156 geometry assumption) to `obs_dim == ny`; not a functional bug,
+  the same test's shape/finiteness checks already passed under the new geometry.
+- `evaluation/run_qg_baselines.py` — added `--obs-noise-frac`/`--da-nx` to the plain
+  CLI (previously sweep-wrapper-only; the plain CLI silently used the wrong 5% obs
+  noise default instead of the canonical 1% reference setting).
+- `PLAN.md` — recorded the reproducibility validation table and the S1 extension.
+- `reports/qg/outputs/qg_s1_da_integration/` — new S1-cross-res/QG1L result JSONs.
+- `reports/qg/outputs/qg_repro_validation/` — new reproducibility-check result JSONs.
+
+**Verification:** Full QG test suite (`tests/test_qg_dynamics.py`,
+`test_qg_data.py`, `test_qg_baselines.py`, `test_qg_s0s1.py`,
+`test_qg_random_columns.py`, `test_qg1l_dynamics.py`, `test_qg_psi_state.py`,
+`test_qg_baselines_4dvar.py`, `-m "not slow"`): 113 passed. Reproducibility
+validated via job 52174 (see above).
+
 ## 2026-09-05: FDV1+FDV1-CFM warm-start hybrid — inference-time only, second-best RMSE in the benchmark
 
 **Summary:** Combines FDV1's frozen deterministic point estimate with FDV1-CFM's own stochastic sampling trajectory, with **no retraining of either model** -- the third such hybrid this session, after FDV1+SDA1/SDA2 (#157). `FourDVarNetPredictStateCFM.sample()` gains the same `mean_estimate`/`tau0` SDEdit-style warm-start params as `evaluation/sda_sampler.py::sda_guided_sample`: instead of starting the Euler trajectory from pure noise at τ=0, it starts from `interpolant.mix(noise, mean_estimate, tau0)` at an intermediate `tau0` and only runs the remaining steps to τ=1.
