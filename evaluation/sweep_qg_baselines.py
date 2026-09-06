@@ -36,6 +36,7 @@ def main():
     ap.add_argument("--geometry", default="random_columns")
     ap.add_argument("--init-lag-days-list", default="2.0")
     ap.add_argument("--da-nx", type=int, default=None)
+    ap.add_argument("--window-spacing-days", type=float, default=None)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--cols-per-day-list", default=None)
@@ -102,6 +103,9 @@ def main():
                if args.b_var_scale_list else [1.0])
     qscales = ([float(x) for x in args.q_var_scale_list.split(",")]
                if args.q_var_scale_list else [1.0])
+    cfg_extra = {}
+    if args.window_spacing_days is not None:
+        cfg_extra["window_spacing_days"] = args.window_spacing_days
     for cols in colss:
         for noise in noises:
             if noise is None:
@@ -112,7 +116,7 @@ def main():
                     da_nx=args.da_nx,
                     s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
                     s1_loc_sigma_frac=args.s1_loc_sigma_frac,
-                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac, **cfg_extra)
             else:
                 cfg = QGConfig(
                     nx=args.nx, window_days=args.window_days,
@@ -121,7 +125,7 @@ def main():
                     obs_noise_std_frac=noise, seed=7, da_nx=args.da_nx,
                     s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
                     s1_loc_sigma_frac=args.s1_loc_sigma_frac,
-                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac, **cfg_extra)
             print(f"device={device} building dataset (cols={cols},"
                   f"noise={noise}) once", flush=True)
             t0 = time.time()

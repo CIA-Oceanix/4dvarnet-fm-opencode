@@ -997,6 +997,13 @@ def main():
     ap.add_argument("--fourdvar-grad-clip", type=float, default=100.0)
     ap.add_argument("--obs-noise-frac", type=float, default=None)
     ap.add_argument("--da-nx", type=int, default=None)
+    ap.add_argument("--window-spacing-days", type=float, default=None,
+                     help="Days between successive window start times (default "
+                          "QGConfig value, 90.0). Set below window-days to pack "
+                          "more windows into a shorter source trajectory, at the "
+                          "cost of window-to-window overlap in the underlying "
+                          "true flow (independent obs/corruption/init draws per "
+                          "window either way).")
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
@@ -1009,6 +1016,8 @@ def main():
         cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
     if args.da_nx is not None:
         cfg_kwargs["da_nx"] = args.da_nx
+    if args.window_spacing_days is not None:
+        cfg_kwargs["window_spacing_days"] = args.window_spacing_days
     cfg = QGConfig(**cfg_kwargs)
     print(f"device={device}")
     for method in args.method_list.split(","):
