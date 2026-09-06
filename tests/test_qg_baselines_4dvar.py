@@ -69,9 +69,13 @@ def test_qg4dvar_psi_h_uses_absolute_index():
     traj = res.trajectory
     assert traj.shape == (cfg.num_steps, dyn.state_dim)
     assert np.isfinite(traj).all()
-    # The absolute-index H call must reproduce the per-time psi columns, i.e.
-    # the mapped obs dimension equals cols_per_day * ny.
-    assert obs_op.obs_dim == cfg.cols_per_day * cfg.ny
+    # The absolute-index H call must reproduce the per-time psi columns.
+    # Since PR #156 (per-column independent intra-day timing,
+    # OBS_GEOMETRY_VERSION=2), only one column is observed per event, so the
+    # mapped obs dimension is ny, not cols_per_day * ny (the old
+    # constellation-style simultaneous-columns geometry this assertion
+    # originally assumed).
+    assert obs_op.obs_dim == cfg.ny
 
 
 def test_qg4dvar_q_index_mode_weak():
