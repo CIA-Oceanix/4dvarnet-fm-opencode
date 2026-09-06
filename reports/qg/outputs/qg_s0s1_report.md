@@ -126,14 +126,22 @@ Error-free benchmark: `da_params = true_params`, DA at full resolution (`da_nx =
 
 ### 4.1 Headline (psi-obs)
 
-| obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |
-|---|---|---|---|---|---|---|---|
-| psi | 4 | 1.0 | 6.40e-06 | 7.33e-06 | 1.14 | +0.747 | +0.727 |
-| psi | 4 | 2.0 | 8.30e-06 | 1.30e-05 | 1.57 | +0.639 | +0.301 |
-| psi | 8 | 1.0 | 4.78e-06 | 7.33e-06 | 1.53 | +0.812 | +0.727 |
-| psi | 8 | 2.0 | 6.94e-06 | 1.30e-05 | 1.88 | +0.684 | +0.301 |
+| method | obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|---|---|
+| etkf | psi | 4 | 1.0 | 6.32e-06 | 7.33e-06 | 1.16 | +0.752 | +0.727 |
+| enkf | psi | 4 | 1.0 | 6.28e-06 | 7.33e-06 | 1.17 | +0.754 | +0.727 |
+| strong4dvar | psi | 4 | 1.0 | 5.50e-06 | 7.33e-06 | 1.33 | +0.725 | +0.727 |
+| weak4dvar | psi | 4 | 1.0 | 5.12e-06 | 7.33e-06 | 1.43 | +0.788 | +0.727 |
+| etkf | psi | 4 | 2.0 | 8.11e-06 | 1.30e-05 | 1.61 | +0.652 | +0.301 |
+| enkf | psi | 4 | 2.0 | 8.08e-06 | 1.30e-05 | 1.61 | +0.655 | +0.301 |
+| strong4dvar | psi | 4 | 2.0 | 9.08e-06 | 1.30e-05 | 1.43 | +0.322 | +0.301 |
+| weak4dvar | psi | 4 | 2.0 | 9.04e-06 | 1.30e-05 | 1.44 | +0.370 | +0.301 |
+| etkf | psi | 8 | 1.0 | 5.18e-06 | 7.33e-06 | 1.42 | +0.777 | +0.727 |
+| etkf | psi | 8 | 2.0 | 6.89e-06 | 1.30e-05 | 1.89 | +0.689 | +0.301 |
 
 ### 4.2 Per-field (psi-obs, cols=4, lag 1.0)
+
+**etkf**
 
 | field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
 |---|---|---|---|---|---|---|
@@ -143,6 +151,40 @@ Error-free benchmark: `da_params = true_params`, DA at full resolution (`da_nx =
 | streamfunction ψ | upper (layer 1) | 2.57e+03 | 2.57e+03 | 1.00 | +0.966 | +0.967 |
 | streamfunction ψ | lower (layer 2) | 1.95e+03 | 1.11e+03 | 0.57 | +0.972 | +0.991 |
 | streamfunction ψ | full state | 2.28e+03 | 1.98e+03 | 0.87 | +0.969 | +0.979 |
+
+**enkf**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 1.09e-05 | 1.37e-05 | 1.26 | +0.816 | +0.706 |
+| PV q | lower (layer 2) | 2.18e-06 | 1.96e-06 | 0.90 | +0.691 | +0.748 |
+| PV q | full state | 7.84e-06 | 9.76e-06 | 1.25 | +0.754 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 2.53e+03 | 2.57e+03 | 1.02 | +0.967 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 1.9e+03 | 1.11e+03 | 0.58 | +0.972 | +0.991 |
+| streamfunction ψ | full state | 2.24e+03 | 1.98e+03 | 0.88 | +0.970 | +0.979 |
+
+**strong4dvar**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 1.00e-05 | 1.37e-05 | 1.36 | +0.839 | +0.706 |
+| PV q | lower (layer 2) | 2.37e-06 | 1.96e-06 | 0.83 | +0.611 | +0.748 |
+| PV q | full state | 7.29e-06 | 9.76e-06 | 1.34 | +0.725 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 1.43e+03 | 2.57e+03 | 1.80 | +0.990 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 987 | 1.11e+03 | 1.12 | +0.993 | +0.991 |
+| streamfunction ψ | full state | 1.23e+03 | 1.98e+03 | 1.61 | +0.991 | +0.979 |
+
+**weak4dvar**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 9.10e-06 | 1.37e-05 | 1.50 | +0.868 | +0.706 |
+| PV q | lower (layer 2) | 2.06e-06 | 1.96e-06 | 0.95 | +0.708 | +0.748 |
+| PV q | full state | 6.60e-06 | 9.76e-06 | 1.48 | +0.788 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 1.36e+03 | 2.57e+03 | 1.90 | +0.991 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 972 | 1.11e+03 | 1.14 | +0.993 | +0.991 |
+| streamfunction ψ | full state | 1.18e+03 | 1.98e+03 | 1.68 | +0.992 | +0.979 |
+
 
 ## 5. S1-QG2L metrics (param + forcing + cross-resolution error)
 
@@ -195,6 +237,16 @@ Model-error S1 with the **2-layer** DA model (`qg2l_lores`): parameter bias (`rd
 | streamfunction ψ | upper (layer 1) | 1.73e+04 | 1.04e+04 | 0.60 | -0.476 | +0.413 |
 | streamfunction ψ | lower (layer 2) | 1.68e+04 | 8.1e+03 | 0.48 | -1.066 | +0.467 |
 | streamfunction ψ | full state | 1.71e+04 | 9.33e+03 | 0.55 | -0.771 | +0.440 |
+
+### 5.6 Weak-4DVar on S1 (da_nx=64, nores)
+
+Weak-4DVar (LBFGS w60, q-var-scale=0.1) on the S1 model-error case with the resolution-mismatch component removed (`da_nx=64 == truth`), so the DA model faces only the param bias + corrupted wind. Lags 1.0 and 2.0, psi-obs, cols=4, 1% noise. ETKF (same da_nx=64) shown for reference.
+
+| lag | method | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|
+| 1.0 | weak4dvar | 8.88e-06 | 1.70e-05 | 1.92 | +0.398 | -0.232 |
+| 2.0 | weak4dvar | 1.13e-05 | 1.86e-05 | 1.64 | +0.023 | -0.416 |
+| 1.0 | etkf | 1.10e-05 | 1.70e-05 | 1.55 | +0.428 | -0.232 |
 
 ## 6. S1-QG1L metrics (structural error, r-scale sweep)
 
