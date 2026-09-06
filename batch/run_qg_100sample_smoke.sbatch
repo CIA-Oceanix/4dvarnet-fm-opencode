@@ -2,7 +2,7 @@
 #SBATCH --job-name=qg_100smoke
 #SBATCH --partition=Odyssey_GPU
 #SBATCH --gres=gpu:a40:1
-#SBATCH --time=00:45:00
+#SBATCH --time=04:00:00
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
