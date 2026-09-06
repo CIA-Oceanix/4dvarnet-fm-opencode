@@ -995,14 +995,21 @@ def main():
     ap.add_argument("--b-var-scale", type=float, default=1.0)
     ap.add_argument("--q-var-scale", type=float, default=1.0)
     ap.add_argument("--fourdvar-grad-clip", type=float, default=100.0)
+    ap.add_argument("--obs-noise-frac", type=float, default=None)
+    ap.add_argument("--da-nx", type=int, default=None)
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
-    cfg = QGConfig(nx=args.nx, window_days=args.window_days,
-                   spinup_years=args.spinup_years, num_windows=args.num_windows,
-                   obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
-                   seed=7)
+    cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
+                      spinup_years=args.spinup_years, num_windows=args.num_windows,
+                      obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
+                      seed=7)
+    if args.obs_noise_frac is not None:
+        cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
+    if args.da_nx is not None:
+        cfg_kwargs["da_nx"] = args.da_nx
+    cfg = QGConfig(**cfg_kwargs)
     print(f"device={device}")
     for method in args.method_list.split(","):
         run(method, cfg, device=device, N_ensemble=args.ensemble,
