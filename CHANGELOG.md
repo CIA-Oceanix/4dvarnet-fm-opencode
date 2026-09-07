@@ -11,17 +11,27 @@ cross-cutting cleanup PR touching many files outside this session's QG topic (ri
 collisions with concurrent L96/L63 work), fixed the actual root cause: the lint step now
 diffs against the PR's base SHA (or the push event's `before` SHA, falling back to the
 repo root commit for a branch's first push) and lints only the changed `*.py` files.
-`continue-on-error: true` kept as a second line of defense. Also fixed the 5 QG-side
-issues while here (all in `reports/qg/`): 4 `E402` (module-level imports after a
-necessary `sys.path.insert`, silenced with `# noqa: E402` -- the standard idiom for this
-repo's report-script pattern) in `generate_qg_s0s1_figs.py`, and 1 `F841` (unused `end`
-variable) in `probe_param_adjustment_time.py`.
+`continue-on-error: true` kept as a second line of defense.
+
+Also fixed the 5 QG-side issues found by the local environment's ruff (0.16.4): a real
+`F841` (unused `end` variable, `probe_param_adjustment_time.py`) and 4 `E402` (module-
+level imports after a necessary `sys.path.insert`, `generate_qg_s0s1_figs.py`), the
+latter first "fixed" with `# noqa: E402`. Turning on the just-fixed scoped lint step
+immediately caught a real problem with that: CI's freshly `pip install ruff`'d version
+(0.16.6, unpinned) doesn't enable E402 by default at all, so the `noqa` comments were
+themselves flagged (`RUF100`, unused-directive) -- confirmed by testing directly against
+ruff 0.16.6 (pip-installed to a throwaway dir). Removed the `noqa` comments entirely
+(no suppression needed against the actual CI ruff version) and fixed one more real,
+version-independent issue the scoped lint surfaced on the same file: `EXE001` (shebang
+present but the file wasn't marked executable) -- `chmod +x`.
 
 **Files modified:** `.github/workflows/ci.yml` (lint step scope), `reports/qg/
-generate_qg_s0s1_figs.py`, `reports/qg/probe_param_adjustment_time.py`.
+generate_qg_s0s1_figs.py` (E402 false-alarm removed, `chmod +x` for EXE001),
+`reports/qg/probe_param_adjustment_time.py` (F841).
 
-**Verification:** `ruff check reports/qg/` clean. Full QG suite (115 tests,
-`-m "not slow"`) passed. YAML syntax validated (`yaml.safe_load`).
+**Verification:** Validated directly against ruff 0.16.6 (matching CI's unpinned
+install) on the actual changed-file set the new CI logic computes: clean. Full QG suite
+(115 tests, `-m "not slow"`) passed. YAML syntax validated (`yaml.safe_load`).
 
 ## 2026-09-07: QG outputs cleanup — remove S0 exploratory result JSONs superseded by the 100-window test benchmark
 
