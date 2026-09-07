@@ -10,7 +10,16 @@ from torch.utils.data import DataLoader
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
 from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
-from models.monai_unet_adapter import MonaiDirectUNet
+try:
+    from models.monai_unet_adapter import MonaiDirectUNet
+except ImportError:
+    # monai is an optional, deliberately-isolated dependency (see
+    # models/monai_unet_adapter.py) -- not installed by default, so this
+    # module's isinstance dispatch must not hard-require it. The sentinel
+    # class below is never constructed; it only exists so the isinstance
+    # check further down stays syntactically valid and simply never matches.
+    class MonaiDirectUNet:
+        pass
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
 from evaluation.sda_sampler import sda_guided_sample
