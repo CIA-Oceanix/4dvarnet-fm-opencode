@@ -1,5 +1,82 @@
 # Changelog
 
+## 2026-09-07: QG Q1 launch — wire train_qg_neural.py to reuse the production 1000/100/100 nx=64 cache, launch DirectUNet training
+
+**Summary:** Wired `train_qg_neural.py` to reuse the already-generated production
+truth cache (`reports/qg/outputs/qg_windows_1000_100_100/cache/`, 41GB, built on
+the sibling `feature/qg-100sample-benchmark` worktree by the
+`generate_qg_window_chunk.py` array-job pipeline) instead of re-paying the
+~2-year-spinup rollout from this branch. New `--train-seed`/`--val-seed`/
+`--test-seed` (default 42/10042/20042, matching that pipeline's
+`SPLIT_SEED_BASE`) and `--obs-geometry`/`--cols-per-day`/`--obs-noise-std-frac`/
+`--init-lag-days` (default `random_columns`/4/0.01/1.0, the S0 DA-baseline
+reference case) CLI flags. Train/val now load via `ensure_truth_cache` (not
+`ensure_truth_only_cache`): the production cache's train/val entries carry
+baked-in obs from `QGConfig` defaults (wrong for S0), but `on_the_fly_obs=True`
+overwrites `obs`/`obs_mask`/`init_state` on every `__getitem__` regardless, so
+reusing the full cache is correct and avoids maintaining a second cache format
+for this launch; `ensure_truth_only_cache` stays available/tested for contexts
+with no pre-existing full cache.
+
+**Bug found and fixed while validating this (before it could burn real GPU
+time):** `build_cfg(...)` never set `num_windows`, leaving it at the `QGConfig`
+dataclass default (200) instead of the split size. `_truth_cache_path` hashes
+the *entire* `asdict(cfg)` (`num_windows` included), so this silently missed
+the production cache (written with `num_windows` equal to the split size) and
+would have fallen back to a full from-scratch nx=64 rollout (~90h extrapolated)
+instead of a cache hit. Caught interactively: benchmarked `ensure_truth_cache`
+against the production test-split file directly before trusting it inside the
+sbatch job, saw it hang past 90s (expected: a cache hit is ~3s), stopped it,
+recomputed `_truth_cache_path` by hand and diffed against the exact on-disk
+filenames (`qg_truth_a3c24de…`/`e7f84d…`/`ab5c09…` = train/val/test), found the
+mismatch, fixed by passing `num_windows=args.num_{train,val,test}` explicitly
+to each `build_cfg(...)` call, and reverified: hashes now match exactly, live
+load of the 100-window test cache is 3.2s.
+
+**On-the-fly obs cost at nx=64, benchmarked:** `QGS01Dataset._generate_obs_ic`
+(single window, no rollout) ≈32ms/draw → ≈1.8h aggregate over 200 epochs ×
+1000 train windows, well hidden by GPU prefetch at `num_workers=1` — confirmed
+not a bottleneck before launching.
+
+**Files modified:**
+- `train_qg_neural.py` — `--train-seed`/`--val-seed`/`--test-seed`,
+  `--obs-geometry`/`--cols-per-day`/`--obs-noise-std-frac`/`--init-lag-days`
+  CLI flags (all with `num_windows=` passed to `build_cfg`); train/val loading
+  switched to `ensure_truth_cache`; `results.json` config records the new
+  seeds/obs settings; module docstring updated.
+- `batch/run_qg_q1_train.sbatch` (new) — `Odyssey_GPU` partition, 1×A40,
+  `--mem=96G` (must comfortably hold the 33GB train cache in RAM),
+  `--time=24:00:00`, `--cache-dir` pointed at the production cache's absolute
+  path on the sibling worktree's filesystem (the cache itself is
+  untracked/gitignored, not portable via git — a path, not a git artifact).
+- `PLAN.md` — new "Q1 launch" subsection under the QG neural baseline section.
+
+**Incidental environment fixes** (shared `fdv` conda env, unrelated to this
+branch's code — a concurrent process modified the shared env twice mid-session):
+`setuptools` had drifted to 84.0.0 (dropped the `pkg_resources` shim
+`pytorch_lightning` 2.3.3 needs; fixed with `pip install "setuptools<81"`), and
+separately `torch`'s `libtorch_global_deps.so` went briefly missing mid-reinstall
+(self-resolved after waiting; confirmed `torch 2.4.1+cu121` healthy after).
+
+**Rationale:** The QG neural baseline (Q1/Q2) has had trainable infrastructure
+since 2026-09-06 and on-the-fly obs diversity since earlier today, but no run
+had actually been launched — real nx=64 truth generation from scratch was
+never feasible from this branch alone (~90h serial). The sibling worktree
+already paid that cost in full (1200 windows, ~3.5h wall-clock via GPU +
+array-parallel generation); reusing it directly unlocks an actual Q1 training
+run today instead of waiting on redundant generation.
+
+**Verification:** Full CI-matching gate (`ci.yml`'s exact 19-file list,
+`-m "not slow"`) — 320 passed. `ruff check` on touched `.py` files — clean
+(only the pre-existing repo-wide `EXE001` note on `train_qg_neural.py`). Live
+end-to-end smoke (`--nx 8 --epochs 1 --num-train 3 --num-val 2 --num-test 2`):
+trains, writes `results.json`/`estimates_s0.npz` with finite metrics. Live
+cache-hit verification against the actual production files (see above).
+**Launched:** `sbatch batch/run_qg_q1_train.sbatch` → **job 52368** (queued,
+`Odyssey_GPU`, 1×A40; DirectUNet, 200 epochs, nx=64, 1000/100/100 split).
+Q2 (VanillaCFM) is deliberately not launched yet — waiting to confirm Q1
+trains smoothly first, per plan.
+
 ## 2026-09-07: QG neural dataloader — on-the-fly obs for train/val (built on the merged truth/obs/IC split)
 
 **Summary:** `data.qg_neural.QGNeuralDataset` gained `on_the_fly_obs: bool = False`. When
