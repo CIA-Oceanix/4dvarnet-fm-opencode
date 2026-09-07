@@ -137,6 +137,52 @@ report + generator were on master).
   (+ `run_qg_figs.sbatch`, the illustration/DA-cycle regeneration job).
 - QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
 
+### QG neural baseline (Q1/Q2) — infrastructure on `feature/qg-neural-baseline` (2026-09-06)
+
+Self-contained DirectUNet / VanillaCFM(τ=0) neural estimators on the **S0**
+case study, comparing against the QG DA baselines. Not wired into `train.py`
+(dedicated entry point `train_qg_neural.py` + `data/qg_neural.py` wrapper).
+
+- **Supervision**: daily mean of the full 2-layer **streamfunction** ψ
+  (`psi_daily`), 30 days/window, with an auxiliary PV-q loss
+  (`--q-loss-weight`, default 0.1) that inverts the ψ estimate to PV per-window
+  (`norm_q_from_psi`) and MSEs it against the PV target. Tracked as both a ψ
+  primary loss and a q auxiliary term per window.
+- **Observations**: upper-layer ψ random-column obs, grid-expanded + daily
+  aggregated + NaN-masked, padded to the full state width (zeros in the lower
+  layer) so the shared `DirectUNet`/`VanillaCFM` (obs_dim==state_dim) work
+  unchanged. `QGBatch.params` added (None) for the shared model forward paths.
+- **Per-window normalization (key design)**: `window_scales` computes each
+  window's own per-layer ψ/q std (`WindowScale`), so samples whose streamfunction
+  energy spans a wide dynamic range (empirically ~30→10⁴ at nx=8 across windows)
+  are each mapped to O(1). Global-scalar normalization would be dominated by the
+  highest-energy windows. **Critical:** the ψ<->q inverter is cached per device
+  (`_INVERTER_CACHE[..., device]`) so the GPU q-loss never moves the shared CPU
+  inverter used by `psi_daily`/scales — which would otherwise break CPU-side
+  eval after a GPU training step.
+- **Model/lightning**: `QGNeuralLightning(pl.LightningModule)` computes
+  DIRECTUNET `MSE(est, ψ_norm)` or τ=0 CFM `MSE(x0+v, (ψ_norm−x0))` plus the
+  per-window q-loss; `create_trainer` for the Lightning loop.
+- **Eval**: `estimate_windows` produces per-window physical ψ; `psi_to_q`
+  maps to physical PV; both ψ and PV-q RMSE/EV per layer + pooled are written
+  to `estimates_s0.npz` + `results.json` (`s0.psi`, `s0.q`).
+- **Configs**: `config/experiment/Q1_direct_unet_s0.yaml`,
+  `Q2_vanilla_cfm_s0.yaml` (documentation specs → CLI flags; not Hydra).
+- **Report**: `reports/qg/generate_qg_neural_report.py` → `qg_neural_report.md`
+  renders Q1/Q2 vs the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ.
+- **Tests**: `tests/test_qg_neural.py` (12 fast tests: psi-day matches the
+  window's own upper-psi target, per-window scale O(1), dataset/collate shapes,
+  denorm round-trip, `norm_q_from_psi` round-trip, per-device inverter-cache
+  isolation, QGNeuralLightning fwd/bwd for both models, estimate_windows
+  shapes) — added to the master CI gate.
+- **HPC note**: per-window truth generation (`QGS01Dataset` spinup) is
+  expensive (~85 s/window at nx=8 single-thread; nx=64 far more). The
+  `num_train/val/test` defaults in the configs are a production target; see
+  the "1000/100/100 train/val/test dataset generation" section below for the
+  now-merged array-parallel/GPU-side generation infra that makes this
+  tractable, and "Truth-only cache + on-the-fly obs" further below for how
+  `train_qg_neural.py` consumes it.
+
 ### 1000/100/100 train/val/test dataset generation (2026-09-07)
 
 Scaling the S0/S1 truth-window generation from the ~5-200 window exploratory scale to a
@@ -203,6 +249,30 @@ arrays across all windows before computing summary metrics (fine at ~5-window
 exploratory scale, needs real memory at 100). Moved to `batch/
 run_qg_test100_reference.sbatch` (`--mem=64G`, `--time=12:00:00`, ETKF/EnKF/
 Strong-4DVar/Weak-4DVar at the exact S0 reference settings); results pending.
+
+### Neural dataloader: on-the-fly obs for train/val (2026-09-07, `feature/qg-neural-baseline`)
+
+Consumes the `_generate_truth_only`/`_generate_obs_ic` split above (unchanged
+here) from the neural training side: `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`
+redraws obs/init-state fresh (random seed) from a truth-only window on every
+`__getitem__` call, so train/val see a different obs realization each epoch
+from the same cached truth instead of one fixed draw baked in — increasing
+training obs diversity without re-paying the rollout. `data.qg.ensure_truth_only_cache`
+(a lightweight single-process hash-keyed cache, distinct from the array-parallel
+`generate_qg_window_chunk.py` pipeline above — useful for smaller-scale/smoke
+runs; the production 1000-window cache from that pipeline
+(`reports/qg/outputs/qg_windows_1000_100_100/cache/`) can also be pointed to
+directly via `--cache-dir` once `train_qg_neural.py` is scaled up) wraps
+`QGS01Dataset._generate_truth_only`, keyed only by the rollout-relevant
+`QGConfig` fields so obs-geometry/noise tuning reuses the same cache.
+`train_qg_neural.py` builds train/val from this + `on_the_fly_obs=True` by
+default (`--fixed-split-obs` reverts to the old fixed-cache behavior); the
+**test split is unchanged** (`ensure_truth_cache`, fixed reproducible obs).
+`--num-test` default 200→100 (train/val defaults unchanged at 1000/100),
+matching the 1000/100/100 split above. Note: `forcing` in `QGBatch` remains a
+zero placeholder (Q1/Q2 are `cond_extra_dim=0`, obs-only) — on-the-fly
+*forcing* conditioning was not wired, only obs; see CHANGELOG 2026-09-07 for
+the full rationale/verification.
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 

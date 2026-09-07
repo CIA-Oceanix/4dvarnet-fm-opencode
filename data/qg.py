@@ -333,7 +333,10 @@ class QGS01Dataset:
         depend only on cfg's obs_geometry/cols_per_day/obs_noise_std_frac/
         init_lag_days and can be recomputed cheaply from this output via
         `_generate_obs_ic`, without re-running the rollout, whenever just the
-        obs/IC protocol (not the underlying physics) needs to change.
+        obs/IC protocol (not the underlying physics) needs to change. Also
+        lets `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)` resample
+        obs/init-state fresh from a truth-only cache on every draw instead of
+        reading one fixed realization baked into the cache.
         """
         from models.qg_dynamics import QGDynamics
         # `device` only speeds up the expensive rollout (generate_wind_state +
@@ -418,7 +421,10 @@ class QGS01Dataset:
         forcing) and draws obs/init-state under `cfg`'s current
         obs_geometry/cols_per_day/obs_noise_std_frac/init_lag_days. Lets an
         obs/IC-protocol fix be applied without re-running the ~2-year-spinup
-        truth generation.
+        truth generation, and lets a caller redraw a fresh obs/init-state
+        realization for the same truth window by passing a randomized `i`
+        (see `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`, which
+        calls this one window at a time with a random `i` each draw).
         """
         from models.qg_dynamics import QGDynamics
         steps_per_day = round(86400.0 / cfg.dt)
@@ -539,6 +545,49 @@ def _truth_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
         json.dumps(payload, sort_keys=True, default=str).encode()
     ).hexdigest()[:20]
     return os.path.join(cache_dir, f"qg_truth_{key}.pt")
+
+
+_TRUTH_ONLY_CFG_FIELDS = (
+    "nx", "L", "dt", "beta", "rd", "delta", "U1", "U2", "rek", "filterfac",
+    "window_days", "spinup_years", "seed", "init_lead_days",
+    "wind_amp", "wind_tau_days", "wind_sigma", "wind_cx", "wind_cy",
+    "wind_drift_tau_days", "wind_drift_sigma", "wind_seed", "param_range",
+)
+
+
+def _truth_only_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
+    """Deterministic cache path for truth-only windows (rollout, no obs/IC).
+
+    Keyed only by the `QGConfig` fields that affect `_generate_truth_only`
+    (dynamics/rollout params), NOT the obs-geometry/noise fields -- so tuning
+    `obs_geometry`/`cols_per_day`/`obs_noise_std_frac`/etc. reuses the same
+    cached truth instead of re-paying the ~4.5-min/window spinup.
+    """
+    payload = {k: getattr(cfg, k) for k in _TRUTH_ONLY_CFG_FIELDS}
+    payload["n_windows"] = n
+    key = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()[:20]
+    return os.path.join(cache_dir, f"qg_truthonly_{key}.pt")
+
+
+def ensure_truth_only_cache(cfg: QGConfig, n: int, cache_dir: str) -> list[dict]:
+    """Load/generate+cache truth-only windows (rollout, no obs/init-state).
+
+    For splits whose obs/init-state should be regenerated on the fly at train
+    time (`data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`) instead of
+    read from one fixed realization baked into the cache.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    path = _truth_only_cache_path(cfg, n, cache_dir)
+    if os.path.exists(path):
+        try:
+            return torch.load(path, map_location="cpu")
+        except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
+            pass
+    windows = QGS01Dataset._generate_truth_only(cfg, n)
+    torch.save(windows, path)
+    return windows
 
 
 def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
