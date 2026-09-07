@@ -65,6 +65,7 @@ all_figures.pdf
 
 # SLURM logs
 sbatch_logs/
+batch/logs/
 # SLURM sbatch (%A/%a) stderr artifacts written to the repo root
 [0-9]*_[0-9]*.err
 [0-9]*.err

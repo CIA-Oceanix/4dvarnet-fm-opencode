@@ -1,5 +1,98 @@
 # Changelog
 
+## 2026-09-07: QG dataset — truth/obs/IC split + cheap obs/IC correction for the test split
+
+**Summary:** The 1000/100/100 dataset generated earlier this session used `QGConfig`
+defaults for `obs_geometry`/`cols_per_day`/`obs_noise_std_frac`/`init_lag_days` instead of
+the established S0 reference-case settings (`random_columns`, `cols_per_day=4`,
+`obs_noise_std_frac=0.01`, `init_lag_days=1.0`) -- a mismatch that would have made DA
+baseline numbers on the test split incomparable to the rest of the benchmark. Truth
+generation (the ~2-year-spinup rollout, the expensive part) doesn't depend on any of
+those fields, so rather than regenerating the full dataset, `QGS01Dataset._generate_truth`
+is split into `_generate_truth_only` (the expensive rollout) and `_generate_obs_ic`
+(cheap: reconstructs a `QGDynamics` from the window's cached `true_params`, no rollout,
+and redraws obs/init-state under the desired obs/IC config) -- `_generate_truth` itself is
+now a thin wrapper composing both, so existing callers/tests are unaffected.
+`reports/qg/fix_qg_test_obs_ic.py` uses this to correct the test split's obs/IC in
+seconds from the already-generated truth cache, writing three distinct files (per the
+"separate files per data type" principle this split establishes): `truth_only/test.pt`,
+`obs_ic/test_reference.pt`, and a corrected combined `cache/qg_truth_<hash>.pt` at the
+exact path `make_qg_s0_s1_datasets(..., cache_dir=...)` expects. Train/val are untouched
+-- their obs/IC are meant to be generated on the fly downstream, not read from this cache.
+
+**Files modified:**
+- `data/qg.py` -- `_generate_truth_only`/`_generate_obs_ic` (new), `_generate_truth`
+  refactored to compose them.
+- `evaluation/run_qg_baselines.py` -- `--seed`/`--cache-dir` CLI flags (previously the
+  seed was hardcoded to 7 and there was no way to point the plain CLI at a pre-generated
+  cache) so `run()`'s existing `ds=` bypass can be reached from the command line.
+- `reports/qg/fix_qg_test_obs_ic.py` (new) -- the obs/IC correction script.
+- `batch/run_qg_test100_reference.sbatch` (new) -- runs ETKF/EnKF/Strong-4DVar/Weak-4DVar
+  against the corrected 100-window test set at the exact S0 reference-case settings.
+
+**Bug found and fixed during the initial (interactive, no sbatch) obs/IC-buffer-reuse
+implementation:** `init_lead_truth` (cached, indices `[0, lead)` of the original rollout)
+does not include index `lead` itself (`traj[0]`, the window's own first state), which the
+original IC-interpolation formula needs for a zero-day lag draw. Fixed by concatenating
+`traj[:1]` back on before indexing -- caught by the full QG test suite (18 failures,
+`IndexError: index N is out of bounds`) before it reached anything downstream.
+
+**Verification:** Full QG suite (115 tests, `-m "not slow"`) passed after the fix.
+`ruff check` clean. End-to-end verified: corrected test cache loads via
+`make_qg_s0_s1_datasets` (cache hit), 120 obs/window (4 cols/day x 30 days) with
+distinct columns per day, `obs_noise_std_frac=0.01` applied.
+
+**Separately discovered:** running `run_qg_baselines.py` for a 100-window scenario in
+this interactive session (16GB job-allocation cgroup) OOM'd -- `run()` accumulates full
+per-window `(360, 8192)` arrays (`analyses`/`refs`/`free_ra`) across all windows before
+computing summary metrics, which is fine at the ~5-window exploratory scale but needs a
+dedicated job with real memory headroom at 100 windows. Moved to `batch/
+run_qg_test100_reference.sbatch` (`--mem=64G`, `--time=12:00:00`); DA baseline results
+pending as of this entry.
+
+## 2026-09-07: QG dataset generation — GPU device fix + array-parallel 1000/100/100 train/val/test generation
+
+**Summary:** Fixes a device-placement bug (`QGS01Dataset._generate_truth` never moved its
+`QGDynamics` to the requested device, so the ~2-year-spinup rollout ran on CPU regardless
+of GPU allocation — 7.4x speedup measured, 36.65s/window on a dedicated A40 vs. the
+documented ~270s/window CPU baseline) and refactors per-window generation to be fully
+index-independent (per-window `RandomState(cfg.seed + i)` instead of one RNG shared
+sequentially across all `n` windows), enabling SLURM array-job parallelization. Used both
+to generate the first 1000-train/100-val/100-test window dataset: 3 array jobs (50 tasks)
+across the cluster's 3 available A40 GPUs, **1200 windows in ~3h27min wall-clock**, all
+tasks exit 0.
+
+**Files modified:**
+- `data/qg.py` — `_generate_truth` gains `device`/`indices` params (GPU rollout + CPU
+  post-processing handoff; per-window independent RNG); `QGS01Dataset.__init__` and
+  `make_qg_s0_s1_datasets` thread `device` through.
+- `tests/test_qg_s0s1.py` — 2 new tests: indices-subset generation matches a full serial
+  run bit-for-bit; device round-trips truth tensors back to CPU.
+- `reports/qg/generate_qg_window_chunk.py` (new) — one array-task's worth of window
+  indices -> one `.pt` file per window.
+- `reports/qg/assemble_qg_windows.py` (new) — glob + sort per-window files -> the combined
+  truth-cache file `make_qg_s0_s1_datasets(..., cache_dir=...)` expects.
+- `reports/qg/probe_device_fix_timing.py` (new) — clean per-window timing probe (n=20,
+  dedicated A40) used to validate the fix and extrapolate total generation time.
+- `batch/run_qg_device_fix_timing.sbatch`, `batch/run_qg_window_chunk_array.sbatch`,
+  `batch/run_qg_assemble_train.sbatch` (new sbatch scripts).
+- `.gitignore` — `batch/logs/` (per-array-task stdout/stderr scratch).
+- `PLAN.md` — new "1000/100/100 train/val/test dataset generation" subsection.
+
+**Rationale:** The prior CPU-only path made a 1200-window dataset infeasible (~90h
+extrapolated). The device fix alone gets it to ~12.2h serial; array-parallelization
+(required the RNG-independence refactor) gets it to ~3.5h wall-clock on this cluster's
+idle A40 capacity, well within a single overnight run.
+
+**Verification:** Full QG suite (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
+`test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`, `test_qg_psi_state`,
+`test_qg_baselines_4dvar`, `-m "not slow"`): 115 passed (113 prior + 2 new indices/device
+tests). `ruff check` clean on all touched files.
+End-to-end cache load verified (`make_qg_s0_s1_datasets` on the assembled val cache: 9.1s
+load, correct S0/S1/S1-QG1L shapes). Train-split assembly (1000 windows, ~32GB) OOM'd
+under this interactive session's 16GB job-allocation cgroup cap; resolved by running the
+assembly as its own sbatch job with `--mem=96G` (succeeded, 3m48s).
+
 ## 2026-09-06: QG DA integration — merge two independent 4DVar implementations, validate reproducibility, extend S1
 
 **Summary:** Reconciles two independently-developed QG 4DVar implementations (this
