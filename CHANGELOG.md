@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-07: Document the monai env's required torch version
+
+**Summary:** Added `requirements-monai.txt`, pinning `torch==2.8.0+cu126` and
+`monai==1.6.0` -- the two load-bearing versions the `MonaiDirectUNet`/
+`MonaiUNet1D` work (#166, #167) was actually validated against, run in a
+separate conda env (`fdv-monai-proto`) from the project's standard `fdv` env.
+Previously this was only implicit in an sbatch script's `$PATH`/env-var lines,
+with no written record of *why* a separate env is needed or which versions to
+recreate it with -- a real reproducibility gap if that conda env is ever lost.
+
+**Files modified:** `requirements-monai.txt` (new); `models/monai_unet_adapter.py`
+— module docstring now states the separate-env requirement and points to the
+new file.
+
+**Rationale:** `monai==1.6.0` requires a newer `torch` than this project's
+standard `torch>=2.0.0` pin supports in practice; installing `monai` directly
+into the shared env previously broke CUDA for the rest of the project by
+dragging `torch` forward. `requirements.txt` deliberately does not include
+`monai`, so the isolation needs to be written down somewhere reachable, not
+just implied by which conda env happens to be active.
+
+**Verification:** N/A (documentation only, no code behavior changed).
+
 ## 2026-09-07: Fix MonaiDirectUNet's silently no-op dropout, retrain, corrected numbers
 
 **Summary:** PR #166's automated review (`rfablet-review`) found that
