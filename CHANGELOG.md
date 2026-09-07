@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-09-07: Fix MonaiDirectUNet's silently no-op dropout, retrain, corrected numbers
+
+**Summary:** PR #166's automated review (`rfablet-review`) found that
+`MonaiDirectUNet.__init__` accepted a `dropout` argument but never forwarded it to
+`MonaiUNet1D`, which had no dropout mechanism at all (MONAI's
+`DiffusionUNetResnetBlock` has neither a dropout constructor arg nor a dropout
+layer) — dropout was silently a no-op, undermining the "exact same hyperparameters
+as `DirectUNet`" claim below (`DirectUNet` does apply real `nn.Dropout`). Fixed by
+attaching an `nn.Dropout` submodule to every `DiffusionUNetResnetBlock` post-
+construction and applying it in the monkeypatched `forward` (after `conv2`, before
+the residual add, matching `UNet1D.ConvBlock`'s placement); `MonaiDirectUNet` now
+forwards its `dropout` arg through. Retrained `L1b_monai_unet_s0s1_norm` (job
+52448) with the fix active: RMSE improved further to **0.501/0.502** (S0/S1, was
+0.539/0.541 under the bug), EV **0.902/0.901** (was 0.885/0.884) — real dropout
+also delayed overfitting (val loss kept falling to epoch 199 instead of plateauing
+by epoch ~50). `reports/l96/outputs/l96_normalization_ablation.md` and this
+CHANGELOG's prior entry's headline numbers are now stale; the corrected numbers are
+in the regenerated report. The prior run's outputs are kept at
+`experiments/L1b_monai_unet_s0s1_norm_nodropout_bug/` for provenance.
+
+**Files modified:** `models/monai_unet_adapter.py` — dropout wiring;
+`tests/test_monai_unet_adapter.py` — `test_dropout_is_actually_applied`,
+`test_dropout_zero_attaches_no_resblock_dropout`,
+`test_monai_direct_unet_forwards_dropout` (caught along the way: MONAI's own
+attention block has pre-existing unrelated `nn.Dropout` layers, so the zero-dropout
+test checks resblock-attached dropout specifically; and MONAI zero-initializes
+every resblock's second conv, so dropout's effect is only observable after training
+briefly, not at init); `reports/l96/generate_l96_normalization_ablation.py` —
+updated MonaiDirectUNet findings prose with corrected numbers.
+
+**Rationale:** A code-review-caught correctness bug directly affecting a
+reported experimental result must be fixed and the result regenerated, not just
+noted as a caveat — the whole point of this comparison is an apples-to-apples
+hyperparameter match against `DirectUNet`.
+
+**Verification:** `pytest tests/test_monai_unet_adapter.py tests/test_l96_normalization.py`
+(21 passed); manual dropout-activity check (train-mode outputs stochastic,
+eval-mode deterministic, after training briefly past MONAI's zero-init); full
+200-epoch SLURM retrain (job 52448) + its own normalization-aware
+`eval_monai_l96.py` pass (this time correct on the first try, unlike job 52397's
+initial buggy eval pass).
+
 ## 2026-09-07: MonaiDirectUNet backbone + L96 per-channel normalization infra
 
 **Summary:** Added `MonaiDirectUNet`/`MonaiUNet1D` (`models/monai_unet_adapter.py`), a
