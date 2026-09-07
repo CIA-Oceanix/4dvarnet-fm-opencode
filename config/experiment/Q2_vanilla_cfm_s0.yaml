@@ -1,0 +1,44 @@
+# Q2: VanillaCFM (tau=0) neural baseline on QG S0 (streamfunction target).
+#
+# Consumed by the self-contained entry point `train_qg_neural.py` (NOT Hydra;
+# this file documents the experiment spec and maps to CLI flags).
+#
+# Same supervision as Q1 plus the tau=0 CFM conditional-velocity loss; the
+# reconstruction is x0 + v(x0; tau=0). Auxiliary PV-q loss weight 0.1.
+#
+# Production target: nx=64 (state_dim=8192). See PLAN.md HPC sizing note.
+#
+#   python train_qg_neural.py \
+#     --model-type vanilla_cfm \
+#     --exp-dir experiments/Q2_vanilla_cfm_s0 \
+#     --nx 64 --q-loss-weight 0.1 --epochs 400
+#     --num-train 1000 --num-val 100 --num-test 200
+#     --batch-size 2 --cache-dir reports/qg_cache
+
+experiment_id: Q2_vanilla_cfm_s0
+entry_point: train_qg_neural.py
+system: qg
+model_type: vanilla_cfm
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  time_emb_dim: 64
+  N_outer: 10
+  sigma_prior: 0.5
+  param_dim: 0
+  cond_extra_dim: 0
+  train_tau_0_only: true
+training:
+  epochs: 400
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 0.1
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  cache_dir: reports/qg_cache

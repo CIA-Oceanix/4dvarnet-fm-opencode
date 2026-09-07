@@ -1,5 +1,68 @@
 # Changelog
 
+## 2026-09-06: QG neural baseline (Q1 DirectUNet / Q2 VanillaCFM-τ=0) — infrastructure + verify
+
+**Summary:** Landed the self-contained neural-estimator infrastructure for the QG S0 case
+study on `feature/qg-neural-baseline`. A dedicated entry point `train_qg_neural.py` +
+`data/qg_neural.py` train a DirectUNet (Q1) or VanillaCFM with `train_tau_0_only=True`
+(Q2) on the daily-mean **full 2-layer streamfunction ψ** (30 days/window) with an
+optional auxiliary PV-q loss, and score them on both ψ and PV q. Because QG is not wired
+into `train.py`/`get_dynamics()`, this is a self-contained pipeline (shared models, the
+Lightning loop, per-window normalization) rather than a `train.py` extension.
+
+**Key design — per-window normalization (`window_scales`/`WindowScale`):** each window's
+own ψ/q per-layer std is used to normalize that window's targets, observations and the
+q-loss, so samples whose streamfunction energy spans an empirically wide dynamic range
+(~30→10⁴ at nx=8 across windows) are each O(1). A single global scalar would be dominated
+by the few highest-energy windows and make MSE a near-total loss over the rest. This is a
+deliberate departure from the L63/L96 single-scalar normalization, justified by the
+measurements (per-window psi-day std 29.8/953/4340/10607 across 4 windows at nx=8).
+
+**Critical implementation detail — per-device inverter cache:** `psi_to_q`/`norm_q_from_psi`
+(reconstructing the spectral PV↔ψ operator per `rd`) now cache the `QGPsiDynamics` inverter
+**per device** (`_INVERTER_CACHE[(..., device)]`). A GPU q-loss would otherwise `.to(cuda)`
+the shared CPU inverter in place, which then broke CPU-side `psi_daily`/`window_scales`
+(the `NameError`-free `RuntimeError: cuda:0 vs cpu` hit during the nx=8 end-to-end smoke).
+
+**Files modified:**
+- `data/qg_neural.py` — rewritten ψ-target API: `psi_daily` (ψ = streamfunctions of
+  daily-mean q), `QGBatch`/`QGNeuralDataset`/`qg_collate` (per-window `WindowScale`
+  carried on the batch), `denorm_state`/`norm_q_from_psi` (per-window scale-aware), and
+  the per-device inverter cache. `QGBatch` also gained a `params=None` attribute so the
+  shared `DirectUNet`/`VanillaCFM` forward paths (which read `batch.params`) work unchanged.
+- `train_qg_neural.py` — rewritten: `QGNeuralLightning(pl.LightningModule)` (DirectUNet
+  `MSE(est,ψ_norm)` or τ=0 CFM `MSE(x0+v, ψ_norm−x0)` plus `q_loss_weight`-weighted
+  per-window q-loss via `norm_q_from_psi`); `estimate_windows` (per-window denorm physical
+  ψ); eval writes `estimates_s0.npz` (physical ψ+q, truth, rd, per-window psi scales) +
+  `results.json` (`s0.psi`/`s0.q` pooled + per-layer RMSE/EV); `--eval-only` path fixed to
+  not build train/val loaders.
+- `config/experiment/Q1_direct_unet_s0.yaml`, `Q2_vanilla_cfm_s0.yaml` — documentation
+  specs (CLI flags, not Hydra) for the two runs.
+- `reports/qg/generate_qg_neural_report.py` + `outputs/qg_neural_report.md` — JSON-only
+  generator rendering Q1/Q2 (`--` until run) against the 4 DA baselines
+  (`qg_repro_validation/`) on PV-q RMSE/EV + ψ EV.
+- `tests/test_qg_neural.py` — 12 fast tests (see PLAN.md).
+- `.github/workflows/ci.yml` — `test_qg_neural.py` added to the pytest gate (PRs → master).
+- `PLAN.md` — QG neural-baseline section.
+
+**Rationale:** Completes the QG DA-baseline case study's neural leg (Q1/Q2) at the
+infrastructure level per the committed plan: self-contained S0 streamfunction-target
+estimators that can be compared head-to-head with the ETKF/EnKF/Weak-4DVar/Strong-4DVar
+baselines on the same daily PV field. The per-window normalization and per-device
+inverter cache fix two real problems surfaced during the nx=8 smoke (wide ψ dynamic range;
+CPU eval after GPU training).
+
+**Verification:** `tests/test_qg_neural.py` — 12 passed (fast); full QG fast gate (all 9 QG
+test files incl. the new one) — **125 passed, 8 deselected**. End-to-end nx=8 smoke of the
+entire CLI (`train_qg_neural.py --model-type vanilla_cfm ... --epochs 1`): trains, saves
+`stage1_best.pt`, eval writes `estimates_s0.npz`/`results.json` with finite ψ + PV-q
+metrics (negative EV expected for an untrained 1-epoch model). `--eval-only` checkpoint
+reload verified. `norm_q_from_psi` round-trip max rel err ≈ 2.7e-6 (given true ψ recovers
+true normalized q). ruff clean on touched `.py` (0 errors besides the repo-wide EXE001).
+**Follow-up (open):** the configs' default `num_train=1000` at `nx=64` is a production
+target; per-window S0 truth generation is CPU-expensive (~85 s/window at nx=8), so the
+real Q1/Q2 launch needs parallel/GPU-side window generation or a smaller window count.
+
 ## 2026-09-06: QG DA integration — merge two independent 4DVar implementations, validate reproducibility, extend S1
 
 **Summary:** Reconciles two independently-developed QG 4DVar implementations (this

@@ -137,6 +137,51 @@ report + generator were on master).
   (+ `run_qg_figs.sbatch`, the illustration/DA-cycle regeneration job).
 - QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
 
+### QG neural baseline (Q1/Q2) — infrastructure on `feature/qg-neural-baseline` (2026-09-06)
+
+Self-contained DirectUNet / VanillaCFM(τ=0) neural estimators on the **S0**
+case study, comparing against the QG DA baselines. Not wired into `train.py`
+(dedicated entry point `train_qg_neural.py` + `data/qg_neural.py` wrapper).
+
+- **Supervision**: daily mean of the full 2-layer **streamfunction** ψ
+  (`psi_daily`), 30 days/window, with an auxiliary PV-q loss
+  (`--q-loss-weight`, default 0.1) that inverts the ψ estimate to PV per-window
+  (`norm_q_from_psi`) and MSEs it against the PV target. Tracked as both a ψ
+  primary loss and a q auxiliary term per window.
+- **Observations**: upper-layer ψ random-column obs, grid-expanded + daily
+  aggregated + NaN-masked, padded to the full state width (zeros in the lower
+  layer) so the shared `DirectUNet`/`VanillaCFM` (obs_dim==state_dim) work
+  unchanged. `QGBatch.params` added (None) for the shared model forward paths.
+- **Per-window normalization (key design)**: `window_scales` computes each
+  window's own per-layer ψ/q std (`WindowScale`), so samples whose streamfunction
+  energy spans a wide dynamic range (empirically ~30→10⁴ at nx=8 across windows)
+  are each mapped to O(1). Global-scalar normalization would be dominated by the
+  highest-energy windows. **Critical:** the ψ<->q inverter is cached per device
+  (`_INVERTER_CACHE[..., device]`) so the GPU q-loss never moves the shared CPU
+  inverter used by `psi_daily`/scales — which would otherwise break CPU-side
+  eval after a GPU training step.
+- **Model/lightning**: `QGNeuralLightning(pl.LightningModule)` computes
+  DIRECTUNET `MSE(est, ψ_norm)` or τ=0 CFM `MSE(x0+v, (ψ_norm−x0))` plus the
+  per-window q-loss; `create_trainer` for the Lightning loop.
+- **Eval**: `estimate_windows` produces per-window physical ψ; `psi_to_q`
+  maps to physical PV; both ψ and PV-q RMSE/EV per layer + pooled are written
+  to `estimates_s0.npz` + `results.json` (`s0.psi`, `s0.q`).
+- **Configs**: `config/experiment/Q1_direct_unet_s0.yaml`,
+  `Q2_vanilla_cfm_s0.yaml` (documentation specs → CLI flags; not Hydra).
+- **Report**: `reports/qg/generate_qg_neural_report.py` → `qg_neural_report.md`
+  renders Q1/Q2 vs the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ.
+- **Tests**: `tests/test_qg_neural.py` (12 fast tests: psi-day matches the
+  window's own upper-psi target, per-window scale O(1), dataset/collate shapes,
+  denorm round-trip, `norm_q_from_psi` round-trip, per-device inverter-cache
+  isolation, QGNeuralLightning fwd/bwd for both models, estimate_windows
+  shapes) — added to the master CI gate.
+- **HPC note**: per-window truth generation (`QGS01Dataset` spinup) is
+  expensive (~85 s/window at nx=8 single-thread; nx=64 far more). The
+  `num_train/val/test` defaults in the configs (1000/100/200 at nx=64) are a
+  production target; a feasible training run needs GPU-side / parallel window
+  generation or a smaller window count — sizing is an open follow-up before
+  launching Q1/Q2 for real.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

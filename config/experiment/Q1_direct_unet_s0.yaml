@@ -1,0 +1,41 @@
+# Q1: DirectUNet neural baseline on QG S0 (streamfunction target).
+#
+# Consumed by the self-contained entry point `train_qg_neural.py` (NOT Hydra;
+# this file documents the experiment spec and maps to CLI flags).
+#
+# Supervision: daily mean of the full 2-layer streamfunction psi (D=2*ny*nx),
+# normalized per-window. Auxiliary PV-q loss (norm_q_from_psi) with weight 0.1.
+#
+# Production target: nx=64 (state_dim=8192). NOTE: per-window truth generation
+# (QGS01Dataset spinup) is expensive; see PLAN.md for the HPC sizing note.
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet \
+#     --exp-dir experiments/Q1_direct_unet_s0 \
+#     --nx 64 --q-loss-weight 0.1 --epochs 200
+#     --num-train 1000 --num-val 100 --num-test 200
+#     --batch-size 2 --cache-dir reports/qg_cache
+
+experiment_id: Q1_direct_unet_s0
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 0.1
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  cache_dir: reports/qg_cache

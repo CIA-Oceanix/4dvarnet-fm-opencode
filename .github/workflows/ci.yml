@@ -65,4 +65,5 @@ jobs:
             tests/test_qg1l_dynamics.py \
             tests/test_qg_psi_state.py \
             tests/test_qg_baselines_4dvar.py \
+            tests/test_qg_neural.py \
             -m "not slow" -q
