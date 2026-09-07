@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-07: QG outputs cleanup — remove S0 exploratory result JSONs superseded by the 100-window test benchmark
+
+**Summary:** Removes 9 small-scale S0 exploratory result-JSON directories now strictly
+superseded by `reports/qg/outputs/qg_test100_reference/` (ETKF/EnKF/Strong-4DVar/
+Weak-4DVar on the full 100-window reference-case test set, at the corrected
+random-columns/c4/noise-0.01/lag-1.0 config): `qg_repro_validation`,
+`qg_s0_lag_sweep_psi`, `qg_s0_lag_sweep_q`, `qg_s0_psi_state_lag1p0`,
+`qg_s0_psi_state_nz0p01_lag1p0`, `qg_matrix_c4_psi`, `qg_matrix_c4_q`,
+`qg_matrix_c8_psi`, `qg_matrix_c8_q`. These were all small-window (~5-window) S0
+variants, several from before PR #156's obs-geometry change (already flagged
+non-reproducible-as-is in the report's repro note).
+
+**Deliberately NOT removed:** the S1 variant dirs (`qg_s1_da32_*`, `qg_s1_nores_*`,
+`qg_s1_noparam_*`, `qg_s1_nowind_*`, `qg_s1_qg1l_*`, `qg_s1_weak4dvar_nores`,
+`qg_s1_psi_state_*`) -- the 100-window benchmark has only run S0 so far (job 52334);
+these stay until S1/S1-QG1L are rerun at the new scale and can actually replace them.
+`qg_s0s1_report.md` itself is left as-is (a frozen document); `generate_qg_s0s1_report.py`
+line ~357 (`find_json_method(root, "qg_matrix_c4_psi", ...)`) will need repointing at
+`qg_test100_reference/` before that report can be regenerated -- not done yet, pending
+Strong-4DVar/Weak-4DVar results.
+
 ## 2026-09-07: QG reports cleanup + run_qg_baselines.py cache-key fix, ahead of the 100-sample benchmark
 
 **Summary:** Two small follow-ups discovered while assessing DA baseline performance on
