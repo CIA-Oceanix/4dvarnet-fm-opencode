@@ -297,6 +297,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             trainable_prior_weight=fdv.get("trainable_prior_weight", True),
             aux_var_cost_weight=fdv.get("aux_var_cost_weight", 0.0),
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
+            unet_backbone=fdv.get("unet_backbone", "unet1d"),
+            monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM

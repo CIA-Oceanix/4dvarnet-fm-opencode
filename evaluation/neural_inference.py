@@ -598,6 +598,8 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             trainable_prior_weight=_fdv("trainable_prior_weight", True),
             aux_var_cost_weight=_fdv("aux_var_cost_weight", 0.0),
             prior_tau_conditioning=_fdv("prior_tau_conditioning", False),
+            unet_backbone=_fdv("unet_backbone", "unet1d"),
+            monai_norm_num_groups=_fdv("monai_norm_num_groups", 32),
         )
     elif model_class == FourDVarNetPredictStateCFM:
         fc = cfg.model.get("fdv_cfm", {})
