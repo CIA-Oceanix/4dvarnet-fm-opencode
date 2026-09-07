@@ -303,13 +303,14 @@ class QGS01Dataset:
 
     def __init__(self, cfg: QGConfig, scenario: str,
                  base_windows: list[dict] | None = None,
-                 num_windows: int | None = None):
+                 num_windows: int | None = None,
+                 device: torch.device | None = None):
         self.cfg = cfg
         self.scenario = scenario
         self.device = torch.device("cpu")
         n = num_windows or cfg.num_windows
         if base_windows is None:
-            base_windows = self._generate_truth(cfg, n)
+            base_windows = self._generate_truth(cfg, n, device=device)
         self.windows = [
             self._scenario_window(cfg, scenario, w, i)
             for i, w in enumerate(base_windows)
@@ -322,22 +323,42 @@ class QGS01Dataset:
         return self.windows[idx]
 
     @staticmethod
-    def _generate_truth_only(cfg: QGConfig, n: int) -> list[dict]:
-        """Per-window truth rollout only -- no obs, no init-state draw.
+    def _generate_truth_only(cfg: QGConfig, n: int,
+                             device: torch.device | None = None,
+                             indices: list[int] | None = None) -> list[dict]:
+        """The expensive per-window product (2-year spin-up + rollout):
+        true_state, upper-layer targets, wind fields, true params.
 
-        This is the expensive step (~4.5 min/window CPU spinup). Splitting it
-        out from obs/init-state generation lets a fixed truth-only cache be
-        reused across obs-geometry/noise settings, and lets the neural
-        dataloader regenerate fresh obs/init-state per draw (`_generate_obs_ic`)
-        for training diversity instead of reading one obs realization baked
-        into the cache. `_generate_truth` (below) composes the two and is
-        byte-identical to the original combined implementation.
+        Deliberately excludes obs and initial-condition sampling -- those
+        depend only on cfg's obs_geometry/cols_per_day/obs_noise_std_frac/
+        init_lag_days and can be recomputed cheaply from this output via
+        `_generate_obs_ic`, without re-running the rollout, whenever just the
+        obs/IC protocol (not the underlying physics) needs to change. Also
+        lets `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)` resample
+        obs/init-state fresh from a truth-only cache on every draw instead of
+        reading one fixed realization baked into the cache.
         """
         from models.qg_dynamics import QGDynamics
-        rng = np.random.RandomState(cfg.seed)
+        # `device` only speeds up the expensive rollout (generate_wind_state +
+        # generate_full_trajectory, the ~4.5min/window CPU cost this was
+        # entirely paying regardless of GPU availability before this fix);
+        # dyn/traj_full/wind_full are moved back to CPU immediately after,
+        # since every downstream helper (_upper_field, wind_curl_field, ...)
+        # constructs its own CPU-only tensors (no device kwarg) and would
+        # otherwise hit a device mismatch.
+        gen_device = device or torch.device("cpu")
         levels = list(_S1_WIND_LEVELS)
         out = []
-        for i in range(n):
+        idx_list = list(range(n)) if indices is None else list(indices)
+        for i in idx_list:
+            # Per-window RandomState (keyed by cfg.seed + i, matching the
+            # existing index-keyed wind/traj seed formulas below) rather than
+            # one RNG shared sequentially across all n windows: this makes
+            # every window's param/geometry draw independent of every other
+            # window, so any subset of indices can be generated on any
+            # worker in any order (array-job parallelization) and still
+            # reproduce bit-for-bit what a full serial run would produce.
+            rng = np.random.RandomState(cfg.seed + i)
             u = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
             r = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
             k = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
@@ -355,7 +376,7 @@ class QGS01Dataset:
                 wind_cx=cx, wind_cy=cy,
                 wind_drift_tau_days=cfg.wind_drift_tau_days,
                 wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=win_seed,
-            )
+            ).to(gen_device)
             steps_per_day = round(86400.0 / cfg.dt)
             lead = max(1, round(cfg.init_lead_days * steps_per_day)) + 1
             wind_full = dyn.generate_wind_state(lead + cfg.num_steps, seed=win_seed,
@@ -364,6 +385,11 @@ class QGS01Dataset:
                 num_steps=lead + cfg.num_steps, seed=cfg.seed + 3000 + i * 101,
                 spinup_steps=cfg.spinup_steps, wind_state=wind_full,
             )
+            # Downstream post-processing (field extraction, wind-curl)
+            # assumes CPU-only tensors throughout -- move back.
+            dyn = dyn.to("cpu")
+            traj_full = traj_full.cpu()
+            wind_full = wind_full.cpu()
             init_lead_truth = traj_full[0:lead]
             traj = traj_full[lead:lead + cfg.num_steps]
             wind_true = wind_full[lead:lead + cfg.num_steps]
@@ -386,80 +412,79 @@ class QGS01Dataset:
         return out
 
     @staticmethod
-    def _generate_obs_ic(cfg: QGConfig, window: dict, i: int) -> dict:
-        """Cheap obs + init-state draw for an already-generated truth window.
-
-        Rebuilds a `QGDynamics` matching the window's own resolved params
-        (`true_params`: rd/U1/U2/rek) purely to invert the already-generated
-        state for the obs operator -- no time integration, so this is far
-        cheaper than `_generate_truth_only`. `i` seeds obs
-        (`cfg.seed + 4000 + i*101`) and init-state (`cfg.init_seed + i*17`)
-        exactly as the original combined `_generate_truth` did when `i` is the
-        window index (giving byte-identical fixed-obs windows for val/test);
-        callers wanting a fresh draw each call (on-the-fly training diversity,
-        see `data.qg_neural.QGNeuralDataset`) pass a randomized `i` instead.
+    def _generate_obs_ic(cfg: QGConfig, truth_windows: list[dict],
+                         indices: list[int]) -> list[dict]:
+        """Obs + initial-condition sampling for already-generated truth
+        windows (see `_generate_truth_only`) -- cheap (no dynamics rollout):
+        reconstructs a `QGDynamics` from each window's cached `true_params`
+        (needed only for field-extraction/spectral-inversion, not wind
+        forcing) and draws obs/init-state under `cfg`'s current
+        obs_geometry/cols_per_day/obs_noise_std_frac/init_lag_days. Lets an
+        obs/IC-protocol fix be applied without re-running the ~2-year-spinup
+        truth generation, and lets a caller redraw a fresh obs/init-state
+        realization for the same truth window by passing a randomized `i`
+        (see `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`, which
+        calls this one window at a time with a random `i` each draw).
         """
         from models.qg_dynamics import QGDynamics
-        p = window["true_params"]
-        dyn = QGDynamics(
-            nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=p["beta"], rd=p["rd"],
-            delta=cfg.delta, U1=p["U1"], U2=p["U2"], rek=p["rek"],
-            filterfac=cfg.filterfac, wind_amp=cfg.wind_amp,
-            wind_tau_days=cfg.wind_tau_days, wind_sigma=cfg.wind_sigma,
-            wind_cx=cfg.wind_cx, wind_cy=cfg.wind_cy,
-            wind_drift_tau_days=cfg.wind_drift_tau_days,
-            wind_drift_sigma=cfg.wind_drift_sigma,
-            wind_seed=int(window.get("wind_seed", cfg.wind_seed)),
-        )
-        traj = window["true_state"]
-        if cfg.obs_geometry == "random_columns":
-            obs, obs_mask, obs_cols = _generate_random_column_observations(
-                dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
-            )
-            track_idx = None
-        else:
-            obs, obs_mask, track_idx = _generate_alongtrack_observations(
-                dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
-            )
-            obs_cols = None
         steps_per_day = round(86400.0 / cfg.dt)
-        lead_truth = window["init_lead_truth"]
-        lead = lead_truth.shape[0]
-        rng_init = np.random.RandomState(cfg.init_seed + i * 17)
-        lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
-        lag_steps = lag_days * steps_per_day
-        kk = math.floor(lag_steps)
-        alpha = lag_steps - kk
-
-        def _lead_or_traj(idx: int) -> torch.Tensor:
-            # `lead_truth` = traj_full[0:lead] only covers indices < lead;
-            # the original combined generator indexed straight into the
-            # longer traj_full, so index == lead (kk == 0) spills over into
-            # this window's own true_state[0] (== traj_full[lead]).
-            return lead_truth[idx] if idx < lead else traj[idx - lead]
-
-        a = _lead_or_traj(lead - kk - 1)
-        b = _lead_or_traj(lead - kk)
-        init_state = (1.0 - alpha) * a + alpha * b
-        out = {
-            "obs": obs,
-            "obs_mask": obs_mask,
-            "obs_field": cfg.obs_field,
-            "init_state": init_state,
-            "init_dt_days": lag_days,
-        }
-        if obs_cols is None:
-            out["track_x_index"] = track_idx
-        else:
-            out["obs_columns"] = obs_cols
+        out = []
+        for i, tw in zip(indices, truth_windows):
+            tp = tw["true_params"]
+            dyn = QGDynamics(
+                nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
+                delta=cfg.delta, U1=tp["U1"], U2=tp["U2"], rek=tp["rek"],
+                filterfac=cfg.filterfac, wind_amp=1e-11,
+                wind_tau_days=cfg.wind_tau_days, wind_sigma=cfg.wind_sigma,
+                wind_cx=0.5, wind_cy=0.0,
+                wind_drift_tau_days=cfg.wind_drift_tau_days,
+                wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=0,
+            )
+            traj = tw["true_state"]
+            init_lead_truth = tw["init_lead_truth"]
+            lead = init_lead_truth.shape[0]
+            # `init_lead_truth` spans indices [0, lead) of the original
+            # traj_full; index `lead` itself (needed for kk=0) is traj[0],
+            # the window's own first state -- append it to reproduce the
+            # original traj_full[lead-kk-1]/traj_full[lead-kk] indexing
+            # exactly.
+            full_lead = torch.cat([init_lead_truth, traj[:1]], dim=0)
+            rng_init = np.random.RandomState(cfg.init_seed + i * 17)
+            lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
+            lag_steps = lag_days * steps_per_day
+            kk = math.floor(lag_steps)
+            alpha = lag_steps - kk
+            a = full_lead[lead - kk - 1]
+            b = full_lead[lead - kk]
+            init_state = (1.0 - alpha) * a + alpha * b
+            if cfg.obs_geometry == "random_columns":
+                obs, obs_mask, obs_cols = _generate_random_column_observations(
+                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+                )
+            else:
+                obs, obs_mask, track_idx = _generate_alongtrack_observations(
+                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+                )
+                obs_cols = None
+            entry = {
+                "obs": obs, "obs_mask": obs_mask, "obs_field": cfg.obs_field,
+                "init_state": init_state, "init_dt_days": lag_days,
+            }
+            if obs_cols is None:
+                entry["track_x_index"] = track_idx
+            else:
+                entry["obs_columns"] = obs_cols
+            out.append(entry)
         return out
 
     @staticmethod
-    def _generate_truth(cfg: QGConfig, n: int) -> list[dict]:
-        out = QGS01Dataset._generate_truth_only(cfg, n)
-        for i, w in enumerate(out):
-            w.update(QGS01Dataset._generate_obs_ic(cfg, w, i))
-        return out
+    def _generate_truth(cfg: QGConfig, n: int,
+                        device: torch.device | None = None,
+                        indices: list[int] | None = None) -> list[dict]:
+        idx_list = list(range(n)) if indices is None else list(indices)
+        truth = QGS01Dataset._generate_truth_only(cfg, n, device=device, indices=idx_list)
+        obs_ic = QGS01Dataset._generate_obs_ic(cfg, truth, idx_list)
+        return [{**t, **o} for t, o in zip(truth, obs_ic)]
 
     @staticmethod
     def _scenario_window(cfg: QGConfig, scenario: str, w: dict, i: int) -> dict:
@@ -566,13 +591,17 @@ def ensure_truth_only_cache(cfg: QGConfig, n: int, cache_dir: str) -> list[dict]
 
 
 def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
-                           cache_dir: str | None = None) -> dict:
+                           cache_dir: str | None = None,
+                           device: torch.device | None = None) -> dict:
     """Build the S0/S1 datasets, optionally caching/loading the shared truth.
 
     `cache_dir` (when set) stores the per-window truth (`_generate_truth` output,
     the dominant spinup cost) keyed by config, so repeated runs with the same
     config skip the ~4.5-min CPU spinup. Default None keeps prior on-the-fly
     behavior unchanged.
+
+    `device` (when set) runs the expensive per-window rollout on that device
+    (e.g. a GPU) instead of CPU; the returned truth tensors are always CPU.
     """
     n = num_test_windows or cfg.num_windows
     base = None
@@ -585,10 +614,10 @@ def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
             except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
                 base = None
         if base is None:
-            base = QGS01Dataset._generate_truth(cfg, n)
+            base = QGS01Dataset._generate_truth(cfg, n, device=device)
             torch.save(base, path)
     else:
-        base = QGS01Dataset._generate_truth(cfg, n)
+        base = QGS01Dataset._generate_truth(cfg, n, device=device)
     return {
         "test_s0": QGS01Dataset(cfg, "test_s0", base_windows=base),
         "test_s1": QGS01Dataset(cfg, "test_s1", base_windows=base),

@@ -231,17 +231,18 @@ def test_compute_norm_returns_positive_scales():
 
 
 def test_truth_only_plus_obs_ic_matches_generate_truth():
-    """Splitting `_generate_truth` into `_generate_truth_only` +
-    `_generate_obs_ic` (keyed by the same per-window index `i`) must reproduce
-    the original combined generator byte-for-byte -- the split only changes
-    what gets cached, not the seeded data."""
+    """Composing `_generate_truth_only` + `_generate_obs_ic` (keyed by the
+    same per-window index `i`) must reproduce what `_generate_truth` itself
+    produces for that index -- the split only changes what gets cached, not
+    the seeded data (this is exactly what `_generate_truth` does internally)."""
     cfg = _cfg()
     combined = QGS01Dataset._generate_truth(cfg, 2)
     truth_only = QGS01Dataset._generate_truth_only(cfg, 2)
-    for i, (full, part) in enumerate(zip(combined, truth_only)):
+    indices = list(range(2))
+    ics = QGS01Dataset._generate_obs_ic(cfg, truth_only, indices)
+    for full, part, ic in zip(combined, truth_only, ics):
         assert torch.equal(full["true_state"], part["true_state"])
         assert full["true_params"] == part["true_params"]
-        ic = QGS01Dataset._generate_obs_ic(cfg, part, i)
         assert torch.equal(full["obs_mask"], ic["obs_mask"])
         assert torch.allclose(
             torch.nan_to_num(full["obs"]), torch.nan_to_num(ic["obs"]),

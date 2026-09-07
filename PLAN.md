@@ -177,32 +177,102 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   shapes) — added to the master CI gate.
 - **HPC note**: per-window truth generation (`QGS01Dataset` spinup) is
   expensive (~85 s/window at nx=8 single-thread; nx=64 far more). The
-  `num_train/val/test` defaults in the configs (1000/100/100 at nx=64) are a
-  production target; a feasible training run needs GPU-side / parallel window
-  generation or a smaller window count — sizing is an open follow-up before
-  launching Q1/Q2 for real. (The sibling `feature/qg-100sample-benchmark`
-  worktree has already built chunked SLURM-array + GPU-side generation for
-  this exact sizing problem — see its `reports/qg/generate_qg_window_chunk.py`
-  / `assemble_qg_windows.py` — not ported to this branch; porting that
-  infra, if wanted, is separate follow-up from the dataloader change below.)
-- **Truth-only cache + on-the-fly obs (2026-09-07):** `QGS01Dataset._generate_truth`
-  (rollout + obs, cached as one unit) is now `_generate_truth_only` (rollout
-  only) + `_generate_obs_ic` (cheap obs/init-state redraw from an already-
-  generated truth window, no rollout); `_generate_truth` composes them and is
-  unchanged (byte-identical output). `data.qg.ensure_truth_only_cache` caches
-  truth-only windows keyed only by the rollout-relevant config fields (obs
-  settings don't invalidate it). `QGNeuralDataset(on_the_fly_obs=True)`
-  redraws obs/init-state fresh (random seed) on every `__getitem__`, so
-  train/val see a different obs realization each epoch from the same cached
-  truth instead of one fixed draw — increasing training diversity without
-  re-paying the rollout. `train_qg_neural.py` uses this for train/val by
-  default (`--fixed-split-obs` reverts to the old fixed-cache behavior); the
-  **test split is unchanged** (`ensure_truth_cache`, fixed reproducible obs).
-  `--num-test` default 200→100 (train/val defaults unchanged), matching the
-  100/100/1000 split naming on the `qg-100sample-benchmark` worktree. Note:
-  `forcing` in `QGBatch` remains a zero placeholder (Q1/Q2 are `cond_extra_dim=0`,
-  obs-only) — on-the-fly *forcing* conditioning was not wired, only obs; see
-  CHANGELOG 2026-09-07 for the full rationale/verification.
+  `num_train/val/test` defaults in the configs are a production target; see
+  the "1000/100/100 train/val/test dataset generation" section below for the
+  now-merged array-parallel/GPU-side generation infra that makes this
+  tractable, and "Truth-only cache + on-the-fly obs" further below for how
+  `train_qg_neural.py` consumes it.
+
+### 1000/100/100 train/val/test dataset generation (2026-09-07)
+
+Scaling the S0/S1 truth-window generation from the ~5-200 window exploratory scale to a
+**1000 train / 100 val / 100 test** window dataset exposed a critical perf bug and required
+array-job parallelization to make the scale tractable.
+
+- **Device-placement fix**: `QGS01Dataset._generate_truth` never moved its per-window
+  `QGDynamics` to the requested device, so the ~2-year spin-up (the dominant cost, ~4.5
+  min/window) ran on CPU regardless of GPU allocation. Fixed: `dyn`/`wind_full`/`traj_full`
+  now roll out on the given `device`, then move back to CPU before the (CPU-only)
+  obs/field-extraction post-processing. **7.4x speedup** measured on a dedicated A40:
+  36.65s ± 0.16s/window (n=20) vs. the documented ~270s/window CPU baseline.
+  `QGS01Dataset.__init__`/`make_qg_s0_s1_datasets` now accept an optional `device` param.
+- **Per-window RNG independence**: `_generate_truth`'s param/geometry draws (`u/r/k/x0/y0/
+  cx/cy`) used one `RandomState` shared sequentially across all `n` windows, so window `i`
+  could only be generated after replaying windows `0..i-1`. Switched to a per-window
+  `RandomState(cfg.seed + i)` (matching the already-index-keyed wind/traj/obs seed
+  formulas) and added an `indices: list[int] | None` param so any subset of window indices
+  can be generated independently, by any worker, in any order — required for array-job
+  parallelization. Verified bit-identical to a full serial run over the same indices.
+- **Array-parallel generation**: `reports/qg/generate_qg_window_chunk.py` (one chunk of
+  window indices -> one `.pt` file per window) + `batch/run_qg_window_chunk_array.sbatch`
+  (SLURM array task, `--gres=gpu:a40:1` — this cluster rejects untyped `gpu:1` GRES
+  requests) + `reports/qg/assemble_qg_windows.py` (glob + sort by index -> single combined
+  file at the exact `_truth_cache_path` the config/n/obs-geometry key expects, so
+  `make_qg_s0_s1_datasets(..., cache_dir=...)` hits the cache afterward with no code
+  changes downstream). Launched 3 array jobs (40+5+5 = 50 tasks, 25/20/20-window chunks)
+  across the cluster's 3 idle A40 GPUs (this partition requires a specific GPU model, no
+  generic request): **1200 windows generated in ~3h27min wall-clock** (23:43->03:10),
+  150/150 tasks exit 0, no errors. Train-split assembly (1000 windows, ~32GB in memory)
+  OOM'd under the interactive session's 16GB job-allocation cgroup cap; reran as its own
+  sbatch job with `--mem=96G` (succeeded in 3m48s). Final cache: 32GB (train) + 3.2GB
+  (val) + 3.2GB (test) = 38GB total, `reports/qg/outputs/qg_windows_1000_100_100/cache/`.
+  End-to-end verified: `make_qg_s0_s1_datasets` cache-hit load (val, 100 windows) in 9.1s,
+  correct S0/S1/S1-QG1L scenario shapes/metadata.
+- Full QG suite (115 tests incl. 2 new: indices-subset reproducibility, device roundtrip)
+  green.
+
+### Test-split obs/IC correction + truth/obs/IC separation (2026-09-07)
+
+The above generation used `QGConfig` defaults for `obs_geometry`/`cols_per_day`/
+`obs_noise_std_frac`/`init_lag_days`, not the S0 reference-case settings
+(`random_columns`/4/0.01/1.0) -- caught before running DA baselines on the test split.
+Since truth generation doesn't depend on those fields, split `_generate_truth` into
+`_generate_truth_only` (expensive rollout) + `_generate_obs_ic` (cheap: rebuilds a
+`QGDynamics` from cached `true_params`, no rollout, redraws obs/init-state) --
+`_generate_truth` now composes both, unchanged for existing callers.
+`reports/qg/fix_qg_test_obs_ic.py` applies this to the test split in seconds, writing
+`truth_only/test.pt`, `obs_ic/test_reference.pt`, and a corrected combined cache at the
+hash `make_qg_s0_s1_datasets` expects. Train/val untouched (obs/IC for those are meant to
+be generated on the fly downstream, not read from this cache). Added `--seed`/
+`--cache-dir` to `run_qg_baselines.py` (seed was hardcoded to 7; no CLI path existed to
+reach the pre-generated cache) so `run()`'s existing `ds=` bypass is reachable from the
+command line.
+
+**Bug caught by the test suite** during the `_generate_obs_ic` split: `init_lead_truth`
+(cached, indices `[0, lead)`) doesn't include index `lead` itself (`traj[0]`), needed for
+a zero-day lag draw -- fixed by concatenating `traj[:1]` before indexing. 115 tests green
+after the fix.
+
+**Separately found:** `run_qg_baselines.py` for a 100-window scenario OOM'd in this
+interactive session's 16GB cgroup -- `run()` accumulates full per-window `(360, 8192)`
+arrays across all windows before computing summary metrics (fine at ~5-window
+exploratory scale, needs real memory at 100). Moved to `batch/
+run_qg_test100_reference.sbatch` (`--mem=64G`, `--time=12:00:00`, ETKF/EnKF/
+Strong-4DVar/Weak-4DVar at the exact S0 reference settings); results pending.
+
+### Neural dataloader: on-the-fly obs for train/val (2026-09-07, `feature/qg-neural-baseline`)
+
+Consumes the `_generate_truth_only`/`_generate_obs_ic` split above (unchanged
+here) from the neural training side: `data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`
+redraws obs/init-state fresh (random seed) from a truth-only window on every
+`__getitem__` call, so train/val see a different obs realization each epoch
+from the same cached truth instead of one fixed draw baked in — increasing
+training obs diversity without re-paying the rollout. `data.qg.ensure_truth_only_cache`
+(a lightweight single-process hash-keyed cache, distinct from the array-parallel
+`generate_qg_window_chunk.py` pipeline above — useful for smaller-scale/smoke
+runs; the production 1000-window cache from that pipeline
+(`reports/qg/outputs/qg_windows_1000_100_100/cache/`) can also be pointed to
+directly via `--cache-dir` once `train_qg_neural.py` is scaled up) wraps
+`QGS01Dataset._generate_truth_only`, keyed only by the rollout-relevant
+`QGConfig` fields so obs-geometry/noise tuning reuses the same cache.
+`train_qg_neural.py` builds train/val from this + `on_the_fly_obs=True` by
+default (`--fixed-split-obs` reverts to the old fixed-cache behavior); the
+**test split is unchanged** (`ensure_truth_cache`, fixed reproducible obs).
+`--num-test` default 200→100 (train/val defaults unchanged at 1000/100),
+matching the 1000/100/100 split above. Note: `forcing` in `QGBatch` remains a
+zero placeholder (Q1/Q2 are `cond_extra_dim=0`, obs-only) — on-the-fly
+*forcing* conditioning was not wired, only obs; see CHANGELOG 2026-09-07 for
+the full rationale/verification.
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 

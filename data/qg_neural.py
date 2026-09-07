@@ -277,10 +277,12 @@ class QGNeuralDataset(Dataset):
             return w
         # `_generate_obs_ic` turns `i` into np/torch seeds via `+ i*101`/`+
         # i*17` on top of `cfg.seed`/`cfg.init_seed`; keep the draw small so
-        # the resulting seed stays a valid (< 2**32) RNG seed.
+        # the resulting seed stays a valid (< 2**32) RNG seed. Batch-of-1 call
+        # (master's `_generate_obs_ic` takes lists of windows/indices).
         draw = random.randrange(1, 1_000_000)
+        ic = QGS01Dataset._generate_obs_ic(self.cfg, [w], [draw])[0]
         w = dict(w)
-        w.update(QGS01Dataset._generate_obs_ic(self.cfg, w, draw))
+        w.update(ic)
         return w
 
     def __getitem__(self, idx: int) -> tuple:
