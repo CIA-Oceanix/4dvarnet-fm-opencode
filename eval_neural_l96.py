@@ -51,6 +51,11 @@ def main():
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
+    parser.add_argument("--normalize-stats", default=None,
+                        help="Path to a per-channel norm stats .pt (mean/std). When given, "
+                             "obs is z-score normalized before each model call and predictions "
+                             "are denormalized back to raw physical units before scoring. "
+                             "Omitting this flag is a true no-op (identical to not passing it).")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -75,9 +80,16 @@ def main():
             dataset_path = str(candidates[0])
             logger.info(f"Auto-detected dataset: {dataset_path}")
 
+    norm_stats = None
+    if args.normalize_stats:
+        from data.normalization import load_norm_stats
+        norm_stats = load_norm_stats(args.normalize_stats)
+        logger.info(f"Loaded normalize-stats from {args.normalize_stats}: "
+                    f"mean/std shape {tuple(norm_stats['mean'].shape)}")
+
     dataset, dataloaders, obs_var_indices = prepare_dataset(
         cfg, dataset_path, args.num_windows, args.obs_interval,
-        obs_j=args.obs_j,
+        obs_j=args.obs_j, norm_stats=norm_stats,
     )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
@@ -92,6 +104,22 @@ def main():
         model, dataloaders, device, obs_var_indices,
         n_members=args.n_members, n_outer=args.n_outer,
     )
+
+    if norm_stats is not None:
+        # obs (and, for training, states) were fed to the model normalized;
+        # predictions come back in normalized space and must be denormalized
+        # to raw physical units before scoring (truth is already raw, since
+        # collate_eval never touches true_state).
+        from data.normalization import denormalize
+        for est in estimates.values():
+            est["trajectories"] = denormalize(est["trajectories"], norm_stats)
+            if "members" in est:
+                # members: (W, T, D, M) -- channel dim D is second-to-last, not
+                # last, so swap it into the last axis for the per-channel
+                # broadcast then swap back.
+                m = np.swapaxes(est["members"], -1, -2)
+                m = denormalize(m, norm_stats)
+                est["members"] = np.swapaxes(m, -1, -2)
 
     # Save per-case .npz estimates + truth, and compute generic metrics (step 2)
     output_path = Path(args.output)
