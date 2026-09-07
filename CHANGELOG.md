@@ -1,5 +1,65 @@
 # Changelog
 
+## 2026-09-07: QG neural dataloader — truth-only cache + on-the-fly obs (train/val diversity)
+
+**Summary:** Split the QG S0 truth generation (`QGS01Dataset._generate_truth`) into
+`_generate_truth_only` (the expensive per-window rollout) and `_generate_obs_ic` (a cheap
+obs + init-state redraw against an already-generated truth window, rebuilding a `QGDynamics`
+from the window's own resolved `true_params` — no time integration). `_generate_truth` now
+composes the two and is byte-for-byte identical to the prior combined implementation. This
+mirrors the truth/obs split found on the sibling `feature/qg-100sample-benchmark` worktree,
+which uses it for chunked/GPU-parallel truth generation — that generation infra itself is
+**not** ported here; this change is scoped to the dataloader as requested.
+
+**On-the-fly obs for train/val:** `QGNeuralDataset` gained `on_the_fly_obs: bool = False`.
+When set, `__getitem__` redraws the (noisy) obs/init-state fresh from a truth-only window via
+`_generate_obs_ic` with a random seed on every call — so the same cached truth trajectory
+yields a different observation realization each epoch instead of one fixed draw baked into
+the cache, increasing training obs diversity without re-paying the ~4.5-min/window rollout.
+The psi/q targets (`psi_daily`/`q_daily`, from `true_state`) are unaffected — only the obs/
+init-state resample. `train_qg_neural.py` now builds train/val from `ensure_truth_only_cache`
++ `on_the_fly_obs=True` by default; a new `--fixed-split-obs` flag reverts to the legacy fixed
+cache for train/val when needed (e.g. an obs-diversity ablation). The `forcing` field in
+`QGBatch` is unaffected by this change — it was already a zero placeholder consistent with
+Q1/Q2's `cond_extra_dim=0` (obs-only conditioning) design, so "on-the-fly forcing" was not
+wired; wiring real forcing conditioning is a separate, larger change (would need
+`cond_extra_dim>0` end to end) and is left as follow-up if the models are extended to
+condition on it. **Test split is unchanged**: `ensure_truth_cache` still gives fixed,
+reproducible obs for stable evaluation.
+
+**Split sizes:** `train_qg_neural.py --num-test` default changed 200→100 (train/val defaults
+unchanged at 1000/100), matching the sibling worktree's 1000/100/100 split. `Q1_direct_unet_s0.yaml`/
+`Q2_vanilla_cfm_s0.yaml` updated to match (`num_test_windows: 100`, `on_the_fly_split_obs: true`).
+
+**Files modified:**
+- `data/qg.py` — `QGS01Dataset._generate_truth_only`/`_generate_obs_ic` (new); `_generate_truth`
+  now composes them (unchanged output, seed formulas preserved exactly); `_TRUTH_ONLY_CFG_FIELDS`,
+  `_truth_only_cache_path`, `ensure_truth_only_cache` (new cache keyed only by the rollout-relevant
+  `QGConfig` fields, so obs-geometry/noise tuning reuses the same truth-only cache).
+- `data/qg_neural.py` — `QGNeuralDataset(on_the_fly_obs=...)`; `compute_norm` guards the
+  informational `obs` stat for truth-only windows (no `"obs"` key); `ensure_truth_only_cache`
+  wrapper; module docstring documents the on-the-fly design.
+- `train_qg_neural.py` — `--num-test` default 100; new `--fixed-split-obs` flag; train/val
+  loaders built from `ensure_truth_only_cache` + `on_the_fly_obs=True` by default;
+  `results.json` config records `num_val_windows`/`on_the_fly_split_obs`.
+- `config/experiment/Q1_direct_unet_s0.yaml`, `Q2_vanilla_cfm_s0.yaml` — split/flag updates.
+- `tests/test_qg_neural.py` — 4 new tests: `_generate_truth_only`+`_generate_obs_ic` reproduces
+  `_generate_truth` exactly; `ensure_truth_only_cache` windows lack `"obs"` and `compute_norm`
+  tolerates that; `on_the_fly_obs=True` varies obs across repeated draws while targets stay
+  fixed; `on_the_fly_obs=False` (default) stays deterministic (regression).
+
+**Rationale:** The neural dataloader was reading one obs realization baked into the truth
+cache, so the same window always presented the identical obs pattern/noise every epoch —
+limiting training diversity relative to the true obs-generation process. Separating the
+expensive truth rollout from the cheap obs draw lets training resample obs/noise per epoch
+(more diverse supervision from the same cached truth) while keeping the test split's
+evaluation fully reproducible, and lets the truth-only cache be reused across obs-geometry
+sweeps without re-paying the rollout.
+
+**Verification:** `pytest tests/test_qg_neural.py -m "not slow"` — 16 passed (12 existing +
+4 new). `ruff check` on touched `.py` files — clean (only the pre-existing repo-wide
+`EXE001` shebang note on `train_qg_neural.py`, unrelated to this change).
+
 ## 2026-09-06: QG neural baseline (Q1 DirectUNet / Q2 VanillaCFM-τ=0) — infrastructure + verify
 
 **Summary:** Landed the self-contained neural-estimator infrastructure for the QG S0 case

@@ -322,7 +322,17 @@ class QGS01Dataset:
         return self.windows[idx]
 
     @staticmethod
-    def _generate_truth(cfg: QGConfig, n: int) -> list[dict]:
+    def _generate_truth_only(cfg: QGConfig, n: int) -> list[dict]:
+        """Per-window truth rollout only -- no obs, no init-state draw.
+
+        This is the expensive step (~4.5 min/window CPU spinup). Splitting it
+        out from obs/init-state generation lets a fixed truth-only cache be
+        reused across obs-geometry/noise settings, and lets the neural
+        dataloader regenerate fresh obs/init-state per draw (`_generate_obs_ic`)
+        for training diversity instead of reading one obs realization baked
+        into the cache. `_generate_truth` (below) composes the two and is
+        byte-identical to the original combined implementation.
+        """
         from models.qg_dynamics import QGDynamics
         rng = np.random.RandomState(cfg.seed)
         levels = list(_S1_WIND_LEVELS)
@@ -357,33 +367,13 @@ class QGS01Dataset:
             init_lead_truth = traj_full[0:lead]
             traj = traj_full[lead:lead + cfg.num_steps]
             wind_true = wind_full[lead:lead + cfg.num_steps]
-            rng_init = np.random.RandomState(cfg.init_seed + i * 17)
-            lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
-            lag_steps = lag_days * steps_per_day
-            kk = math.floor(lag_steps)
-            alpha = lag_steps - kk
-            a = traj_full[lead - kk - 1]
-            b = traj_full[lead - kk]
-            init_state = (1.0 - alpha) * a + alpha * b
-            if cfg.obs_geometry == "random_columns":
-                obs, obs_mask, obs_cols = _generate_random_column_observations(
-                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
-                )
-            else:
-                obs, obs_mask, track_idx = _generate_alongtrack_observations(
-                    dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
-                )
-                obs_cols = None
             psi1 = _upper_field(dyn, traj, "psi").reshape(cfg.num_steps, cfg.ny * cfg.nx)
             q1 = _upper_field(dyn, traj, "q").reshape(cfg.num_steps, cfg.ny * cfg.nx)
             wind_curl = dyn.wind_curl_field(wind_true)
             true_params = {"U1": dyn.U1, "rd": dyn.rd, "rek": dyn.rek,
                            "beta": dyn.beta, "U2": dyn.U2}
-            entry = {
+            out.append({
                 "true_state": traj,
-                "obs": obs,
-                "obs_mask": obs_mask,
-                "obs_field": cfg.obs_field,
                 "target_state_psi": psi1,
                 "target_state_q": q1,
                 "wind_curl": wind_curl,
@@ -391,15 +381,84 @@ class QGS01Dataset:
                 "true_params": true_params,
                 "wind_seed": win_seed,
                 "wind_amp": amp,
-                "init_state": init_state,
-                "init_dt_days": lag_days,
                 "init_lead_truth": init_lead_truth,
-            }
-            if obs_cols is None:
-                entry["track_x_index"] = track_idx
-            else:
-                entry["obs_columns"] = obs_cols
-            out.append(entry)
+            })
+        return out
+
+    @staticmethod
+    def _generate_obs_ic(cfg: QGConfig, window: dict, i: int) -> dict:
+        """Cheap obs + init-state draw for an already-generated truth window.
+
+        Rebuilds a `QGDynamics` matching the window's own resolved params
+        (`true_params`: rd/U1/U2/rek) purely to invert the already-generated
+        state for the obs operator -- no time integration, so this is far
+        cheaper than `_generate_truth_only`. `i` seeds obs
+        (`cfg.seed + 4000 + i*101`) and init-state (`cfg.init_seed + i*17`)
+        exactly as the original combined `_generate_truth` did when `i` is the
+        window index (giving byte-identical fixed-obs windows for val/test);
+        callers wanting a fresh draw each call (on-the-fly training diversity,
+        see `data.qg_neural.QGNeuralDataset`) pass a randomized `i` instead.
+        """
+        from models.qg_dynamics import QGDynamics
+        p = window["true_params"]
+        dyn = QGDynamics(
+            nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=p["beta"], rd=p["rd"],
+            delta=cfg.delta, U1=p["U1"], U2=p["U2"], rek=p["rek"],
+            filterfac=cfg.filterfac, wind_amp=cfg.wind_amp,
+            wind_tau_days=cfg.wind_tau_days, wind_sigma=cfg.wind_sigma,
+            wind_cx=cfg.wind_cx, wind_cy=cfg.wind_cy,
+            wind_drift_tau_days=cfg.wind_drift_tau_days,
+            wind_drift_sigma=cfg.wind_drift_sigma,
+            wind_seed=int(window.get("wind_seed", cfg.wind_seed)),
+        )
+        traj = window["true_state"]
+        if cfg.obs_geometry == "random_columns":
+            obs, obs_mask, obs_cols = _generate_random_column_observations(
+                dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+            )
+            track_idx = None
+        else:
+            obs, obs_mask, track_idx = _generate_alongtrack_observations(
+                dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
+            )
+            obs_cols = None
+        steps_per_day = round(86400.0 / cfg.dt)
+        lead_truth = window["init_lead_truth"]
+        lead = lead_truth.shape[0]
+        rng_init = np.random.RandomState(cfg.init_seed + i * 17)
+        lag_days = rng_init.uniform(0.0, cfg.init_lag_days)
+        lag_steps = lag_days * steps_per_day
+        kk = math.floor(lag_steps)
+        alpha = lag_steps - kk
+
+        def _lead_or_traj(idx: int) -> torch.Tensor:
+            # `lead_truth` = traj_full[0:lead] only covers indices < lead;
+            # the original combined generator indexed straight into the
+            # longer traj_full, so index == lead (kk == 0) spills over into
+            # this window's own true_state[0] (== traj_full[lead]).
+            return lead_truth[idx] if idx < lead else traj[idx - lead]
+
+        a = _lead_or_traj(lead - kk - 1)
+        b = _lead_or_traj(lead - kk)
+        init_state = (1.0 - alpha) * a + alpha * b
+        out = {
+            "obs": obs,
+            "obs_mask": obs_mask,
+            "obs_field": cfg.obs_field,
+            "init_state": init_state,
+            "init_dt_days": lag_days,
+        }
+        if obs_cols is None:
+            out["track_x_index"] = track_idx
+        else:
+            out["obs_columns"] = obs_cols
+        return out
+
+    @staticmethod
+    def _generate_truth(cfg: QGConfig, n: int) -> list[dict]:
+        out = QGS01Dataset._generate_truth_only(cfg, n)
+        for i, w in enumerate(out):
+            w.update(QGS01Dataset._generate_obs_ic(cfg, w, i))
         return out
 
     @staticmethod
@@ -461,6 +520,49 @@ def _truth_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
         json.dumps(payload, sort_keys=True, default=str).encode()
     ).hexdigest()[:20]
     return os.path.join(cache_dir, f"qg_truth_{key}.pt")
+
+
+_TRUTH_ONLY_CFG_FIELDS = (
+    "nx", "L", "dt", "beta", "rd", "delta", "U1", "U2", "rek", "filterfac",
+    "window_days", "spinup_years", "seed", "init_lead_days",
+    "wind_amp", "wind_tau_days", "wind_sigma", "wind_cx", "wind_cy",
+    "wind_drift_tau_days", "wind_drift_sigma", "wind_seed", "param_range",
+)
+
+
+def _truth_only_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
+    """Deterministic cache path for truth-only windows (rollout, no obs/IC).
+
+    Keyed only by the `QGConfig` fields that affect `_generate_truth_only`
+    (dynamics/rollout params), NOT the obs-geometry/noise fields -- so tuning
+    `obs_geometry`/`cols_per_day`/`obs_noise_std_frac`/etc. reuses the same
+    cached truth instead of re-paying the ~4.5-min/window spinup.
+    """
+    payload = {k: getattr(cfg, k) for k in _TRUTH_ONLY_CFG_FIELDS}
+    payload["n_windows"] = n
+    key = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()[:20]
+    return os.path.join(cache_dir, f"qg_truthonly_{key}.pt")
+
+
+def ensure_truth_only_cache(cfg: QGConfig, n: int, cache_dir: str) -> list[dict]:
+    """Load/generate+cache truth-only windows (rollout, no obs/init-state).
+
+    For splits whose obs/init-state should be regenerated on the fly at train
+    time (`data.qg_neural.QGNeuralDataset(on_the_fly_obs=True)`) instead of
+    read from one fixed realization baked into the cache.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    path = _truth_only_cache_path(cfg, n, cache_dir)
+    if os.path.exists(path):
+        try:
+            return torch.load(path, map_location="cpu")
+        except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
+            pass
+    windows = QGS01Dataset._generate_truth_only(cfg, n)
+    torch.save(windows, path)
+    return windows
 
 
 def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,

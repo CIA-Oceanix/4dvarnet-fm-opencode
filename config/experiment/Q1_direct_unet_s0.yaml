@@ -9,11 +9,16 @@
 # Production target: nx=64 (state_dim=8192). NOTE: per-window truth generation
 # (QGS01Dataset spinup) is expensive; see PLAN.md for the HPC sizing note.
 #
+# Split 1000 train / 100 val / 100 test. Train/val obs+init-state are
+# regenerated on the fly each epoch from a truth-only cache (diversity;
+# `--fixed-split-obs` reverts to one fixed baked-in draw); test keeps the
+# original fixed, reproducible obs. See PLAN.md.
+#
 #   python train_qg_neural.py \
 #     --model-type direct_unet \
 #     --exp-dir experiments/Q1_direct_unet_s0 \
 #     --nx 64 --q-loss-weight 0.1 --epochs 200
-#     --num-train 1000 --num-val 100 --num-test 200
+#     --num-train 1000 --num-val 100 --num-test 100
 #     --batch-size 2 --cache-dir reports/qg_cache
 
 experiment_id: Q1_direct_unet_s0
@@ -37,5 +42,6 @@ training:
 data:
   num_train_windows: 1000
   num_val_windows: 100
-  num_test_windows: 200
+  num_test_windows: 100
+  on_the_fly_split_obs: true
   cache_dir: reports/qg_cache

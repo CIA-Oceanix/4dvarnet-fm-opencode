@@ -41,6 +41,7 @@ from data.qg_neural import (
     compute_norm,
     denorm_state,
     ensure_truth_cache,
+    ensure_truth_only_cache,
     layer_split,
     norm_q_from_psi,
     psi_daily,
@@ -212,7 +213,11 @@ def main():
     ap.add_argument("--q-loss-weight", type=float, default=0.1)
     ap.add_argument("--num-train", type=int, default=1000)
     ap.add_argument("--num-val", type=int, default=100)
-    ap.add_argument("--num-test", type=int, default=200)
+    ap.add_argument("--num-test", type=int, default=100)
+    ap.add_argument("--fixed-split-obs", action="store_true",
+                    help="Use one fixed obs/init-state draw for train/val "
+                         "(legacy behavior) instead of regenerating them on "
+                         "the fly from a truth-only cache each epoch.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--nx", type=int, default=None)
@@ -240,12 +245,17 @@ def main():
     if args.eval_only is None:
         train_cfg = build_cfg(nx=args.nx, seed=7)
         val_cfg = build_cfg(nx=args.nx, seed=99)
-        train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
-        val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
+        on_the_fly = not args.fixed_split_obs
+        if args.fixed_split_obs:
+            train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
+            val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
+        else:
+            train_windows = ensure_truth_only_cache(train_cfg, args.num_train, args.cache_dir)
+            val_windows = ensure_truth_only_cache(val_cfg, args.num_val, args.cache_dir)
         norm = compute_norm(train_windows, test_cfg)
 
-        train_ds = QGNeuralDataset(train_windows, test_cfg, norm)
-        val_ds = QGNeuralDataset(val_windows, test_cfg, norm)
+        train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
+        val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                   collate_fn=qg_collate, num_workers=1)
         val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
@@ -309,7 +319,9 @@ def main():
     result = {
         "model_type": model_type,
         "config": {"nx": test_cfg.nx, "state_dim": state_dim, "epochs": epochs,
-                   "num_train_windows": args.num_train, "num_test_windows": args.num_test,
+                   "num_train_windows": args.num_train, "num_val_windows": args.num_val,
+                   "num_test_windows": args.num_test,
+                   "on_the_fly_split_obs": not args.fixed_split_obs,
                    "n_members": args.n_members, "q_loss_weight": args.q_loss_weight},
         "norm": {"psi1": norm.psi1, "psi2": norm.psi2,
                  "q1": norm.q1, "q2": norm.q2, "obs": norm.obs},

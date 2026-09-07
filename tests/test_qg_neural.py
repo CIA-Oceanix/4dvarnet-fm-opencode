@@ -1,7 +1,12 @@
 import numpy as np
 import torch
 
-from data.qg import QGConfig, make_qg_s0_s1_datasets
+from data.qg import (
+    QGConfig,
+    QGS01Dataset,
+    ensure_truth_only_cache,
+    make_qg_s0_s1_datasets,
+)
 from data.qg_neural import (
     QGNeuralDataset,
     QGNorm,
@@ -223,3 +228,58 @@ def test_compute_norm_returns_positive_scales():
     norm = compute_norm([w, w], cfg)
     assert norm.psi1 > 0 and norm.psi2 > 0
     assert norm.q1 > 0 and norm.q2 > 0
+
+
+def test_truth_only_plus_obs_ic_matches_generate_truth():
+    """Splitting `_generate_truth` into `_generate_truth_only` +
+    `_generate_obs_ic` (keyed by the same per-window index `i`) must reproduce
+    the original combined generator byte-for-byte -- the split only changes
+    what gets cached, not the seeded data."""
+    cfg = _cfg()
+    combined = QGS01Dataset._generate_truth(cfg, 2)
+    truth_only = QGS01Dataset._generate_truth_only(cfg, 2)
+    for i, (full, part) in enumerate(zip(combined, truth_only)):
+        assert torch.equal(full["true_state"], part["true_state"])
+        assert full["true_params"] == part["true_params"]
+        ic = QGS01Dataset._generate_obs_ic(cfg, part, i)
+        assert torch.equal(full["obs_mask"], ic["obs_mask"])
+        assert torch.allclose(
+            torch.nan_to_num(full["obs"]), torch.nan_to_num(ic["obs"]),
+        )
+        assert torch.equal(full["init_state"], ic["init_state"])
+
+
+def test_ensure_truth_only_cache_windows_lack_obs():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    assert "obs" not in windows[0]
+    assert "true_state" in windows[0]
+    # compute_norm must not choke on obs-less (truth-only) windows.
+    norm = compute_norm(windows, cfg)
+    assert norm.psi1 > 0 and norm.q1 > 0
+
+
+def test_on_the_fly_obs_varies_across_draws_target_fixed():
+    """`on_the_fly_obs=True` redraws a different obs realization on every
+    `__getitem__` call, while the psi/q targets (from `true_state`) stay
+    identical -- diversity comes only from the obs/init-state resample."""
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True)
+    psi_a, obs_a, _mask_a, _f_a, q_a, _rd_a, _sc_a = ds[0]
+    psi_b, obs_b, _mask_b, _f_b, q_b, _rd_b, _sc_b = ds[0]
+    assert torch.equal(psi_a, psi_b)
+    assert torch.equal(q_a, q_b)
+    assert not torch.equal(obs_a, obs_b)
+
+
+def test_fixed_obs_dataset_is_deterministic_across_draws():
+    """Default `on_the_fly_obs=False` keeps returning the same baked-in obs
+    on repeated `__getitem__` calls (test/eval reproducibility, unchanged)."""
+    cfg, w = _window()
+    ds = QGNeuralDataset([w], cfg)
+    item_a = ds[0]
+    item_b = ds[0]
+    for a, b in zip(item_a, item_b):
+        if isinstance(a, torch.Tensor):
+            assert torch.equal(a, b)

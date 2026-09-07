@@ -25,15 +25,26 @@ need no code change.
 Normalization is fixed per-layer scalars (psi per layer, q per layer, obs per
 field) computed on the training split and applied identically everywhere so eval
 maps back to physical units.
+
+**On-the-fly obs (train/val diversity):** ``QGNeuralDataset(on_the_fly_obs=True)``
+redraws the (noisy) obs + init-state from a *truth-only* window
+(``data.qg.ensure_truth_only_cache``, no obs baked in) at every ``__getitem__``
+call via ``QGS01Dataset._generate_obs_ic`` with a fresh random seed -- so the
+same cached truth trajectory yields a different obs realization each epoch
+instead of one fixed draw, increasing training diversity without re-paying the
+truth rollout cost. The state/PV targets (``psi_daily``/``q_daily``) come from
+``true_state`` and are unaffected. The ``test`` split keeps the original fixed,
+reproducible obs (``on_the_fly_obs=False``, the default) for stable evaluation.
 """
 
+import random
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from data.qg import QGConfig, expand_obs_to_grid
+from data.qg import QGConfig, QGS01Dataset, expand_obs_to_grid
 
 _INVERTER_CACHE: dict = {}
 
@@ -160,8 +171,12 @@ def compute_norm(windows: list, cfg: QGConfig) -> QGNorm:
         psi2.append(ps[:, split:].reshape(-1))
         q1.append(qs[:, :split].reshape(-1))
         q2.append(qs[:, split:].reshape(-1))
-        od, md = _daily_obs_psi(w, cfg)
-        obs_vals.append(od[md].reshape(-1))
+        if "obs" in w:
+            # Truth-only windows (on-the-fly obs) carry no baked-in obs; the
+            # informational `norm.obs` display stat just skips those (it is
+            # not used to normalize obs -- that's the per-window `sc.psi1`).
+            od, md = _daily_obs_psi(w, cfg)
+            obs_vals.append(od[md].reshape(-1))
     return QGNorm(
         psi1=float(torch.cat(psi1).std()) if psi1 and torch.cat(psi1).numel() > 1 else 1.0,
         psi2=float(torch.cat(psi2).std()) if psi2 and torch.cat(psi2).numel() > 1 else 1.0,
@@ -239,18 +254,37 @@ class QGNeuralDataset(Dataset):
     (`window_scales`) so samples with very different streamfunction energy are
     each mapped to O(1), avoiding a single global scalar being dominated by the
     highest-energy windows.
+
+    `on_the_fly_obs=True` treats `windows` as truth-only (no baked-in obs) and
+    redraws the obs/init-state fresh on every `__getitem__` call (see module
+    docstring) -- use for train/val to increase obs diversity across epochs.
+    Keep the default `False` (fixed, reproducible obs) for test/eval.
     """
 
-    def __init__(self, windows: list, cfg: QGConfig, norm: QGNorm | None = None):
+    def __init__(self, windows: list, cfg: QGConfig, norm: QGNorm | None = None,
+                 on_the_fly_obs: bool = False):
         self.windows = windows
         self.cfg = cfg
         self.norm = norm
+        self.on_the_fly_obs = on_the_fly_obs
 
     def __len__(self) -> int:
         return len(self.windows)
 
-    def __getitem__(self, idx: int) -> tuple:
+    def _resolved_window(self, idx: int) -> dict:
         w = self.windows[idx]
+        if not self.on_the_fly_obs:
+            return w
+        # `_generate_obs_ic` turns `i` into np/torch seeds via `+ i*101`/`+
+        # i*17` on top of `cfg.seed`/`cfg.init_seed`; keep the draw small so
+        # the resulting seed stays a valid (< 2**32) RNG seed.
+        draw = random.randrange(1, 1_000_000)
+        w = dict(w)
+        w.update(QGS01Dataset._generate_obs_ic(self.cfg, w, draw))
+        return w
+
+    def __getitem__(self, idx: int) -> tuple:
+        w = self._resolved_window(idx)
         split = layer_split(self.cfg)
         days = num_days(self.cfg)
         sc = window_scales(w, self.cfg)
@@ -337,6 +371,13 @@ def norm_q_from_psi(pred_psi_norm: torch.Tensor, rd: float, cfg: QGConfig,
 
 
 def ensure_truth_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:
+    """Fixed, reproducible obs windows (test/eval split)."""
     from data.qg import make_qg_s0_s1_datasets
     datasets = make_qg_s0_s1_datasets(cfg, num_test_windows=num_windows, cache_dir=cache_dir)
     return list(datasets["test_s0"])
+
+
+def ensure_truth_only_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:
+    """Truth-only windows (no baked-in obs) for `QGNeuralDataset(on_the_fly_obs=True)`."""
+    from data.qg import ensure_truth_only_cache as _ensure
+    return _ensure(cfg, num_windows, cache_dir)

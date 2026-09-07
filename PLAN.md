@@ -177,10 +177,32 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   shapes) — added to the master CI gate.
 - **HPC note**: per-window truth generation (`QGS01Dataset` spinup) is
   expensive (~85 s/window at nx=8 single-thread; nx=64 far more). The
-  `num_train/val/test` defaults in the configs (1000/100/200 at nx=64) are a
+  `num_train/val/test` defaults in the configs (1000/100/100 at nx=64) are a
   production target; a feasible training run needs GPU-side / parallel window
   generation or a smaller window count — sizing is an open follow-up before
-  launching Q1/Q2 for real.
+  launching Q1/Q2 for real. (The sibling `feature/qg-100sample-benchmark`
+  worktree has already built chunked SLURM-array + GPU-side generation for
+  this exact sizing problem — see its `reports/qg/generate_qg_window_chunk.py`
+  / `assemble_qg_windows.py` — not ported to this branch; porting that
+  infra, if wanted, is separate follow-up from the dataloader change below.)
+- **Truth-only cache + on-the-fly obs (2026-09-07):** `QGS01Dataset._generate_truth`
+  (rollout + obs, cached as one unit) is now `_generate_truth_only` (rollout
+  only) + `_generate_obs_ic` (cheap obs/init-state redraw from an already-
+  generated truth window, no rollout); `_generate_truth` composes them and is
+  unchanged (byte-identical output). `data.qg.ensure_truth_only_cache` caches
+  truth-only windows keyed only by the rollout-relevant config fields (obs
+  settings don't invalidate it). `QGNeuralDataset(on_the_fly_obs=True)`
+  redraws obs/init-state fresh (random seed) on every `__getitem__`, so
+  train/val see a different obs realization each epoch from the same cached
+  truth instead of one fixed draw — increasing training diversity without
+  re-paying the rollout. `train_qg_neural.py` uses this for train/val by
+  default (`--fixed-split-obs` reverts to the old fixed-cache behavior); the
+  **test split is unchanged** (`ensure_truth_cache`, fixed reproducible obs).
+  `--num-test` default 200→100 (train/val defaults unchanged), matching the
+  100/100/1000 split naming on the `qg-100sample-benchmark` worktree. Note:
+  `forcing` in `QGBatch` remains a zero placeholder (Q1/Q2 are `cond_extra_dim=0`,
+  obs-only) — on-the-fly *forcing* conditioning was not wired, only obs; see
+  CHANGELOG 2026-09-07 for the full rationale/verification.
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
