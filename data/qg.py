@@ -303,13 +303,14 @@ class QGS01Dataset:
 
     def __init__(self, cfg: QGConfig, scenario: str,
                  base_windows: list[dict] | None = None,
-                 num_windows: int | None = None):
+                 num_windows: int | None = None,
+                 device: torch.device | None = None):
         self.cfg = cfg
         self.scenario = scenario
         self.device = torch.device("cpu")
         n = num_windows or cfg.num_windows
         if base_windows is None:
-            base_windows = self._generate_truth(cfg, n)
+            base_windows = self._generate_truth(cfg, n, device=device)
         self.windows = [
             self._scenario_window(cfg, scenario, w, i)
             for i, w in enumerate(base_windows)
@@ -322,12 +323,30 @@ class QGS01Dataset:
         return self.windows[idx]
 
     @staticmethod
-    def _generate_truth(cfg: QGConfig, n: int) -> list[dict]:
+    def _generate_truth(cfg: QGConfig, n: int,
+                        device: torch.device | None = None,
+                        indices: list[int] | None = None) -> list[dict]:
         from models.qg_dynamics import QGDynamics
-        rng = np.random.RandomState(cfg.seed)
+        # `device` only speeds up the expensive rollout (generate_wind_state +
+        # generate_full_trajectory, the ~4.5min/window CPU cost this was
+        # entirely paying regardless of GPU availability before this fix);
+        # dyn/traj_full/wind_full are moved back to CPU immediately after,
+        # since every downstream helper (_generate_random_column_observations,
+        # _upper_field, wind_curl_field, ...) constructs its own CPU-only
+        # tensors (no device kwarg) and would otherwise hit a device mismatch.
+        gen_device = device or torch.device("cpu")
         levels = list(_S1_WIND_LEVELS)
         out = []
-        for i in range(n):
+        idx_list = list(range(n)) if indices is None else list(indices)
+        for i in idx_list:
+            # Per-window RandomState (keyed by cfg.seed + i, matching the
+            # existing index-keyed wind/traj/obs seed formulas below) rather
+            # than one RNG shared sequentially across all n windows: this
+            # makes every window's param/geometry draw independent of every
+            # other window, so any subset of indices can be generated on any
+            # worker in any order (array-job parallelization) and still
+            # reproduce bit-for-bit what a full serial run would produce.
+            rng = np.random.RandomState(cfg.seed + i)
             u = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
             r = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
             k = rng.uniform(1 - cfg.param_range, 1 + cfg.param_range)
@@ -345,7 +364,7 @@ class QGS01Dataset:
                 wind_cx=cx, wind_cy=cy,
                 wind_drift_tau_days=cfg.wind_drift_tau_days,
                 wind_drift_sigma=cfg.wind_drift_sigma, wind_seed=win_seed,
-            )
+            ).to(gen_device)
             steps_per_day = round(86400.0 / cfg.dt)
             lead = max(1, round(cfg.init_lead_days * steps_per_day)) + 1
             wind_full = dyn.generate_wind_state(lead + cfg.num_steps, seed=win_seed,
@@ -354,6 +373,11 @@ class QGS01Dataset:
                 num_steps=lead + cfg.num_steps, seed=cfg.seed + 3000 + i * 101,
                 spinup_steps=cfg.spinup_steps, wind_state=wind_full,
             )
+            # Downstream post-processing (obs generation, field extraction,
+            # wind-curl) assumes CPU-only tensors throughout -- move back.
+            dyn = dyn.to("cpu")
+            traj_full = traj_full.cpu()
+            wind_full = wind_full.cpu()
             init_lead_truth = traj_full[0:lead]
             traj = traj_full[lead:lead + cfg.num_steps]
             wind_true = wind_full[lead:lead + cfg.num_steps]
@@ -464,13 +488,17 @@ def _truth_cache_path(cfg: QGConfig, n: int, cache_dir: str) -> str:
 
 
 def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
-                           cache_dir: str | None = None) -> dict:
+                           cache_dir: str | None = None,
+                           device: torch.device | None = None) -> dict:
     """Build the S0/S1 datasets, optionally caching/loading the shared truth.
 
     `cache_dir` (when set) stores the per-window truth (`_generate_truth` output,
     the dominant spinup cost) keyed by config, so repeated runs with the same
     config skip the ~4.5-min CPU spinup. Default None keeps prior on-the-fly
     behavior unchanged.
+
+    `device` (when set) runs the expensive per-window rollout on that device
+    (e.g. a GPU) instead of CPU; the returned truth tensors are always CPU.
     """
     n = num_test_windows or cfg.num_windows
     base = None
@@ -483,10 +511,10 @@ def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
             except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
                 base = None
         if base is None:
-            base = QGS01Dataset._generate_truth(cfg, n)
+            base = QGS01Dataset._generate_truth(cfg, n, device=device)
             torch.save(base, path)
     else:
-        base = QGS01Dataset._generate_truth(cfg, n)
+        base = QGS01Dataset._generate_truth(cfg, n, device=device)
     return {
         "test_s0": QGS01Dataset(cfg, "test_s0", base_windows=base),
         "test_s1": QGS01Dataset(cfg, "test_s1", base_windows=base),

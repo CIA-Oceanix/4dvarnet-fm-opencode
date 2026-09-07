@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-09-07: QG dataset generation — GPU device fix + array-parallel 1000/100/100 train/val/test generation
+
+**Summary:** Fixes a device-placement bug (`QGS01Dataset._generate_truth` never moved its
+`QGDynamics` to the requested device, so the ~2-year-spinup rollout ran on CPU regardless
+of GPU allocation — 7.4x speedup measured, 36.65s/window on a dedicated A40 vs. the
+documented ~270s/window CPU baseline) and refactors per-window generation to be fully
+index-independent (per-window `RandomState(cfg.seed + i)` instead of one RNG shared
+sequentially across all `n` windows), enabling SLURM array-job parallelization. Used both
+to generate the first 1000-train/100-val/100-test window dataset: 3 array jobs (50 tasks)
+across the cluster's 3 available A40 GPUs, **1200 windows in ~3h27min wall-clock**, all
+tasks exit 0.
+
+**Files modified:**
+- `data/qg.py` — `_generate_truth` gains `device`/`indices` params (GPU rollout + CPU
+  post-processing handoff; per-window independent RNG); `QGS01Dataset.__init__` and
+  `make_qg_s0_s1_datasets` thread `device` through.
+- `tests/test_qg_s0s1.py` — 2 new tests: indices-subset generation matches a full serial
+  run bit-for-bit; device round-trips truth tensors back to CPU.
+- `reports/qg/generate_qg_window_chunk.py` (new) — one array-task's worth of window
+  indices -> one `.pt` file per window.
+- `reports/qg/assemble_qg_windows.py` (new) — glob + sort per-window files -> the combined
+  truth-cache file `make_qg_s0_s1_datasets(..., cache_dir=...)` expects.
+- `reports/qg/probe_device_fix_timing.py` (new) — clean per-window timing probe (n=20,
+  dedicated A40) used to validate the fix and extrapolate total generation time.
+- `batch/run_qg_device_fix_timing.sbatch`, `batch/run_qg_window_chunk_array.sbatch`,
+  `batch/run_qg_assemble_train.sbatch` (new sbatch scripts).
+- `.gitignore` — `batch/logs/` (per-array-task stdout/stderr scratch).
+- `PLAN.md` — new "1000/100/100 train/val/test dataset generation" subsection.
+
+**Rationale:** The prior CPU-only path made a 1200-window dataset infeasible (~90h
+extrapolated). The device fix alone gets it to ~12.2h serial; array-parallelization
+(required the RNG-independence refactor) gets it to ~3.5h wall-clock on this cluster's
+idle A40 capacity, well within a single overnight run.
+
+**Verification:** Full QG suite (`test_qg_dynamics`, `test_qg_data`, `test_qg_baselines`,
+`test_qg_s0s1`, `test_qg_random_columns`, `test_qg1l_dynamics`, `test_qg_psi_state`,
+`test_qg_baselines_4dvar`, `-m "not slow"`): 115 passed (113 prior + 2 new indices/device
+tests). `ruff check` clean on all touched files.
+End-to-end cache load verified (`make_qg_s0_s1_datasets` on the assembled val cache: 9.1s
+load, correct S0/S1/S1-QG1L shapes). Train-split assembly (1000 windows, ~32GB) OOM'd
+under this interactive session's 16GB job-allocation cgroup cap; resolved by running the
+assembly as its own sbatch job with `--mem=96G` (succeeded, 3m48s).
+
 ## 2026-09-06: QG DA integration — merge two independent 4DVar implementations, validate reproducibility, extend S1
 
 **Summary:** Reconciles two independently-developed QG 4DVar implementations (this

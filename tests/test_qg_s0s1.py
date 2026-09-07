@@ -5,6 +5,7 @@ import torch
 
 from data.qg import (
     QGConfig,
+    QGS01Dataset,
     expand_obs_to_grid,
     make_qg_s0_s1_datasets,
 )
@@ -297,3 +298,23 @@ def test_windows_disjoint():
     for i in range(1, len(ds)):
         assert not torch.equal(ds[i - 1]["true_state"][-1],
                                ds[i]["true_state"][0])
+
+
+def test_generate_truth_indices_subset_matches_full_run():
+    """A subset of window indices generated independently (as array-job
+    workers would, in any order) must reproduce exactly what a full serial
+    run over the same (cfg, n) produces -- required for parallelization."""
+    cfg = _tiny_cfg()
+    full = QGS01Dataset._generate_truth(cfg, cfg.num_windows)
+    subset = QGS01Dataset._generate_truth(cfg, cfg.num_windows, indices=[2, 0])
+    for idx, w in zip([2, 0], subset):
+        assert torch.equal(w["true_state"], full[idx]["true_state"])
+        assert torch.equal(w["obs"], full[idx]["obs"])
+
+
+def test_generate_truth_device_roundtrips_to_cpu():
+    cfg = _tiny_cfg()
+    windows = QGS01Dataset._generate_truth(cfg, cfg.num_windows,
+                                           device=torch.device("cpu"))
+    for w in windows:
+        assert w["true_state"].device == torch.device("cpu")

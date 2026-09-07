@@ -137,6 +137,44 @@ report + generator were on master).
   (+ `run_qg_figs.sbatch`, the illustration/DA-cycle regeneration job).
 - QG is DA-baseline-only (no QG neural estimator; not wired into `train.py`/`get_dynamics()`).
 
+### 1000/100/100 train/val/test dataset generation (2026-09-07)
+
+Scaling the S0/S1 truth-window generation from the ~5-200 window exploratory scale to a
+**1000 train / 100 val / 100 test** window dataset exposed a critical perf bug and required
+array-job parallelization to make the scale tractable.
+
+- **Device-placement fix**: `QGS01Dataset._generate_truth` never moved its per-window
+  `QGDynamics` to the requested device, so the ~2-year spin-up (the dominant cost, ~4.5
+  min/window) ran on CPU regardless of GPU allocation. Fixed: `dyn`/`wind_full`/`traj_full`
+  now roll out on the given `device`, then move back to CPU before the (CPU-only)
+  obs/field-extraction post-processing. **7.4x speedup** measured on a dedicated A40:
+  36.65s ± 0.16s/window (n=20) vs. the documented ~270s/window CPU baseline.
+  `QGS01Dataset.__init__`/`make_qg_s0_s1_datasets` now accept an optional `device` param.
+- **Per-window RNG independence**: `_generate_truth`'s param/geometry draws (`u/r/k/x0/y0/
+  cx/cy`) used one `RandomState` shared sequentially across all `n` windows, so window `i`
+  could only be generated after replaying windows `0..i-1`. Switched to a per-window
+  `RandomState(cfg.seed + i)` (matching the already-index-keyed wind/traj/obs seed
+  formulas) and added an `indices: list[int] | None` param so any subset of window indices
+  can be generated independently, by any worker, in any order — required for array-job
+  parallelization. Verified bit-identical to a full serial run over the same indices.
+- **Array-parallel generation**: `reports/qg/generate_qg_window_chunk.py` (one chunk of
+  window indices -> one `.pt` file per window) + `batch/run_qg_window_chunk_array.sbatch`
+  (SLURM array task, `--gres=gpu:a40:1` — this cluster rejects untyped `gpu:1` GRES
+  requests) + `reports/qg/assemble_qg_windows.py` (glob + sort by index -> single combined
+  file at the exact `_truth_cache_path` the config/n/obs-geometry key expects, so
+  `make_qg_s0_s1_datasets(..., cache_dir=...)` hits the cache afterward with no code
+  changes downstream). Launched 3 array jobs (40+5+5 = 50 tasks, 25/20/20-window chunks)
+  across the cluster's 3 idle A40 GPUs (this partition requires a specific GPU model, no
+  generic request): **1200 windows generated in ~3h27min wall-clock** (23:43->03:10),
+  150/150 tasks exit 0, no errors. Train-split assembly (1000 windows, ~32GB in memory)
+  OOM'd under the interactive session's 16GB job-allocation cgroup cap; reran as its own
+  sbatch job with `--mem=96G` (succeeded in 3m48s). Final cache: 32GB (train) + 3.2GB
+  (val) + 3.2GB (test) = 38GB total, `reports/qg/outputs/qg_windows_1000_100_100/cache/`.
+  End-to-end verified: `make_qg_s0_s1_datasets` cache-hit load (val, 100 windows) in 9.1s,
+  correct S0/S1/S1-QG1L scenario shapes/metadata.
+- Full QG suite (115 tests incl. 2 new: indices-subset reproducibility, device roundtrip)
+  green.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
