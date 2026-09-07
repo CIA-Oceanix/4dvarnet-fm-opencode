@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-07: QG reports cleanup + run_qg_baselines.py cache-key fix, ahead of the 100-sample benchmark
+
+**Summary:** Two small follow-ups discovered while assessing DA baseline performance on
+the corrected 100-window test set (job 52334: ETKF improv 1.13/EV 0.76, EnKF improv
+1.15/EV 0.77, both matching the earlier 5-window validation).
+
+- **`run_qg_baselines.py` cache-key bug**: the CLI's `cfg_kwargs` never included
+  `init_lag_days`, so it always built `QGConfig(init_lag_days=0.5)` (the dataclass
+  default) regardless of the `--init-lag-days` value actually used for DA init-state
+  sampling -- meaning `--cache-dir` could silently miss a cache written by
+  `fix_qg_test_obs_ic.py` (or any other exact-cfg producer) and trigger a full,
+  unnecessary regeneration. Confirmed the two mismatched cache files' `true_state`/`obs`
+  were bit-identical regardless (only the unused cached `init_state` differed, since
+  `run()` always resamples init state at run-time, never reading it from the dataset) --
+  so this was a wasted-compute bug, not a correctness bug in any results already
+  produced. Fixed by adding `init_lag_days=args.init_lag_days` to `cfg_kwargs`.
+- **Reports/qg cleanup**: removed 6 scripts (+ 1 sbatch) that are fully superseded or
+  unreferenced anywhere: `calibrate_qg_alongtrack.py`, `calibrate_qg_init_lag.py`,
+  `calibrate_qg_nominal.py`, `calibrate_qg_wind.py`, `diagnose_qg_wind_impact.py` (early
+  one-off calibration/diagnostic scripts, findings already baked into `QGConfig`
+  defaults), `probe_100sample_dataset.py` + `batch/run_qg_100sample_smoke.sbatch` (the
+  pre-device-fix smoke test that timed out twice, fully superseded by
+  `generate_qg_window_chunk.py` + the array-job pipeline). Kept `probe_device_fix_timing.py`
+  and `probe_param_adjustment_time.py` as reusable diagnostics.
+- **Disk cleanup** (all untracked, `*.pt` gitignored): removed the scattered per-window
+  `train/`/`val`/`test/` directories under `qg_windows_1000_100_100/` (redundant with the
+  assembled `cache/` combined files) and the orphaned pre-fix wrong-obs-config test
+  cache -- freed ~42GB.
+
+**Files modified:** `evaluation/run_qg_baselines.py` (cache-key fix); 6 scripts + 1 sbatch
+removed (listed above).
+
 ## 2026-09-07: QG dataset — truth/obs/IC split + cheap obs/IC correction for the test split
 
 **Summary:** The 1000/100/100 dataset generated earlier this session used `QGConfig`

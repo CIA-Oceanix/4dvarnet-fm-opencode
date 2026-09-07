@@ -1022,7 +1022,7 @@ def main():
     cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
                       spinup_years=args.spinup_years, num_windows=args.num_windows,
                       obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
-                      seed=args.seed)
+                      seed=args.seed, init_lag_days=args.init_lag_days)
     if args.obs_noise_frac is not None:
         cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
     if args.da_nx is not None:
