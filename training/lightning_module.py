@@ -73,9 +73,18 @@ class LitModel(pl.LightningModule):
                 prior_unet_params = list(prior_unet.parameters())
         use_var_cost_weight_group = var_cost_weight_param is not None and self.obs_weight_lr_scale != 1.0
         if use_var_cost_weight_group or prior_unet_params:
-            prior_unet_param_ids = {id(p) for p in prior_unet_params}
-            other_params = [p for p in params
-                             if p is not var_cost_weight_param and id(p) not in prior_unet_param_ids]
+            # Only exclude var_cost_weight_param from other_params when it
+            # actually gets its own group below (use_var_cost_weight_group) --
+            # otherwise (e.g. prior_unet_lr_scale != 1.0 but obs_weight_lr_scale
+            # left at its 1.0 default) it must stay in other_params so it's
+            # still covered by SOME group, at the plain self.lr rate. Dropping
+            # it unconditionally here silently excludes it from the optimizer
+            # entirely whenever only prior_unet_params triggers this branch --
+            # exactly the kind of silent-stall bug this PR exists to eliminate.
+            excluded_ids = {id(p) for p in prior_unet_params}
+            if use_var_cost_weight_group:
+                excluded_ids.add(id(var_cost_weight_param))
+            other_params = [p for p in params if id(p) not in excluded_ids]
             groups = [{"params": other_params, "lr": self.lr}]
             if use_var_cost_weight_group:
                 groups.append({"params": [var_cost_weight_param], "lr": self.lr * self.obs_weight_lr_scale})

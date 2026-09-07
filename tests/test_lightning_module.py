@@ -119,6 +119,16 @@ class TestPriorUnetLRScale:
         prior_group = next(g for g in optimizer.param_groups if g["lr"] == pytest.approx(5e-4))
         prior_unet_ids = {id(p) for p in lit.model.prior_unet.parameters()}
         assert {id(p) for p in prior_group["params"]} == prior_unet_ids
+        # Regression guard: with prior_unet_lr_scale != 1.0 but
+        # obs_weight_lr_scale left at its default 1.0, _prior_weight_raw
+        # (trainable via FourDVarNetSolver's default trainable_prior_weight=True)
+        # must still land in SOME group -- a prior bug dropped it from
+        # other_params without ever re-adding it to a var-cost-weight group,
+        # silently excluding it from the optimizer entirely.
+        all_param_ids = {id(p) for g in optimizer.param_groups for p in g["params"]}
+        model_param_ids = {id(p) for p in lit.model.parameters()}
+        assert all_param_ids == model_param_ids
+        assert id(lit.model._prior_weight_raw) in all_param_ids
 
     def test_scaled_lr_ignored_without_prior_unet(self):
         lit = _make_lit(update_input="obs+state", prior_unet_lr_scale=0.5)
