@@ -135,6 +135,39 @@ true normalized q). ruff clean on touched `.py` (0 errors besides the repo-wide 
 target; per-window S0 truth generation is CPU-expensive (~85 s/window at nx=8), so the
 real Q1/Q2 launch needs parallel/GPU-side window generation or a smaller window count.
 
+## 2026-09-07: CI — scope ruff lint to changed files; fix the 5 QG-side pre-existing issues
+
+**Summary:** The `ruff lint (informational)` CI check ran `ruff check .` over the whole
+repo unconditionally, so any PR showed a "fail" regardless of what it touched, as long
+as pre-existing debt existed anywhere (90 issues repo-wide at last count, concentrated
+in `reports/l63` (16), `evaluation/baselines.py` (11, shared with L96), `train.py` (11),
+`run_experiments.py` (9), `reports/l96` (9) -- only 5 were QG-side). Rather than a
+cross-cutting cleanup PR touching many files outside this session's QG topic (risking
+collisions with concurrent L96/L63 work), fixed the actual root cause: the lint step now
+diffs against the PR's base SHA (or the push event's `before` SHA, falling back to the
+repo root commit for a branch's first push) and lints only the changed `*.py` files.
+`continue-on-error: true` kept as a second line of defense.
+
+Also fixed the 5 QG-side issues found by the local environment's ruff (0.16.4): a real
+`F841` (unused `end` variable, `probe_param_adjustment_time.py`) and 4 `E402` (module-
+level imports after a necessary `sys.path.insert`, `generate_qg_s0s1_figs.py`), the
+latter first "fixed" with `# noqa: E402`. Turning on the just-fixed scoped lint step
+immediately caught a real problem with that: CI's freshly `pip install ruff`'d version
+(0.16.6, unpinned) doesn't enable E402 by default at all, so the `noqa` comments were
+themselves flagged (`RUF100`, unused-directive) -- confirmed by testing directly against
+ruff 0.16.6 (pip-installed to a throwaway dir). Removed the `noqa` comments entirely
+(no suppression needed against the actual CI ruff version) and fixed one more real,
+version-independent issue the scoped lint surfaced on the same file: `EXE001` (shebang
+present but the file wasn't marked executable) -- `chmod +x`.
+
+**Files modified:** `.github/workflows/ci.yml` (lint step scope), `reports/qg/
+generate_qg_s0s1_figs.py` (E402 false-alarm removed, `chmod +x` for EXE001),
+`reports/qg/probe_param_adjustment_time.py` (F841).
+
+**Verification:** Validated directly against ruff 0.16.6 (matching CI's unpinned
+install) on the actual changed-file set the new CI logic computes: clean. Full QG suite
+(115 tests, `-m "not slow"`) passed. YAML syntax validated (`yaml.safe_load`).
+
 ## 2026-09-07: QG outputs cleanup — remove S0 exploratory result JSONs superseded by the 100-window test benchmark
 
 **Summary:** Removes 9 small-scale S0 exploratory result-JSON directories now strictly
