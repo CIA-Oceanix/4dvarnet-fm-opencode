@@ -10,6 +10,16 @@ from torch.utils.data import DataLoader
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
 from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
+try:
+    from models.monai_unet_adapter import MonaiDirectUNet
+except ImportError:
+    # monai is an optional, deliberately-isolated dependency (see
+    # models/monai_unet_adapter.py) -- not installed by default, so this
+    # module's isinstance dispatch must not hard-require it. The sentinel
+    # class below is never constructed; it only exists so the isinstance
+    # check further down stays syntactically valid and simply never matches.
+    class MonaiDirectUNet:
+        pass
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
 from evaluation.sda_sampler import sda_guided_sample
@@ -28,6 +38,26 @@ def collate_eval(batch):
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
     return {"true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing, "params": None}
+
+
+def make_collate_eval(norm_stats: Optional[dict] = None):
+    """Return a ``collate_eval``-compatible collate fn that additionally
+    z-score normalizes ``obs`` (the model's input) when ``norm_stats`` is
+    given. ``true_state`` stays raw always: it is never fed to the model,
+    only used later for scoring. ``norm_stats is None`` reproduces plain
+    ``collate_eval`` exactly.
+    """
+    if norm_stats is None:
+        return collate_eval
+
+    from data.normalization import normalize
+
+    def _collate(batch):
+        d = collate_eval(batch)
+        d["obs"] = normalize(d["obs"], norm_stats)
+        return d
+
+    return _collate
 
 
 L96_JOINT_PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
@@ -74,6 +104,21 @@ def collate_joint_eval(batch):
         "true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing,
         "forcing_true": forcing_true, "params": params, "true_params": true_params,
     }
+
+
+def make_collate_joint_eval(norm_stats: Optional[dict] = None):
+    """``collate_joint_eval`` counterpart to :func:`make_collate_eval`."""
+    if norm_stats is None:
+        return collate_joint_eval
+
+    from data.normalization import normalize
+
+    def _collate(batch):
+        d = collate_joint_eval(batch)
+        d["obs"] = normalize(d["obs"], norm_stats)
+        return d
+
+    return _collate
 
 
 logging.basicConfig(level=logging.INFO)
@@ -633,7 +678,9 @@ def prepare_dataset(
 
     # Create dataloaders for both the S0 and S1 test splits
     is_joint = bool(kwargs.get("is_joint", False))
-    collate = collate_joint_eval if is_joint else collate_eval
+    norm_stats = kwargs.get("norm_stats")
+    collate = (make_collate_joint_eval(norm_stats) if is_joint
+               else make_collate_eval(norm_stats))
     dataloaders = {}
     for key, case in (("test_s0", "s0"), ("test_s1", "s1")):
         split = dataset[key]
@@ -700,7 +747,7 @@ def _run_case_inference(
                         pred = model.sample(batch_obj, return_params=False)
                     else:
                         pred, params = model.sample(batch_obj, return_params=True)
-                elif isinstance(model, DirectUNet):
+                elif isinstance(model, (DirectUNet, MonaiDirectUNet)):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
                     pred = model.sample(batch_obj, N_outer=n_outer)

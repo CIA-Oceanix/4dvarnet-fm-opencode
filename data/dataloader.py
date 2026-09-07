@@ -188,6 +188,26 @@ def collate_fm(batch):
     return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params)
 
 
+def make_collate_fm(norm_stats: dict | None = None):
+    """Return a ``collate_fm``-compatible collate fn that additionally
+    z-score normalizes ``states``/``obs`` when ``norm_stats`` is given.
+
+    ``norm_stats is None`` reproduces plain ``collate_fm`` exactly.
+    """
+    if norm_stats is None:
+        return collate_fm
+
+    from data.normalization import normalize
+
+    def _collate(batch):
+        fm_batch = collate_fm(batch)
+        fm_batch.states = normalize(fm_batch.states, norm_stats)
+        fm_batch.obs = normalize(fm_batch.obs, norm_stats)
+        return fm_batch
+
+    return _collate
+
+
 def make_dataloaders(datasets: Dict[str, Dataset], batch_size: int = 32,
                      obs_interval: int = 20, R_var: float = 0.5,
                      obs_var_indices=None):

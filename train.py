@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
 from data.random_param_dataset import RandomParamLorenz63Dataset
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm
+from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm, make_collate_fm
 from torch.utils.data import DataLoader
 from models.solver import TweedieSolver
 from models.direct_unet import DirectUNet
@@ -76,8 +76,8 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None, use_biased_params=False,
-                         resample_bias_draws=False, bias_max=0.2):
-    kw = dict(batch_size=batch_size, collate_fn=collate_fm,
+                         resample_bias_draws=False, bias_max=0.2, norm_stats=None):
+    kw = dict(batch_size=batch_size, collate_fn=make_collate_fm(norm_stats),
               num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
@@ -115,6 +115,19 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=dc.dropout,
             param_dim=param_dim,
             cond_extra_dim=dc.get("cond_extra_dim", 1 + param_dim),
+        )
+    elif model_type == "monai_direct_unet":
+        from models.monai_unet_adapter import MonaiDirectUNet
+        mdu = cfg.model.monai_direct_unet
+        param_dim = cfg.model.get("param_dim", 4)
+        model = MonaiDirectUNet(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mdu.hidden_channels,
+            dropout=mdu.get("dropout", 0.1),
+            param_dim=param_dim,
+            cond_extra_dim=mdu.get("cond_extra_dim", 1 + param_dim),
+            num_res_blocks=mdu.get("num_res_blocks", 2),
+            norm_num_groups=mdu.get("norm_num_groups", 32),
         )
     elif model_type == "vanilla_cfm":
         vc = cfg.model.vanilla_cfm
@@ -346,7 +359,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
                                  obs_var_indices=obs_var_indices)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type == "direct_unet":
+        elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -420,7 +433,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
                                  obs_var_indices=obs_var_indices)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type == "direct_unet":
+        elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type == "vanilla_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -595,6 +608,13 @@ def main(cfg: DictConfig):
             )
             test_keys = ["test_cs1", "test_cs2", "test_cs3", "test_cs4"]
     if system == "lorenz96":
+        norm_stats = None
+        if dc.get("normalize", False):
+            from data.normalization import load_norm_stats
+            norm_stats_path = dc.get("norm_stats_path",
+                                      os.path.join(EXP_DIR, "l96_norm_stats_obsj2.pt"))
+            norm_stats = load_norm_stats(norm_stats_path)
+            logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
@@ -604,6 +624,7 @@ def main(cfg: DictConfig):
             use_biased_params=(model_type in ("param_head", "param_head_unet")),
             resample_bias_draws=dc.get("resample_bias_draws", False),
             bias_max=dc.get("bias_max", 0.2),
+            norm_stats=norm_stats,
         )
     else:
         loaders = make_experiment_dataloaders(

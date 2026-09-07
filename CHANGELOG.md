@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-09-07: MonaiDirectUNet backbone + L96 per-channel normalization infra
+
+**Summary:** Added `MonaiDirectUNet`/`MonaiUNet1D` (`models/monai_unet_adapter.py`), a
+MONAI `DiffusionModelUNet`-backed drop-in for `DirectUNet` (FiLM-style timestep
+conditioning + real ResBlocks vs `UNet1D`'s additive-only conditioning), wired into
+`train.py`/`training/lightning_module.py`/`evaluation/neural_inference.py` alongside
+the existing `direct_unet` dispatch. Also brings in the L96 per-channel z-score
+normalization infrastructure it depends on (`data/normalization.py`,
+`precompute_l96_norm_stats.py`, the `*_norm` experiment configs,
+`tests/test_l96_normalization.py`), previously only uncommitted working-tree state on
+`feature/l96-normalization-ablation`. A full 200-epoch training run
+(`L1b_monai_unet_s0s1_norm`, job 52397) under the exact hyperparameters that made
+`L1b_direct_unet_s0s1_norm` collapse (`lr=0.001`, `gradient_clip_val=10.0`) trains
+cleanly: RMSE 0.539/0.541 (S0/S1), EV 0.885/0.884 — beating even the unnormalized
+`L1b` baseline (RMSE 0.622/0.625, EV 0.86), vs `L1b`'s collapsed normalized RMSE
+1.73/1.72 (EV 0.03). See `reports/l96/outputs/l96_normalization_ablation.md` for the
+consolidated comparison table and discussion (including the caveat that
+`MonaiDirectUNet` has 3.11x more parameters than `DirectUNet` at matching
+`hidden_channels`: 5,889,048 vs 1,896,600 at `[64,128,256]`).
+
+**Files modified:** `models/monai_unet_adapter.py` (new) — `MonaiUNet1D`/
+`MonaiDirectUNet`, plus a scoped monkeypatch for a MONAI 1.6.0 bug (its
+`DiffusionUNetResnetBlock.forward` has no `spatial_dims == 1` branch for the
+timestep-embedding broadcast, silently corrupting shapes); `eval_monai_l96.py` (new)
+— parallel eval script (bypasses `evaluation/neural_inference.py`'s checkpoint
+shape-inference loader, which is hardcoded to `UNet1D`'s weight-key names) that
+builds `MonaiDirectUNet` directly from its known config and writes a
+`neural_eval.json` in the same schema as `eval_neural_l96.py`; `train.py`,
+`training/lightning_module.py`, `evaluation/neural_inference.py` — new
+`monai_direct_unet`/`MonaiDirectUNet` branches alongside every existing
+`direct_unet`/`DirectUNet` dispatch point; `data/normalization.py`,
+`precompute_l96_norm_stats.py`, `config/experiment/L1b_direct_unet_s0s1_norm*.yaml`,
+`config/experiment/L1b_monai_unet_s0s1_norm.yaml`,
+`config/experiment/L3_vanilla_cfm_s0s1_norm.yaml`, `tests/test_l96_normalization.py`,
+`reports/l96/generate_l96_normalization_ablation.py` (extended with a
+`L1b_monai_unet_s0s1` section), `batch/run_l96_neural_training_monai_norm.sbatch`
+(new) — the normalization infra and its ablation report generator.
+
+**Rationale:** Prototype (`/homes/rfablet/.claude/plans/monai-diffunet-prototype.md`)
+found `UNet1D` has no self-attention and only additive (not FiLM/AdaGN) time
+conditioning vs SOTA diffusion backbones. This tests whether that gap explains
+`DirectUNet`'s training collapse under L96 per-channel normalization
+(`l96_normalization_ablation.md`'s original finding) — MONAI's richer backbone avoids
+the collapse entirely, supporting a backbone-conditioning explanation over a
+fundamental single-pass-regression limitation.
+
+**Verification:** `pytest tests/test_monai_unet_adapter.py tests/test_l96_normalization.py`
+(18 passed) both before and after rebasing onto current `origin/master`; a 2-epoch
+`train.py` smoke run against the rebased code (correct model construction, forward/
+backward, checkpoint save); the full 200-epoch SLURM run (job 52397) plus a corrected
+`eval_monai_l96.py` pass (an initial run of that script omitted normalization at eval
+time, producing meaningless RMSE ~1.7 — caught and fixed before trusting the numbers).
+
 ## 2026-09-07: QG Q1 launch — wire train_qg_neural.py to reuse the production 1000/100/100 nx=64 cache, launch DirectUNet training
 
 **Summary:** Wired `train_qg_neural.py` to reuse the already-generated production

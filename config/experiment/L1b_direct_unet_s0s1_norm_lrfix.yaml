@@ -1,0 +1,36 @@
+# @package _global_
+# Clone of L1b_direct_unet_s0s1_norm with lr=1e-4 instead of 1e-3 -- the
+# 50-epoch diagnostic (L1b_direct_unet_s0s1_norm_lr1e-4) showed the original
+# lr=1e-3 collapses training under data.normalize=true (flat train_loss=1.0
+# for 200 epochs), while lr=1e-4 converges normally. This is the full
+# 200-epoch confirmation run at the corrected LR.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: direct_unet
+  state_dim: 24
+  param_dim: 0
+  direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.0001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt
