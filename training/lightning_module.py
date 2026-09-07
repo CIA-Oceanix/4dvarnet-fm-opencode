@@ -14,6 +14,10 @@ class LitModel(pl.LightningModule):
         gradient_clip_val: float = 10.0,
         use_gradient_loss: bool = True,
         gradient_weight: float = 0.1,
+        use_cosine_scheduler: bool = False,
+        max_epochs: int = None,
+        obs_weight_lr_scale: float = 1.0,
+        prior_unet_lr_scale: float = 1.0,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -22,6 +26,10 @@ class LitModel(pl.LightningModule):
         self.stage = stage
         self.lr = lr
         self.gradient_clip_val = gradient_clip_val
+        self.use_cosine_scheduler = use_cosine_scheduler
+        self.max_epochs = max_epochs
+        self.obs_weight_lr_scale = obs_weight_lr_scale
+        self.prior_unet_lr_scale = prior_unet_lr_scale
         self.loss_fn = StateMSELoss(
             use_gradient_loss=use_gradient_loss,
             gradient_weight=gradient_weight,
@@ -46,7 +54,42 @@ class LitModel(pl.LightningModule):
             params = self.model.param_head.parameters()
         else:
             params = self.model.parameters()
-        return torch.optim.Adam(params, lr=self.lr)
+        # obs_weight_lr_scale governs whichever trainable var-cost scalar the
+        # model actually has: FourDVarNetPredictStateCFM's _obs_weight_raw, or
+        # FourDVarNetSolver's _prior_weight_raw (the two are mutually
+        # exclusive per model -- never both -- see models/fourdvarnet.py).
+        # Explicit `is not None` checks throughout (never `or`/truthiness):
+        # these are 0-dim tensors, and `bool(tensor(0.0))` is False, which
+        # would silently misselect the wrong attribute if the value happens
+        # to equal exactly zero.
+        var_cost_weight_param = None
+        prior_unet_params = []
+        if self.model_type in ("fourdvarnet", "fourdvarnet_cfm"):
+            obs_weight_param = getattr(self.model, "_obs_weight_raw", None)
+            prior_weight_param = getattr(self.model, "_prior_weight_raw", None)
+            var_cost_weight_param = obs_weight_param if obs_weight_param is not None else prior_weight_param
+            prior_unet = getattr(self.model, "prior_unet", None)
+            if prior_unet is not None and self.prior_unet_lr_scale != 1.0:
+                prior_unet_params = list(prior_unet.parameters())
+        use_var_cost_weight_group = var_cost_weight_param is not None and self.obs_weight_lr_scale != 1.0
+        if use_var_cost_weight_group or prior_unet_params:
+            prior_unet_param_ids = {id(p) for p in prior_unet_params}
+            other_params = [p for p in params
+                             if p is not var_cost_weight_param and id(p) not in prior_unet_param_ids]
+            groups = [{"params": other_params, "lr": self.lr}]
+            if use_var_cost_weight_group:
+                groups.append({"params": [var_cost_weight_param], "lr": self.lr * self.obs_weight_lr_scale})
+            if prior_unet_params:
+                groups.append({"params": prior_unet_params, "lr": self.lr * self.prior_unet_lr_scale})
+            optimizer = torch.optim.Adam(groups)
+        else:
+            optimizer = torch.optim.Adam(params, lr=self.lr)
+        if self.use_cosine_scheduler and self.model_type in ("fourdvarnet", "fourdvarnet_cfm"):
+            if not self.max_epochs:
+                raise ValueError("use_cosine_scheduler=True requires max_epochs to be set")
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_epochs)
+            return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return optimizer
 
     def on_train_start(self):
         if self._frozen:
@@ -132,6 +175,10 @@ class LitModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss = self._forward_and_loss(batch)
         self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.batch_size)
+        if getattr(self.model, "_obs_weight_raw", None) is not None:
+            self.log("obs_weight", self.model.obs_weight, on_step=False, on_epoch=True, batch_size=batch.batch_size)
+        if getattr(self.model, "_prior_weight_raw", None) is not None:
+            self.log("prior_weight", self.model.prior_weight, on_step=False, on_epoch=True, batch_size=batch.batch_size)
         return loss
 
     def validation_step(self, batch, batch_idx):

@@ -543,6 +543,12 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             N_outer=_fdv("N_outer", 10),
             dropout=_fdv("dropout", 0.1),
             update_input=_fdv("update_input", "obs+state"),
+            R_var=_fdv("R_var", 0.5),
+            prior_weight=_fdv("prior_weight", 1.0),
+            clip_range=_fdv("clip_range", 50.0),
+            trainable_prior_weight=_fdv("trainable_prior_weight", True),
+            aux_var_cost_weight=_fdv("aux_var_cost_weight", 0.0),
+            prior_tau_conditioning=_fdv("prior_tau_conditioning", False),
         )
     elif model_class == FourDVarNetPredictStateCFM:
         fc = cfg.model.get("fdv_cfm", {})
@@ -565,6 +571,10 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             train_tau_0_only=_fc("train_tau_0_only", False),
             update_input=_fc("update_input", "obs+state"),
             clip_range=_fc("clip_range", 50.0),
+            R_var=_fc("R_var", 0.5),
+            obs_weight=_fc("obs_weight", 1.0),
+            min_obs_weight=_fc("min_obs_weight", 1e-3),
+            trainable_obs_weight=_fc("trainable_obs_weight", True),
         )
     else:
         raise ValueError(f"Unknown model type: {model_class}")

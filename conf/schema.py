@@ -262,6 +262,12 @@ class FourDVarNetConfig:
     N_outer: int = 10
     dropout: float = 0.1
     update_input: str = "obs+state"
+    R_var: float = 0.5
+    prior_weight: float = 1.0
+    clip_range: float = 50.0
+    trainable_prior_weight: bool = True
+    aux_var_cost_weight: float = 0.0
+    prior_tau_conditioning: bool = False
 
 
 @dataclass
@@ -275,6 +281,10 @@ class FourDVarNetCFMConfig:
     train_tau_0_only: bool = False
     update_input: str = "obs+state"
     clip_range: float = 50.0
+    R_var: float = 0.5
+    obs_weight: float = 1.0
+    min_obs_weight: float = 1e-3
+    trainable_obs_weight: bool = True
 
 
 @dataclass
@@ -308,6 +318,9 @@ class StageConfig:
     epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
+    use_cosine_scheduler: bool = False
+    obs_weight_lr_scale: float = 1.0
+    prior_unet_lr_scale: float = 1.0
 
 
 @dataclass

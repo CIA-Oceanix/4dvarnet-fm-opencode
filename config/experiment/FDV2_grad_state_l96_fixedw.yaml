@@ -1,0 +1,68 @@
+# @package _global_
+# Ablation of FDV2_grad_state_l96: the var_cost weight fixed at 1.0 (not
+# trainable), to isolate whether trainability of that weight causes the
+# val_loss stall seen when it's trainable (job 52184 flatlined at
+# val_loss~3.06 past epoch 6, unlike the earlier fixed-weight FDV2 run which
+# broke free by epoch ~17). Superseded by job 52305 (FDV2_grad_state_l96 with
+# the trainable prior_weight recipe), which beat this ablation's converged
+# RMSE at ~1/4 of its training budget -- job 52205 (this config) was killed
+# at epoch 328/400 (plateaued since ~epoch 280) and its best checkpoint
+# (epoch 324, val_loss 0.2460) kept only as a closed-out baseline.
+#
+# NOTE: this config predates the prior_weight reparametrization (var_cost now
+# trains prior_weight, not obs_weight -- see models/fourdvarnet.py); at a
+# fixed weight of 1.0 the two are mathematically identical
+# (var_cost = prior_cost + 1*obs_cost either way), so job 52205's
+# already-collected results remain valid under either parametrization.
+# `trainable_prior_weight: false` here just keeps this ablation's intended
+# "fixed, no aux loss" role for any future fresh relaunch of this file.
+#
+# `prior_tau_conditioning: true` reproduces job 52205's exact trained
+# architecture: it predates prior_unet's tau-conditioning becoming
+# configurable (back when it was unconditionally on), so its checkpoint's
+# prior_unet.*.time_proj.* weights were genuinely learned during training.
+# Loading with prior_tau_conditioning=False (this repo's new default)
+# silently skips those weights (shape-mismatch). VERIFIED (not assumed): a
+# direct output comparison of both reconstructions on the same input gave a
+# max abs diff of ~1.9e-6 (floating-point noise) -- this checkpoint's
+# time_proj weights ended up contributing ~nothing to its behavior, so both
+# reconstructions give the identical, reproducible RMSE 0.4702/0.4674
+# (S0/S1) on the full 200-window test set (N_outer=10). Kept as
+# prior_tau_conditioning=true anyway since it's the historically-correct
+# architecture and costs nothing.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: false
+    prior_tau_conditioning: true
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
