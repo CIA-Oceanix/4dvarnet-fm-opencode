@@ -175,6 +175,35 @@ array-job parallelization to make the scale tractable.
 - Full QG suite (115 tests incl. 2 new: indices-subset reproducibility, device roundtrip)
   green.
 
+### Test-split obs/IC correction + truth/obs/IC separation (2026-09-07)
+
+The above generation used `QGConfig` defaults for `obs_geometry`/`cols_per_day`/
+`obs_noise_std_frac`/`init_lag_days`, not the S0 reference-case settings
+(`random_columns`/4/0.01/1.0) -- caught before running DA baselines on the test split.
+Since truth generation doesn't depend on those fields, split `_generate_truth` into
+`_generate_truth_only` (expensive rollout) + `_generate_obs_ic` (cheap: rebuilds a
+`QGDynamics` from cached `true_params`, no rollout, redraws obs/init-state) --
+`_generate_truth` now composes both, unchanged for existing callers.
+`reports/qg/fix_qg_test_obs_ic.py` applies this to the test split in seconds, writing
+`truth_only/test.pt`, `obs_ic/test_reference.pt`, and a corrected combined cache at the
+hash `make_qg_s0_s1_datasets` expects. Train/val untouched (obs/IC for those are meant to
+be generated on the fly downstream, not read from this cache). Added `--seed`/
+`--cache-dir` to `run_qg_baselines.py` (seed was hardcoded to 7; no CLI path existed to
+reach the pre-generated cache) so `run()`'s existing `ds=` bypass is reachable from the
+command line.
+
+**Bug caught by the test suite** during the `_generate_obs_ic` split: `init_lead_truth`
+(cached, indices `[0, lead)`) doesn't include index `lead` itself (`traj[0]`), needed for
+a zero-day lag draw -- fixed by concatenating `traj[:1]` before indexing. 115 tests green
+after the fix.
+
+**Separately found:** `run_qg_baselines.py` for a 100-window scenario OOM'd in this
+interactive session's 16GB cgroup -- `run()` accumulates full per-window `(360, 8192)`
+arrays across all windows before computing summary metrics (fine at ~5-window
+exploratory scale, needs real memory at 100). Moved to `batch/
+run_qg_test100_reference.sbatch` (`--mem=64G`, `--time=12:00:00`, ETKF/EnKF/
+Strong-4DVar/Weak-4DVar at the exact S0 reference settings); results pending.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

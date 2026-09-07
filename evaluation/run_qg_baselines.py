@@ -1004,6 +1004,17 @@ def main():
                           "cost of window-to-window overlap in the underlying "
                           "true flow (independent obs/corruption/init draws per "
                           "window either way).")
+    ap.add_argument("--seed", type=int, default=7,
+                     help="QGConfig.seed (default 7, the small-scale exploratory "
+                          "runs' value). Set to match a specific pre-generated "
+                          "truth cache, e.g. one of the SPLIT_SEED_BASE values in "
+                          "reports/qg/generate_qg_window_chunk.py.")
+    ap.add_argument("--cache-dir", default=None,
+                     help="If set, load/save the generated truth via "
+                          "make_qg_s0_s1_datasets(..., cache_dir=...) instead of "
+                          "generating fresh in run(). Use to point at a "
+                          "pre-generated dataset (e.g. the 1000/100/100 "
+                          "train/val/test cache) instead of regenerating.")
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
@@ -1011,7 +1022,7 @@ def main():
     cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
                       spinup_years=args.spinup_years, num_windows=args.num_windows,
                       obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
-                      seed=7)
+                      seed=args.seed)
     if args.obs_noise_frac is not None:
         cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
     if args.da_nx is not None:
@@ -1020,6 +1031,10 @@ def main():
         cfg_kwargs["window_spacing_days"] = args.window_spacing_days
     cfg = QGConfig(**cfg_kwargs)
     print(f"device={device}")
+    ds = None
+    if args.cache_dir:
+        ds = make_qg_s0_s1_datasets(cfg, num_test_windows=cfg.num_windows,
+                                    cache_dir=args.cache_dir, device=device)
     for method in args.method_list.split(","):
         run(method, cfg, device=device, N_ensemble=args.ensemble,
             inflation=args.inflation, loc_radius=args.loc_radius,
@@ -1032,7 +1047,7 @@ def main():
             fourdvar_opt_steps=args.fourdvar_opt_steps,
             fourdvar_lr=args.fourdvar_lr,
             b_var_scale=args.b_var_scale, q_var_scale=args.q_var_scale,
-            fourdvar_grad_clip=args.fourdvar_grad_clip)
+            fourdvar_grad_clip=args.fourdvar_grad_clip, ds=ds)
 
 
 if __name__ == "__main__":
