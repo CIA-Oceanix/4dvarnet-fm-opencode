@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-07: CI — scope ruff lint to changed files; fix the 5 QG-side pre-existing issues
+
+**Summary:** The `ruff lint (informational)` CI check ran `ruff check .` over the whole
+repo unconditionally, so any PR showed a "fail" regardless of what it touched, as long
+as pre-existing debt existed anywhere (90 issues repo-wide at last count, concentrated
+in `reports/l63` (16), `evaluation/baselines.py` (11, shared with L96), `train.py` (11),
+`run_experiments.py` (9), `reports/l96` (9) -- only 5 were QG-side). Rather than a
+cross-cutting cleanup PR touching many files outside this session's QG topic (risking
+collisions with concurrent L96/L63 work), fixed the actual root cause: the lint step now
+diffs against the PR's base SHA (or the push event's `before` SHA, falling back to the
+repo root commit for a branch's first push) and lints only the changed `*.py` files.
+`continue-on-error: true` kept as a second line of defense. Also fixed the 5 QG-side
+issues while here (all in `reports/qg/`): 4 `E402` (module-level imports after a
+necessary `sys.path.insert`, silenced with `# noqa: E402` -- the standard idiom for this
+repo's report-script pattern) in `generate_qg_s0s1_figs.py`, and 1 `F841` (unused `end`
+variable) in `probe_param_adjustment_time.py`.
+
+**Files modified:** `.github/workflows/ci.yml` (lint step scope), `reports/qg/
+generate_qg_s0s1_figs.py`, `reports/qg/probe_param_adjustment_time.py`.
+
+**Verification:** `ruff check reports/qg/` clean. Full QG suite (115 tests,
+`-m "not slow"`) passed. YAML syntax validated (`yaml.safe_load`).
+
 ## 2026-09-07: QG outputs cleanup — remove S0 exploratory result JSONs superseded by the 100-window test benchmark
 
 **Summary:** Removes 9 small-scale S0 exploratory result-JSON directories now strictly
