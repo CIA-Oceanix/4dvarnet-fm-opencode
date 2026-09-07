@@ -274,6 +274,60 @@ zero placeholder (Q1/Q2 are `cond_extra_dim=0`, obs-only) — on-the-fly
 *forcing* conditioning was not wired, only obs; see CHANGELOG 2026-09-07 for
 the full rationale/verification.
 
+### Q1 launch: reusing the production 1000/100/100 nx=64 cache (2026-09-07, `feature/qg-neural-q1-launch`)
+
+Wired `train_qg_neural.py` to reuse the already-generated production truth
+cache (`reports/qg/outputs/qg_windows_1000_100_100/cache/`, 41GB, built by the
+`generate_qg_window_chunk.py` array-job pipeline above) instead of paying the
+~2-year-spinup rollout again from this branch:
+- New `--train-seed`/`--val-seed`/`--test-seed` (default 42/10042/20042,
+  matching `SPLIT_SEED_BASE`) and `--obs-geometry`/`--cols-per-day`/
+  `--obs-noise-std-frac`/`--init-lag-days` (default `random_columns`/4/0.01/1.0,
+  the S0 DA-baseline reference case) CLI flags, applied to `test_cfg` (which
+  also seeds train/val's on-the-fly obs draws via the shared cfg object).
+- Train/val now load via `ensure_truth_cache` (not `ensure_truth_only_cache`):
+  the production cache's train/val entries already carry (QGConfig-default,
+  i.e. wrong-for-S0) baked-in obs, but `on_the_fly_obs=True` overwrites
+  `obs`/`obs_mask`/`init_state` on every `__getitem__` regardless, so reusing
+  the full cache is correct and avoids a second, redundant cache format.
+  `ensure_truth_only_cache` remains available/tested (`data/qg.py`) for
+  contexts with no pre-existing full cache to reuse.
+- **Bug found and fixed while validating this**: `build_cfg(...)` never set
+  `num_windows`, leaving it at the `QGConfig` dataclass default (200) instead
+  of the split size. Since `_truth_cache_path` hashes the *entire* `asdict(cfg)`
+  (`num_windows` included) plus a separate `n_windows` key, this silently
+  missed the production cache (whose entries were written with
+  `num_windows` equal to the split size, matching
+  `generate_qg_window_chunk.py`) and would have fallen back to a full
+  from-scratch nx=64 rollout (~90h extrapolated) instead of a cache hit.
+  Fixed by passing `num_windows=args.num_{train,val,test}` explicitly to each
+  `build_cfg(...)` call. Caught interactively (stopped the hung process after
+  ~5 min, well before real damage) by benchmarking `ensure_truth_cache`
+  in isolation before trusting it inside a long GPU job — verified the fix by
+  recomputing `_truth_cache_path` and diffing against the exact on-disk
+  filenames (`qg_truth_a3c24de…`/`e7f84d…`/`ab5c09…` for train/val/test),
+  then a live load (100-window test cache: 3.2s, was hanging past 90s before
+  the fix).
+- **On-the-fly obs cost at nx=64, benchmarked**: `QGS01Dataset._generate_obs_ic`
+  (single window, no rollout) ≈32ms/draw → ≈1.8h aggregate over
+  200 epochs × 1000 train windows, well hidden by GPU prefetch at
+  `num_workers=1` (not a bottleneck).
+- `batch/run_qg_q1_train.sbatch` (new): `Odyssey_GPU` partition, 1×A40,
+  `--mem=96G` (must comfortably hold the 33GB train cache in RAM),
+  `--time=24:00:00`, points `--cache-dir` at the production cache's absolute
+  path (on the sibling `4dvarnet-fm-qg-100samples` worktree's filesystem
+  location — the cache itself is untracked/gitignored, not portable via git).
+- **Incidental environment fixes** (shared `fdv` conda env, unrelated to this
+  branch's code): mid-session, a concurrent process modified the shared env
+  twice — `setuptools` drifted to 84.0.0 (dropped the `pkg_resources` shim
+  `pytorch_lightning` 2.3.3 needs; fixed with `pip install "setuptools<81"`),
+  and separately `torch`'s `libtorch_global_deps.so` went briefly missing
+  mid-reinstall (self-resolved after waiting; confirmed `torch 2.4.1+cu121`
+  healthy after). Neither is caused by or specific to this branch's changes.
+
+**Q1 status:** launched via `sbatch batch/run_qg_q1_train.sbatch` (job id
+recorded in CHANGELOG 2026-09-07); monitor for completion before starting Q2.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

@@ -17,8 +17,18 @@ psi, spectrally inverted to PV (per-window `rd`), re-normalized, and MSE-matched
 against the normalized daily-mean PV target. Because PV<->psi is a linear
 spectral inversion this is a consistent auxiliary objective.
 
+Default `--train-seed`/`--val-seed`/`--test-seed` (42/10042/20042) and split
+sizes (1000/100/100) match `reports/qg/generate_qg_window_chunk.py`'s
+production convention, so pointing `--cache-dir` at a pre-generated 1000/100/100
+truth cache (built by that array-job pipeline) hits it directly instead of
+re-paying the ~2-year-spinup rollout. Default `--obs-geometry`/`--cols-per-day`/
+`--obs-noise-std-frac`/`--init-lag-days` match the S0 DA-baseline reference case
+(PLAN.md); train/val's on-the-fly obs redraws follow these same settings via
+the shared `test_cfg` object passed to `QGNeuralDataset`.
+
 Usage:
-    python train_qg_neural.py --model-type direct_unet --exp-dir experiments/Q1_direct_unet_s0
+    python train_qg_neural.py --model-type direct_unet --exp-dir experiments/Q1_direct_unet_s0 \
+        --cache-dir /path/to/qg_windows_1000_100_100/cache
     python train_qg_neural.py --model-type vanilla_cfm   --exp-dir experiments/Q2_vanilla_cfm_s0
     python train_qg_neural.py --model-type direct_unet --q-loss-weight 0.0 --eval-only <ckpt>
 """
@@ -41,7 +51,6 @@ from data.qg_neural import (
     compute_norm,
     denorm_state,
     ensure_truth_cache,
-    ensure_truth_only_cache,
     layer_split,
     norm_q_from_psi,
     psi_daily,
@@ -217,11 +226,27 @@ def main():
     ap.add_argument("--fixed-split-obs", action="store_true",
                     help="Use one fixed obs/init-state draw for train/val "
                          "(legacy behavior) instead of regenerating them on "
-                         "the fly from a truth-only cache each epoch.")
+                         "the fly from the cached truth each epoch.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--nx", type=int, default=None)
     ap.add_argument("--n-members", type=int, default=1)
+    # Split seeds match the production 1000/100/100 truth-generation convention
+    # (reports/qg/generate_qg_window_chunk.py's SPLIT_SEED_BASE) so a `--cache-dir`
+    # pointed at that pre-generated cache hits it directly instead of re-paying the
+    # ~2-year-spinup rollout (train/val truth is reused as-is even though its baked-in
+    # obs used QGConfig defaults -- `on_the_fly_obs` overwrites it every draw anyway).
+    ap.add_argument("--train-seed", type=int, default=42)
+    ap.add_argument("--val-seed", type=int, default=10_042)
+    ap.add_argument("--test-seed", type=int, default=20_042)
+    # S0 reference-case obs/IC protocol (matches reports/qg/fix_qg_test_obs_ic.py's
+    # ref_cfg and the DA-baseline reference case in PLAN.md), applied to `test_cfg` --
+    # which also doubles as the shared cfg QGNeuralDataset uses to (re)draw obs for
+    # every split, so train/val's on-the-fly obs follow the same protocol.
+    ap.add_argument("--obs-geometry", default="random_columns")
+    ap.add_argument("--cols-per-day", type=int, default=4)
+    ap.add_argument("--obs-noise-std-frac", type=float, default=0.01)
+    ap.add_argument("--init-lag-days", type=float, default=1.0)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
@@ -234,7 +259,16 @@ def main():
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
-    test_cfg = build_cfg(nx=args.nx)
+    # `num_windows` must match the split's window count: `_truth_cache_path`
+    # hashes the *whole* QGConfig (asdict), and `num_windows` is one of its
+    # fields, so a mismatched default there silently misses a cache keyed
+    # with the matching value (`generate_qg_window_chunk.py` always sets it
+    # equal to the split size) and falls back to a full from-scratch rollout.
+    test_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
+                        obs_geometry=args.obs_geometry,
+                        cols_per_day=args.cols_per_day,
+                        obs_noise_std_frac=args.obs_noise_std_frac,
+                        init_lag_days=args.init_lag_days)
     state_dim = test_cfg.state_dim
 
     if os.path.exists(results_path) and args.eval_only is None:
@@ -243,15 +277,17 @@ def main():
 
     test_windows = ensure_truth_cache(test_cfg, args.num_test, args.cache_dir)
     if args.eval_only is None:
-        train_cfg = build_cfg(nx=args.nx, seed=7)
-        val_cfg = build_cfg(nx=args.nx, seed=99)
+        # No obs-config overrides here: `_truth_cache_path` hashes the whole
+        # QGConfig, and the pre-generated production truth was built with plain
+        # QGConfig defaults for obs fields (only nx/dt/seed/num_windows set) --
+        # overriding obs fields here would miss that cache and trigger a full
+        # from-scratch rollout. `on_the_fly_obs` (below) discards whatever obs
+        # this cache carries anyway, so its obs config is irrelevant.
+        train_cfg = build_cfg(nx=args.nx, seed=args.train_seed, num_windows=args.num_train)
+        val_cfg = build_cfg(nx=args.nx, seed=args.val_seed, num_windows=args.num_val)
         on_the_fly = not args.fixed_split_obs
-        if args.fixed_split_obs:
-            train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
-            val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
-        else:
-            train_windows = ensure_truth_only_cache(train_cfg, args.num_train, args.cache_dir)
-            val_windows = ensure_truth_only_cache(val_cfg, args.num_val, args.cache_dir)
+        train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
+        val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
         norm = compute_norm(train_windows, test_cfg)
 
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
@@ -322,6 +358,11 @@ def main():
                    "num_train_windows": args.num_train, "num_val_windows": args.num_val,
                    "num_test_windows": args.num_test,
                    "on_the_fly_split_obs": not args.fixed_split_obs,
+                   "train_seed": args.train_seed, "val_seed": args.val_seed,
+                   "test_seed": args.test_seed, "obs_geometry": test_cfg.obs_geometry,
+                   "cols_per_day": test_cfg.cols_per_day,
+                   "obs_noise_std_frac": test_cfg.obs_noise_std_frac,
+                   "init_lag_days": test_cfg.init_lag_days,
                    "n_members": args.n_members, "q_loss_weight": args.q_loss_weight},
         "norm": {"psi1": norm.psi1, "psi2": norm.psi2,
                  "q1": norm.q1, "q2": norm.q2, "obs": norm.obs},
