@@ -107,7 +107,7 @@ def main():
         both_ok = ke_ok & ens_ok
         n_day = None
         for day in range(test_days):
-            start, end = day * steps_per_day, (day + 1) * steps_per_day
+            start = day * steps_per_day
             if both_ok[start:].all():
                 n_day = day
                 break
