@@ -55,6 +55,13 @@ def _patch_resblock_for_1d() -> None:
         h = self.norm2(h)
         h = self.nonlinearity(h)
         h = self.conv2(h)
+        # MONAI's own DiffusionUNetResnetBlock has no dropout mechanism at all
+        # (no constructor arg, no layer) -- unlike UNet1D.ConvBlock, which
+        # applies real nn.Dropout before its residual add. `dropout` is
+        # attached as a submodule post-construction (see MonaiUNet1D.__init__)
+        # so this comparison isn't silently missing regularization.
+        if hasattr(self, "dropout"):
+            h = self.dropout(h)
         output: torch.Tensor = self.skip_connection(x) + h
         return output
 
@@ -82,6 +89,7 @@ class MonaiUNet1D(nn.Module):
         norm_num_groups: int = 8,
         use_obs: bool = True,
         output_dim: int = None,
+        dropout: float = 0.1,
     ):
         super().__init__()
         _patch_resblock_for_1d()
@@ -104,6 +112,10 @@ class MonaiUNet1D(nn.Module):
             num_res_blocks=num_res_blocks,
             norm_num_groups=norm_num_groups,
         )
+        if dropout > 0:
+            for module in self.backbone.modules():
+                if isinstance(module, _dmu.DiffusionUNetResnetBlock):
+                    module.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -146,6 +158,7 @@ class MonaiDirectUNet(nn.Module):
             num_res_blocks=num_res_blocks,
             norm_num_groups=norm_num_groups,
             use_obs=True,
+            dropout=dropout,
         )
 
     def forward(self, batch):

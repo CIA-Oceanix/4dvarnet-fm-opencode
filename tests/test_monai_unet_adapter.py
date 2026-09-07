@@ -61,3 +61,63 @@ def test_use_obs_true_requires_obs():
     x = torch.randn(2, 2, 48)
     with pytest.raises(ValueError):
         m(x, obs=None)
+
+
+def _n_resblock_dropouts(model):
+    from monai.networks.nets import diffusion_model_unet as _dmu
+    return sum(
+        1 for mod in model.backbone.modules()
+        if isinstance(mod, _dmu.DiffusionUNetResnetBlock) and hasattr(mod, "dropout")
+    )
+
+
+def test_dropout_is_actually_applied():
+    # MONAI's DiffusionUNetResnetBlock has no dropout mechanism at all (no
+    # constructor arg, no layer) -- MonaiUNet1D attaches nn.Dropout to each
+    # resblock post-construction. Every resblock's conv2 is zero_module-
+    # initialized (standard diffusion-model practice), so at init the
+    # dropout's *input* is exactly zero everywhere and this test would pass
+    # vacuously; train briefly first (against a nonzero target, so the
+    # gradient at y=0 isn't itself zero) so the dropout input is nonzero.
+    m = MonaiUNet1D(state_dim=2, obs_dim=2, hidden_channels=[16, 32], num_res_blocks=1,
+                     norm_num_groups=8, dropout=0.9)
+    assert _n_resblock_dropouts(m) > 0, "no dropout attached to any resblock"
+
+    x = torch.randn(4, 2, 48)
+    obs = torch.randn(4, 2, 48)
+    tau = torch.rand(4)
+    target = torch.randn(4, 2, 48)
+    opt = torch.optim.Adam(m.parameters(), lr=0.1)
+    for _ in range(10):
+        opt.zero_grad()
+        y = m(x, obs=obs, tau=tau)
+        (y - target).pow(2).mean().backward()
+        opt.step()
+
+    m.train()
+    y1 = m(x, obs=obs, tau=tau)
+    y2 = m(x, obs=obs, tau=tau)
+    assert not torch.allclose(y1, y2), "dropout=0.9 should make train-mode outputs stochastic"
+
+    m.eval()
+    y3 = m(x, obs=obs, tau=tau)
+    y4 = m(x, obs=obs, tau=tau)
+    assert torch.allclose(y3, y4), "eval-mode outputs must be deterministic (dropout off)"
+
+
+def test_dropout_zero_attaches_no_resblock_dropout():
+    # MONAI's own attention block (SABlock, in the middle bottleneck) has its
+    # own pre-existing internal nn.Dropout layers unrelated to this -- so we
+    # check specifically for dropout attached to DiffusionUNetResnetBlock
+    # instances, not a global nn.Dropout count.
+    m = MonaiUNet1D(state_dim=2, obs_dim=2, hidden_channels=[16, 32], num_res_blocks=1,
+                     norm_num_groups=8, dropout=0.0)
+    assert _n_resblock_dropouts(m) == 0, "dropout=0.0 should attach no resblock dropout"
+
+
+def test_monai_direct_unet_forwards_dropout():
+    from models.monai_unet_adapter import MonaiDirectUNet
+    md = MonaiDirectUNet(state_dim=4, hidden_channels=[16, 32], num_res_blocks=1,
+                          norm_num_groups=8, dropout=0.5)
+    assert _n_resblock_dropouts(md.monai_unet) > 0, \
+        "MonaiDirectUNet must forward its dropout arg to MonaiUNet1D"
