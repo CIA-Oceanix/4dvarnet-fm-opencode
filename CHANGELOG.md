@@ -219,6 +219,67 @@ failed**. `ruff check` on the two touched config/test files: no new issues
 (pre-existing, unrelated lint debt elsewhere in `test_param_head.py`
 untouched).
 
+## 2026-09-08: QG neural baseline: global psi normalization, raw-q auxiliary loss
+
+**Summary:** Replaced Q1/Q2's per-window ψ/q normalization (`WindowScale`)
+with classic global per-layer mean/std z-score normalization for ψ only
+(reusing `data/normalization.py`'s L96 utilities), leaving PV/q in raw
+physical units as an auxiliary-only loss term with a derived
+`q_loss_weight = 1/Var(q)` (≈2.5415e9 at nx=64) so its ~1e-10-scale raw MSE
+still contributes comparably to the (unit-variance) normalized ψ loss instead
+of being numerically negligible at the old default weight of 0.1.
+
+**Files modified:**
+`precompute_qg_norm_stats.py` (new) — computes global per-layer ψ mean/std +
+derived `q_loss_weight` + per-window ψ std diagnostics over the 1000-window
+train split, saves `experiments/qg_psi_norm_stats.pt`/`_extra.pt`.
+`batch/run_qg_precompute_norm_stats.sbatch` (new) — CPU-only batch wrapper
+(the ~33GB train truth cache OOMs an interactive/unreserved shell).
+`data/qg_neural.py` — psi (+obs) normalized via the global `{"mean","std"}`
+dict (`data.normalization.normalize`/`denormalize`) instead of per-window
+`WindowScale`; q left raw; removed `QGNorm`/`compute_norm` (superseded);
+renamed `denorm_state`→`denorm_psi`, `norm_q_from_psi`→`q_from_psi_norm`;
+`QGBatch` drops its `scale` field; `WindowScale`/`window_scales` retained as
+a diagnostic only. `train_qg_neural.py` — loads
+`config/experiment/Q{1,2}_..._s0.yaml`'s `training.q_loss_weight`/
+`data.normalize`/`data.norm_stats_path` as the actual runtime defaults
+(previously these YAML fields were documentation-only, independently
+duplicated by a hardcoded argparse default that could silently drift).
+`config/experiment/Q1_direct_unet_s0.yaml`, `Q2_vanilla_cfm_s0.yaml` — add
+`data.normalize`/`data.norm_stats_path`, update `q_loss_weight` to the
+derived value. `batch/run_qg_q1_train.sbatch` — drop the now-superseded
+`--q-loss-weight 0.1` flag. `tests/test_qg_neural.py` — updated for the new
+API (6-tuple dataset items, no `scale`, new `denorm_psi`/`q_from_psi_norm`
+round-trip tests, global-normalization unit-variance test). `PLAN.md` — new
+"Global psi normalization" section with the measured stats and rationale.
+
+**Rationale:** the per-window scheme was originally chosen because ψ energy
+spans a wide range across training windows (~30→1e4 at nx=8), and a single
+global scalar would be dominated by the highest-energy windows. Measuring
+this at production resolution (nx=64) found a real but less extreme spread
+(23.6x/82.8x for layer1/layer2) — accepted after review as a worthwhile
+trade-off for a standard, interpretable global normalization (low-energy
+windows are now under-weighted in the loss by up to ~16x at p10 energy vs.
+the old per-window scheme, which weighted every window equally regardless of
+energy). ψ and q differ in physical scale by ~9 orders of magnitude
+(std≈1.85e4 vs ≈2.77e-5), so leaving q raw while z-scoring ψ only works if
+`q_loss_weight` absorbs that gap — deriving it as `1/Var(q)` (rather than a
+hand-picked literal) keeps it auditable and reproducible if the train
+split/seed/nx ever changes.
+
+**Verification:** `pytest tests/test_qg_neural.py -v -m "not slow"` — 18/18
+passed (added `test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw`,
+`test_dataset_without_norm_stats_is_raw_identity`, `test_denorm_psi_round_trip`,
+`test_denorm_psi_identity_when_stats_none`, `test_q_from_psi_norm_matches_raw_pv`,
+rewrote the dataset/collate/lightning tests for the new 6-tuple item shape and
+`QGBatch` without `scale`). Full repo `pytest tests/ -m "not slow"` run
+(excluding two pre-existing, unrelated collection errors in
+`test_equiv_report.py`/`test_numerical_equivalence.py`) confirms no
+regressions elsewhere. `ruff check` clean on all touched files.
+`precompute_qg_norm_stats.py` run for real (job 52483, `Mee_Global_CPU`,
+`--account=mee --qos=mee_short`) over the actual 1000-window nx=64 train
+split, producing the stats/diagnostics cited above.
+
 ## 2026-09-07: Document the monai env's required torch version
 
 **Summary:** Added `requirements-monai.txt`, pinning `torch==2.8.0+cu126` and

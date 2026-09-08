@@ -1,10 +1,25 @@
 # Q1: DirectUNet neural baseline on QG S0 (streamfunction target).
 #
-# Consumed by the self-contained entry point `train_qg_neural.py` (NOT Hydra;
-# this file documents the experiment spec and maps to CLI flags).
+# Consumed by `train_qg_neural.py` (loaded via `OmegaConf.load` at startup --
+# `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path` below are
+# this run's actual source of truth, CLI-overridable via
+# `--q-loss-weight`/`--normalize`/`--norm-stats-path`; the rest of this file
+# still just documents the spec/CLI flags).
 #
-# Supervision: daily mean of the full 2-layer streamfunction psi (D=2*ny*nx),
-# normalized per-window. Auxiliary PV-q loss (norm_q_from_psi) with weight 0.1.
+# Supervision: daily mean of the full 2-layer streamfunction psi (D=2*ny*nx).
+# psi (+obs) is z-score normalized per layer with a *global* (mean, std) pair
+# computed once over the whole training split by `precompute_qg_norm_stats.py`
+# (see `data.norm_stats_path`) -- see `data/qg_neural.py`'s module docstring
+# for the per-window-vs-global trade-off (window-to-window psi energy spans
+# ~24-83x at nx=64 across the 1000-window train split; global normalization
+# under-weights low-energy windows relative to the old per-window scheme).
+#
+# Auxiliary PV-q loss: q is left RAW (physical units, not normalized) --
+# `q_loss_weight` is derived as `1/Var(q)` (over the same train split) so its
+# raw-unit MSE contributes comparably to the (unit-variance) normalized psi
+# loss; see `experiments/qg_psi_norm_stats_extra.pt` for the measured
+# Var(q)/q_loss_weight (q_var≈3.93e-10, q_loss_weight≈2.5415e9 at nx=64,
+# train-seed=42, computed 2026-09-07).
 #
 # Production target: nx=64 (state_dim=8192). NOTE: per-window truth generation
 # (QGS01Dataset spinup) is expensive; see PLAN.md for the HPC sizing note.
@@ -14,11 +29,13 @@
 # `--fixed-split-obs` reverts to one fixed baked-in draw); test keeps the
 # original fixed, reproducible obs. See PLAN.md.
 #
+#   python precompute_qg_norm_stats.py --cache-dir reports/qg_cache \
+#     --output experiments/qg_psi_norm_stats.pt   # once, before training
 #   python train_qg_neural.py \
 #     --model-type direct_unet \
 #     --exp-dir experiments/Q1_direct_unet_s0 \
-#     --nx 64 --q-loss-weight 0.1 --epochs 200
-#     --num-train 1000 --num-val 100 --num-test 100
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
 #     --batch-size 2 --cache-dir reports/qg_cache
 
 experiment_id: Q1_direct_unet_s0
@@ -38,10 +55,15 @@ training:
   epochs: 200
   lr: 0.001
   batch_size: 2
-  q_loss_weight: 0.1
+  # = 1/Var(q_raw), derived by precompute_qg_norm_stats.py from the 1000-
+  # window train split (nx=64, train-seed=42, 2026-09-07). Recompute (and
+  # update this value) if the train split/seed/nx ever changes.
+  q_loss_weight: 2.5415e9
 data:
   num_train_windows: 1000
   num_val_windows: 100
   num_test_windows: 100
   on_the_fly_split_obs: true
   cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt

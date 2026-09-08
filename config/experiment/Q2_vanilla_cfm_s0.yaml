@@ -1,10 +1,13 @@
 # Q2: VanillaCFM (tau=0) neural baseline on QG S0 (streamfunction target).
 #
-# Consumed by the self-contained entry point `train_qg_neural.py` (NOT Hydra;
-# this file documents the experiment spec and maps to CLI flags).
+# Consumed by `train_qg_neural.py` (loaded via `OmegaConf.load` at startup --
+# `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path` below are
+# this run's actual source of truth). See Q1_direct_unet_s0.yaml for the full
+# normalization rationale (same psi/q stats: both models train on the same
+# S0 split/cache).
 #
 # Same supervision as Q1 plus the tau=0 CFM conditional-velocity loss; the
-# reconstruction is x0 + v(x0; tau=0). Auxiliary PV-q loss weight 0.1.
+# reconstruction is x0 + v(x0; tau=0).
 #
 # Production target: nx=64 (state_dim=8192). See PLAN.md HPC sizing note.
 #
@@ -13,11 +16,13 @@
 # `--fixed-split-obs` reverts to one fixed baked-in draw); test keeps the
 # original fixed, reproducible obs. See PLAN.md.
 #
+#   python precompute_qg_norm_stats.py --cache-dir reports/qg_cache \
+#     --output experiments/qg_psi_norm_stats.pt   # once, before training
 #   python train_qg_neural.py \
 #     --model-type vanilla_cfm \
 #     --exp-dir experiments/Q2_vanilla_cfm_s0 \
-#     --nx 64 --q-loss-weight 0.1 --epochs 400
-#     --num-train 1000 --num-val 100 --num-test 100
+#     --nx 64 --epochs 400 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
 #     --batch-size 2 --cache-dir reports/qg_cache
 
 experiment_id: Q2_vanilla_cfm_s0
@@ -41,10 +46,13 @@ training:
   epochs: 400
   lr: 0.001
   batch_size: 2
-  q_loss_weight: 0.1
+  # = 1/Var(q_raw), see Q1_direct_unet_s0.yaml (same train split/stats).
+  q_loss_weight: 2.5415e9
 data:
   num_train_windows: 1000
   num_val_windows: 100
   num_test_windows: 100
   on_the_fly_split_obs: true
   cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
