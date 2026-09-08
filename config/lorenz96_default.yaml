@@ -11,7 +11,7 @@ data:
   window_spacing: 2000
   spinup_steps: 10000
   seed: 42
-  NO: 8
+  "NO": 8
   J: 4
   h: 1.0
   hx: 1.0

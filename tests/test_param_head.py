@@ -274,13 +274,13 @@ def test_param_head_unet_configs_instantiate():
             cfg = compose(config_name=f"experiment/{name}")
         assert cfg.model.model_type == "param_head_unet"
         assert cfg.model.param_head_unet.state_source == src
+        if src == "l1b" and not os.path.exists(L1B_CKPT):
+            pytest.skip("L1b checkpoint not available")
         dev = torch.device("cpu")
         model = model_factory(cfg, dev)
         assert isinstance(model.param_head, StateParamUNet)
         assert model.state_source == src
         if src == "l1b":
-            if not os.path.exists(L1B_CKPT):
-                pytest.skip("L1b checkpoint not available")
             assert model.state_encoder is not None
             assert all(not p.requires_grad for p in model.state_encoder.parameters())
         else:

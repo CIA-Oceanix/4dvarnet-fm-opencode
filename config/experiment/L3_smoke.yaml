@@ -35,3 +35,4 @@ data:
   num_val_windows: 5
   num_test_windows: 10
   test_param_noise: 0.2
+  normalize: false

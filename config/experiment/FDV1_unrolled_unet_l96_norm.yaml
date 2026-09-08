@@ -1,0 +1,44 @@
+# @package _global_
+# Clone of FDV1_unrolled_unet_l96 with data.normalize=true (normalization
+# ablation Phase 2, FDV family): per-channel z-score normalization of
+# states/obs, using the shared stats in experiments/l96_norm_stats_obsj2.pt
+# (see precompute_l96_norm_stats.py). FDV1/FourDVarNetSolver had no
+# normalization variant before this -- whether it helps or hurts the unrolled
+# obs+state solver (unlike DirectUNet, where it collapsed the raw UNet1D
+# backbone but helped MonaiDirectUNet) is an open question this fills in.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  # Reuse the canonical cached test_s0/test_s1 (same seeds/config as generating
+  # them fresh would produce) instead of paying the slow per-window simulation
+  # cost every training run. train/val are still generated fresh.
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

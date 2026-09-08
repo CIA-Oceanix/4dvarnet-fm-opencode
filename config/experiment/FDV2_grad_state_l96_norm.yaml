@@ -1,4 +1,10 @@
 # @package _global_
+# Clone of FDV2_grad_state_l96 with data.normalize=true (normalization
+# ablation Phase 2, FDV family): per-channel z-score normalization of
+# states/obs, using the shared stats in experiments/l96_norm_stats_obsj2.pt
+# (see precompute_l96_norm_stats.py). FDV2/grad+state (trainable prior_weight,
+# see PR #168) is the current best-performing FDV variant; had no
+# normalization comparison point before this.
 defaults:
   - /lorenz96_default
   - _self_
@@ -38,4 +44,8 @@ data:
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2
-  normalize: false
+  normalize: true
+  # Reuse the canonical cached test_s0/test_s1 (same seeds/config as generating
+  # them fresh would produce) instead of paying the slow per-window simulation
+  # cost every training run. train/val are still generated fresh.
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

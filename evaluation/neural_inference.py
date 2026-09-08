@@ -1,5 +1,6 @@
 """Standalone neural model inference and evaluation for L96."""
 import logging
+import os
 from typing import Any, Optional
 
 import numpy as np
@@ -125,15 +126,63 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# Filename train.py saves the fully-resolved training config under, next to
+# each experiment's checkpoints/ dir (see train.py::main).
+RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
+
+
+def _find_resolved_config(checkpoint_path: str) -> Optional[str]:
+    """Look for train.py's auto-saved resolved config next to ``checkpoint_path``.
+
+    Checkpoints live at ``<exp_dir>/checkpoints/<name>.{pt,ckpt}``; the resolved
+    config is saved at ``<exp_dir>/resolved_config.yaml``. Also checks the
+    checkpoint's own directory, for non-standard layouts.
+    """
+    ckpt_dir = os.path.dirname(os.path.abspath(checkpoint_path))
+    candidates = [os.path.join(ckpt_dir, RESOLVED_CONFIG_FILENAME)]
+    if os.path.basename(ckpt_dir) == "checkpoints":
+        candidates.append(os.path.join(os.path.dirname(ckpt_dir), RESOLVED_CONFIG_FILENAME))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> tuple:
     """Load model checkpoint and config."""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
 
+    # Only an *auto-discovered* resolved_config.yaml (train.py's unconditional,
+    # defaults-composed dump -- guaranteed to declare every field model_factory
+    # reads for its model_type) is trusted to skip shape-inference entirely.
+    # An explicitly-passed --config may be a raw experiment preset relying on
+    # un-merged defaults (e.g. from lorenz96_default.yaml), so it keeps going
+    # through the tolerant partial-merge path below, as before.
+    auto_discovered_config = False
+    if config_path is None:
+        config_path = _find_resolved_config(checkpoint_path)
+        if config_path:
+            auto_discovered_config = True
+            logger.info(f"Auto-discovered resolved training config: {config_path}")
+
     # Handle Lightning .ckpt files
     if "hyper_parameters" in ckpt:
         # Lightning checkpoint: extract model_type from hyper_parameters
         model_type = ckpt["hyper_parameters"].get("model_type", "direct_unet")
+
+        # A resolved training config lets us recover the exact architecture
+        # the checkpoint was trained with, rather than reverse-engineering it
+        # from state-dict shapes below. Shape-inference remains the fallback
+        # for checkpoints predating this change (no resolved_config.yaml).
+        if auto_discovered_config:
+            try:
+                candidate_cfg = OmegaConf.load(config_path)
+                if candidate_cfg.get("model", {}).get("model_type") is not None:
+                    return state_dict, candidate_cfg
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Could not load config from {config_path}: {e}")
+
         is_joint = "joint" in model_type
 
         # Infer architecture parameters from state_dict
@@ -582,6 +631,22 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
     return model
 
 
+def _apply_model_overrides(cfg: Any, overrides: dict) -> None:
+    """Apply ``overrides`` to ``cfg.model``, under either config schema.
+
+    The legacy shape-inferred ``cfg`` is flat (``cfg.model.<key>``); a training
+    config (resolved or raw preset) nests family-specific fields one level
+    down (e.g. ``cfg.model.vanilla_cfm.<key>``). Set the key at the top level
+    always, and additionally in any existing sub-block that already declares
+    it, so the override takes effect regardless of which schema ``cfg`` is.
+    """
+    for key, value in overrides.items():
+        cfg.model[key] = value
+        for sub in cfg.model.values():
+            if OmegaConf.is_config(sub) and key in sub:
+                sub[key] = value
+
+
 def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs) -> tuple:
     """Load model from checkpoint.
 
@@ -592,14 +657,20 @@ def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs
     """
     overrides = kwargs.pop("overrides", None)
     state_dict, cfg = load_checkpoint(checkpoint_path, config_path)
-    if overrides:
-        for key, value in overrides.items():
-            cfg.model[key] = value
-    model_class, cfg_model = resolve_model_class(cfg)
-    model = create_model(model_class, cfg_model)
-    
-    # Move model to correct device
     device = kwargs.get("device", "cpu")
+    if overrides:
+        _apply_model_overrides(cfg, overrides)
+
+    if cfg.get("model", {}).get("model_type") is not None:
+        # A training config is available: build the model exactly as train.py
+        # did (model_factory), rather than the flat/shape-inferred path.
+        from train import model_factory
+        model = model_factory(cfg, torch.device(device))
+    else:
+        model_class, cfg_model = resolve_model_class(cfg)
+        model = create_model(model_class, cfg_model)
+
+    # Move model to correct device
     model.to(device)
     
     # Strip "model." prefix if present (Lightning wrapper)

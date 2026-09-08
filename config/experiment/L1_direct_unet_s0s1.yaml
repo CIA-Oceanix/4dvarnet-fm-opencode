@@ -27,6 +27,7 @@ data:
   num_val_windows: 100
   num_test_windows: 200
   test_param_noise: 0.2
+  normalize: false
   randomize:
     fast_weights: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
     F: {randomized: false, noise: 0.2, biased: false, bias: 0.0}
