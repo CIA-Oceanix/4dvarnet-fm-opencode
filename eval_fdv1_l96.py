@@ -43,6 +43,11 @@ def main():
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="fdv1_eval_results.json", help="Output JSON")
+    parser.add_argument("--normalize-stats", default=None,
+                        help="Path to a per-channel norm stats .pt (mean/std). When given, "
+                             "obs is z-score normalized before each model call and predictions "
+                             "are denormalized back to raw physical units before scoring. "
+                             "Omitting this flag is a true no-op (identical to not passing it).")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -63,14 +68,31 @@ def main():
             dataset_path = str(candidates[0])
             logger.info(f"Auto-detected dataset: {dataset_path}")
 
+    norm_stats = None
+    if args.normalize_stats:
+        from data.normalization import load_norm_stats
+        norm_stats = load_norm_stats(args.normalize_stats)
+        logger.info(f"Loaded normalize-stats from {args.normalize_stats}: "
+                    f"mean/std shape {tuple(norm_stats['mean'].shape)}")
+
     dataset, dataloaders, obs_var_indices = prepare_dataset(
         cfg, dataset_path, args.num_windows, args.obs_interval, obs_j=args.obs_j,
+        norm_stats=norm_stats,
     )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
     logger.info(f"Running inference (step 1): cases={args.cases} n_outer={n_outer}")
     estimates = run_inference(model, dataloaders, device, obs_var_indices, n_outer=n_outer)
+
+    if norm_stats is not None:
+        # obs was fed to the model normalized (and, at training time, so was
+        # the target state); predictions come back in normalized space and
+        # must be denormalized before scoring against raw truth. Mirrors
+        # eval_neural_l96.py's handling exactly.
+        from data.normalization import denormalize
+        for case in args.cases:
+            estimates[case]["trajectories"] = denormalize(estimates[case]["trajectories"], norm_stats)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

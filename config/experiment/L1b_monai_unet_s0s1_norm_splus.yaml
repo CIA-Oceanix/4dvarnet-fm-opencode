@@ -1,0 +1,41 @@
+# @package _global_
+# S+ complexity-tier variant of L1b_monai_unet_s0s1_norm (see memory
+# project_l96_monai_unet_complexity_tiers -- hidden_channels [32,64,128],
+# num_res_blocks=2, 1,482,264 params vs the M-tier baseline's 5,889,048 --
+# ~78% of DirectUNet-M's 1,896,600 params, the closest achievable
+# capacity-matched point in that tier ladder). Same data setup, normalization,
+# and training hyperparameters as the M-tier baseline; only the backbone
+# capacity changes, so results stay comparable while training cost drops
+# roughly proportionally to the ~4x parameter reduction.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [32, 64, 128]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

@@ -1,5 +1,224 @@
 # Changelog
 
+## 2026-09-08: Full training run validating checkpoint/config persistence + normalization config wiring end-to-end
+
+**Summary:** Before opening the PR for this branch's two components (checkpoint/
+config persistence + L96 normalization config wiring), ran one real, full
+(not smoke) training job on the cluster to validate both end-to-end rather
+than only via fast local tests. New config
+`config/experiment/L1b_monai_unet_s0s1_norm_splus.yaml`: a new **S+
+complexity tier** of the existing `L1b_monai_unet_s0s1_norm` (MonaiDirectUNet,
+`data.normalize=true`) -- `hidden_channels=[32,64,128]`, `num_res_blocks=2`,
+1,482,264 params (vs the M-tier baseline's 5,889,048), per memory
+`project_l96_monai_unet_complexity_tiers` -- chosen specifically so a genuine
+full 200-epoch run completes in ~25 minutes instead of the M-tier's much
+longer training time. New `batch/run_l96_monai_norm_splus_train.sbatch`
+(adapted from `run_l96_neural_training_monai_norm.sbatch` to run from this
+worktree instead of the `4dvarnet-fm-monai-unet-norm` topic worktree).
+
+**Result (job 52529, Quadro RTX 8000, 24m41s total, exit 0):** S0 RMSE
+**0.5323** (EV 0.892, ES 0.338), S1 RMSE **0.5310** (EV 0.892, ES 0.337),
+degradation **0.997** (no S1 robustness gap). ~6% worse RMSE than the M-tier
+baseline (0.501/0.502) at ~4x fewer parameters and a small fraction of the
+training time -- a reasonable capacity/cost trade-off point, not merely a
+smoke-scale result.
+
+**What this validated end-to-end, for real, beyond the unit tests:**
+- **Component 2 (checkpoint/config persistence):** `train.py` wrote
+  `experiments/L1b_monai_unet_s0s1_norm_splus/resolved_config.yaml`
+  immediately at startup (confirmed via `ls` in the sbatch log); the eval
+  step (`eval_monai_l96.py --config .../resolved_config.yaml`) loaded it
+  directly and correctly recovered the architecture (`MonaiDirectUNet,
+  state_dim=24`) and normalization stats -- the actual intended real-world
+  usage of this branch's component 2, not just the synthetic-checkpoint
+  tests in `tests/test_config_persistence.py`.
+- **The `config/lorenz96_default.yaml`/`config/case_study/lorenz96.yaml`
+  `"NO"` YAML-boolean fix (2026-09-08 entry below):** the resolved config's
+  `data.NO`/`data.J` are `8`/`4` as real keys (verified in the saved
+  `neural_eval.json`), not silently absent -- this run is the first real
+  training/eval to exercise the fixed key.
+- **Component 1 (normalization config wiring):** `data.normalize: true` in
+  a from-scratch experiment config flowed correctly through
+  `make_l96_dataloaders`/`make_collate_fm` to actually train on normalized
+  obs/state, exactly as intended, with per-channel stats loaded from the
+  shared `experiments/l96_norm_stats_obsj2.pt`.
+
+**Files added:** `config/experiment/L1b_monai_unet_s0s1_norm_splus.yaml`,
+`batch/run_l96_monai_norm_splus_train.sbatch`. Checkpoints/`resolved_config.yaml`/
+`neural_eval.json` themselves are under `experiments/` (gitignored, not
+committed) -- this entry is their record.
+
+**Verification:** `sacct -j 52529` -- `COMPLETED`, exit `0:0`, all epochs
+(200) reached, both S0/S1 eval cases produced finite, sane metrics (no NaN,
+no divergence).
+
+## 2026-09-08: L96 normalization config wiring (DirectUNet/VanillaCFM/FDV) + a model_factory bug fix
+
+**Summary:** Component 1 of the plan in memory
+`project_l96_normalization_integration_plan`. Every canonical L96
+DirectUNet/VanillaCFM/FDV experiment config now declares `data.normalize`
+explicitly (`true`/`false`) instead of relying on an absent key silently
+defaulting to `False` -- a reviewer/future session can now tell a config's
+normalization status without checking code defaults. Added three new
+`_norm` (`data.normalize: true`) variants: `L2b_vanilla_cfm_s0s1_norm`
+(tau=0 VanillaCFM -- previously only the multi-tau `L3_vanilla_cfm_s0s1_norm`
+had one), `FDV1_unrolled_unet_l96_norm`, `FDV2_grad_state_l96_norm` (the FDV
+family had **no** normalization variant at all before this, despite being
+one of the three families this plan explicitly scopes). `eval_fdv1_l96.py`
+gains a `--normalize-stats` flag mirroring `eval_neural_l96.py`'s existing
+one exactly (z-score-normalizes obs before each model call, denormalizes
+predictions back to physical units before scoring) -- previously the
+dedicated FDV eval script had no way to correctly score a normalize-trained
+FDV checkpoint.
+
+**Bug found and fixed along the way:** `train.py::model_factory`'s
+`fourdvarnet`/`fourdvarnet_cfm` branches read `R_var`/`clip_range` (and, for
+`fourdvarnet_cfm`, `obs_weight`/`min_obs_weight`) via direct attribute access
+on `cfg.model.fdv`/`cfg.model.fdv_cfm` instead of `.get()` with a default,
+unlike every other field on the same block. `FourDVarNetSolver`/
+`FourDVarNetPredictStateCFM` both give these fields real defaults
+(`R_var=0.5`, `clip_range=50.0`, `obs_weight=1.0`, `min_obs_weight=1e-3`) in
+their own constructors -- but `FDV1_unrolled_unet_l96.yaml` and
+`FDV1CFM_predict_state_l96.yaml` (both written before PR #168 added these
+fields to the trainable-`prior_weight` work) never declare them, so
+`model_factory(cfg, dev)` crashed outright for the two most-cited FDV1
+configs in the benchmark -- confirmed against the pre-fix files via `git show
+HEAD` (crashes identically with or without this session's other changes).
+This is also why component 2's new `evaluation.neural_inference.load_model`
+auto-discovered-config path (which now calls `train.model_factory` directly)
+would have failed to rebuild FDV1 from a fresh `resolved_config.yaml` without
+this fix. Fixed by matching every field to its constructor default via
+`.get()`, same pattern as the fields that already had one.
+
+**Files modified:** `config/experiment/{L1,L1b,L4,L2,L2b,L3_smoke,L3,L5,L6}*.yaml`
+(DirectUNet/VanillaCFM, 9 files) + `config/experiment/FDV{1,1CFM,2,2_fixedw,2_subgrad,2CFM}*.yaml`
+(FDV, 6 files) -- added explicit `data.normalize: false`; new
+`config/experiment/{L2b_vanilla_cfm_s0s1_norm,FDV1_unrolled_unet_l96_norm,FDV2_grad_state_l96_norm}.yaml`;
+`train.py` -- `.get()` defaults in `model_factory`'s `fourdvarnet`/
+`fourdvarnet_cfm` branches; `eval_fdv1_l96.py` -- `--normalize-stats` flag +
+denormalize-before-scoring; new `tests/test_l96_normalization_configs.py`
+(44 tests: explicit-normalize assertions for every touched config, `model_factory`
+instantiation for every DirectUNet/VanillaCFM/FDV config incl. all three new
+`_norm` variants, and a dedicated regression test for the `R_var`/`clip_range`
+fix against FDV1's real minimal `fdv:`/`fdv_cfm:` blocks).
+
+**Rationale:** Per the memory: normalization's effect is architecture-dependent
+(collapsed training for the raw `UNet1D` `DirectUNet` backbone, helped once
+paired with `MonaiDirectUNet`), and whether it helps or hurts FDV specifically
+-- unexplored until now -- is an open question worth being able to actually
+test. This pass wires the configs and fixes what was blocking them from
+working at all; it does **not** launch any training (scope decision, see
+below) so the actual FDV-normalization comparison remains a follow-up.
+
+**Verification:** `pytest tests/test_fourdvarnet.py tests/test_l96_normalization.py
+tests/test_l96_normalization_configs.py tests/test_config_persistence.py
+tests/test_neural_inference.py tests/test_hydra_config.py
+tests/test_lorenz96_training.py tests/test_param_head.py
+tests/test_joint_estimation_l96_neural.py -m "not slow"` -- **246 passed, 3
+skipped (l1b checkpoint unavailable, as intended), 0 failed**. Every touched/new
+config verified to (a) compose via Hydra with `data.normalize` explicit and (b)
+instantiate its real model via `model_factory` on CPU (`L1b_monai_unet_s0s1_norm`
+excluded from this env's run -- needs the separate `fdv-monai-proto` env per
+`requirements-monai.txt`, unrelated to this change). `ruff check` clean on all
+new/touched Python files (pre-existing lint debt elsewhere in `train.py`
+untouched, informational per repo CI gate).
+
+**Scope decision (asked, not assumed):** given the choice between "config
+wiring + fast local verification only" and "also launch real FDV-norm
+training jobs on the cluster," the user picked config-wiring-only for this
+pass -- no sbatch jobs submitted. Launching `FDV1_unrolled_unet_l96_norm`/
+`FDV2_grad_state_l96_norm`/`L2b_vanilla_cfm_s0s1_norm` training (each a
+multi-hour GPU job) to actually answer "does normalization help FDV" is open
+follow-up work.
+
+## 2026-09-08: Persist resolved training config next to checkpoints; eval prefers it over shape-inference
+
+**Summary:** `train.py` now saves the fully-resolved (defaults-composed) Hydra
+config to `<exp_dir>/resolved_config.yaml` unconditionally on every run, written
+before the results.json skip-check so re-running against an already-completed
+experiment backfills it too. `evaluation/neural_inference.py::load_checkpoint`/
+`load_model` auto-discover that file next to a checkpoint and, when found,
+build the model via `train.model_factory` -- the exact training-time
+construction path -- instead of reverse-engineering architecture from
+state-dict tensor shapes. Shape-inference remains the fallback for checkpoints
+predating this change (no `resolved_config.yaml` present); an explicitly-passed
+`--config` keeps its prior tolerant partial-merge behavior unchanged (it may be
+an incomplete raw experiment preset relying on un-merged Hydra defaults, unlike
+the auto-discovered file, which is guaranteed field-complete for its
+`model_type`).
+
+**Files modified:** `train.py` -- one `OmegaConf.save(cfg, ..., resolve=True)`
+call in `main()`; `evaluation/neural_inference.py` -- new
+`RESOLVED_CONFIG_FILENAME`/`_find_resolved_config`/`_apply_model_overrides`,
+`load_checkpoint` early-returns the auto-discovered config for Lightning
+checkpoints, `load_model` dispatches to `train.model_factory` when the loaded
+cfg carries `model.model_type` (the nested training-config schema) instead of
+`resolve_model_class`/`create_model` (the flat/shape-inferred schema); new
+`tests/test_config_persistence.py` (9 tests).
+
+**Rationale:** Second component of the plan in memory
+`project_l96_ckpt_config_persistence_plan` (component 1, per-family L96
+normalization config wiring, depends on this for FDV eval robustness).
+Recovering what a checkpoint was actually trained with previously depended on
+`load_checkpoint`'s shape-inference, which had already broken twice this cycle
+(`MonaiDirectUNet`, `FourDVarNetSolver` w/ `unet_backbone=monai`) and left
+`eval_fdv1_l96.py --n-outer`'s "default to the trained model's own N_outer"
+fragile. A fully-resolved config sitting next to the checkpoint makes "what was
+trained" unambiguous. Design mirrors the user's `4dvarnet-global-mapping` repo
+(Hydra's own auto-saved `.hydra/config.yaml` + an explicit checkpoint/config
+pairing), adapted to this repo's own `exp_dir`/`os.chdir` training-output layout
+(an explicit `OmegaConf.save` rather than pointing `hydra.run.dir` at `exp_dir`,
+since `exp_id` here is only resolved at runtime inside `main()`, after Hydra's
+own run-dir setup).
+
+**Verification:** `pytest tests/test_config_persistence.py tests/test_neural_inference.py -m "not slow"`
+-- 39/39 pass. `ruff check` clean on the new test file; pre-existing lint debt
+on `train.py`/`neural_inference.py` unaffected (informational per repo CI
+gate). A broader regression pass surfaced two pre-existing, unrelated bugs --
+fixed separately below (2026-09-08: "Fix NO/YAML-boolean config key + a
+misplaced test skip guard").
+
+## 2026-09-08: Fix NO/YAML-boolean config key + a misplaced test skip guard
+
+**Summary:** Two small pre-existing bugs found while verifying the checkpoint/
+config-persistence change above (unrelated to it -- `model_factory` and the
+`config/*.yaml` files it reads were both untouched by that change).
+
+1. `config/lorenz96_default.yaml` and `config/case_study/lorenz96.yaml` spelled
+   the fast-variable-count key as a bare `NO: 8`. YAML 1.1 resolves `NO` (like
+   `no`/`off`/`false`) to the boolean literal `False` (the "Norway problem"),
+   so the real key was never the string `"NO"` -- `cfg.data.NO` always raised,
+   and every `dc.get("NO", 8)` call silently fell back to its hardcoded
+   default regardless of the YAML. Invisible so far because the default (8)
+   already matched the intended value in both files and no preset overrides
+   it. Fixed by quoting the key (`"NO": 8`) in both files.
+2. `tests/test_param_head.py::test_param_head_unet_configs_instantiate`'s
+   `pytest.skip("L1b checkpoint not available")` guard for the l1b case sat
+   *after* the `model_factory(cfg, dev)` call that needs
+   `experiments/L1b_direct_unet_s0s1/checkpoints/stage1_best.ckpt` to exist --
+   so on any worktree without that specific real checkpoint (checkpoints are
+   gitignored; this is a fresh topic worktree) the test crashed with
+   `FileNotFoundError` instead of skipping. Moved the guard before the
+   `model_factory` call.
+
+**Files modified:** `config/lorenz96_default.yaml`, `config/case_study/lorenz96.yaml`
+-- quoted the `NO` key; `tests/test_param_head.py` -- reordered the l1b skip
+guard.
+
+**Rationale:** Both are correctness bugs independent of any feature work --
+(1) silently no-ops any future attempt to override `NO` from a preset, (2)
+makes CI in a fresh worktree fail instead of skip. Fixing now while the
+context (and a warm test run) was already in hand.
+
+**Verification:** `pytest tests/test_config_persistence.py
+tests/test_neural_inference.py tests/test_hydra_config.py
+tests/test_lorenz96_training.py tests/test_param_head.py
+tests/test_joint_estimation_l96_neural.py tests/test_fourdvarnet.py -m "not slow"`
+-- **191 passed, 3 skipped (l1b checkpoint unavailable, as intended), 0
+failed**. `ruff check` on the two touched config/test files: no new issues
+(pre-existing, unrelated lint debt elsewhere in `test_param_head.py`
+untouched).
+
 ## 2026-09-07: Document the monai env's required torch version
 
 **Summary:** Added `requirements-monai.txt`, pinning `torch==2.8.0+cu126` and

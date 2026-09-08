@@ -291,9 +291,9 @@ def model_factory(cfg: DictConfig, device: torch.device):
             N_outer=fdv.N_outer,
             dropout=fdv.dropout,
             update_input=fdv.update_input,
-            R_var=fdv.R_var,
+            R_var=fdv.get("R_var", 0.5),
             prior_weight=fdv.get("prior_weight", 1.0),
-            clip_range=fdv.clip_range,
+            clip_range=fdv.get("clip_range", 50.0),
             trainable_prior_weight=fdv.get("trainable_prior_weight", True),
             aux_var_cost_weight=fdv.get("aux_var_cost_weight", 0.0),
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
@@ -311,10 +311,10 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=fc.dropout,
             train_tau_0_only=fc.train_tau_0_only,
             update_input=fc.update_input,
-            clip_range=fc.clip_range,
-            R_var=fc.R_var,
-            obs_weight=fc.obs_weight,
-            min_obs_weight=fc.min_obs_weight,
+            clip_range=fc.get("clip_range", 50.0),
+            R_var=fc.get("R_var", 0.5),
+            obs_weight=fc.get("obs_weight", 1.0),
+            min_obs_weight=fc.get("min_obs_weight", 1e-3),
             trainable_obs_weight=fc.get("trainable_obs_weight", True),
         )
     else:
@@ -499,6 +499,13 @@ def main(cfg: DictConfig):
     os.makedirs(exp_dir, exist_ok=True)
     results_path = os.path.join(exp_dir, "results.json")
     trajs_path = os.path.join(exp_dir, "trajectories.npz")
+
+    # Persist the fully-resolved (defaults-composed) config next to the
+    # checkpoints unconditionally, so eval scripts can recover exactly what a
+    # given checkpoint was trained with instead of reverse-engineering
+    # architecture from state-dict shapes. Written before the skip-check below
+    # so re-running against an already-completed experiment still backfills it.
+    OmegaConf.save(cfg, os.path.join(exp_dir, "resolved_config.yaml"), resolve=True)
 
     if os.path.exists(results_path):
         print(f"  Results exist at {results_path}, skipping.")
