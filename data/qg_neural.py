@@ -22,9 +22,25 @@ the full state width (zeros in the lower-layer channels) so the shared
 ``DirectUNet``/``VanillaCFM`` flow models (which assume ``obs_dim==state_dim``)
 need no code change.
 
-Normalization is fixed per-layer scalars (psi per layer, q per layer, obs per
-field) computed on the training split and applied identically everywhere so eval
-maps back to physical units.
+**Normalization (2026-09-08):** psi (streamfunction) is z-score normalized
+per layer with a single *global* (mean, std) pair computed once over the
+whole training split (see `precompute_qg_norm_stats.py` ->
+`experiments/qg_psi_norm_stats.pt`, loaded via `data.normalization.
+load_norm_stats`/`normalize`/`denormalize`) and applied identically to
+train/val/test so eval maps back to physical units. Obs (upper-layer psi)
+uses the same psi1 stats. PV (q) is **left in raw physical units** -- it is
+only ever an auxiliary loss term (see `train_qg_neural.py`'s
+`q_loss_weight`, derived as `1/Var(q)` by the precompute script so its raw-
+unit MSE contributes comparably to the (unit-variance) normalized psi loss).
+
+Per-window normalization (`WindowScale`/`window_scales`) was the original
+design (each window divided by its own std, so windows spanning a wide
+streamfunction-energy range -- ~24-83x at nx=64 across the 1000-window train
+split, see `precompute_qg_norm_stats.py`'s diagnostics -- are each mapped to
+O(1)); global normalization trades that per-window equal-weighting for a
+single interpretable physical-unit scale, at the cost of under-weighting
+low-energy windows in the loss. `window_scales` is retained for this
+diagnostic and is no longer used to build training targets.
 
 **On-the-fly obs (train/val diversity):** ``QGNeuralDataset(on_the_fly_obs=True)``
 redraws the (noisy) obs + init-state from a *truth-only* window
@@ -44,26 +60,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from data.normalization import denormalize, normalize
 from data.qg import QGConfig, QGS01Dataset, expand_obs_to_grid
 
 _INVERTER_CACHE: dict = {}
-
-
-@dataclass
-class QGNorm:
-    psi1: float = 1.0
-    psi2: float = 1.0
-    q1: float = 1.0
-    q2: float = 1.0
-    obs: float = 1.0
-
-    @property
-    def psi_scale(self):
-        return [self.psi1, self.psi2]
-
-    @property
-    def q_scale(self):
-        return [self.q1, self.q2]
 
 
 def steps_per_day(cfg: QGConfig) -> int:
@@ -154,41 +154,15 @@ def psi_to_q(state: torch.Tensor, rd: float, cfg: QGConfig,
     return inv.psi_to_q(state)
 
 
-def compute_norm(windows: list, cfg: QGConfig) -> QGNorm:
-    """Global per-layer normalization scales (legacy; see `window_scales`).
-
-    Retained for report/inspection only. Training uses per-window scales
-    (`WindowScale`) so samples with widely varying streamfunction energy are
-    each made O(1); this global scalar form is kept for backward compatibility
-    and informational display.
-    """
-    split = layer_split(cfg)
-    psi1, psi2, q1, q2, obs_vals = [], [], [], [], []
-    for w in windows:
-        ps = psi_daily(w, cfg)
-        qs = q_daily(w, cfg)
-        psi1.append(ps[:, :split].reshape(-1))
-        psi2.append(ps[:, split:].reshape(-1))
-        q1.append(qs[:, :split].reshape(-1))
-        q2.append(qs[:, split:].reshape(-1))
-        if "obs" in w:
-            # Truth-only windows (on-the-fly obs) carry no baked-in obs; the
-            # informational `norm.obs` display stat just skips those (it is
-            # not used to normalize obs -- that's the per-window `sc.psi1`).
-            od, md = _daily_obs_psi(w, cfg)
-            obs_vals.append(od[md].reshape(-1))
-    return QGNorm(
-        psi1=float(torch.cat(psi1).std()) if psi1 and torch.cat(psi1).numel() > 1 else 1.0,
-        psi2=float(torch.cat(psi2).std()) if psi2 and torch.cat(psi2).numel() > 1 else 1.0,
-        q1=float(torch.cat(q1).std()) if q1 and torch.cat(q1).numel() > 1 else 1.0,
-        q2=float(torch.cat(q2).std()) if q2 and torch.cat(q2).numel() > 1 else 1.0,
-        obs=float(torch.cat(obs_vals).std()) if obs_vals and torch.cat(obs_vals).numel() > 1 else 1.0,
-    )
-
-
 @dataclass
 class WindowScale:
-    """Per-window per-layer normalization scales (streamfunction psi + PV q)."""
+    """Per-window per-layer std (streamfunction psi + PV q).
+
+    No longer used to build training targets (see the module docstring's
+    2026-09-08 normalization note) -- retained as a diagnostic (e.g.
+    `precompute_qg_norm_stats.py`'s window-energy-range check) and for tests
+    that pin its contract.
+    """
 
     psi1: float = 1.0
     psi2: float = 1.0
@@ -216,20 +190,20 @@ def window_scales(w: dict, cfg: QGConfig) -> WindowScale:
 
 
 class QGBatch:
-    """Batch for QG neural training: psi target + obs + auxiliary q target + per-window scales.
+    """Batch for QG neural training: (globally psi-normalized) state target +
+    obs + auxiliary raw-PV target.
 
-    `scale` is a (B, 4) tensor [psi1, psi2, q1, q2] used to (de)normalize each
-    sample's psi estimate and the auxiliary q-loss.
+    `states_q` (the PV/q auxiliary target) is in **raw physical units** --
+    unlike `states`/`obs`, it is not normalized (see the module docstring).
     """
 
-    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, scale, params=None):
+    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None):
         self.states = states
         self.obs = obs
         self.obs_mask = obs_mask
         self.forcing = forcing
         self.states_q = states_q
         self.rd = rd
-        self.scale = scale
         self.params = params
         self.batch_size, self.T, self.dim = states.shape
 
@@ -240,7 +214,6 @@ class QGBatch:
         self.forcing = self.forcing.to(device)
         self.states_q = self.states_q.to(device)
         self.rd = self.rd.to(device)
-        self.scale = self.scale.to(device)
         if self.params is not None:
             self.params = self.params.to(device)
         return self
@@ -249,11 +222,12 @@ class QGBatch:
 class QGNeuralDataset(Dataset):
     """Daily-mean-binned S0 QG windows with a 2-layer streamfunction target.
 
-    Yields (psi_norm, obs_pad, mask, forcing, q_norm, rd, WindowScale) for the
-    QGBatch collate. Each window is normalized by its own per-layer scales
-    (`window_scales`) so samples with very different streamfunction energy are
-    each mapped to O(1), avoiding a single global scalar being dominated by the
-    highest-energy windows.
+    Yields (psi_norm, obs_pad, mask, forcing, q_raw, rd) for the QGBatch
+    collate. `psi_norm`/`obs_pad` are z-score normalized with the *global*
+    per-layer `psi_norm_stats` (mean/std dict, see `data.normalization` and
+    `precompute_qg_norm_stats.py`); `q_raw` (the auxiliary PV target) is left
+    in raw physical units. `psi_norm_stats=None` reproduces raw (unnormalized)
+    psi/obs, e.g. for tests that don't care about normalization.
 
     `on_the_fly_obs=True` treats `windows` as truth-only (no baked-in obs) and
     redraws the obs/init-state fresh on every `__getitem__` call (see module
@@ -261,11 +235,11 @@ class QGNeuralDataset(Dataset):
     Keep the default `False` (fixed, reproducible obs) for test/eval.
     """
 
-    def __init__(self, windows: list, cfg: QGConfig, norm: QGNorm | None = None,
+    def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
                  on_the_fly_obs: bool = False):
         self.windows = windows
         self.cfg = cfg
-        self.norm = norm
+        self.psi_norm_stats = psi_norm_stats
         self.on_the_fly_obs = on_the_fly_obs
 
     def __len__(self) -> int:
@@ -289,25 +263,25 @@ class QGNeuralDataset(Dataset):
         w = self._resolved_window(idx)
         split = layer_split(self.cfg)
         days = num_days(self.cfg)
-        sc = window_scales(w, self.cfg)
 
         psi = psi_daily(w, self.cfg)
-        qs = q_daily(w, self.cfg)
+        qs = q_daily(w, self.cfg)  # left raw -- see module docstring
         psi_n = psi.clone()
-        qs_n = qs.clone()
-        psi_n[:, :split] = psi_n[:, :split] / sc.psi1
-        psi_n[:, split:] = psi_n[:, split:] / sc.psi2
-        qs_n[:, :split] = qs_n[:, :split] / sc.q1
-        qs_n[:, split:] = qs_n[:, split:] / sc.q2
-
         obs_d, mask_d = _daily_obs_psi(w, self.cfg)
+        if self.psi_norm_stats is not None:
+            stats = self.psi_norm_stats
+            psi_n[:, :split] = normalize(psi_n[:, :split],
+                                         {"mean": stats["mean"][0], "std": stats["std"][0]})
+            psi_n[:, split:] = normalize(psi_n[:, split:],
+                                         {"mean": stats["mean"][1], "std": stats["std"][1]})
+            obs_d = normalize(obs_d, {"mean": stats["mean"][0], "std": stats["std"][0]})
+
         obs_pad = torch.zeros(days, 2 * split)
-        obs_d_n = torch.nan_to_num(obs_d / sc.psi1, nan=0.0)
-        obs_pad[:, :split] = obs_d_n
+        obs_pad[:, :split] = torch.nan_to_num(obs_d, nan=0.0)
         mask_full = mask_d.any(dim=-1)
         forcing = torch.zeros(days, dtype=obs_pad.dtype)
         rd = torch.tensor([float(w["true_params"]["rd"])], dtype=torch.float32)
-        return psi_n, obs_pad, mask_full, forcing, qs_n, rd, sc
+        return psi_n, obs_pad, mask_full, forcing, qs, rd
 
     def raw_psi(self, idx: int) -> torch.Tensor:
         return psi_daily(self.windows[idx], self.cfg)
@@ -329,47 +303,32 @@ def qg_collate(batch: list) -> QGBatch:
     forcing = torch.stack([b[3] for b in batch])
     states_q = torch.stack([b[4] for b in batch])
     rd = torch.stack([b[5] for b in batch]).squeeze(-1)
-    scale = WindowScale.collate([b[6] for b in batch])
-    return QGBatch(states, obs, masks, forcing, states_q, rd, scale)
+    return QGBatch(states, obs, masks, forcing, states_q, rd)
 
 
-def denorm_state(x: torch.Tensor, cfg: QGConfig, scale) -> torch.Tensor:
-    """Map a normalized daily-mean 2-layer psi estimate back to physical units.
-
-    `scale` is a (2,) or (..., 2) psi-scale tensor ([psi1, psi2]); when `x` has
-    a batch/time leading dimension of size equal to `scale.shape[-2]` the scales
-    broadcast per-sample, otherwise a single (2,) scale applies to all.
-    """
+def denorm_psi(x: torch.Tensor, cfg: QGConfig, psi_norm_stats: dict | None) -> torch.Tensor:
+    """Map a globally-z-score-normalized daily-mean 2-layer psi estimate back
+    to physical units (`psi_norm_stats=None` is the identity)."""
+    if psi_norm_stats is None:
+        return x
     split = layer_split(cfg)
-    s = torch.as_tensor(scale, dtype=x.dtype, device=x.device)
-    psi1 = s[..., 0]
-    psi2 = s[..., 1]
+    stats = psi_norm_stats
     x = x.clone()
-    if x.dim() >= 2 and s.dim() >= 2 and x.shape[-3] == s.shape[-2] \
-            and s.dim() == x.dim() - 1:
-        x[..., :split] = x[..., :split] * psi1[..., None]
-        x[..., split:] = x[..., split:] * psi2[..., None]
-    else:
-        x[..., :split] = x[..., :split] * psi1
-        x[..., split:] = x[..., split:] * psi2
+    x[..., :split] = denormalize(x[..., :split], {"mean": stats["mean"][0], "std": stats["std"][0]})
+    x[..., split:] = denormalize(x[..., split:], {"mean": stats["mean"][1], "std": stats["std"][1]})
     return x
 
 
-def norm_q_from_psi(pred_psi_norm: torch.Tensor, rd: float, cfg: QGConfig,
-                    scale, device: torch.device) -> torch.Tensor:
-    """Normalized predicted PV from a normalized flattened psi estimate (per window).
+def q_from_psi_norm(pred_psi_norm: torch.Tensor, rd: float, cfg: QGConfig,
+                    psi_norm_stats: dict | None, device: torch.device) -> torch.Tensor:
+    """Physical-units predicted PV from a globally-normalized psi estimate.
 
-    `scale` is a (4,) tensor [psi1, psi2, q1, q2] used to denormalize the psi
-    estimate then re-normalize the resulting PV.
+    Denormalizes the psi estimate to physical units then spectrally inverts
+    it to PV; the result is compared directly against the raw-unit `states_q`
+    target (PV is never normalized, see the module docstring).
     """
-    split = layer_split(cfg)
-    s = torch.as_tensor(scale, dtype=pred_psi_norm.dtype, device=device)
-    psi_phys = denorm_state(pred_psi_norm, cfg, s[:2])
-    q_phys = psi_to_q(psi_phys, rd, cfg, device=device)
-    q_n = q_phys.clone()
-    q_n[..., :split] = q_n[..., :split] / s[2]
-    q_n[..., split:] = q_n[..., split:] / s[3]
-    return q_n
+    psi_phys = denorm_psi(pred_psi_norm, cfg, psi_norm_stats)
+    return psi_to_q(psi_phys, rd, cfg, device=device)
 
 
 def ensure_truth_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:

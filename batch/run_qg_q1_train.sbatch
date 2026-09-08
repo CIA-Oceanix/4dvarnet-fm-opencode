@@ -15,12 +15,19 @@ set -e
 # to that pipeline's SPLIT_SEED_BASE, and --num-windows default to its
 # SPLIT_SIZE, so this hits the existing cache instead of re-paying the
 # ~2-year-spinup rollout -- see train_qg_neural.py's module docstring).
+#
+# q_loss_weight/normalize/norm_stats_path come from
+# config/experiment/Q1_direct_unet_s0.yaml (psi global z-score normalization,
+# derived q_loss_weight=1/Var(q)) -- see that file and
+# data/qg_neural.py's module docstring for the normalization rationale.
+# experiments/qg_psi_norm_stats.pt must exist first (run
+# precompute_qg_norm_stats.py, or batch/run_qg_precompute_norm_stats.sbatch).
 CACHE_DIR="/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
 PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
 
 $PY train_qg_neural.py \
     --model-type direct_unet \
     --exp-dir experiments/Q1_direct_unet_s0 \
-    --nx 64 --q-loss-weight 0.1 --epochs 200 \
+    --nx 64 --epochs 200 \
     --num-train 1000 --num-val 100 --num-test 100 \
     --batch-size 2 --cache-dir "$CACHE_DIR"
