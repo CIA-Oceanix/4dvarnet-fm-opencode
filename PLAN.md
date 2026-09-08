@@ -152,11 +152,15 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   aggregated + NaN-masked, padded to the full state width (zeros in the lower
   layer) so the shared `DirectUNet`/`VanillaCFM` (obs_dim==state_dim) work
   unchanged. `QGBatch.params` added (None) for the shared model forward paths.
-- **Per-window normalization (key design)**: `window_scales` computes each
-  window's own per-layer ψ/q std (`WindowScale`), so samples whose streamfunction
-  energy spans a wide dynamic range (empirically ~30→10⁴ at nx=8 across windows)
-  are each mapped to O(1). Global-scalar normalization would be dominated by the
-  highest-energy windows. **Critical:** the ψ<->q inverter is cached per device
+- **Normalization (superseded 2026-09-08, see below):** the original design
+  used `window_scales` (each window's own per-layer ψ/q std, `WindowScale`) so
+  samples whose streamfunction energy spans a wide dynamic range (empirically
+  ~30→10⁴ at nx=8 across windows) are each mapped to O(1), avoiding a single
+  global scalar being dominated by the highest-energy windows. Q1 now uses
+  **global** per-layer z-score normalization for ψ instead (see the
+  "Global psi normalization" entry below) — `window_scales`/`WindowScale` are
+  retained as a diagnostic only, no longer used to build training targets.
+  **Critical (unchanged):** the ψ<->q inverter is cached per device
   (`_INVERTER_CACHE[..., device]`) so the GPU q-loss never moves the shared CPU
   inverter used by `psi_daily`/scales — which would otherwise break CPU-side
   eval after a GPU training step.
@@ -182,6 +186,55 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   now-merged array-parallel/GPU-side generation infra that makes this
   tractable, and "Truth-only cache + on-the-fly obs" further below for how
   `train_qg_neural.py` consumes it.
+
+### QG neural baseline — global psi normalization (2026-09-08)
+
+Replaced the per-window ψ/q normalization (`WindowScale`) with **classic
+global mean/std z-score normalization**, applied **only to ψ** (PV/q stays in
+raw physical units), matching the L96 track's `data/normalization.py`
+(`compute_channel_stats`/`normalize`/`denormalize`, added in #166) instead of
+a QG-specific abstraction.
+
+- **Precompute**: `precompute_qg_norm_stats.py` loads the 1000-window S0
+  train truth cache and computes (a) global per-layer ψ (mean, std) via
+  `data.normalization.compute_channel_stats`, (b) the per-window ψ std range
+  (diagnostic, reuses `window_scales`) to check the dynamic-range concern
+  documented above at production resolution, (c) the global pooled Var(q) and
+  a derived `q_loss_weight = 1/Var(q)`. Run via
+  `batch/run_qg_precompute_norm_stats.sbatch` (CPU-only, `--account=mee
+  --qos=mee_short` on `Mee_Global_CPU` — the `odyssey` account's `low` QOS
+  isn't permitted there) since loading the ~33GB train truth cache OOMs an
+  interactive/unreserved shell. Output: `experiments/qg_psi_norm_stats.pt`
+  (mean/std) + `..._extra.pt` (q_var/q_loss_weight/per-window std diagnostics).
+- **Measured at nx=64, train-seed=42, 1000 windows (2026-09-07)**:
+  `psi1 mean≈3.5e-6 std≈1.85e4`, `psi2 mean≈1.7e-6 std≈1.62e4`,
+  `q_var≈3.93e-10` → `q_loss_weight≈2.5415e9`. Per-window ψ std range:
+  layer1 min=3.9e3/max=9.19e4 (23.6x), layer2 min=1.0e3/max=8.6e4 (82.8x) —
+  real but less extreme than the ~300x measured at nx=8; accepted trade-off
+  (low-energy windows are under-weighted in the loss vs. the old per-window
+  scheme, by up to ~16x at p10 energy) after review.
+- **Why q stays raw + why q_loss_weight is ~1e9**: ψ std (~1e4) and q std
+  (~1e-5) differ by ~9 orders of magnitude. Z-scoring only ψ makes
+  `loss_psi` ~O(1) (unit target variance); `loss_q` in raw units would then be
+  ~O(1e-10) and, at the old default `q_loss_weight=0.1`, contribute nothing
+  (its gradient would be ~9 orders of magnitude too small to matter) — so the
+  weight itself must absorb the scale gap. `q_loss_weight=1/Var(q)` is the
+  balancing choice: it makes q's raw-unit MSE comparable in scale to ψ's
+  (unit-variance) normalized MSE, and is derived/auditable rather than a
+  hand-picked literal.
+- **Config**: `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path`
+  in `config/experiment/Q{1,2}_..._s0.yaml` are now the actual source of truth
+  (loaded via `OmegaConf.load` in `train_qg_neural.py`'s `main()`, CLI flags
+  `--q-loss-weight`/`--normalize`/`--norm-stats-path` override); previously
+  these YAMLs were documentation-only and `--q-loss-weight` had its own
+  independently-hardcoded argparse default that could silently drift from
+  them.
+- **API**: `data/qg_neural.py`'s `QGNorm`/`compute_norm` (global, std-only,
+  informational-only) are removed; `denorm_state`/`norm_q_from_psi` are
+  renamed `denorm_psi`/`q_from_psi_norm` and take the `{"mean","std"}` dict
+  from `data.normalization` instead of a per-window `WindowScale`. `QGBatch`
+  drops its `scale` field (no longer needed — ψ normalization is a training-
+  run constant, not a per-sample value, and q is unnormalized).
 
 ### 1000/100/100 train/val/test dataset generation (2026-09-07)
 

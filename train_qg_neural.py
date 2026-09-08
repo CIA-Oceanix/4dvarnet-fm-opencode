@@ -7,15 +7,22 @@ eval machinery), this drives the self-contained QG neural data wrapper
 (`data/qg_neural.py`) and shared Lightning training pieces.
 
 Supervision target: daily mean of the full 2-layer streamfunction (`psi_daily`,
-30 days per window), with an optional auxiliary PV-q loss (`--q-loss-weight`).
-Observations: upper-layer psi grid-expanded, daily aggregated, NaN-masked,
-padded to the full state width. Per-layer normalization is computed on the
-training split and recorded so eval maps back to physical units.
+30 days per window), with an optional auxiliary PV-q loss (`training.
+q_loss_weight` in `config/experiment/Q{1,2}_..._s0.yaml`, CLI-overridable via
+`--q-loss-weight`). Observations: upper-layer psi grid-expanded, daily
+aggregated, NaN-masked, padded to the full state width. Psi (+obs) is z-score
+normalized per layer with a *global* (mean, std) computed once over the whole
+training split (`precompute_qg_norm_stats.py` -> `data.normalize`/
+`norm_stats_path` in the experiment YAML, default
+`experiments/qg_psi_norm_stats.pt`) so eval maps back to physical units; PV
+(q) is left in raw physical units (see `data/qg_neural.py`'s docstring for the
+per-window-vs-global normalization trade-off).
 
-For the q-loss, the model's normalized psi estimate is de-normalized to physical
-psi, spectrally inverted to PV (per-window `rd`), re-normalized, and MSE-matched
-against the normalized daily-mean PV target. Because PV<->psi is a linear
-spectral inversion this is a consistent auxiliary objective.
+For the q-loss, the model's normalized psi estimate is de-normalized to
+physical psi, spectrally inverted to PV (per-window `rd`), and MSE-matched
+directly (raw units) against the daily-mean PV target -- `q_loss_weight` is
+derived by `precompute_qg_norm_stats.py` as `1/Var(q)` so this raw-unit term
+contributes comparably to the (unit-variance) normalized psi loss.
 
 Default `--train-seed`/`--val-seed`/`--test-seed` (42/10042/20042) and split
 sizes (1000/100/100) match `reports/qg/generate_qg_window_chunk.py`'s
@@ -44,18 +51,17 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
+from data.normalization import load_norm_stats
 from data.qg import QGConfig
 from data.qg_neural import (
     QGNeuralDataset,
-    QGNorm,
-    compute_norm,
-    denorm_state,
+    denorm_psi,
     ensure_truth_cache,
     layer_split,
-    norm_q_from_psi,
     psi_daily,
     psi_to_q,
     q_daily,
+    q_from_psi_norm,
     qg_collate,
 )
 from models.direct_unet import DirectUNet
@@ -89,7 +95,7 @@ def epochs_for(model_type: str) -> int:
 class QGNeuralLightning(pl.LightningModule):
     """Combined psi (primary) + auxiliary PV-q loss trainer for QG neural models."""
 
-    def __init__(self, model, model_type: str, norm: QGNorm, qg_cfg: QGConfig,
+    def __init__(self, model, model_type: str, norm: dict | None, qg_cfg: QGConfig,
                  q_loss_weight: float = 0.1, lr: float = 1e-3,
                  gradient_clip_val: float = 10.0):
         super().__init__()
@@ -128,8 +134,8 @@ class QGNeuralLightning(pl.LightningModule):
         device = est.device
         losses = []
         for b in range(est.shape[0]):
-            q_pred = norm_q_from_psi(est[b], float(batch.rd[b]), self.qg_cfg,
-                                     batch.scale[b], device)
+            q_pred = q_from_psi_norm(est[b], float(batch.rd[b]), self.qg_cfg,
+                                     self.norm, device)
             losses.append(F.mse_loss(q_pred, batch.states_q[b]))
         return torch.stack(losses).mean()
 
@@ -170,12 +176,11 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
     })
 
 
-def estimate_windows(model, windows, cfg, model_type, device, n_members=1):
+def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1):
     """Return per-window physical psi estimates (W, days, 2*ny*nx) + per-window rd list."""
-    dataset = QGNeuralDataset(windows, cfg)
+    dataset = QGNeuralDataset(windows, cfg, norm)
     loader = DataLoader(dataset, batch_size=8, shuffle=False, collate_fn=qg_collate)
     rds = [float(dataset.rd(i)) for i in range(len(windows))]
-    scales = [dataset.scale(i) for i in range(len(windows))]
     model = model.to(device)
     model.eval()
     estimates = []
@@ -190,9 +195,8 @@ def estimate_windows(model, windows, cfg, model_type, device, n_members=1):
                     members = [model.sample(batch, N_outer=10) for _ in range(n_members)]
                     pred = torch.stack(members).mean(dim=0)
             pred = pred.detach().cpu()
-            s = torch.tensor([[sc.psi1, sc.psi2] for sc in scales], dtype=torch.float32)
             for b in range(pred.shape[0]):
-                estimates.append(denorm_state(pred[b], cfg, s[b]))
+                estimates.append(denorm_psi(pred[b], cfg, norm))
     return np.stack([e.numpy() for e in estimates]), np.asarray(rds)
 
 
@@ -219,7 +223,14 @@ def main():
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--q-loss-weight", type=float, default=0.1)
+    ap.add_argument("--q-loss-weight", type=float, default=None,
+                    help="Overrides config/experiment/Q{1,2}_..._s0.yaml's "
+                         "training.q_loss_weight if given.")
+    ap.add_argument("--normalize", action=argparse.BooleanOptionalAction, default=None,
+                    help="Overrides the experiment YAML's data.normalize if given.")
+    ap.add_argument("--norm-stats-path", default=None,
+                    help="Overrides the experiment YAML's data.norm_stats_path if given "
+                         "(psi mean/std produced by precompute_qg_norm_stats.py).")
     ap.add_argument("--num-train", type=int, default=1000)
     ap.add_argument("--num-val", type=int, default=100)
     ap.add_argument("--num-test", type=int, default=100)
@@ -254,8 +265,21 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_type = args.model_type
     epochs = args.epochs if args.epochs is not None else epochs_for(model_type)
-    exp_dir = args.exp_dir or os.path.join(EXP_DIR, f"Q{1 if model_type == 'direct_unet' else 2}_{model_type}_s0")
+    config_name = f"Q{1 if model_type == 'direct_unet' else 2}_{model_type}_s0"
+    exp_dir = args.exp_dir or os.path.join(EXP_DIR, config_name)
     os.makedirs(exp_dir, exist_ok=True)
+
+    # `config/experiment/Q{1,2}_..._s0.yaml` is the source of truth for
+    # `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path` --
+    # CLI flags below only override it when explicitly given.
+    exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
+                     else float(exp_cfg.training.q_loss_weight))
+    do_normalize = (args.normalize if args.normalize is not None
+                    else bool(exp_cfg.data.get("normalize", True)))
+    norm_stats_path = (args.norm_stats_path or
+                       exp_cfg.data.get("norm_stats_path", "experiments/qg_psi_norm_stats.pt"))
+    norm = load_norm_stats(norm_stats_path) if do_normalize else None
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -288,7 +312,6 @@ def main():
         on_the_fly = not args.fixed_split_obs
         train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
         val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
-        norm = compute_norm(train_windows, test_cfg)
 
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
@@ -296,14 +319,16 @@ def main():
                                   collate_fn=qg_collate, num_workers=1)
         val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                                 collate_fn=qg_collate, num_workers=1)
-    else:
-        norm = QGNorm()
 
     print(f"Device: {device}  model={model_type}  epochs={epochs}  state_dim={state_dim}"
-          f"  q_loss_weight={args.q_loss_weight}")
+          f"  q_loss_weight={q_loss_weight:.4e}")
     print(f"Test: {len(test_windows)}  eval_only={bool(args.eval_only)}")
-    print(f"norm: psi1={norm.psi1:.4e} psi2={norm.psi2:.4e} q1={norm.q1:.4e} "
-          f"q2={norm.q2:.4e} obs={norm.obs:.4e}")
+    if norm is not None:
+        print(f"psi norm stats ({norm_stats_path}): "
+              f"psi1 mean={norm['mean'][0]:.4e} std={norm['std'][0]:.4e}  "
+              f"psi2 mean={norm['mean'][1]:.4e} std={norm['std'][1]:.4e}")
+    else:
+        print("normalization disabled (--no-normalize)")
 
     model = build_model(model_type, state_dim).to(device)
 
@@ -311,7 +336,7 @@ def main():
     if args.eval_only is None:
         tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr)
         lit = QGNeuralLightning(model, model_type, norm, test_cfg,
-                                q_loss_weight=args.q_loss_weight, lr=args.lr,
+                                q_loss_weight=q_loss_weight, lr=args.lr,
                                 gradient_clip_val=10.0)
         trainer = create_trainer(tcfg, 1)
         t0 = time.time()
@@ -326,7 +351,7 @@ def main():
 
     model.eval()
     est_psi, est_rd = estimate_windows(model, test_windows, test_cfg, model_type,
-                                       device, n_members=args.n_members)
+                                       device, norm=norm, n_members=args.n_members)
 
     truth_psi = np.stack([psi_daily(w, test_cfg).numpy() for w in test_windows])
     truth_q = np.stack([q_daily(w, test_cfg).numpy() for w in test_windows])
@@ -340,14 +365,9 @@ def main():
     rmse_psi, ev_psi = pooled_metrics(est_psi, truth_psi)
     rmse_q, ev_q = pooled_metrics(est_q, truth_q)
 
-    test_scales = np.array([[s.psi1, s.psi2] for s in
-                            [QGNeuralDataset(test_windows, test_cfg).scale(i)
-                             for i in range(len(test_windows))]])
-
     np.savez_compressed(est_path,
                         estimates_psi=est_psi, truth_psi=truth_psi,
-                        estimates_q=est_q, truth_q=truth_q, rd=est_rd,
-                        psi_scale=test_scales)
+                        estimates_q=est_q, truth_q=truth_q, rd=est_rd)
 
     summ_psi = layer_summary(rmse_psi, ev_psi, test_cfg)
     summ_q = layer_summary(rmse_q, ev_q, test_cfg)
@@ -363,9 +383,11 @@ def main():
                    "cols_per_day": test_cfg.cols_per_day,
                    "obs_noise_std_frac": test_cfg.obs_noise_std_frac,
                    "init_lag_days": test_cfg.init_lag_days,
-                   "n_members": args.n_members, "q_loss_weight": args.q_loss_weight},
-        "norm": {"psi1": norm.psi1, "psi2": norm.psi2,
-                 "q1": norm.q1, "q2": norm.q2, "obs": norm.obs},
+                   "n_members": args.n_members, "q_loss_weight": q_loss_weight,
+                   "normalize": do_normalize, "norm_stats_path": norm_stats_path},
+        "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
+                  "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
+                 if norm is not None else None),
         "train_time_seconds": total_train,
         "s0": {"psi": summ_psi, "q": summ_q},
     }
