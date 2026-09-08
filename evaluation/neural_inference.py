@@ -185,6 +185,34 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
 
         is_joint = "joint" in model_type
 
+        # The whole inference block below reverse-engineers architecture from
+        # UNet1D-specific state_dict key names (enc_out/downs/...). That
+        # assumption breaks for FourDVarNetSolver's unet_backbone=monai (its
+        # state UNet is MonaiUNet1D, wrapping MONAI's DiffusionModelUNet under
+        # a `.backbone` submodule with completely different internal names) --
+        # none of those keys exist, so inference can't recover state_dim/etc
+        # at all. There's no way to shape-infer a monai backbone's config
+        # (its hidden_channels/norm_num_groups aren't recoverable from weight
+        # shapes alone the way UNet1D's are), so require --config and load
+        # the real training config directly instead of inferring anything.
+        if model_type in ("fourdvarnet", "fourdvarnet_cfm") and not (
+            "model.unet.enc_out.2.weight" in state_dict
+            or "model.velocity_unet.enc_out.2.weight" in state_dict
+        ):
+            if not config_path:
+                raise ValueError(
+                    f"Checkpoint's state UNet doesn't match UNet1D's expected "
+                    f"key names (likely unet_backbone != 'unet1d', e.g. "
+                    f"'monai') -- pass --config to reconstruct the "
+                    f"architecture directly; shape inference cannot recover "
+                    f"a non-UNet1D backbone's config."
+                )
+            cfg = OmegaConf.load(config_path)
+            OmegaConf.set_struct(cfg, False)
+            cfg.model.type = model_type
+            OmegaConf.set_struct(cfg, True)
+            return state_dict, cfg
+
         # Infer architecture parameters from state_dict
         inferred_params = {}
 
