@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-08: torch.compile / JAX investigation notes for FDV
+
+**Summary:** New `docs/fdv_torch_compile_and_jax_notes.md`: records why
+`torch.compile` (explored as a further speed lever after PR #172/#173's
+gradient checkpointing) was tried and shelved, and why a JAX port wasn't
+pursued either despite JAX structurally avoiding the specific bug hit.
+
+**Findings:** `torch.compile(_solver_iteration)` wrapped in
+`torch.utils.checkpoint.checkpoint(...)` crashes for every `update_input`
+mode (`BackendCompilerFailed: ... FakeTensors`) -- root-caused to a known,
+already-fixed PyTorch bug (pytorch/pytorch#121966, fixed by #123196,
+confirmed on torch 2.5.1) hit because this experiment compiled the function
+passed *into* checkpoint rather than the outer function that calls
+checkpoint (the unsupported direction, per the maintainers). Separately,
+`torch.compile` without checkpoint still crashes for "grad-only"/"grad+state"
+with `RuntimeError: ... does not currently support double backward`
+(pytorch/pytorch#91469), a still-open, unrelated architectural limitation
+(last updated 2026-05-15) that no PyTorch version currently fixes. Even the
+one working config (obs+state, no checkpoint, compiled) only gave ~3%
+speedup behind a ~50s compile warm-up. JAX's `jit`/`grad`/`checkpoint` are
+composable-by-design (jaxpr-level transformations, explicit PRNGKey instead
+of global RNG state), so it wouldn't hit this exact crash class -- but the
+achievable speedup is the same modest order of magnitude, not enough to
+justify porting this codebase off PyTorch/Lightning/Hydra.
+
+**Files modified:** `docs/fdv_torch_compile_and_jax_notes.md` (new).
+
+**Rationale:** Avoid re-investigating this blind later; the note records the
+exact GitHub issues to check (specifically pytorch/pytorch#91469) before
+ever re-attempting `torch.compile` for FDV.
+
+**Verification:** docs-only change, no code touched.
+
 ## 2026-09-08: Gradient checkpointing memory/time microbenchmark
 
 **Summary:** Follow-up to PR #172 (gradient checkpointing for the FourDVarNet
