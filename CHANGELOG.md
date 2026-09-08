@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-08: Gradient checkpointing memory/time microbenchmark
+
+**Summary:** Follow-up to PR #172 (gradient checkpointing for the FourDVarNet
+unrolled solver loop, see the entry right below): a GPU microbenchmark
+quantifying the actual memory savings and time overhead, since #172 itself
+only verified numerical equivalence, not the performance tradeoff. New
+`reports/l96/generate_l96_grad_checkpoint_benchmark.py` runs
+`FourDVarNetSolver.forward()`+`backward()` with checkpointing on vs.
+mechanically bypassed (same `unittest.mock.patch` trick as
+`TestGradientCheckpointing`) across `N_outer in {5,10,20,40}` and two
+`update_input` modes (`obs+state`, `grad+state`), sized to match
+`config/experiment/FDV2_grad_state_l96_fixedw.yaml` (B=16, T=500, D=24,
+`hidden_channels=[64,128,256]`). Writes
+`reports/l96/outputs/l96_grad_checkpoint_benchmark.md`.
+
+**Result (Quadro RTX 8000):** peak memory without checkpointing scales
+linearly with `N_outer` as expected (e.g. `grad+state`: 2.3GB -> 4.6GB ->
+9.2GB -> 18.3GB); with checkpointing it stays essentially flat (519-571MB for
+`grad+state`, 161-213MB for `obs+state`) -- a 32x reduction at `N_outer=40`
+for `grad+state`, 21.6x for `obs+state`. Wall-clock cost: a consistent
+~1.55-1.66x overhead across every configuration (one extra forward recompute
+per iteration during backward), not compounding with `N_outer`.
+
+**Files modified:** `reports/l96/generate_l96_grad_checkpoint_benchmark.py`
+(new), `reports/l96/outputs/l96_grad_checkpoint_benchmark.md` (new, generated).
+
+**Rationale:** Confirms the checkpointing tradeoff is worth taking whenever
+GPU memory (not wall-clock) is the binding constraint -- e.g. before scaling
+`N_outer` or the MonaiUNet backbone prototype further.
+
+**Verification:** ran the script directly on GPU (`fdv` conda env);
+`ruff check reports/l96/generate_l96_grad_checkpoint_benchmark.py` clean.
+
 ## 2026-09-08: Gradient checkpointing for the FourDVarNet unrolled solver loop
 
 **Summary:** `FourDVarNetSolver.forward()`'s `for k in range(N_outer)` loop and
