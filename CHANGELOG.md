@@ -65,6 +65,43 @@ eval-mode deterministic, after training briefly past MONAI's zero-init); full
 `eval_monai_l96.py` pass (this time correct on the first try, unlike job 52397's
 initial buggy eval pass).
 
+## 2026-09-07: FDV2 trainable `prior_weight` + stabilized `grad+state`/`subgrad+state` training
+
+**Summary:** Makes the `var_cost = prior_weight*prior_cost(x) + obs_weight*obs_cost(x, obs)` balance in `FourDVarNetSolver`'s gradient-conditioned update modes (`grad-only`/`grad+state`/`subgrad+state`) trainable, after every earlier attempt at a trainable var-cost weight either stalled flat or diverged outright. Root-caused to two compounding issues: (1) the `prior_unet`'s own `tau` conditioning let the network implicitly co-adapt with a moving `prior_weight`, creating a joint optimization surface with no stable fixed point; (2) an unconstrained-sign trainable scalar could drive `prior_weight` negative, making `var_cost` non-convex in `x` and the inner-loop gradient step directionless. Fixes: `prior_unet` now always built `time_emb_dim=0` (no tau-conditioning) in the trainable-weight path; `prior_weight` is reparametrized as `raw**2` (`_init_positive_weight_raw`/`_positive_weight_value`), guaranteeing positivity with `prior_weight -> 0` as a valid, non-catastrophic limit (pure obs-cost gradient descent) rather than a singularity. Adds an `aux_var_cost_weight` auxiliary loss term (`prior_weight*prior_cost + obs_cost` evaluated at the model's own final estimate and at the ground-truth state) giving `prior_weight`/`prior_unet` a direct supervised signal beyond the per-iteration inner-loop dynamics. Also adds `use_cosine_scheduler` (`CosineAnnealingLR`, requires `max_epochs`) and `obs_weight_lr_scale`/`prior_unet_lr_scale` discounted-LR parameter groups for the var-cost-weight scalar and the prior network respectively, and implements the previously-deferred `subgrad+state` update mode (a two-residual proxy gradient that never calls `torch.autograd.grad`/`create_graph`, architecturally immune to the tau-coupling instability above).
+
+**Result:** job 52305 (`grad+state`, trainable `prior_weight`) is the first stable, non-diverging run of this family -- interim best val_loss 0.2240 (epoch 118/400), S0/S1 RMSE 0.4524/0.4475, already beating FDV1 (0.4700/0.4704) and essentially matching FDV1+SDA2 (0.4514/0.4521, the benchmark's best RMSE entry) at under a third of budget, still descending when interrupted (see the incident entry below -- a shared-env issue, not a training problem). Job 52358 (`subgrad+state`) trained cleanly and cheaply from the start, as expected given it has no autograd-instability exposure.
+
+**Files modified:**
+- `models/fourdvarnet.py` -- `_init_positive_weight_raw`/`_positive_weight_value` (reparametrization), `prior_weight`/`obs_weight` properties, `aux_var_cost_weight` auxiliary loss term, `subgrad+state` update-input implementation, `_build_update_input` threading of `obs_weight`/`prior_weight` into the per-iteration var-cost gradient.
+- `training/lightning_module.py` -- `use_cosine_scheduler`, `obs_weight_lr_scale`/`prior_unet_lr_scale` discounted parameter groups.
+- `conf/schema.py`, `train.py`, `evaluation/neural_inference.py` -- config/dispatch plumbing for the above.
+- `config/experiment/FDV2_grad_state_l96.yaml`, `FDV2_subgrad_state_l96.yaml`, `FDV2_grad_state_l96_fixedw.yaml`, `FDV2CFM_grad_state_l96.yaml` -- new experiment configs.
+- `batch/run_l96_fdv2_train.sbatch`, `run_l96_fdv2_subgrad_train.sbatch`, `run_l96_fdv2_train_fixedw.sbatch`, `run_l96_fdv2cfm_train.sbatch` -- new training launch scripts.
+- `tests/test_fourdvarnet.py`, `tests/test_lightning_module.py` -- regression coverage for the reparametrization, aux loss, subgrad+state mode, scheduler, and LR-scale param groups.
+
+**Rationale:** a fixed, hand-tuned `prior_weight` can't adapt across training as the prior network itself improves; every prior attempt at making it trainable destabilized the whole solver, so the fix had to address the underlying joint-optimization coupling (tau-conditioning) and sign-indefiniteness, not just add a parameter.
+
+**Verification:** `pytest tests/test_fourdvarnet.py tests/test_lightning_module.py tests/test_hydra_config.py -m "not slow"` -- 75/75 passed. Job 52305 full-eval RMSE numbers above independently verified via `eval_neural_l96.py` on the cached 200-window test set, no checkpoint-loading warnings.
+
+## 2026-09-07: FDV2 grad+state/subgrad+state — interim results, interrupted by a shared-env torch corruption
+
+**Summary:** Two `FourDVarNetSolver` L96 training runs -- job 52305 (`update_input=grad+state`, `FDV2_grad_state_l96.yaml`) and job 52358 (`update_input=subgrad+state`, `FDV2_subgrad_state_l96.yaml`, an exact copy of 52305's training recipe otherwise) -- both got stuck partway through their 400-epoch budget when another session uninstalled `torch` from the shared `fdv` conda env while these jobs were running. Diagnosed via: `squeue` showing both jobs still `RUNNING`, but `metrics.csv` unchanged for ~5 hours; `srun --overlap` onto the compute node showed both main processes `S` (sleeping), 0% GPU utilization despite ~29GB still allocated, and CPU time frozen across a 15s sample; the jobs' `.err` logs showed `ModuleNotFoundError: No module named 'torch.nested._internal'` inside PyTorch's own `torch/multiprocessing/reductions.py`, thrown from DataLoader worker processes trying to serialize a tensor -- consistent with the main process having already imported torch before the uninstall (so it kept accumulating CPU time for a while), while freshly-spawned DataLoader workers needed a fresh import that then failed. Both jobs' `metrics.csv` stopped at the identical timestamp (15:09), confirming one shared-env event affected both simultaneously. Not a bug in this codebase.
+
+**Interim results before the interruption** (best checkpoint per job, evaluated via `eval_neural_l96.py --n-outer 10` on the full 200-window cached test set):
+
+| Job | update_input | Epochs reached | Best val_loss | S0 RMSE | S1 RMSE |
+|---|---|---|---|---|---|
+| 52305 | grad+state | 121/400 | 0.2240 (epoch 118) | 0.4524 | 0.4475 |
+| 52358 | subgrad+state | 37/400 | 0.2841 (epoch 36) | not evaluated | not evaluated |
+
+Job 52305's interim result already beats FDV1 (0.4700/0.4704) and is essentially tied with/edges past FDV1+SDA2 (0.4514/0.4521, the best RMSE entry in `l96_consolidated_benchmark.md` at the time) -- at under a third of its training budget, still descending. This is the first stable, non-diverging trainable-`prior_weight` `grad+state` run this session (see the `prior_weight` reparametrization, tau-free `prior_unet`, `aux_var_cost_weight` auxiliary loss, cosine-annealing scheduler, and `obs_weight_lr_scale`/`prior_unet_lr_scale` LR-discount param groups added earlier the same day specifically to fix a training instability that made every previous trainable-var-cost-weight attempt for `FourDVarNetSolver` either stall flat or diverge outright). Job 52358 (subgrad+state, a cheap two-residual proxy gradient that never calls `torch.autograd.grad`/`create_graph`, architecturally immune to that same instability) was still early but training cleanly, val_loss descending steadily.
+
+**Disposition:** confirmed `torch` reinstalled and working in the `fdv` env (`torch 2.4.1+cu121`, `torch.nested._internal` imports cleanly) before acting. Both hung jobs killed (`scancel 52305 52358`). `train.py` has no checkpoint-resume support (`trainer.fit()` always starts fresh, no `ckpt_path=`), so continuing either run past its interrupted epoch is not possible -- only a fresh 400-epoch relaunch can reach that budget. Backed up both experiment directories (checkpoints + full `metrics.csv` epoch history) to `experiments/FDV2_grad_state_l96_backup_20260907_torchcrash/` and `experiments/FDV2_subgrad_state_l96_backup_20260907_torchcrash/` before relaunching fresh via the same sbatch scripts (which `rm -rf` their target experiment dir on start).
+
+**Files modified:** `CHANGELOG.md` -- this entry (no code changes; the interruption was environmental, not a bug).
+
+**Verification:** N/A (incident report, not a code change). Interim RMSE numbers above were independently verified with no "Skipping key" checkpoint-loading warnings.
+
 ## 2026-09-07: MonaiDirectUNet backbone + L96 per-channel normalization infra
 
 **Summary:** Added `MonaiDirectUNet`/`MonaiUNet1D` (`models/monai_unet_adapter.py`), a

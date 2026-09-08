@@ -291,6 +291,12 @@ def model_factory(cfg: DictConfig, device: torch.device):
             N_outer=fdv.N_outer,
             dropout=fdv.dropout,
             update_input=fdv.update_input,
+            R_var=fdv.R_var,
+            prior_weight=fdv.get("prior_weight", 1.0),
+            clip_range=fdv.clip_range,
+            trainable_prior_weight=fdv.get("trainable_prior_weight", True),
+            aux_var_cost_weight=fdv.get("aux_var_cost_weight", 0.0),
+            prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
@@ -306,6 +312,10 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=fc.train_tau_0_only,
             update_input=fc.update_input,
             clip_range=fc.clip_range,
+            R_var=fc.R_var,
+            obs_weight=fc.obs_weight,
+            min_obs_weight=fc.min_obs_weight,
+            trainable_obs_weight=fc.get("trainable_obs_weight", True),
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -662,7 +672,11 @@ def main(cfg: DictConfig):
                 lit = LitModel(model, model_type=model_type, stage=1,
                                lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                                use_gradient_loss=cfg.training.loss.use_gradient,
-                               gradient_weight=cfg.training.loss.gradient_weight)
+                               gradient_weight=cfg.training.loss.gradient_weight,
+                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
+                               max_epochs=epochs_s1,
+                               obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
+                               prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
                 trainer = create_trainer(cfg, 1)
                 trainer.fit(lit, loaders["train"], loaders["val"])
                 path = cfg.paths.checkpoint_stage1
