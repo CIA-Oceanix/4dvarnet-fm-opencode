@@ -1,21 +1,26 @@
 # Results Overview
 
+10 Observations per Window
 
-## State estimation (non-joint)
+[beta τ: Beta-Tuned Timestep Diffusion Model](https://www.ecva.net/papers/eccv_2024/papers_ECCV/papers/00328.pdf) paper
+
+[logit-normal τ: Scaling Rectified Flow Transformers for High-Resolution Image Synthesis](https://arxiv.org/pdf/2403.03206) paper
+
+## State estimation 
 
 | Model | N_ens | s0 RMSE | s0 R² | s0 CRPS | s1 RMSE | s1 R² | s1 CRPS |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Weak-4DVar | – | 0.874 | 0.972 | 0.598 | 2.171 | 0.910 | 1.666 |
-| Strong-4DVar | – | 0.927 | 0.962 | 0.640 | 2.630 | 0.858 | 2.020 |
-| EnKF | – | 1.286 | 0.973 | 0.706 | 2.741 | 0.882 | 1.842 |
-| ETKF | – | 1.236 | 0.976 | 0.693 | 2.776 | 0.879 | 1.895 |
+| Weak-4DVar | 1 | 0.874 | 0.972 | 0.598 | 2.171 | 0.910 | 1.666 |
+| Strong-4DVar | 1 | 0.927 | 0.962 | 0.640 | 2.630 | 0.858 | 2.020 |
+| EnKF | 50 | 1.286 | 0.973 | 0.706 | 2.741 | 0.882 | 1.842 |
+| ETKF | 50 | 1.236 | 0.976 | 0.693 | 2.776 | 0.879 | 1.895 |
 | DirectUNet | 1 | 0.598 | 0.995 | 0.441 | 0.582 | 0.995 | 0.438 |
 | TweedieCFM (K=5) | 50 | 0.561 | 0.995 | 0.301 | 0.598 | 0.994 | 0.317 |
 | TweedieCFM (K=1) | 50 | 0.568 | 0.995 | 0.305 | 0.562 | 0.995 | 0.297 |
 | VanillaCFM | 50 | 0.549 | 0.996 | 0.289 | 0.558 | 0.996 | 0.306 |
 | VanillaCFM (τ=0 only) | 50 | 0.604 | 0.995 | 0.418 | 0.580 | 0.995 | 0.404 |
 | VanillaCFM (logit-normal τ) | 50 | 0.608 | 0.994 | 0.304 | 0.564 | 0.995 | 0.299 |
-| VanillaCFM (beta τ, conditional) | 50 | 0.588 | 0.995 | 0.320 | 0.545 | 0.996 | 0.302 |
+| VanillaCFM (beta τ) | 50 | 0.588 | 0.995 | 0.320 | 0.545 | 0.996 | 0.302 |
 | VanillaCFM (beta τ, unconditional) | 50 | 4.047 | 0.760 | 2.380 | 1.732 | 0.936 | 0.931 |
 
 ## Joint state + parameter estimation
