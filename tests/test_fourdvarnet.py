@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import torch
 import torch.nn.functional as F
 
@@ -9,6 +11,32 @@ from models.fourdvarnet import (
 )
 
 _GRAD_MODES = ("grad-only", "grad+state", "subgrad+state")
+_ALL_UPDATE_INPUT_MODES = ("obs+state", "obs-only", "grad-only", "grad+state", "subgrad+state")
+
+
+def _bypass_checkpoint(fn, *args, **kwargs):
+    """Drop-in stand-in for ``torch.utils.checkpoint.checkpoint`` that just
+    calls the wrapped function directly -- no activation discarding, no
+    recomputation. Patched into ``models.fourdvarnet.checkpoint`` to produce
+    a "no checkpointing" reference run for TestGradientCheckpointing, so the
+    same forward()/backward() code path is exercised either way and only the
+    checkpoint mechanics differ."""
+    return fn(*args)
+
+
+def _forward_backward_grads(model, forward_fn, seed):
+    """Runs ``forward_fn()`` (a closure calling ``model``'s forward with
+    whatever args it needs) under a fixed seed -- so dropout draws land in
+    the same order whether or not checkpointing recomputes any iteration --
+    then backprops a simple sum-of-squares loss and returns the output and
+    every parameter's gradient, for before/after comparison."""
+    torch.manual_seed(seed)
+    model.zero_grad()
+    out = forward_fn()
+    out.pow(2).sum().backward()
+    grads = {name: (p.grad.clone() if p.grad is not None else None)
+             for name, p in model.named_parameters()}
+    return out.detach().clone(), grads
 
 
 class _MockBatch:
@@ -636,3 +664,67 @@ class TestFourDVarNetPredictStateCFM:
             a = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
             b = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
         assert not torch.allclose(a, b)
+
+
+class TestGradientCheckpointing:
+    """``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
+    wrap each unrolled iteration in ``torch.utils.checkpoint.checkpoint(...,
+    use_reentrant=False)`` (see ``_solver_iteration``) to keep activation
+    memory from scaling with the unroll length. These tests confirm that's
+    exactly transparent -- same output, same gradients, for every
+    ``update_input`` mode including "grad-only"/"grad+state" (whose
+    ``torch.autograd.grad(..., create_graph=True)`` inside the checkpointed
+    region is the main risk `use_reentrant=False` is meant to cover) --
+    by comparing against `_bypass_checkpoint`, which runs the identical
+    forward() code path with checkpointing mechanically disabled.
+    """
+
+    def _assert_checkpoint_matches_reference(self, model, forward_fn):
+        out_ckpt, grads_ckpt = _forward_backward_grads(model, forward_fn, seed=42)
+        with patch("models.fourdvarnet.checkpoint", _bypass_checkpoint):
+            out_plain, grads_plain = _forward_backward_grads(model, forward_fn, seed=42)
+        assert torch.allclose(out_ckpt, out_plain, atol=1e-5), "checkpointed output diverged"
+        assert grads_ckpt.keys() == grads_plain.keys()
+        for name in grads_ckpt:
+            g_ckpt, g_plain = grads_ckpt[name], grads_plain[name]
+            assert (g_ckpt is None) == (g_plain is None), f"{name}: grad presence differs"
+            if g_ckpt is not None:
+                assert torch.allclose(g_ckpt, g_plain, atol=1e-4), f"{name}: gradient diverged"
+
+    def test_solver_checkpoint_matches_uncheckpointed(self):
+        for mode in _ALL_UPDATE_INPUT_MODES:
+            model = _make_model(update_input=mode, N_outer=4, dropout=0.1)
+            model.train()
+            batch = _MockBatch(B=2, T=20, D=3, seed=0)
+            self._assert_checkpoint_matches_reference(
+                model, lambda model=model, batch=batch: model(batch))
+
+    def test_predict_state_cfm_checkpoint_matches_uncheckpointed(self):
+        for mode in _ALL_UPDATE_INPUT_MODES:
+            model = _make_cfm_model(update_input=mode, K_inner=4, dropout=0.1)
+            model.train()
+            batch = _MockBatch(B=2, T=20, D=3, seed=0)
+            x_tau = torch.randn(2, 20, 3)
+            tau = torch.rand(2)
+            self._assert_checkpoint_matches_reference(
+                model,
+                lambda model=model, x_tau=x_tau, batch=batch, tau=tau: model(x_tau, batch, tau))
+
+    def test_double_backward_create_graph_survives_checkpoint(self):
+        """The specific higher-order-autograd risk `use_reentrant=False` is
+        meant to cover: "grad-only"/"grad+state" call
+        ``torch.autograd.grad(..., create_graph=True)`` *inside* the
+        checkpointed region, so the outer ``loss.backward()`` is itself a
+        double-backward through that inner autograd.grad call, now combined
+        with checkpoint recomputation. Must not raise, and must reach every
+        parameter (including prior_unet's) with a finite gradient -- checked
+        via the same ``compute_loss`` path actual training uses, not just a
+        toy scalar."""
+        for mode in ("grad-only", "grad+state"):
+            model = _make_model(update_input=mode, N_outer=4)
+            batch = _MockBatch(B=2, T=20, D=3)
+            loss = model.compute_loss(batch)
+            loss.backward()
+            for name, p in model.named_parameters():
+                assert p.grad is not None, f"[{mode}] no gradient reached {name}"
+                assert torch.isfinite(p.grad).all(), f"[{mode}] non-finite gradient at {name}"

@@ -1,5 +1,61 @@
 # Changelog
 
+## 2026-09-08: Gradient checkpointing for the FourDVarNet unrolled solver loop
+
+**Summary:** `FourDVarNetSolver.forward()`'s `for k in range(N_outer)` loop and
+`FourDVarNetPredictStateCFM.forward()`'s mirrored `for k in range(K_inner)`
+loop each kept a full per-iteration UNet forward (plus, for the
+gradient-conditioned `update_input` modes, the prior-operator forward and the
+`torch.autograd.grad(..., create_graph=True)` call inside
+`_build_update_input`) alive for backprop -- activation memory scaled
+linearly with the unroll length, unbounded. Factored the per-iteration step
+out of both `forward()`s into a new shared `_solver_iteration` (mirroring
+`_build_update_input`'s existing shared-free-function pattern) and wrapped
+each call to it in `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`
+-- `use_reentrant=False` specifically because "grad-only"/"grad+state"'s
+nested `create_graph=True` call needs the non-reentrant implementation to
+support higher-order autograd correctly. Applied unconditionally (no config
+flag): under `torch.no_grad()` (eval/sampling) checkpoint just runs the
+function directly with no recomputation, so eval-time behavior and cost are
+unchanged.
+
+**Real bug caught by this change (not a hypothetical from the design phase):**
+`_normalize_channels`'s `cache`-hit branch skipped computing the RMS norm
+entirely once cached, so a checkpointed iteration's *recomputation* (during
+backward, always happening after the whole unrolled solve -- and therefore
+the whole cache -- has already been populated) executed a different number
+of ops than that same iteration's *original* forward (a cache miss, at the
+time it first ran) -- raising `torch.utils.checkpoint.CheckpointError: ...
+different number of tensors was saved` for every gradient-conditioned mode.
+Fixed by always computing the norm (`(t**2).mean().sqrt().clamp_min(1e-8).detach()`)
+and only using `cache.setdefault(key, norm)` to pick which detached scalar
+actually gets used -- same op sequence every call regardless of cache state,
+same cached-reuse semantics as before (values unchanged, confirmed by test).
+
+**Files modified:**
+- `models/fourdvarnet.py` -- new `_solver_iteration` helper; both `forward()`s
+  call it via `checkpoint(...)` instead of inlining `_build_update_input` +
+  `self.unet(...)`; `_normalize_channels` cache-hit path fixed as above.
+- `tests/test_fourdvarnet.py` -- new `TestGradientCheckpointing`: compares
+  checkpointed vs. checkpoint-bypassed (`unittest.mock.patch` on
+  `models.fourdvarnet.checkpoint`) forward output and every parameter's
+  gradient across all five `update_input` modes for both classes, plus a
+  dedicated double-backward-through-`create_graph=True` regression test for
+  "grad-only"/"grad+state".
+
+**Rationale:** Reduces GPU memory for the unrolled solver at any `N_outer`/
+`K_inner`, trading it for one extra forward recompute per iteration during
+backward -- standard activation-checkpointing tradeoff, needed before scaling
+either the unroll length or the backbone (e.g. the MonaiUNet backbone
+prototype) further without also scaling batch size down.
+
+**Verification:** `pytest tests/test_fourdvarnet.py -v -m "not slow"` -- 55
+passed (was 46 passed / 9 failed with the `_normalize_channels` bug present,
+confirming the new tests and the pre-existing gradient tests both catch it).
+`ruff check models/fourdvarnet.py tests/test_fourdvarnet.py` -- only 5
+pre-existing, unrelated issues remain (confirmed present on `master` before
+this change too); no new lint issues.
+
 ## 2026-09-08: Full training run validating checkpoint/config persistence + normalization config wiring end-to-end
 
 **Summary:** Before opening the PR for this branch's two components (checkpoint/

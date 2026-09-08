@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from models.interpolant import LinearInterpolant
 from models.unet import UNet1D
@@ -121,13 +122,26 @@ def _normalize_channels(t, cache=None, key=None):
     tensor stays fully differentiable w.r.t. upstream parameters (via the
     un-normalized numerator) without backpropagating through the norm
     computation itself.
+
+    Deliberately computes ``norm`` unconditionally (even on a cache hit,
+    where the fresh value is immediately discarded via ``setdefault``)
+    rather than branching on ``key in cache`` to skip the computation: each
+    call site is wrapped in ``torch.utils.checkpoint.checkpoint`` (see
+    ``_solver_iteration``), which requires a checkpointed segment's
+    recomputation (during backward) to perform the *exact* same ops as its
+    original forward -- a cache-hit branch that skips computing ``norm``
+    would make the very first iteration's checkpoint recompute (which always
+    lands after the whole unrolled solve has already populated the cache)
+    diverge from that same iteration's original forward (a cache miss at the
+    time it first ran), raising ``torch.utils.checkpoint.CheckpointError:
+    ... different number of tensors was saved``. Unconditional computation
+    keeps the op sequence identical regardless of cache state; the discarded
+    norm is detached and unused, so this changes no gradient, only adds one
+    redundant (and cheap) elementwise reduction per already-cached call.
     """
-    if cache is not None and key in cache:
-        norm = cache[key]
-    else:
-        norm = (t ** 2).mean().sqrt().clamp_min(1e-8).detach()
-        if cache is not None:
-            cache[key] = norm
+    norm = (t ** 2).mean().sqrt().clamp_min(1e-8).detach()
+    if cache is not None:
+        norm = cache.setdefault(key, norm)
     return t / norm
 
 
@@ -194,6 +208,41 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     if update_input == "grad-only":
         return grad
     return torch.cat([grad, x], dim=-1)
+
+
+def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
+                       prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache):
+    """One unrolled solver step -- build the per-iteration update-UNet input
+    (``_build_update_input``) then run the main solver UNet -- factored out
+    of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
+    so both can wrap a single call to it in
+    ``torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`` instead
+    of keeping every iteration's UNet forward (and, for the gradient-
+    conditioned modes, the prior-operator forward inside
+    ``_build_update_input``) alive for backprop: activation memory would
+    otherwise scale linearly with the unroll length (``N_outer``/``K_inner``)
+    with no bound. ``use_reentrant=False`` specifically -- not the older
+    reentrant checkpoint implementation -- because "grad-only"/"grad+state"
+    call ``torch.autograd.grad(..., create_graph=True)`` inside
+    ``_build_update_input``, and only the non-reentrant checkpoint supports
+    nested/higher-order autograd correctly.
+
+    Safe to checkpoint unconditionally (no config flag): under
+    ``torch.no_grad()`` (eval/sampling), ``checkpoint`` just runs the
+    function directly with no recomputation, so this adds no eval-time cost.
+    ``grad_norm_cache`` (a plain dict, not a tensor -- passed through
+    unchanged across the checkpoint boundary) is always fully populated by
+    the very first iteration's real forward pass, before ``backward()`` is
+    ever called, so a checkpoint-triggered recomputation of the ``k=0``
+    iteration during backward always hits the already-cached branch in
+    ``_normalize_channels`` and reproduces the exact same norm -- no stale-
+    cache risk despite the forward code re-running.
+    """
+    inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
+                               prior_unet=prior_unet, R_var=R_var,
+                               obs_weight=obs_weight, prior_weight=prior_weight,
+                               grad_norm_cache=grad_norm_cache).transpose(1, 2)
+    return unet(inp, tau=tau_k).transpose(1, 2)
 
 
 class FourDVarNetSolver(nn.Module):
@@ -340,11 +389,11 @@ class FourDVarNetSolver(nn.Module):
             # conditioned on tau_k. prior_tau_conditioning=True (legacy
             # checkpoints only) instead feeds it the same tau_k.
             prior_tau_k = tau_k if self.prior_tau_conditioning else None
-            inp = _build_update_input(self.update_input, x, obs_clean, obs_mask, prior_tau_k,
-                                       prior_unet=self.prior_unet, R_var=self.R_var,
-                                       prior_weight=self.prior_weight,
-                                       grad_norm_cache=grad_norm_cache).transpose(1, 2)
-            gmod = self.unet(inp, tau=tau_k).transpose(1, 2)
+            gmod = checkpoint(
+                _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
+                tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
+                grad_norm_cache, use_reentrant=False,
+            )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
@@ -502,11 +551,11 @@ class FourDVarNetPredictStateCFM(nn.Module):
         denom = max(self.K_inner - 1, 1)
         for k in range(self.K_inner):
             tau_k = torch.full((x.shape[0],), k / denom, device=x.device)
-            inp = _build_update_input(self.update_input, x, obs_clean, obs_mask, tau_k,
-                                       prior_unet=self.prior_unet, R_var=self.R_var,
-                                       obs_weight=self.obs_weight,
-                                       grad_norm_cache=grad_norm_cache).transpose(1, 2)
-            gmod = self.unet(inp, tau=tau_k).transpose(1, 2)
+            gmod = checkpoint(
+                _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
+                tau_k, tau_k, self.prior_unet, self.R_var, 1.0, self.obs_weight,
+                grad_norm_cache, use_reentrant=False,
+            )
             x = torch.clamp(x - (1.0 / self.K_inner) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
