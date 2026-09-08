@@ -1,0 +1,28 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: direct_unet
+  state_dim: 3
+  use_obs: true
+  use_forcing: true
+  use_params: true
+  direct_unet:
+    hidden_channels: [32, 64, 128]
+    dropout: 0.1
+
+training:
+  stage1:
+    max_epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

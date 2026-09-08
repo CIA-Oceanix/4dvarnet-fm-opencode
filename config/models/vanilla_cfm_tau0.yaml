@@ -1,0 +1,38 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: vanilla_cfm
+  state_dim: 3
+  N_ensemble: 50
+  use_obs: true
+  use_forcing: true
+  use_params: true
+  vanilla_cfm:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: true
+    tau_sampling: uniform  # uniform | logit_normal | beta
+    logit_normal_loc: 0.0
+    logit_normal_scale: 1.0
+    beta_alpha: 0.1 
+    beta_beta: 1.0
+
+training:
+  stage1:
+    max_epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+  
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs
