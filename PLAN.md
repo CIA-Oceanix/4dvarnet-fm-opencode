@@ -842,6 +842,61 @@ dominated by the **unobserved** obs_fast group (S0 obs_fast ≈ 1.6–1.95 vs 0.
 0.130→0.158 (hx/F degrade), S0 slightly improves (0.045 vs 0.054, F-driven). Full tables:
 `reports/l96/outputs/l96_obs_density_da_baselines.md`.
 
+### Fast-Y observation-density generalization study (2026-09-09, `feature/l96-obs-density-generalization`)
+
+Inference-time-only generalization test (no retraining) for the 4 best-of-subcategory
+monai-backbone schemes from the consolidated benchmark (`l96_consolidated_benchmark.md`) --
+**DirectUNet-L(monai,cos)**, **CFM-M(monai,flat)**, **SDA3(monai)**, **DirectUNet+SDA3** -- on
+the same 200-window S0/S1 cached test set, with the fast-Y observation density randomly
+reduced: only `keep_k` of the 16 canonical fast-Y channels (2 per slow node) are kept,
+**redrawn independently at every observation time** within a window (the harder OOD test,
+chosen over a simpler fixed-per-window mask); the 8 slow-X channels always stay fully
+observed. `keep_k ∈ {16 (sanity check), 8, 4, 0}`.
+
+Distinct from the pre-existing `l96_obs_density_da_baselines.md` above: that study is DA
+baselines only, a single fixed slow-only (obsj0) config; this one is the 4 best neural/SDA
+schemes, a per-obs-time randomly redrawn density sweep.
+
+- **New utility `evaluation/obs_density.py`**: `fast_channel_keep_mask` draws an exact-count
+  random keep-mask per (window, obs-time) via per-slice `topk` scores (not a Bernoulli
+  approximation); `apply_density_mask_to_obs` NaNs out the dropped channels directly in `obs`.
+- **Architecture-driven design split** (verified against the code, not assumed): DirectUNet/
+  VanillaCFM/FourDVarNet/Joint* consume `obs` only via `torch.nan_to_num(obs, nan=0.0)`, no
+  separate mask channel -- trained only on whole-timestep NaN blocks, never partial-channel NaN
+  within an observed timestep, so a dropped fast-Y channel is genuinely indistinguishable from a
+  real near-zero observation for them (flagged as an explicit, unfixable-without-retraining
+  caveat in the report). SDA's prior network never conditions on raw obs at all (only the
+  guided-sampling cost, `evaluation/sda_sampler.py::guided_obs_cost`, reads it) -- architecturally
+  clean, no zero-imputation ambiguity there.
+- **`evaluation/sda_sampler.py`**: `guided_obs_cost`/`sda_guided_sample` generalized with a new
+  `obs_channel_mask` param (boolean, may vary per timestep/batch element -- unlike the
+  pre-existing `obs_indices`, which applies one fixed subset across the whole trajectory;
+  mutually exclusive with it), combined multiplicatively with the existing temporal `obs_mask`.
+- **`evaluation/neural_inference.py`**: `_run_case_inference`/`run_inference` gained
+  `obs_density_keep_k` (mutually exclusive with `obs_indices`), applied uniformly across every
+  model type dispatched there -- NaNs `batch["obs"]` for direct-obs-consuming models, forwards
+  `obs_channel_mask` to `sda_guided_sample` for the SDA priors. `None` (default) is a true no-op.
+- **New `eval_obs_density_l96.py`**: orchestrates all 4 methods x {S0,S1} x keep_k x
+  `--n-repeats` (independent seed reruns; default 3 -- each run already averages over ~30
+  obs-times x 200 windows of independent random draws, so a small repeat count suffices to
+  sanity-check aggregate RNG sensitivity) x reusing each scheme's existing checkpoint at its
+  canonical benchmark hyperparameters (n_members/n_outer/guidance_weight/tau0 all match
+  `l96_consolidated_benchmark.md` exactly, so `keep_k=16` is a reproduction sanity check, not
+  just a nominal baseline). The hybrid's DirectUNet-M warm start gets the density-masked obs
+  directly (same ambiguity as plain DirectUNet); its SDA3 guidance stage gets `obs_channel_mask`
+  (clean).
+- **New `reports/l96/generate_l96_obs_density_generalization_report.py`**: RMSE/EV(all_obs)
+  table (rows=keep_k, columns=method x case, mean±std across repeats) + a degradation table
+  (RMSE relative to the keep_k=16 baseline per method/case).
+- **New `batch/run_l96_obs_density_generalization.sbatch`** launches the sweep + report on the
+  cluster (checkpoints/cached dataset live only in `experiments/` on the HPC filesystem, not in
+  this git worktree) -- **not yet run**; this PR is the implementation, the actual sweep results
+  are a follow-up once the sbatch job completes.
+- Tests: `tests/test_obs_density.py` (mask exact-count/shape/no-op invariants),
+  `tests/test_sda_sampler.py` (obs_channel_mask restricts/varies-per-timestep/mutual-exclusion/
+  zero-guidance-equivalence), `tests/test_neural_inference.py` (obs_density_keep_k NaNs the
+  right channels for direct-obs models, no-ops at keep_k=16, forwards correctly to the SDA path).
+
 ## Phases
 
 ### Phase 0: Plan

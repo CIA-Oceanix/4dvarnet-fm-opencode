@@ -16,6 +16,7 @@ from evaluation.neural_inference import (
     _run_case_inference,
 )
 from evaluation.estimate_metrics import evaluate_estimates, evaluate_npz
+from evaluation.obs_density import NUM_FAST, NUM_SLOW
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM, TweedieCFM, PredictStateCFM
 
@@ -243,6 +244,108 @@ class TestNeuralInference:
         # Direct check: the returned truth columns are exactly obs_var_indices.
         expected_truth = truth[..., list(obs_var_indices)].numpy()
         assert np.allclose(out["truth"], expected_truth)
+
+    def test_obs_density_keep_k_nans_dropped_fast_channels(self):
+        """obs_density_keep_k=0 must NaN out all 16 fast-Y columns of obs
+        before a direct-obs-consuming model ever sees them, leaving the 8
+        slow-X columns untouched."""
+        D = NUM_SLOW + NUM_FAST
+        B, T = 3, 5
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0  # never exactly 0/NaN by construction
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        torch.manual_seed(0)
+        out = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                  obs_density_keep_k=0)
+        traj = torch.from_numpy(out["trajectories"])
+        assert not torch.isnan(traj[..., :NUM_SLOW]).any()
+        assert torch.isnan(traj[..., NUM_SLOW:]).all()
+
+    def test_obs_density_keep_k_full_density_is_noop(self):
+        D = NUM_SLOW + NUM_FAST
+        B, T = 2, 4
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        out_baseline = _run_case_inference(model, dataloader, torch.device("cpu"))
+        out_full = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       obs_density_keep_k=NUM_FAST)
+        assert np.allclose(out_baseline["trajectories"], out_full["trajectories"])
+
+    def test_obs_density_keep_k_partial_keeps_exact_count(self):
+        D = NUM_SLOW + NUM_FAST
+        B, T = 4, 6
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        torch.manual_seed(0)
+        out = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                  obs_density_keep_k=4)
+        traj = torch.from_numpy(out["trajectories"])
+        finite_fast = ~torch.isnan(traj[..., NUM_SLOW:])
+        assert torch.all(finite_fast.sum(dim=-1) == 4)
+
+    def test_obs_density_keep_k_and_obs_indices_mutually_exclusive(self):
+        D = NUM_SLOW + NUM_FAST
+        obs = torch.rand(2, 3, D)
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _IdentityModel()
+        with pytest.raises(ValueError):
+            _run_case_inference(model, dataloader, torch.device("cpu"),
+                                obs_indices=[0, 1], obs_density_keep_k=4)
+
+    def test_obs_density_keep_k_sda_prior_all_dropped_matches_zero_guidance(self):
+        """For the SDA priors, obs_density_keep_k=0 must exclude every fast-Y
+        channel from the guidance cost -- equivalent to zero guidance weight
+        on those channels but NOT on the still-fully-observed slow-X ones, so
+        this only reduces (never fully zeroes) the guidance vs. an unmasked
+        run; here we just check it runs, returns finite output, and differs
+        from the full-density (keep_k=16) run (obs_density_keep_k has a real
+        effect on the trajectory)."""
+        from models.sda import UnconditionalPriorCFM
+
+        D = NUM_SLOW + NUM_FAST
+        B, T = 1, 8
+        model = UnconditionalPriorCFM(state_dim=D, hidden_channels=[4, 8], N_outer=3)
+        model.eval()
+        obs = torch.rand(B, T, D)
+        dataloader = _build_case_dataloader(obs, obs)
+
+        torch.manual_seed(1)
+        out_full = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       n_outer=3, guidance_weight=2.0,
+                                       obs_density_keep_k=NUM_FAST)
+        torch.manual_seed(1)
+        out_zero = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       n_outer=3, guidance_weight=2.0,
+                                       obs_density_keep_k=0)
+        assert np.isfinite(out_full["trajectories"]).all()
+        assert np.isfinite(out_zero["trajectories"]).all()
+        assert not np.allclose(out_full["trajectories"], out_zero["trajectories"])
 
     def _save_lightning_ckpt(self, tmp_path, model, model_type):
         state_dict = {f"model.{k}": v for k, v in model.state_dict().items()}

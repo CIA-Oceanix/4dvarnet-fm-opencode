@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-09-09: L96 fast-Y observation-density generalization study (implementation)
+
+**Summary:** Implemented an inference-time-only (no retraining) generalization test for
+the 4 best-of-subcategory L96 monai-backbone schemes -- DirectUNet-L(cos), CFM-M(flat),
+SDA3, DirectUNet+SDA3 -- under randomly reduced fast-Y observation density: `keep_k` of
+the 16 canonical fast-Y channels are kept, redrawn independently at every observation
+time within a window (slow-X always fully observed). Code + tests only in this PR; the
+actual sweep needs the checkpoints/cached dataset that live only in `experiments/` on
+the HPC cluster, not in this git worktree -- run via the new sbatch script as a follow-up.
+
+**Files modified:**
+- `evaluation/obs_density.py` (new) -- `fast_channel_keep_mask`/`apply_density_mask_to_obs`,
+  the shared exact-count random-masking primitives.
+- `evaluation/sda_sampler.py` -- `guided_obs_cost`/`sda_guided_sample` gained
+  `obs_channel_mask` (a per-timestep-varying boolean mask, mutually exclusive with the
+  pre-existing fixed-subset `obs_indices`).
+- `evaluation/neural_inference.py` -- `_run_case_inference`/`run_inference` gained
+  `obs_density_keep_k`, dispatched per model family (NaN's `obs` for direct-obs-consuming
+  models; forwards `obs_channel_mask` to `sda_guided_sample` for the SDA priors).
+- `eval_obs_density_l96.py` (new) -- orchestrates all 4 methods x {S0,S1} x keep_k x
+  N_REPEATS, reusing each scheme's existing checkpoint at its canonical benchmark
+  hyperparameters.
+- `reports/l96/generate_l96_obs_density_generalization_report.py` (new) -- RMSE/EV table +
+  degradation-vs-full-density table.
+- `batch/run_l96_obs_density_generalization.sbatch` (new).
+- `tests/test_obs_density.py` (new), `tests/test_sda_sampler.py`, `tests/test_neural_inference.py`
+  -- unit coverage for the masking mechanics and their plumbing into both eval paths.
+
+**Rationale:** DirectUNet/VanillaCFM/FourDVarNet/Joint* consume `obs` only via
+`torch.nan_to_num(obs, nan=0.0)` with no separate mask channel (verified against the
+code) -- trained only on whole-timestep NaN blocks, never partial-channel NaN within an
+observed timestep, so a dropped fast-Y channel is genuinely indistinguishable from a real
+near-zero observation for them; this is flagged as an explicit, unfixable-without-retraining
+caveat in the report rather than silently glossed over. SDA's prior network never
+conditions on raw obs at all (only the guided-sampling cost reads it), so the same
+reduction is architecturally clean there -- no zero-imputation ambiguity. Per-obs-time
+(rather than per-window) mask redraw was chosen deliberately as the harder OOD test.
+
+**Verification:** `pytest tests/test_obs_density.py tests/test_sda_sampler.py
+tests/test_neural_inference.py -v` (new/extended tests) green; `ruff check` clean on all
+new files (pre-existing files touched only had new import lines added, no new lint debt
+beyond the pre-existing baseline in those files); full `pytest tests/ -m "not slow"` run
+before pushing.
+
 ## 2026-09-09: Fix silent `use_cosine_scheduler` default flip (code review)
 
 **Summary:** The cosine-scheduler generalization below ("L96 monai-backbone
