@@ -74,6 +74,47 @@ class TestGuidedObsCost:
         cost_all = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_indices=[0, 1, 2])
         assert torch.allclose(cost_none, cost_all)
 
+    def test_obs_channel_mask_restricts_which_channels_count(self):
+        """Unlike obs_indices (one fixed subset for the whole trajectory),
+        obs_channel_mask may vary per timestep -- e.g. the fast-Y
+        observation-density study's per-(window, obs-time) random keep-mask.
+        """
+        B, T, D = 1, 6, 3
+        obs_mask = torch.zeros(B, T, dtype=torch.bool)
+        obs_mask[:, [1, 3]] = True
+        x_hat_1 = torch.randn(B, T, D)
+        y = x_hat_1.clone()
+        y[:, :, 2] += 1000.0  # channel 2 wildly mismatched
+        channel_mask = torch.ones(B, T, D, dtype=torch.bool)
+        channel_mask[..., 2] = False
+        cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_channel_mask=channel_mask)
+        assert torch.allclose(cost, torch.tensor(0.0), atol=1e-4), \
+            "excluded channel's mismatch must not enter the cost"
+
+    def test_obs_channel_mask_can_vary_per_timestep(self):
+        B, T, D = 1, 4, 2
+        obs_mask = torch.ones(B, T, dtype=torch.bool)
+        x_hat_1 = torch.zeros(B, T, D)
+        y = torch.zeros(B, T, D)
+        y[:, 0, 1] = 1000.0  # mismatched only at (t=0, channel=1) -- masked out there
+        y[:, 1, 1] = 1000.0  # mismatched at (t=1, channel=1) -- NOT masked at this t
+        channel_mask = torch.ones(B, T, D, dtype=torch.bool)
+        channel_mask[:, 0, 1] = False
+        cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_channel_mask=channel_mask)
+        expected = (1000.0 ** 2) / 0.5  # only the t=1 mismatch contributes
+        assert torch.allclose(cost, torch.tensor(expected), rtol=1e-4)
+
+    def test_obs_indices_and_obs_channel_mask_mutually_exclusive(self):
+        import pytest
+        B, T, D = 1, 3, 2
+        obs_mask = torch.ones(B, T, dtype=torch.bool)
+        x_hat_1 = torch.zeros(B, T, D)
+        y = torch.zeros(B, T, D)
+        channel_mask = torch.ones(B, T, D, dtype=torch.bool)
+        with pytest.raises(ValueError):
+            guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5, obs_indices=[0],
+                            obs_channel_mask=channel_mask)
+
 
 class TestSdaGuidedSample:
     def test_guidance_weight_zero_matches_unconditional_sample(self):
@@ -118,6 +159,36 @@ class TestSdaGuidedSample:
         assert samples.shape == (1, 20, 3)
         assert torch.isfinite(samples).all()
         assert n_forward == 3
+
+    def test_obs_channel_mask_all_true_matches_unmasked(self):
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=1, T=10, D=3, obs_every=2)
+        full_mask = torch.ones(1, 10, 3, dtype=torch.bool)
+
+        torch.manual_seed(3)
+        unmasked, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3, guidance_weight=2.0)
+        torch.manual_seed(3)
+        masked, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3, guidance_weight=2.0,
+                                      obs_channel_mask=full_mask)
+        assert torch.allclose(masked, unmasked), \
+            "an all-True obs_channel_mask must reproduce the unmasked guided trajectory"
+
+    def test_obs_channel_mask_all_false_matches_zero_guidance(self):
+        """Excluding every channel from the guidance cost must be equivalent
+        to no guidance at all (guidance_weight=0)."""
+        model = _make_model()
+        model.eval()
+        batch = _MockBatch(B=1, T=10, D=3, obs_every=2)
+        empty_mask = torch.zeros(1, 10, 3, dtype=torch.bool)
+
+        torch.manual_seed(5)
+        with torch.no_grad():
+            unconditional = model.sample(batch, N_outer=3)
+        torch.manual_seed(5)
+        masked_out, _ = sda_guided_sample(model, batch, R_var=0.1, N_outer=3, guidance_weight=2.0,
+                                          obs_channel_mask=empty_mask)
+        assert torch.allclose(masked_out, unconditional)
 
     def test_n_members_stacks_last_dim(self):
         model = _make_model()

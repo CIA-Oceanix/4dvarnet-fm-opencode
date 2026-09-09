@@ -23,6 +23,7 @@ except ImportError:
         pass
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
+from evaluation.obs_density import NUM_FAST, NUM_SLOW, apply_density_mask_to_obs, fast_channel_keep_mask
 from evaluation.sda_sampler import sda_guided_sample
 
 
@@ -819,6 +820,7 @@ def _run_case_inference(
     r_var: float = 0.5,
     guidance_weight: float = 1.0,
     obs_indices=None,
+    obs_density_keep_k: int | None = None,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -832,9 +834,27 @@ def _run_case_inference(
     evaluator. For joint models the batch also carries ``params``; each
     window's predicted params are returned in ``"params_pred"`` (W, P) and the
     ground-truth in ``"params_true"`` (W, P).
+
+    ``obs_density_keep_k`` (optional): the fast-Y observation-density
+    generalization study (see ``evaluation/obs_density.py``) -- randomly
+    keeps only ``keep_k`` of the 16 canonical fast-Y channels, redrawn
+    independently per (window, timestep), leaving the 8 slow-X channels
+    always observed. ``None`` (default) is a true no-op (full density,
+    identical to the pre-existing behavior). For direct-obs-consuming models
+    (everything except the SDA priors) the dropped channels are NaN'd out of
+    ``batch["obs"]`` before the model ever sees it; for the SDA priors
+    (``UnconditionalPriorCFM``/``ConditionalPriorCFM``, never obs-conditioned
+    on their own) the keep-mask is instead passed to ``sda_guided_sample`` as
+    ``obs_channel_mask``, excluding dropped-channel terms from the guidance
+    cost directly -- no zero-imputation ambiguity there. Uses the caller's
+    global torch RNG state (``torch.manual_seed`` before calling), matching
+    every other stochastic knob in this module.
     """
+    if obs_density_keep_k is not None and obs_indices is not None:
+        raise ValueError("obs_density_keep_k and obs_indices are mutually exclusive")
     model.eval()
     is_joint = isinstance(model, (JointCFM, JointCFMCoupled, JointDirectUNet))
+    is_sda_prior = isinstance(model, (UnconditionalPriorCFM, ConditionalPriorCFM))
     member_preds: list[list] = [[] for _ in range(n_members)]
     member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint and not ens_then_head else None
     ens_then_head_params: list = [] if (is_joint and ens_then_head) else None
@@ -847,6 +867,24 @@ def _run_case_inference(
         for batch in dataloader:
             # Convert tensors to device, skip None values
             batch = {k: v.to(device) if v is not None else v for k, v in batch.items()}
+
+            obs_channel_mask = None
+            if obs_density_keep_k is not None:
+                Bb, Tb, Db = batch["obs"].shape
+                if Db != NUM_SLOW + NUM_FAST:
+                    raise ValueError(
+                        f"obs_density_keep_k requires the canonical {NUM_SLOW}+{NUM_FAST}D "
+                        f"obsj2 observed subspace, got obs dim {Db}"
+                    )
+                obs_channel_mask = fast_channel_keep_mask(Bb, Tb, obs_density_keep_k, device=device)
+                if not is_sda_prior:
+                    # Direct-obs-consuming models: NaN out the dropped channels
+                    # so nan_to_num(obs, nan=0.0) zeroes them like any other
+                    # unobserved value; the SDA priors never read obs as a
+                    # network input, so their obs stays raw and the mask is
+                    # applied to the guidance cost instead (see below).
+                    batch["obs"] = apply_density_mask_to_obs(batch["obs"], obs_channel_mask)
+
             batch_obj = BatchDict(batch)
 
             for m in range(n_members):
@@ -876,7 +914,8 @@ def _run_case_inference(
                                                 N_outer=n_outer,
                                                 guidance_weight=guidance_weight,
                                                 n_members=1,
-                                                obs_indices=obs_indices)
+                                                obs_indices=obs_indices,
+                                                obs_channel_mask=obs_channel_mask)
                 elif isinstance(model, (FourDVarNetSolver, FourDVarNetPredictStateCFM)):
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
@@ -956,6 +995,7 @@ def run_inference(
     r_var: float = 0.5,
     guidance_weight: float = 1.0,
     obs_indices=None,
+    obs_density_keep_k: int | None = None,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -972,10 +1012,19 @@ def run_inference(
     against; ``obs_indices`` restricts what the SDA guidance cost is allowed
     to see, within that same 24D subspace -- e.g. ``range(8)`` for
     slow-only-observed).
+
+    ``obs_density_keep_k`` (optional, mutually exclusive with ``obs_indices``):
+    applies the fast-Y observation-density generalization mask (see
+    ``evaluation/obs_density.py``) to EVERY model type -- unlike
+    ``obs_indices``, this is not SDA-specific: direct-obs-consuming models get
+    the dropped fast-Y channels NaN'd out of ``obs`` itself, while the SDA
+    priors get the keep-mask forwarded to the guidance cost. ``None``
+    (default) is a true no-op.
     """
     return {
         case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
                                   ens_then_head=ens_then_head, r_var=r_var,
-                                  guidance_weight=guidance_weight, obs_indices=obs_indices)
+                                  guidance_weight=guidance_weight, obs_indices=obs_indices,
+                                  obs_density_keep_k=obs_density_keep_k)
         for case, dl in dataloaders.items()
     }
