@@ -59,7 +59,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install hydra-core omegaconf pytorch-lightning
+          pip install hydra-core omegaconf pytorch-lightning tensorboard
       - name: Run fast test suite
         run: |
           pytest \
@@ -84,4 +84,5 @@ jobs:
             tests/test_qg_psi_state.py \
             tests/test_qg_baselines_4dvar.py \
             tests/test_qg_neural.py \
+            tests/test_resume.py \
             -m "not slow" -q

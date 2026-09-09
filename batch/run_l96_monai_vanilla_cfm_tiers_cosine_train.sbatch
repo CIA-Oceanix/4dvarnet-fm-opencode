@@ -40,7 +40,6 @@ for EXP in $TIERS; do
   echo "============================================"
   echo ""
 
-  rm -rf "experiments/${EXP}"
 
   python train.py \
     --config-name experiment/${EXP} \

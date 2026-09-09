@@ -34,7 +34,6 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 echo ""
 
-rm -rf "experiments/${EXP}"
 
 python train.py \
   --config-name experiment/${EXP} \

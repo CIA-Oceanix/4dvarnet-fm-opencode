@@ -44,6 +44,75 @@ new files (pre-existing files touched only had new import lines added, no new li
 beyond the pre-existing baseline in those files); full `pytest tests/ -m "not slow"` run
 before pushing.
 
+## 2026-09-09: Checkpoint-resume + archive-not-delete run history (never `rm -rf` a checkpoint again)
+
+**Summary:** `train.py` had no checkpoint-resume support, and every training
+sbatch script unconditionally `rm -rf`'d its experiment directory before
+calling `python train.py` -- on 2026-09-09 this silently destroyed a good
+FDV1(monai) checkpoint (epoch 320/400, val_loss 0.275) via job 52672. Also
+found in the process: `run_l96_cfm_variants_e2e_quick.sbatch` /
+`run_l96_cfm_variants_smoke.sbatch` reused the exact same experiment names
+(`V3_predict_state_cfm_l96`, `V2_tweedie_cfm_l96`) as the full production
+training scripts, so a smoke-test rerun could just as easily have wiped a
+real production checkpoint under the old code. Added: `ModelCheckpoint(
+save_last=True)` (`checkpoints/stage{N}_last.ckpt`, full Lightning trainer
+state) in `training/pipeline.py::create_trainer`; a new
+`training/resume.py` with `config_fingerprint` (hash of the `model`/`data`/
+`training` cfg subtrees), `resolve_experiment_dir` (compares the current
+run's fingerprint against the prior run's persisted `resolved_config.yaml`
+and, on any mismatch/missing-config/`--fresh`-on-a-finished-run, **moves**
+the whole `experiments/<EXP>/` dir to `experiments/<EXP>_runs/<run_id>/` --
+never deletes), and `resume_ckpt_path` (per-stage last-checkpoint lookup);
+wired `ckpt_path=resume_ckpt_path(stage)` into all 4 `trainer.fit()` call
+sites (`train.py` x3, `training/pipeline.py::train_stage`); removed the
+`rm -rf "experiments/${EXP}"` line from all 35 sbatch scripts that had it;
+added `+fresh=true` to the 4 scripts that are genuine repeatable smoke/CI
+tests (`run_l96_cfm_variants_e2e_quick.sbatch`,
+`run_l96_cfm_variants_smoke.sbatch`, `run_l96_v2_ablation_smoke.sbatch`,
+`run_one_epoch_tests_l96.sbatch`) so a rerun with an unchanged config still
+forces a clean archived restart instead of silently resuming (and skipping
+training on) an already-finished 1-epoch checkpoint.
+
+**Files modified:** `training/resume.py` (new); `training/pipeline.py`
+(`save_last=True` + per-stage `CHECKPOINT_NAME_LAST`, resume wiring in
+`train_stage`); `train.py` (`resolve_experiment_dir` call before
+`resolved_config.yaml` is (over)written, `resume_ckpt_path` at the 3 direct
+`trainer.fit()` sites); `tests/test_resume.py` (new, 16 tests: fingerprint
+hashing, archive-vs-resume gate incl. the missing-config and
+finished+`--fresh` edge cases, and a real 2-epoch-then-resume-to-4-epoch
+Lightning `trainer.fit()` integration test asserting `current_epoch` and
+optimizer state actually carry over); 35 `batch/*.sbatch` scripts (removed
+`rm -rf`; 4 of them gained `+fresh=true`).
+
+**Rationale:** `save_top_k=1` without `save_last=True` meant no checkpoint
+survived across a full trainer state (optimizer/scheduler/epoch), and
+nothing anywhere ever passed `ckpt_path=` to `trainer.fit()` -- resume was
+simply never wired up. Even with resume support, the sbatch `rm -rf` would
+still have deleted the checkpoint before `train.py` ever saw it. The
+existing per-experiment `resolved_config.yaml` persistence (PR #171) gave a
+config snapshot per experiment name but no check that it still matched the
+on-disk checkpoint across repeated/varied reruns of that name -- this is
+the gap closed here. Archiving instead of deleting also makes multi-run
+comparison first-class: `experiments/<EXP>_runs/` now accumulates one
+directory per superseded run, diffable/comparable, instead of the DA/eval
+metrics of the previous attempt just vanishing.
+
+**Caveats (for the user):** (1) rerunning the *identical* config resumes
+rather than starting an independent replicate -- pass `+fresh=true` to
+force a fresh archived-and-restarted attempt (e.g. a different seed)
+alongside an existing one. (2) This covers *training* metrics/checkpoints
+only -- an archived run's `eval_neural_l96.py` RMSE/EV (`neural_eval.json`)
+is not recomputed automatically; only the live `experiments/<EXP>/` gets
+evaluated by the sbatch scripts' post-training eval step. (3) The
+`config_fingerprint` hash covers `model`/`data`/`training` cfg subtrees
+only (not `paths`) -- a code change with an unchanged config will still be
+treated as resumable, which is why the 4 genuine smoke/CI scripts now pass
+`+fresh=true` rather than relying on the resume gate.
+
+**Verification:** `pytest tests/test_resume.py -v` (16 passed);
+`pytest tests/ -m "not slow"` (full fast suite, no regressions);
+`grep -rn "rm -rf.*experiments" batch/*.sbatch` (no matches remain).
+
 ## 2026-09-09: Fix silent `use_cosine_scheduler` default flip (code review)
 
 **Summary:** The cosine-scheduler generalization below ("L96 monai-backbone

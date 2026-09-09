@@ -41,10 +41,9 @@ python train.py \
   data.num_test_windows=5 \
   data.spinup_steps=3000 \
   hydra.run.dir=. \
-  hydra.output_subdir=null
+  hydra.output_subdir=null \
+  +fresh=true
 
-echo "  Cleaning smoke-test artifacts for experiment ${EXP}..."
-rm -rf "experiments/${EXP}"
 
 echo ""
 echo " Done: ${EXP} at $(date)"
