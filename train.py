@@ -728,7 +728,7 @@ def main(cfg: DictConfig):
                                lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                                use_gradient_loss=cfg.training.loss.use_gradient,
                                gradient_weight=cfg.training.loss.gradient_weight,
-                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
                                max_epochs=epochs_s1,
                                obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
                                prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
@@ -751,7 +751,7 @@ def main(cfg: DictConfig):
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
                            gradient_weight=cfg.training.loss.gradient_weight,
-                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
                            max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
             trainer.fit(lit, loaders["train"], loaders["val"])
@@ -766,7 +766,7 @@ def main(cfg: DictConfig):
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
                            gradient_weight=cfg.training.loss.gradient_weight,
-                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
                            max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
             trainer.fit(lit, loaders["train"], loaders["val"])

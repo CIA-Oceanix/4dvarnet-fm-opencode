@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-09-09: Fix silent `use_cosine_scheduler` default flip (code review)
+
+**Summary:** The cosine-scheduler generalization below ("L96 monai-backbone
+tier sweep") correctly removed `use_cosine_scheduler`'s `model_type in
+("fourdvarnet", "fourdvarnet_cfm")` gate, but in doing so also silently
+flipped its *default value* from `False` to `True` in five places
+(`training/lightning_module.py`'s `LitModel.__init__`, `training/
+pipeline.py`, and three `stage_cfg.get(...)` call sites in `train.py`).
+`config/lorenz96_default.yaml` and 71/82 `config/experiment/*.yaml` files
+never set this key, so the flip wasn't a no-op: re-running any of those
+configs (including this session's own flat-LR baselines that the report
+explicitly contrasts against their `_cosine` siblings) would have silently
+switched them to cosine-annealed LR, contradicting their documented purpose.
+
+**Files modified:** `training/lightning_module.py`, `training/pipeline.py`,
+`train.py` (3 call sites) -- reverted the default back to `False`;
+`tests/test_lightning_module.py` -- fixed `TestCosineScheduler` (renamed
+`test_use_cosine_scheduler_defaults_to_true` ->
+`test_use_cosine_scheduler_defaults_to_false`, updated assertion) and a
+stale docstring in `_make_lit_cfm` that contrasted against the old default.
+
+**Rationale:** Caught by `rfablet-review` on PR #176: the model-type-gate
+removal was correct and intentional (any model type's config can now opt
+in), but the default should stay an explicit per-config opt-in
+(`training.stage1.use_cosine_scheduler: true`, already present in every
+`_cosine`-suffixed config -- verified none of the 11 configs that reference
+this key rely on the default), not a global behavior change silently
+affecting ~60 unrelated, untouched experiment configs.
+
+**Verification:** `pytest tests/test_lightning_module.py
+tests/test_config_persistence.py tests/test_estimate_metrics.py` (39
+passed); confirmed via `grep` that every config referencing
+`use_cosine_scheduler` sets it explicitly (none depend on the default).
+
 ## 2026-09-09: FDV1+SDA1/SDA2(monai) hybrid coherence eval + final report regeneration
 
 **Summary:** Ran the FDV1-mean-warm-started SDA1/SDA2 hybrids (ens30, S0/S1)

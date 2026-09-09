@@ -46,7 +46,7 @@ def train_stage(
         gradient_clip_val=stage_cfg.gradient_clip_val,
         use_gradient_loss=cfg.training.loss.use_gradient,
         gradient_weight=cfg.training.loss.gradient_weight,
-        use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+        use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
         max_epochs=stage_cfg.epochs,
     )
     trainer = create_trainer(cfg, stage)

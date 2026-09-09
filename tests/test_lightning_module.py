@@ -19,11 +19,6 @@ def _make_lit_cfm(obs_weight_lr_scale=1.0, trainable_obs_weight=True, update_inp
     """FourDVarNetPredictStateCFM is the model that still has a trainable
     obs_weight (_obs_weight_raw) -- FourDVarNetSolver switched to a trainable
     prior_weight instead (see models/fourdvarnet.py).
-
-    use_cosine_scheduler defaults to False here (unlike LitModel's own
-    default) because these param-group-composition tests inspect
-    configure_optimizers()'s return value as a bare Optimizer -- orthogonal
-    to whether a scheduler is attached.
     """
     model = FourDVarNetPredictStateCFM(state_dim=3, hidden_channels=[4, 8], N_outer=3,
                                         update_input=update_input,
@@ -35,16 +30,16 @@ def _make_lit_cfm(obs_weight_lr_scale=1.0, trainable_obs_weight=True, update_inp
 
 
 class TestCosineScheduler:
-    def test_use_cosine_scheduler_defaults_to_true(self):
+    def test_use_cosine_scheduler_defaults_to_false(self):
         """LitModel's own default (independent of any train.py call site) is
-        True -- cosine annealing is the default scheduler for all training
-        runs unless a config explicitly opts out."""
+        False -- cosine annealing is opt-in per config
+        (``training.stage*.use_cosine_scheduler: true``), not a global
+        default, so configs that never set the key keep their flat LR."""
         model = FourDVarNetSolver(state_dim=3, hidden_channels=[4, 8], N_outer=3)
         lit = LitModel(model, model_type="direct_unet", stage=1, lr=1e-3, max_epochs=50)
-        assert lit.use_cosine_scheduler is True
+        assert lit.use_cosine_scheduler is False
         out = lit.configure_optimizers()
-        assert isinstance(out, dict)
-        assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+        assert isinstance(out, torch.optim.Optimizer)
 
     def test_disabled_returns_plain_optimizer(self):
         lit = _make_lit(use_cosine_scheduler=False)
