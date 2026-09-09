@@ -5,15 +5,15 @@ per-window pooled PV-q RMSE) x all 4 DA methods (ETKF/EnKF/Strong-4DVar/
 Weak-4DVar), each showing truth | free-forecast | analysis for streamfunction
 (psi, both layers) and PV (q, both layers) at a representative day.
 
-Window selection reads `crps_list`... no -- `rmse_list` from an existing
-ETKF run's saved JSON (produced by qg_da_sensitivity_scratch.py --method
-etkf, or any `run_qg_baselines.run()` call with the same windows/config) so
-the 3 examples are picked by real per-window DA skill, not arbitrarily.
+Window selection reads `rmse_list` from an existing ETKF run's saved JSON
+(any `run_qg_baselines.run(..., out_path=...)` call with the same
+windows/config -- e.g. `reports/qg/outputs/qg_repro_validation/etkf.json`)
+so the 3 examples are picked by real per-window DA skill, not arbitrarily.
 
 Run from the repository root::
 
     python reports/qg/generate_qg_reconstruction_figs.py \
-        --etkf-json qg_repro_validation_lag5_noise05/etkf.json \
+        --etkf-json reports/qg/outputs/qg_repro_validation/etkf.json \
         --out-dir reports/qg/outputs/figs
 """
 import argparse
@@ -41,14 +41,14 @@ NOISE_FRAC = 0.05
 CMAP = "RdBu_r"
 
 METHODS = [
-    ("ETKF", "etkf", dict(N_ensemble=80, inflation=1.0, loc_radius=6.0)),
-    ("EnKF", "enkf", dict(N_ensemble=80, inflation=1.0, loc_radius=6.0)),
+    ("ETKF", "etkf", {"N_ensemble": 80, "inflation": 1.0, "loc_radius": 6.0}),
+    ("EnKF", "enkf", {"N_ensemble": 80, "inflation": 1.0, "loc_radius": 6.0}),
     ("Strong-4DVar", "strong4dvar",
-     dict(da_window_steps=60, optimizer="lbfgs", fourdvar_max_iter=60,
-          fourdvar_lr=1.0, b_var_scale=1.0)),
+     {"da_window_steps": 60, "optimizer": "lbfgs", "fourdvar_max_iter": 60,
+          "fourdvar_lr": 1.0, "b_var_scale": 1.0}),
     ("Weak-4DVar", "weak4dvar",
-     dict(da_window_steps=60, optimizer="lbfgs", fourdvar_max_iter=60,
-          fourdvar_lr=1.0, b_var_scale=1.0, q_var_scale=0.1)),
+     {"da_window_steps": 60, "optimizer": "lbfgs", "fourdvar_max_iter": 60,
+          "fourdvar_lr": 1.0, "b_var_scale": 1.0, "q_var_scale": 0.1}),
 ]
 
 
@@ -162,7 +162,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cfg = _base_cfg()
-    print(f"Loading test cache (100 windows, nx=64, seed=20042)...", flush=True)
+    print("Loading test cache (100 windows, nx=64, seed=20042)...", flush=True)
     all_windows = ensure_truth_cache(cfg, 100, CACHE_DIR)
 
     indices = select_example_windows(args.etkf_json)
