@@ -5,6 +5,75 @@ from torch.utils.checkpoint import checkpoint
 
 from models.interpolant import LinearInterpolant
 from models.unet import UNet1D
+try:
+    from models.monai_unet_adapter import MonaiUNet1D
+except ImportError:
+    # monai is an optional, deliberately-isolated dependency (see
+    # models/monai_unet_adapter.py) -- not installed by default. The
+    # sentinel class below is never constructed; _build_backbone_unet raises
+    # a clear error before reaching it if unet_backbone="monai" is requested
+    # without monai installed.
+    class MonaiUNet1D:
+        pass
+
+_VALID_UNET_BACKBONES = ("unet1d", "monai")
+
+
+def _validate_unet_backbone(unet_backbone):
+    if unet_backbone not in _VALID_UNET_BACKBONES:
+        raise ValueError(
+            f"Unknown unet_backbone={unet_backbone!r}; expected one of {_VALID_UNET_BACKBONES}"
+        )
+
+
+def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
+                          dropout, output_dim, monai_norm_num_groups=32):
+    """Dispatches ``self.unet``/``self.prior_unet`` construction between
+    ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
+    (``unet_backbone="monai"``) -- both built with ``use_obs=False``
+    (FDV's own channel-concat convention: whatever conditioning the caller
+    wants is already concatenated into ``state_dim`` before this call, see
+    ``_UPDATE_INPUT_CHANNEL_MULTIPLIER``/``_build_update_input``), so the two
+    backbones are true drop-in replacements for each other at every call site
+    in this module -- ``forward(x, tau=...)`` has the same signature and
+    return shape either way.
+
+    ``MonaiUNet1D`` has no ``time_emb_dim``-style architectural switch to
+    fully omit tau-conditioning (unlike ``UNet1D(time_emb_dim=0)``, a literal
+    omission of the conditioning pathway): passing ``tau=None`` at call time
+    (this module's convention for an "unconditioned" ``prior_unet``, see
+    ``_prior_ae``) makes ``MonaiUNet1D`` feed a constant zero timestep through
+    its real, trainable time-embedding/FiLM layers instead -- functionally
+    close (the embedding never varies) but not architecturally identical
+    (those parameters still exist and run). ``time_emb_dim`` is accordingly
+    ignored for ``unet_backbone="monai"``: MONAI's ``DiffusionModelUNet``
+    always carries its own internal time embedding, sized by its own
+    ``channels``, not by ``time_emb_dim``.
+    """
+    _validate_unet_backbone(unet_backbone)
+    if unet_backbone == "unet1d":
+        return UNet1D(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            time_emb_dim=time_emb_dim,
+            use_obs=False,
+            use_energy=False,
+            dropout=dropout,
+            output_dim=output_dim,
+        )
+    if MonaiUNet1D.__module__ == __name__:
+        raise ImportError(
+            "unet_backbone='monai' requires the optional 'monai' package "
+            "(not installed in this environment) -- see models/monai_unet_adapter.py"
+        )
+    return MonaiUNet1D(
+        state_dim=state_dim,
+        hidden_channels=hidden_channels,
+        use_obs=False,
+        output_dim=output_dim,
+        dropout=dropout,
+        norm_num_groups=monai_norm_num_groups,
+    )
 
 # Recognized update_input tokens (mirrors the config-string taxonomy explored on
 # CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch, contrib/4dvarnet_latent/
@@ -266,6 +335,16 @@ class FourDVarNetSolver(nn.Module):
     - ``"subgrad+state"``: a cheap two-residual proxy gradient (obs residual +
       prior-autoencoder residual), concatenated with state, no autograd call.
 
+    ``unet_backbone`` ("unet1d" default, or "monai") selects the nn.Module
+    class backing ``self.unet``/``self.prior_unet`` -- ``models.unet.UNet1D``
+    or ``models.monai_unet_adapter.MonaiUNet1D`` (MONAI's DiffusionModelUNet,
+    already validated as a drop-in backbone for DirectUNet, see
+    reports/l96/outputs/l96_normalization_ablation.md). Both are built with
+    ``use_obs=False`` and have the identical ``forward(x, tau=...)`` call
+    signature, so this is a pure backbone swap -- no other FDV logic changes.
+    See ``_build_backbone_unet`` for the one known semantic gap (no true
+    tau-conditioning omission for the Monai-backed ``prior_unet``).
+
     The gradient-conditioned modes need a trainable prior operator
     (``self.prior_unet``, a second ``UNet1D`` sharing the main UNet's
     ``hidden_channels``/``time_emb_dim``/``dropout`` -- mirrors
@@ -298,9 +377,19 @@ class FourDVarNetSolver(nn.Module):
                  R_var=0.5, prior_weight=1.0, clip_range=50.0,
                  trainable_prior_weight=True,
                  aux_var_cost_weight=0.0,
-                 prior_tau_conditioning=False):
+                 prior_tau_conditioning=False,
+                 unet_backbone="unet1d",
+                 monai_norm_num_groups=32):
         super().__init__()
         _validate_update_input(update_input)
+        _validate_unet_backbone(unet_backbone)
+        if unet_backbone == "monai" and prior_tau_conditioning:
+            raise ValueError(
+                "prior_tau_conditioning=True exists only to reproduce legacy "
+                "UNet1D checkpoints trained with a tau-conditioned prior_unet -- "
+                "no such MonaiUNet1D checkpoint exists, so this combination is "
+                "not supported (see _build_backbone_unet)."
+            )
         self.update_input = update_input
         self.state_dim = state_dim
         self.N_outer = N_outer
@@ -308,30 +397,33 @@ class FourDVarNetSolver(nn.Module):
         self.clip_range = clip_range
         self.aux_var_cost_weight = aux_var_cost_weight
         self.prior_tau_conditioning = prior_tau_conditioning
+        self.unet_backbone = unet_backbone
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
             self._prior_weight_raw = nn.Parameter(torch.tensor(
                 prior_weight ** 0.5, dtype=torch.float32))
         in_state_dim = _UPDATE_INPUT_CHANNEL_MULTIPLIER[update_input] * state_dim
-        self.unet = UNet1D(
+        self.unet = _build_backbone_unet(
+            unet_backbone,
             state_dim=in_state_dim,
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
-            use_obs=False,
-            use_energy=False,
             dropout=dropout,
             output_dim=state_dim,
+            monai_norm_num_groups=monai_norm_num_groups,
         )
         self.prior_unet = None
         if update_input in _PRIOR_MODES:
             # prior_tau_conditioning=False (the default): time_emb_dim=0, no
             # iteration/tau conditioning at all for the prior operator
-            # (architecturally absent, not just unfed) -- the prior is a
-            # fixed background/regularization operator, unlike the main
-            # solver ``self.unet`` above, which keeps its per-iteration tau
-            # conditioning (time_emb_dim=time_emb_dim) unchanged. See
-            # ``forward()`` and ``_prior_ae``.
+            # (architecturally absent for unet1d, not just unfed -- for
+            # unet_backbone="monai" this is instead enforced by always
+            # calling with tau=None, see _build_backbone_unet's docstring)
+            # -- the prior is a fixed background/regularization operator,
+            # unlike the main solver ``self.unet`` above, which keeps its
+            # per-iteration tau conditioning (time_emb_dim=time_emb_dim)
+            # unchanged. See ``forward()`` and ``_prior_ae``.
             #
             # prior_tau_conditioning=True exists ONLY for reproducing
             # checkpoints trained before this became configurable (e.g.
@@ -341,14 +433,14 @@ class FourDVarNetSolver(nn.Module):
             # real time_proj weights (shape-mismatch skip in load_model),
             # evaluating a model that behaves differently from how it was
             # actually trained. New configs should leave this False.
-            self.prior_unet = UNet1D(
+            self.prior_unet = _build_backbone_unet(
+                unet_backbone,
                 state_dim=state_dim,
                 hidden_channels=hidden_channels,
                 time_emb_dim=(time_emb_dim if prior_tau_conditioning else 0),
-                use_obs=False,
-                use_energy=False,
                 dropout=dropout,
                 output_dim=state_dim,
+                monai_norm_num_groups=monai_norm_num_groups,
             )
 
     @property

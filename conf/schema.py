@@ -268,6 +268,8 @@ class FourDVarNetConfig:
     trainable_prior_weight: bool = True
     aux_var_cost_weight: float = 0.0
     prior_tau_conditioning: bool = False
+    unet_backbone: str = "unet1d"
+    monai_norm_num_groups: int = 32
 
 
 @dataclass

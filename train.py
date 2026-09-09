@@ -143,6 +143,22 @@ def model_factory(cfg: DictConfig, device: torch.device):
             param_dim=param_dim,
             cond_extra_dim=vc.get("cond_extra_dim", 1 + param_dim),
         )
+    elif model_type == "monai_vanilla_cfm":
+        from models.monai_unet_adapter import MonaiVanillaCFM
+        mvc = cfg.model.monai_vanilla_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = MonaiVanillaCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mvc.hidden_channels,
+            N_outer=mvc.N_outer,
+            sigma_prior=mvc.sigma_prior,
+            dropout=mvc.dropout,
+            train_tau_0_only=mvc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            cond_extra_dim=mvc.get("cond_extra_dim", 1 + param_dim),
+            num_res_blocks=mvc.get("num_res_blocks", 2),
+            norm_num_groups=mvc.get("norm_num_groups", 32),
+        )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
         jc = cfg.model.joint_cfm
@@ -281,6 +297,31 @@ def model_factory(cfg: DictConfig, device: torch.device):
             sigma_prior=sp.sigma_prior,
             dropout=sp.dropout,
         )
+    elif model_type == "monai_sda_prior":
+        from models.monai_unet_adapter import MonaiUnconditionalPriorCFM
+        sp = cfg.model.monai_sda_prior
+        model = MonaiUnconditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 32),
+        )
+    elif model_type == "monai_sda_prior_cond":
+        from models.monai_unet_adapter import MonaiConditionalPriorCFM
+        sp = cfg.model.monai_sda_prior
+        model = MonaiConditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 32),
+        )
     elif model_type == "fourdvarnet":
         from models.fourdvarnet import FourDVarNetSolver
         fdv = cfg.model.fdv
@@ -297,6 +338,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             trainable_prior_weight=fdv.get("trainable_prior_weight", True),
             aux_var_cost_weight=fdv.get("aux_var_cost_weight", 0.0),
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
+            unet_backbone=fdv.get("unet_backbone", "unet1d"),
+            monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM

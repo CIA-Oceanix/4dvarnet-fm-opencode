@@ -35,6 +35,10 @@ import torch.nn as nn
 from monai.networks.nets import diffusion_model_unet as _dmu
 from monai.networks.nets import DiffusionModelUNet
 
+from models.interpolant import LinearInterpolant
+from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
+from models.vanilla_cfm import VanillaCFM
+
 _PATCHED_1D_RESBLOCK = False
 
 
@@ -187,3 +191,90 @@ class MonaiDirectUNet(nn.Module):
         tau = torch.zeros(B, device=obs.device)
         out = self.monai_unet(x, obs=cond.transpose(1, 2), tau=tau)
         return out.transpose(1, 2)
+
+
+class MonaiVanillaCFM(VanillaCFM):
+    """MonaiUNet1D-backed drop-in for VanillaCFM: identical CFM training/
+    sampling logic (inherited unchanged -- forward/compute_cfm_loss/sample
+    only ever call ``self.unet(...)``, and MonaiUNet1D's forward has the same
+    (x, obs=, tau=) shape as UNet1D's), only the backbone construction
+    differs. Subclassing VanillaCFM (rather than composing) means
+    ``isinstance(model, VanillaCFM)`` dispatch in evaluation/neural_inference.py
+    picks this up automatically -- no eval-side changes needed.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
+                 N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False,
+                 param_dim=4, cond_extra_dim=0, num_res_blocks=2, norm_num_groups=32):
+        nn.Module.__init__(self)
+        self.cond_extra_dim = cond_extra_dim
+        self.param_dim = param_dim
+        self.unet = MonaiUNet1D(
+            state_dim=state_dim,
+            obs_dim=state_dim + cond_extra_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
+
+
+class MonaiUnconditionalPriorCFM(UnconditionalPriorCFM):
+    """MonaiUNet1D-backed drop-in for UnconditionalPriorCFM (SDA1): same
+    unconditional p(x_1) prior contract, only the backbone construction
+    differs. Subclassing keeps the ``isinstance(model, (UnconditionalPriorCFM,
+    ConditionalPriorCFM))`` dispatch in evaluation/neural_inference.py and
+    ``eval_sda_l96.py``'s guided-sampler path working unchanged.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
+                 N_outer=10, sigma_prior=0.5, dropout=0.1,
+                 num_res_blocks=2, norm_num_groups=32):
+        nn.Module.__init__(self)
+        self.unet = MonaiUNet1D(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=False,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = False
+
+
+class MonaiConditionalPriorCFM(ConditionalPriorCFM):
+    """MonaiUNet1D-backed drop-in for ConditionalPriorCFM (SDA2/SDA3): same
+    params+forcing-conditioned prior contract (obs never a network input,
+    only ``_cond``'s forcing+params tensor), only the backbone construction
+    differs.
+    """
+
+    def __init__(self, state_dim=3, param_dim=8, hidden_channels=None, time_emb_dim=64,
+                 N_outer=10, sigma_prior=0.5, dropout=0.1,
+                 num_res_blocks=2, norm_num_groups=32):
+        nn.Module.__init__(self)
+        self.param_dim = param_dim
+        self.unet = MonaiUNet1D(
+            state_dim=state_dim,
+            obs_dim=1 + param_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = False

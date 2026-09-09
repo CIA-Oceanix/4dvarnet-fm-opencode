@@ -130,6 +130,88 @@ def evaluate_ensemble_estimates(members: np.ndarray, truth: np.ndarray) -> dict:
     return out
 
 
+def _groups_from_per_window(full: np.ndarray) -> dict:
+    """Group a per-window, per-dimension array (W, D) into slow/obs_fast/all_obs
+    per-window arrays (W,) by averaging over each group's dimensions."""
+    return {
+        "slow": full[:, :NO].mean(axis=1),
+        "obs_fast": full[:, NO:].mean(axis=1),
+        "all_obs": full.mean(axis=1),
+    }
+
+
+def _mean_std(x: np.ndarray) -> dict:
+    return {"mean": float(np.mean(x)), "std": float(np.std(x))}
+
+
+def per_window_rmse_ev(trajectories: np.ndarray, truth: np.ndarray) -> dict:
+    """Per-window RMSE/EV, grouped by slow/obs_fast/all_obs, as mean +/- std
+    across the W windows (rather than ``evaluate_estimates``'s single pooled
+    scalar).
+
+    RMSE_w is computed per-window (pooled over T within that window only);
+    EV_w uses the SAME globally-pooled reference variance as
+    ``evaluate_estimates`` (computed once across all windows/timesteps) so
+    that per-window EV values remain comparable to each other and to the
+    pooled EV -- using a per-window variance in the denominator would make
+    EV_w sensitive to how much that one window's own dynamics happened to
+    vary, not to reconstruction quality.
+    """
+    se = (trajectories - truth) ** 2  # (W, T, D)
+    mse_per_window = se.mean(axis=1)  # (W, D)
+    rmse_per_window = np.sqrt(mse_per_window)  # (W, D)
+
+    var_ref = pooled_variance(truth)  # (D,), pooled across all W, T
+    var_ref_safe = np.maximum(var_ref, 1e-12)
+    ev_per_window = 1.0 - mse_per_window / var_ref_safe  # (W, D)
+
+    return {
+        "rmse": {k: _mean_std(v) for k, v in _groups_from_per_window(rmse_per_window).items()},
+        "ev": {k: _mean_std(v) for k, v in _groups_from_per_window(ev_per_window).items()},
+    }
+
+
+def per_window_deterministic_crps(trajectories: np.ndarray, truth: np.ndarray) -> dict:
+    """Per-window CRPS for a deterministic (N=1) reconstruction, grouped by
+    slow/obs_fast/all_obs, as mean +/- std across the W windows.
+
+    For a single-point forecast, CRPS reduces exactly to the absolute error
+    (the N=1 special case of ``per_window_ensemble_crps``'s formula, whose
+    pairwise spread term vanishes with only one member) -- this is the same
+    N=1 MAE convention already used for deterministic schemes' pooled ES
+    elsewhere in this module (see ``evaluate_estimates``).
+    """
+    mae_per_window = np.abs(trajectories - truth).mean(axis=1)  # (W, D)
+    return {k: _mean_std(v) for k, v in _groups_from_per_window(mae_per_window).items()}
+
+
+def per_window_ensemble_crps(members: np.ndarray, truth: np.ndarray) -> dict:
+    """Per-window CRPS (the ensemble Energy Score computed per state
+    dimension, i.e. its univariate special case), grouped by slow/obs_fast/
+    all_obs, as mean +/- std across the W windows.
+
+    ``CRPS_w,d = mae_w,d - 0.5 * pairwise_w,d`` per window/dimension (pooled
+    over T within that window), matching ``pooled_ensemble_es``'s formula but
+    kept per-window instead of pooled across all windows.
+
+    The pairwise mean-absolute-member-distance term is computed via the
+    standard order-statistic identity (sorting each window/timestep/dim's M
+    values ascending, then a weighted sum with coefficients ``2k-M+1``)
+    rather than materializing the full (M, M) pairwise difference array --
+    ``O(M log M)`` instead of ``O(M^2)`` per cell, and no Python loop over
+    windows, which matters a lot at M=30, W~200, T~3000: verified numerically
+    identical (float64) to the naive ``|x_i - x_j|`` pairwise mean.
+    """
+    _, _, _, M = members.shape
+    mae = np.abs(members - truth[:, :, :, None]).mean(axis=(1, 3))  # (W, D)
+    sorted_members = np.sort(members, axis=-1)  # (W, T, D, M), ascending along M
+    coeff = 2 * np.arange(M) - M + 1  # (M,)
+    pairwise_sum_wtd = 2 * np.einsum("m,wtdm->wtd", coeff, sorted_members)
+    pairwise = (pairwise_sum_wtd / (M * M)).mean(axis=1)  # (W, D), averaged over T
+    crps_per_window = mae - 0.5 * pairwise  # (W, D)
+    return {k: _mean_std(v) for k, v in _groups_from_per_window(crps_per_window).items()}
+
+
 def evaluate_npz(path: str) -> dict:
     """Evaluate a stored ``.npz`` with ``trajectories`` and ``truth`` arrays."""
     data = np.load(path)
