@@ -906,6 +906,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],
             [r[:, :per_layer] for r in refs])
+        # Pooled (not per-window) truth std, so a normalized CRPS is
+        # dimensionless and comparable across fields/methods without the
+        # per-window-normalization distortion a low-energy window would
+        # otherwise introduce (a window with small true variance would get
+        # an inflated normalized score if divided by its own std instead).
+        q_std_pooled = float(np.std(np.concatenate(refs, axis=0)))
         da_r = float(np.mean(rmse_list))
         fc_r = float(np.mean(fcast_rmse))
         ev_free = None
@@ -956,6 +962,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "rmse_list": rmse_list,
             "crps_mean": float(np.mean(crps_list)),
             "crps_list": crps_list,
+            "crps_normalized": float(np.mean(crps_list)) / max(q_std_pooled, 1e-30),
+            "q_std_pooled": q_std_pooled,
             "crps_is_deterministic": getattr(res, "ensemble", None) is None,
             "forecast_rmse_mean": fc_r,
             "forecast_improvement": fc_r / max(da_r, 1e-30),
@@ -971,7 +979,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
               f"ev_full={summary[scen]['expvar_full']:.3f} "
               f"ev_free={summary[scen]['expvar_free']:.3f} "
-              f"crps={summary[scen]['crps_mean']:.4e}"
+              f"crps={summary[scen]['crps_mean']:.4e} "
+              f"crps_norm={summary[scen]['crps_normalized']:.4f}"
               f"{' (=MAE, deterministic)' if summary[scen]['crps_is_deterministic'] else ''}")
 
     payload = {"method": method_name, "nx": cfg.nx,

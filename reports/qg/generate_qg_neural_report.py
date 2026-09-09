@@ -61,6 +61,7 @@ def load_da_baselines(root: Path) -> list[dict]:
                 "free_rmse": s0.get("forecast_rmse_mean"),
                 "improv": s0.get("forecast_improvement"),
                 "crps": s0.get("crps_mean"),
+                "crps_normalized": s0.get("crps_normalized"),
                 "crps_is_deterministic": s0.get("crps_is_deterministic"),
                 "q_ev": q.get("full", {}).get("ev"),
                 "q_ev_free": q.get("full", {}).get("ev_free"),
@@ -106,25 +107,31 @@ def main() -> None:
     add("CRPS is computed per-window on the q-state: ensemble methods "
         "(ETKF/EnKF) score their real per-member spread; deterministic "
         "methods (4DVar) have no ensemble, so CRPS degenerates exactly to "
-        "the mean absolute error (marked `*`) -- lower is better for both.")
+        "the mean absolute error (marked `*`) -- lower is better for both. "
+        "CRPS (norm.) divides by the pooled truth PV std over the whole "
+        "test set (not per-window -- avoids the distortion a low-variance "
+        "window would introduce), giving a dimensionless, cross-method-"
+        "comparable score.")
     add("")
-    add("| method | PV RMSE | free RMSE | improv | CRPS | PV EV | PV EV (free) | "
-        "PV q1 EV | PV q2 EV | ψ EV | ψ EV (free) |")
-    add("|---|---|---|---|---|---|---|---|---|---|---|")
+    add("| method | PV RMSE | free RMSE | improv | CRPS | CRPS (norm.) | PV EV | "
+        "PV EV (free) | PV q1 EV | PV q2 EV | ψ EV | ψ EV (free) |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|---|")
     free_ref = None
     for row in da:
         d = row["data"]
         if d is None:
-            add(f"| {row['label']} | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |")
+            add(f"| {row['label']} | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |")
             continue
         free_ref = free_ref if free_ref is not None else d["free_rmse"]
-        crps_str = fmt_sci(d["crps"]) + ("*" if d["crps_is_deterministic"] else "")
+        star = "*" if d["crps_is_deterministic"] else ""
+        crps_str = fmt_sci(d["crps"]) + star
+        crps_norm_str = fmt(d["crps_normalized"]) + star
         add(f"| {row['label']} | {fmt_sci(d['rmse'])} | {fmt_sci(d['free_rmse'])} | "
-            f"{fmt(d['improv'])} | {crps_str} | {fmt(d['q_ev'])} | "
+            f"{fmt(d['improv'])} | {crps_str} | {crps_norm_str} | {fmt(d['q_ev'])} | "
             f"{fmt(d['q_ev_free'])} | {fmt(d['q1_ev'])} | {fmt(d['q2_ev'])} | "
             f"{fmt(d['psi_ev'])} | {fmt(d['psi_ev_free'])} |")
     add(f"| _free forecast_ | {fmt_sci(free_ref)} | — | 1.0 | -- | -- | -- | "
-        f"-- | -- | -- | -- |")
+        f"-- | -- | -- | -- | -- |")
     add("")
 
     have_data = [row["data"] for row in da if row["data"] is not None]
