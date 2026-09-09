@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Tests for neural inference and evaluation."""
+from unittest.mock import Mock
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
-from pathlib import Path
 from omegaconf import OmegaConf
-from unittest.mock import Mock, patch
 
-from evaluation.neural_inference import (
-    load_checkpoint,
-    resolve_model_class,
-    create_model,
-    load_model,
-    run_inference,
-    _run_case_inference,
-)
 from evaluation.estimate_metrics import evaluate_estimates, evaluate_npz
+from evaluation.neural_inference import (
+    _run_case_inference,
+    create_model,
+    load_checkpoint,
+    load_model,
+    resolve_model_class,
+    run_inference,
+)
 from evaluation.obs_density import NUM_FAST, NUM_SLOW
 from models.direct_unet import DirectUNet
-from models.vanilla_cfm import VanillaCFM, TweedieCFM, PredictStateCFM
+from models.vanilla_cfm import PredictStateCFM, TweedieCFM, VanillaCFM
 
 
 class _DictBatch:
@@ -55,28 +55,28 @@ class TestNeuralInference:
         """Test model class resolution for DirectUNet."""
         cfg = Mock()
         cfg.model = {"type": "DirectUNet"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == DirectUNet
 
     def test_resolve_model_class_vanilla_cfm(self):
         """Test model class resolution for VanillaCFM."""
         cfg = Mock()
         cfg.model = {"type": "VanillaCFM"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == VanillaCFM
 
     def test_resolve_model_class_tweedie_cfm(self):
         """Test model class resolution for TweedieCFM (V2)."""
         cfg = Mock()
         cfg.model = {"type": "tweedie_cfm"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == TweedieCFM
 
     def test_resolve_model_class_predict_state_cfm(self):
         """Test model class resolution for PredictStateCFM (V3)."""
         cfg = Mock()
         cfg.model = {"type": "predict_state_cfm"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == PredictStateCFM
 
     def test_create_model_tweedie_cfm(self):
