@@ -827,8 +827,14 @@ class ETKF:
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
+        # Full per-member trajectory (not just the mean/variance reductions
+        # above), so callers can score ensemble-aware metrics like CRPS
+        # (evaluation/metrics.py::crps) -- previously BaselineResult.ensemble
+        # was a np.zeros(...) stub, never actually populated.
+        ens_traj = np.zeros((N, num_steps, sd), dtype=np.float32)
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
+        ens_traj[:, 0] = ensemble.detach().cpu().numpy()
 
         ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
@@ -905,11 +911,12 @@ class ETKF:
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
+            ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((N, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_traj, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
     def assimilate_batch(
         self,
         observations: torch.Tensor,
@@ -1144,8 +1151,11 @@ class EnKF:
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
+        # Full per-member trajectory, see the matching ETKF.assimilate comment.
+        ens_traj = np.zeros((self.N_ensemble, num_steps, self.state_dim), dtype=np.float32)
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
+        ens_traj[:, 0] = ensemble.detach().cpu().numpy()
 
         ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
@@ -1195,11 +1205,12 @@ class EnKF:
 
             analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
             ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
+            ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)), ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_traj, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
 
     def assimilate_batch(
         self,
