@@ -27,7 +27,7 @@ mkdir -p "$MPLCONFIGDIR"
 # weights/tau0), so keep_k=16 in the report should reproduce the consolidated
 # benchmark numbers as a sanity check. --n-repeats 3 (independent mask-redraw
 # + sampling-noise seeds per (method, case, keep_k) cell) is deliberately
-# small (evaluation/obs_density.py::PLAN note: each run already averages
+# small (data/obs_density.py::PLAN note: each run already averages
 # over ~30 obs-times x 200 windows of independent random draws).
 echo "============================================"
 echo " L96 obs-density generalization sweep | $(date)"

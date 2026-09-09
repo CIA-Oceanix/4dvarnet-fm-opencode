@@ -16,7 +16,7 @@ from evaluation.neural_inference import (
     resolve_model_class,
     run_inference,
 )
-from evaluation.obs_density import NUM_FAST, NUM_SLOW
+from data.obs_density import NUM_FAST, NUM_SLOW
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import PredictStateCFM, TweedieCFM, VanillaCFM
 

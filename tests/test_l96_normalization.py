@@ -125,6 +125,59 @@ def test_make_collate_fm_normalizes_states_and_obs():
     torch.testing.assert_close(batch.forcing, ds.forcing)
 
 
+def test_make_collate_fm_obs_density_cfg_none_is_noop():
+    """obs_density_cfg=None (default) must reproduce plain collate_fm exactly
+    -- the regression invariant that data.obs_density_augment=False (the
+    DataConfig default) changes nothing for every pre-existing config.
+    """
+    assert make_collate_fm(None, obs_density_cfg=None) is collate_fm
+
+
+def test_make_collate_fm_obs_density_nans_dropped_fast_channels():
+    torch.manual_seed(0)
+    ds = _fm_batch(D=24)
+    loader = DataLoader(ds, batch_size=4, collate_fn=make_collate_fm(
+        None, obs_density_cfg={"full_prob": 0.0}))
+    batch = next(iter(loader))
+    assert not torch.isnan(batch.obs[..., :8]).any()  # slow always kept
+    assert torch.isnan(batch.obs[..., 8:]).any()  # some fast channels dropped
+    assert not torch.isnan(batch.obs[..., 8:]).all()  # but not literally all of them, every batch
+
+
+def test_make_collate_fm_obs_density_full_prob_one_is_noop_on_obs_values():
+    """full_prob=1.0 always keeps full density -- obs values must be
+    unchanged (still no NaN beyond whatever the raw obs already had)."""
+    ds = _fm_batch(D=24)
+    loader = DataLoader(ds, batch_size=4, collate_fn=make_collate_fm(
+        None, obs_density_cfg={"full_prob": 1.0}))
+    batch = next(iter(loader))
+    torch.testing.assert_close(batch.obs, ds.obs)
+
+
+def test_make_collate_fm_obs_density_wrong_dim_raises():
+    import pytest
+    ds = _fm_batch(D=10)  # not the canonical 8+16
+    loader = DataLoader(ds, batch_size=4, collate_fn=make_collate_fm(
+        None, obs_density_cfg={"full_prob": 0.4}))
+    with pytest.raises(ValueError):
+        next(iter(loader))
+
+
+def test_make_collate_fm_obs_density_composes_with_normalization():
+    """Density masking (NaN) must survive being fed through normalize (an
+    elementwise affine op) -- order of the two must not silently drop the
+    augmentation or crash.
+    """
+    torch.manual_seed(0)
+    ds = _fm_batch(D=24)
+    stats = compute_channel_stats(ds.states)
+    loader = DataLoader(ds, batch_size=4, collate_fn=make_collate_fm(
+        stats, obs_density_cfg={"full_prob": 0.0}))
+    batch = next(iter(loader))
+    assert torch.isnan(batch.obs[..., 8:]).any()
+    assert not torch.isnan(batch.obs[..., :8]).any()
+
+
 def _eval_batch(B=4, T=6, D=24, seed=1):
     g = torch.Generator().manual_seed(seed)
     return [{

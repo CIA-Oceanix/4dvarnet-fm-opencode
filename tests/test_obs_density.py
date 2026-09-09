@@ -1,13 +1,15 @@
 """Tests for the fast-Y observation-density generalization utilities."""
 import torch
 
-from evaluation.obs_density import (
+from data.obs_density import (
     NUM_FAST,
     NUM_SLOW,
     apply_density_mask_to_obs,
     fast_channel_keep_mask,
     fast_column_indices,
     random_keep_mask,
+    random_variable_keep_mask,
+    sample_training_density_mask,
 )
 
 
@@ -72,6 +74,83 @@ class TestFastChannelKeepMask:
         (statistically near-certain for keep_k=4 of 16 over many steps)."""
         torch.manual_seed(2)
         mask = fast_channel_keep_mask(batch_size=1, num_steps=100, keep_k=4)
+        fast = mask[0, :, NUM_SLOW:]
+        assert not torch.all(fast == fast[0:1])
+
+
+class TestRandomVariableKeepMask:
+    def test_matches_constant_keep_k_distribution_properties(self):
+        torch.manual_seed(0)
+        keep_k = torch.full((5, 7), 4)
+        mask = random_variable_keep_mask((5, 7), 16, keep_k)
+        assert mask.shape == (5, 7, 16)
+        assert mask.dtype == torch.bool
+        assert torch.all(mask.sum(dim=-1) == 4)
+
+    def test_per_slice_varying_keep_k_respected(self):
+        torch.manual_seed(0)
+        keep_k = torch.tensor([[0, 4, 8, 16]])
+        mask = random_variable_keep_mask((1, 4), 16, keep_k)
+        counts = mask.sum(dim=-1).squeeze(0)
+        assert counts.tolist() == [0, 4, 8, 16]
+
+    def test_scalar_keep_k_broadcasts(self):
+        torch.manual_seed(0)
+        mask = random_variable_keep_mask((3, 5), 16, torch.tensor(6))
+        assert torch.all(mask.sum(dim=-1) == 6)
+
+
+class TestSampleTrainingDensityMask:
+    def test_shape_and_slow_always_true(self):
+        torch.manual_seed(0)
+        mask = sample_training_density_mask(batch_size=4, num_steps=10, full_prob=0.4)
+        assert mask.shape == (4, 10, NUM_SLOW + NUM_FAST)
+        assert mask[..., :NUM_SLOW].all()
+
+    def test_full_prob_one_is_always_full_density(self):
+        torch.manual_seed(0)
+        mask = sample_training_density_mask(batch_size=4, num_steps=10, full_prob=1.0)
+        assert mask.all()
+
+    def test_full_prob_zero_never_keeps_all_16(self):
+        """With full_prob=0, keep_k is drawn from {0,...,15} -- 16 (full
+        density) should never occur."""
+        torch.manual_seed(0)
+        mask = sample_training_density_mask(batch_size=8, num_steps=50, full_prob=0.0)
+        fast_counts = mask[..., NUM_SLOW:].sum(dim=-1)
+        assert int(fast_counts.max()) < NUM_FAST
+
+    def test_min_keep_respected(self):
+        torch.manual_seed(0)
+        mask = sample_training_density_mask(batch_size=8, num_steps=50, full_prob=0.0, min_keep=5)
+        fast_counts = mask[..., NUM_SLOW:].sum(dim=-1)
+        assert int(fast_counts.min()) >= 5
+
+    def test_mixture_produces_both_full_and_reduced_density(self):
+        """Over many draws at full_prob=0.4, both regimes should appear."""
+        torch.manual_seed(0)
+        mask = sample_training_density_mask(batch_size=1, num_steps=500, full_prob=0.4)
+        fast_counts = mask[0, :, NUM_SLOW:].sum(dim=-1)
+        assert (fast_counts == NUM_FAST).any()
+        assert (fast_counts < NUM_FAST).any()
+
+    def test_full_prob_out_of_range_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            sample_training_density_mask(batch_size=1, num_steps=1, full_prob=1.5)
+        with pytest.raises(ValueError):
+            sample_training_density_mask(batch_size=1, num_steps=1, full_prob=-0.1)
+
+    def test_min_keep_out_of_range_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            sample_training_density_mask(batch_size=1, num_steps=1, full_prob=0.5, min_keep=16)
+        with pytest.raises(ValueError):
+            sample_training_density_mask(batch_size=1, num_steps=1, full_prob=0.5, min_keep=-1)
+
+    def test_redrawn_independently_per_timestep(self):
+        torch.manual_seed(3)
+        mask = sample_training_density_mask(batch_size=1, num_steps=100, full_prob=0.4)
         fast = mask[0, :, NUM_SLOW:]
         assert not torch.all(fast == fast[0:1])
 

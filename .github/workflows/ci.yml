@@ -69,6 +69,7 @@ jobs:
             tests/test_neural_inference.py \
             tests/test_obs_density.py \
             tests/test_sda_sampler.py \
+            tests/test_l96_normalization.py \
             tests/test_hydra_config.py \
             tests/test_baselines_hydra.py \
             tests/test_metrics.py \

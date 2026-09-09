@@ -202,21 +202,57 @@ def collate_fm(batch):
     return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params)
 
 
-def make_collate_fm(norm_stats: dict | None = None):
+def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None = None):
     """Return a ``collate_fm``-compatible collate fn that additionally
-    z-score normalizes ``states``/``obs`` when ``norm_stats`` is given.
+    z-score normalizes ``states``/``obs`` when ``norm_stats`` is given, and/or
+    applies TRAINING-time fast-Y observation-density augmentation when
+    ``obs_density_cfg`` is given.
 
-    ``norm_stats is None`` reproduces plain ``collate_fm`` exactly.
+    ``obs_density_cfg`` (optional dict, keys ``full_prob`` default 0.4 and
+    ``min_keep`` default 0) draws a fresh
+    ``data.obs_density.sample_training_density_mask`` every batch and NaNs
+    out the dropped fast-Y channels of ``obs`` -- so the model sees
+    partial-channel-dropout obs patterns during training instead of only at
+    eval time (see ``eval_obs_density_l96.py`` / ``data/obs_density.py``'s
+    module docstring for why that gap matters: DirectUNet/CFM read obs only
+    via ``nan_to_num``, with no separate mask channel, so an untrained-for
+    dropped channel is indistinguishable from a real near-zero observation).
+    Requires the canonical 24D (8 slow-X + 16 fast-Y) obsj2 observed
+    subspace -- raises if ``obs``'s last dim doesn't match.
+
+    ``norm_stats is None and obs_density_cfg is None`` reproduces plain
+    ``collate_fm`` exactly.
     """
-    if norm_stats is None:
+    if norm_stats is None and obs_density_cfg is None:
         return collate_fm
 
     from data.normalization import normalize
 
     def _collate(batch):
         fm_batch = collate_fm(batch)
-        fm_batch.states = normalize(fm_batch.states, norm_stats)
-        fm_batch.obs = normalize(fm_batch.obs, norm_stats)
+        if obs_density_cfg is not None:
+            from data.obs_density import (
+                NUM_FAST,
+                NUM_SLOW,
+                apply_density_mask_to_obs,
+                sample_training_density_mask,
+            )
+            B, T, D = fm_batch.obs.shape
+            if D != NUM_SLOW + NUM_FAST:
+                raise ValueError(
+                    f"obs_density_cfg requires the canonical {NUM_SLOW}+{NUM_FAST}D "
+                    f"obsj2 observed subspace, got obs dim {D}"
+                )
+            keep_mask = sample_training_density_mask(
+                B, T,
+                full_prob=obs_density_cfg.get("full_prob", 0.4),
+                min_keep=obs_density_cfg.get("min_keep", 0),
+                device=fm_batch.obs.device,
+            )
+            fm_batch.obs = apply_density_mask_to_obs(fm_batch.obs, keep_mask)
+        if norm_stats is not None:
+            fm_batch.states = normalize(fm_batch.states, norm_stats)
+            fm_batch.obs = normalize(fm_batch.obs, norm_stats)
         return fm_batch
 
     return _collate

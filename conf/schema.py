@@ -63,6 +63,12 @@ class DataConfig:
     test_cache: Optional[str] = None
     resample_bias_draws: bool = False
     bias_max: float = 0.2
+    # Training-time fast-Y observation-density augmentation (see
+    # data/obs_density.py::sample_training_density_mask, wired via
+    # data/dataloader.py::make_collate_fm) -- val/test are never augmented.
+    obs_density_augment: bool = False
+    obs_density_full_prob: float = 0.4
+    obs_density_min_keep: int = 0
 
     # Device
     device: str = "cpu"

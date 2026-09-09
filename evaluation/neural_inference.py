@@ -23,7 +23,7 @@ except ImportError:
         pass
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
-from evaluation.obs_density import NUM_FAST, NUM_SLOW, apply_density_mask_to_obs, fast_channel_keep_mask
+from data.obs_density import NUM_FAST, NUM_SLOW, apply_density_mask_to_obs, fast_channel_keep_mask
 from evaluation.sda_sampler import sda_guided_sample
 
 
@@ -836,7 +836,7 @@ def _run_case_inference(
     ground-truth in ``"params_true"`` (W, P).
 
     ``obs_density_keep_k`` (optional): the fast-Y observation-density
-    generalization study (see ``evaluation/obs_density.py``) -- randomly
+    generalization study (see ``data/obs_density.py``) -- randomly
     keeps only ``keep_k`` of the 16 canonical fast-Y channels, redrawn
     independently per (window, timestep), leaving the 8 slow-X channels
     always observed. ``None`` (default) is a true no-op (full density,
@@ -1015,7 +1015,7 @@ def run_inference(
 
     ``obs_density_keep_k`` (optional, mutually exclusive with ``obs_indices``):
     applies the fast-Y observation-density generalization mask (see
-    ``evaluation/obs_density.py``) to EVERY model type -- unlike
+    ``data/obs_density.py``) to EVERY model type -- unlike
     ``obs_indices``, this is not SDA-specific: direct-obs-consuming models get
     the dropped fast-Y channels NaN'd out of ``obs`` itself, while the SDA
     priors get the keep-mask forwarded to the guidance cost. ``None``
