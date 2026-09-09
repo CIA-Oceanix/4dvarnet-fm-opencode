@@ -153,18 +153,25 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
 
-    # Only an *auto-discovered* resolved_config.yaml (train.py's unconditional,
-    # defaults-composed dump -- guaranteed to declare every field model_factory
-    # reads for its model_type) is trusted to skip shape-inference entirely.
-    # An explicitly-passed --config may be a raw experiment preset relying on
-    # un-merged defaults (e.g. from lorenz96_default.yaml), so it keeps going
-    # through the tolerant partial-merge path below, as before.
-    auto_discovered_config = False
+    # Only a file literally named resolved_config.yaml (train.py's
+    # unconditional, defaults-composed dump -- guaranteed to declare every
+    # field model_factory reads for its model_type) is trusted to skip
+    # shape-inference entirely, whether that path was auto-discovered here or
+    # passed explicitly via --config (e.g. an sbatch script pointing straight
+    # at experiments/<exp>/resolved_config.yaml). Any other --config may be a
+    # raw experiment preset relying on un-merged defaults (e.g. from
+    # lorenz96_default.yaml), so it keeps going through the tolerant
+    # partial-merge path below, as before. (Ported from the
+    # 4dvarnet-fm-l96-eval-config-persist worktree's independently-evolved
+    # fix for the same underlying gap: shape-inference cannot recover a
+    # monai-backbone config for ANY model type, not just FourDVarNetSolver,
+    # so trusting an explicitly-passed resolved_config.yaml generalizes the
+    # narrower fourdvarnet-only special case below to every model type.)
     if config_path is None:
         config_path = _find_resolved_config(checkpoint_path)
         if config_path:
-            auto_discovered_config = True
             logger.info(f"Auto-discovered resolved training config: {config_path}")
+    is_resolved_config = config_path is not None and os.path.basename(config_path) == RESOLVED_CONFIG_FILENAME
 
     # Handle Lightning .ckpt files
     if "hyper_parameters" in ckpt:
@@ -175,7 +182,7 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         # the checkpoint was trained with, rather than reverse-engineering it
         # from state-dict shapes below. Shape-inference remains the fallback
         # for checkpoints predating this change (no resolved_config.yaml).
-        if auto_discovered_config:
+        if is_resolved_config:
             try:
                 candidate_cfg = OmegaConf.load(config_path)
                 if candidate_cfg.get("model", {}).get("model_type") is not None:

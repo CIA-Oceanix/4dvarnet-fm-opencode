@@ -33,6 +33,176 @@ ever re-attempting `torch.compile` for FDV.
 
 **Verification:** docs-only change, no code touched.
 
+## 2026-09-09: FDV1-mean-warm-started SDA guided-sampling hybrid (new best neural scheme)
+
+**Summary:** Adds `eval_sda_mean_hybrid_l96.py`, generalizing
+`eval_sda_directunet_hybrid_l96.py` (from the sibling
+`4dvarnet-fm-l96-eval-config-persist` worktree) to any deterministic
+mean-estimate model, dispatching on type: `FourDVarNetSolver`/
+`FourDVarNetPredictStateCFM` via `.sample(batch_obj, N_outer=...)`,
+everything else (DirectUNet/MonaiDirectUNet) via a plain forward call.
+Evaluated FDV1(monai) warm-starting SDA1/SDA2/SDA3(monai)'s guided sampling
+(`evaluation/sda_sampler.py`'s SDEdit-style `mean_estimate`/`tau0` mechanism)
+at `tau0=0.3`/`guidance_weight=2.0` -- an own S0-only grid sweep
+(`sweep_sda_fdv1_hybrid_l96.py`, `tau0∈{0.1..0.5}×guidance_weight∈{0.5,1,2,5}`)
+converged on the exact same point already found for the DirectUNet+SDA
+hybrids, despite a different mean model. **FDV1+SDA3 is the best scheme
+found this session**: ens30 S0/S1 RMSE 0.378/0.374, EV 0.941/0.942 -- beats
+FDV1 alone (0.428/0.424) and DirectUNet+SDA3 (0.420/0.418).
+
+**Real bug caught along the way:** FDV1(monai) was trained WITHOUT
+`data.normalize=true` (unlike DirectUNet-M/SDA*, which share a normalized
+space) -- feeding it normalized obs (as SDA expects) silently produced a
+garbage mean estimate that poisoned the whole hybrid (confirmed: RMSE
+1.36/EV 0.35 before the fix). Fixed via `--no-mean-normalized`: the mean
+model gets its own separately-prepared raw-obs dataloader (same windows,
+same order, `shuffle=False` on both loaders), and its raw-space output is
+normalized (`data.normalization.normalize`) before being handed to SDA as
+the warm start.
+
+**Files modified:**
+- `eval_sda_mean_hybrid_l96.py` (new) -- generalized mean-model hybrid eval,
+  `--mean-normalized`/`--no-mean-normalized` dispatch, `--mean-n-outer` for
+  the FourDVarNetSolver-family mean model's own unroll length.
+- `sweep_sda_fdv1_hybrid_l96.py` (new) -- the S0-only sweep.
+- `batch/run_l96_sda_fdv1_hybrid_sweep.sbatch`,
+  `run_l96_sda_fdv1_hybrid_ens30.sbatch`,
+  `run_l96_sda_fdv1_hybrids_sda12_ens30.sbatch` (new) -- launch scripts.
+
+**Rationale:** Once FDV1(monai)'s eval bug was fixed (see the entry below)
+and it turned out to be the single best deterministic scheme, warm-starting
+SDA's guidance from it (rather than DirectUNet-M) was the natural next
+question -- and it paid off, for free (same NFE budget as the DirectUNet
+hybrids).
+
+**Verification:** `pytest tests/test_fourdvarnet_monai.py -m "not slow"` (12
+passed, unaffected). Manual runs: S0-only smoke test (n_members=2) caught
+the normalization bug directly (RMSE 1.36 -> 0.385 after the fix); full
+ens30 S0/S1 for SDA1/SDA2/SDA3 all completed cleanly on a single RTX8000
+(13-17 min each).
+
+## 2026-09-09: Rebase onto origin/master + deterministic FDV1/FDV2-monai training
+
+**Summary:** Rebased this branch onto `origin/master` (was 6 commits behind:
+`#169`-`#173`, notably `#172`'s gradient checkpointing for the unrolled
+solver loop) -- one duplicate commit (`7b7da71`, superseded by master's
+`fb70889` which is a strict superset) skipped during the rebase, one
+CHANGELOG.md conflict resolved by hand, both verified with a real `git diff`
+between the two commits before skipping. Added deterministic (fixed
+`prior_weight`, no trainable-weight/cosine-scheduler recipe --
+`config/experiment/FDV2_grad_state_monai_l96_fixedw.yaml`, mirroring
+`FDV2_grad_state_l96_fixedw.yaml`'s non-monai deterministic ablation) FDV1
+(`obs+state`) and FDV2 (`grad+state`) monai-backbone training configs, run
+sequentially in one sbatch job on an H100 (chosen after a live GPU-
+utilization sample on this exact workload showed ~100% SM -- compute-bound,
+not launch-latency-bound, so a faster GPU gives a real speedup here, unlike
+the CFM/DirectUNet/SDA schemes which don't need one).
+
+**Real finding:** gradient checkpointing does fix the CUDA-OOM this exact
+backbone+solver combination (FDV2's `grad+state`, `create_graph=True`
+double-backward through the full `N_outer=10` unroll) previously needed an
+H200 for -- confirmed via a real smoke test (batch_size=16, the actual
+production config): peaked at 19.5GB on an RTX8000, comfortably under 46GB,
+vs. OOMing at batch_size=1 before. The H100 speedup itself was less durable
+in practice: FDV1's first epoch ran in ~27s, but settled to ~157s/epoch by
+epoch ~75 -- likely contention from another job sharing the 2-GPU node
+(unconfirmed; SLURM gres allocation should give exclusive GPU access, so
+this remains a partial mystery, not a clean explanation).
+
+**Files modified:**
+- `config/experiment/FDV2_grad_state_monai_l96_fixedw.yaml` (new).
+- `batch/run_l96_fdv_monai_deterministic_train.sbatch` (new) -- FDV1 then
+  FDV2-fixedw, sequential, one H100, 96h time budget (later revised: see the
+  `--n-outer` entry above for the eval-step fix applied to this same file).
+
+**Rationale:** The trainable-`prior_weight` FDV2 recipe (already covered by
+`FDV2_grad_state_monai_l96.yaml`) bundles several stabilization mechanisms
+(cosine LR, discounted param groups, an auxiliary loss) that make it hard to
+isolate the monai-backbone-only effect; a fixed-weight run is the cleaner
+backbone-only comparison point against the non-monai `_fixedw` baseline.
+
+**Verification:** `pytest tests/test_fourdvarnet.py tests/test_lightning_module.py tests/test_hydra_config.py -m "not slow"`
+post-rebase (78 passed, no regression to the default `unet1d` backbone);
+`pytest tests/test_fourdvarnet_monai.py` (12 passed). Real smoke test at the
+production config confirming the OOM fix (19.5GB peak, batch_size=16,
+N_outer=10). Full training run launched and monitored to completion for
+FDV1; FDV2 still training as of this entry.
+
+## 2026-09-09: FDV1(monai) production eval + `--n-outer` default trap
+
+**Summary:** FDV1(monai)'s (obs+state, deterministic, N_outer=10) first
+`eval_neural_l96.py` pass gave a nonsensical RMSE 3.47/EV -3.75 -- traced to
+`eval_neural_l96.py`'s `--n-outer` CLI default (1), which is correct for
+tau0-only CFM but silently starves `FourDVarNetSolver.sample()`'s zero-init
+refinement of the N_outer=10 iterations it actually needs (only 1 of 10
+unroll steps ran). Fixed by passing `--n-outer 10` explicitly (added to
+`batch/run_l96_fdv_monai_deterministic_train.sbatch`'s eval step, with an
+inline comment flagging the trap for the next model that reuses this
+script). Recovered a sane, in fact excellent, result: RMSE 0.427/0.424, EV
+0.927/0.928 -- on par with the best DirectUNet+SDA hybrid despite being a
+single deterministic pass with no ensemble at all.
+
+**Files modified:**
+- `batch/run_l96_fdv_monai_deterministic_train.sbatch` -- `--n-outer 10`
+  added to the eval step, explanatory comment.
+
+**Rationale:** A confidently-reported garbage number is worse than an
+obvious crash -- this was caught by comparing against `train.py`'s own
+in-training eval of the identical checkpoint (RMSE ~0.42, sane), which
+disagreed sharply with the standalone eval script's number, prompting the
+investigation.
+
+**Verification:** Re-ran `eval_neural_l96.py --n-outer 10` against the
+already-trained checkpoint (no retraining needed) -- RMSE/EV recovered to
+the expected range, matching `train.py`'s own held-out eval order of
+magnitude.
+
+## 2026-09-09: Port monai SDA/VanillaCFM `model_factory` support + generalized resolved-config trust
+
+**Summary:** This worktree's `train.py`/`evaluation/neural_inference.py`
+predated the sibling `4dvarnet-fm-l96-eval-config-persist` worktree's
+independent monai-backbone work on `models/monai_unet_adapter.py`
+(`MonaiVanillaCFM`/`MonaiUnconditionalPriorCFM`/`MonaiConditionalPriorCFM`),
+so loading an SDA-monai checkpoint here crashed
+(`UnboundLocalError: local variable 'output_dim' referenced before
+assignment` -- the generic shape-inference fallback has no key-name
+convention for these classes). Ported: (1) `models/monai_unet_adapter.py`'s
+three new classes verbatim from the sibling worktree (confirmed byte-
+identical elsewhere); (2) `train.py::model_factory`'s
+`monai_vanilla_cfm`/`monai_sda_prior`/`monai_sda_prior_cond` dispatch
+branches; (3) `evaluation/neural_inference.py::load_checkpoint`'s resolved-
+config trust check generalized from "only if auto-discovered" to "any path
+literally named `resolved_config.yaml`, auto-discovered or explicitly
+passed via `--config`" -- the sibling worktree's independently-evolved fix
+for the same underlying gap (shape-inference cannot recover ANY monai-
+backbone config, not just `FourDVarNetSolver`'s), which supersedes this
+worktree's earlier narrower `fourdvarnet`-only special case (kept as a
+fallback for non-standard config filenames); (4) ported the sibling's
+`evaluation/estimate_metrics.py` per-window (mean +/- std across windows)
+RMSE/EV/CRPS functions and their tests, needed by the new hybrid eval
+scripts below.
+
+**Files modified:**
+- `models/monai_unet_adapter.py` -- added `MonaiVanillaCFM`,
+  `MonaiUnconditionalPriorCFM`, `MonaiConditionalPriorCFM`.
+- `train.py` -- `model_factory` dispatch for the three new model types.
+- `evaluation/neural_inference.py` -- `load_checkpoint`'s
+  `is_resolved_config` generalization (was `auto_discovered_config`).
+- `evaluation/estimate_metrics.py`, `tests/test_estimate_metrics.py` --
+  ported per-window metric functions + 14 tests (all passing here too).
+
+**Rationale:** Two worktrees independently extending the same monai-
+backbone effort in parallel diverged on overlapping infrastructure
+(model_factory dispatch, checkpoint-loading trust rules, evaluation
+metrics) -- this reconciles the FDV side to match, rather than
+reimplementing a third variant.
+
+**Verification:** `pytest tests/test_fourdvarnet.py tests/test_lightning_module.py tests/test_hydra_config.py -m "not slow"`
+in the `fdv` env (78 passed, unaffected);
+`pytest tests/test_fourdvarnet_monai.py -m "not slow"` in `fdv-monai-proto`
+(12 passed); `pytest tests/test_estimate_metrics.py` (14 passed). Manually
+confirmed a previously-crashing SDA3(monai) checkpoint load now succeeds.
+
 ## 2026-09-08: Gradient checkpointing memory/time microbenchmark
 
 **Summary:** Follow-up to PR #172 (gradient checkpointing for the FourDVarNet
