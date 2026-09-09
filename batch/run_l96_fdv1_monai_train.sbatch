@@ -39,7 +39,6 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 echo
 
-rm -rf "experiments/${EXPERIMENT}"
 python train.py \
   --config-name experiment/${EXPERIMENT} \
   hydra.run.dir=. \

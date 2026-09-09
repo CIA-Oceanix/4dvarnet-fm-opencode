@@ -29,8 +29,6 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 echo ""
 
-# Remove stale smoke results so the full run starts fresh.
-rm -rf "experiments/${EXP}"
 
 # Optional epoch override for smoke runs.
 EPOCHS_OVERRIDE="${EPOCHS_OVERRIDE:-}"

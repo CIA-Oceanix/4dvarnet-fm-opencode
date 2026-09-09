@@ -30,6 +30,7 @@ from models.solver import TweedieSolver
 from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
 from training.pipeline import create_trainer, train_stage
+from training.resume import resolve_experiment_dir, resume_ckpt_path
 from training.lightning_module import LitModel
 from evaluation.metrics import rmse, param_rmse
 
@@ -541,6 +542,7 @@ def main(cfg: DictConfig):
         exp_id = hcfg.job.config_name.replace("experiment/", "")
 
     exp_dir = os.path.join(EXP_DIR, exp_id)
+    resolve_experiment_dir(exp_dir, cfg, fresh=cfg.get("fresh", False))
     os.makedirs(exp_dir, exist_ok=True)
     results_path = os.path.join(exp_dir, "results.json")
     trajs_path = os.path.join(exp_dir, "trajectories.npz")
@@ -733,7 +735,7 @@ def main(cfg: DictConfig):
                                obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
                                prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
                 trainer = create_trainer(cfg, 1)
-                trainer.fit(lit, loaders["train"], loaders["val"])
+                trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(1))
                 path = cfg.paths.checkpoint_stage1
                 torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
@@ -754,7 +756,7 @@ def main(cfg: DictConfig):
                            use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
                            max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
-            trainer.fit(lit, loaders["train"], loaders["val"])
+            trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(2))
             path = cfg.paths.checkpoint_stage2
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
@@ -769,7 +771,7 @@ def main(cfg: DictConfig):
                            use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
                            max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
-            trainer.fit(lit, loaders["train"], loaders["val"])
+            trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(2))
             path = cfg.paths.checkpoint_stage2
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0

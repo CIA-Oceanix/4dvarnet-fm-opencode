@@ -5,19 +5,21 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from training.lightning_module import LitModel
+from training.resume import resume_ckpt_path
 
 
 def create_trainer(cfg: DictConfig, stage: int) -> pl.Trainer:
     stage_cfg = cfg.training.stage1 if stage == 1 else cfg.training.stage2
-    callbacks = [
-        ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1,
-            dirpath=cfg.paths.checkpoint_dir,
-            filename=f"stage{stage}_best",
-        )
-    ]
+    checkpoint_cb = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        save_last=True,
+        dirpath=cfg.paths.checkpoint_dir,
+        filename=f"stage{stage}_best",
+    )
+    checkpoint_cb.CHECKPOINT_NAME_LAST = f"stage{stage}_last"
+    callbacks = [checkpoint_cb]
     csv_logger = CSVLogger(save_dir=cfg.paths.outputs_dir, name=f"stage{stage}")
     tb_logger = TensorBoardLogger(save_dir=cfg.paths.outputs_dir, name=f"stage{stage}")
     trainer = pl.Trainer(
@@ -50,7 +52,7 @@ def train_stage(
         max_epochs=stage_cfg.epochs,
     )
     trainer = create_trainer(cfg, stage)
-    trainer.fit(lit_module, loaders["train"], loaders["val"])
+    trainer.fit(lit_module, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(stage))
     path = cfg.paths[f"checkpoint_stage{stage}"]
     torch.save(lit_module.model.state_dict(), path)
     return lit_module.model
