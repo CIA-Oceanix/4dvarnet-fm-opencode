@@ -27,13 +27,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
 from data.qg import QGConfig, QGS01Dataset
 from data.qg_neural import ensure_truth_cache
-from evaluation.run_qg_baselines import run
+from evaluation.run_qg_baselines import _build_dyn, run
 
 CACHE_DIR = "/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
 LAG_DAYS = 5.0
@@ -95,7 +96,6 @@ def run_one(method_name, method_kw, cfg, window, device, save_dir):
 
 
 def build_figure(window_label, window, cfg, device, out_dir, save_dir):
-    from evaluation.run_qg_baselines import _build_dyn
     dyn = _build_dyn(cfg, window, device, psi_state=False)
     truth_inner = dyn.inner if hasattr(dyn, "inner") else dyn
 
@@ -150,6 +150,92 @@ def build_figure(window_label, window, cfg, device, out_dir, save_dir):
     return path
 
 
+ANIM_METHOD = next(m for m in METHODS if m[1] == "enkf")
+
+
+def build_animation(window_label, window, cfg, device, out_dir, save_dir,
+                    sample_days=1.0):
+    """obs | wind forcing | truth | EnKF analysis, animated over the window
+    (one frame per `sample_days`). Panel layout/obs-hold logic mirrors
+    `generate_qg_s0s1_figs.py::fig_dacycle` (the closest existing prior art --
+    obs/truth/analysis, no wind panel); the wind-curl panel is new, following
+    `animate_qg_wind.py`'s `dyn.wind_curl_field(...)` pattern.
+    """
+    _label, method_name, method_kw = ANIM_METHOD
+    analysis, _free, ref = run_one(method_name, method_kw, cfg, window, device, save_dir)
+
+    dyn = _build_dyn(cfg, window, device, psi_state=False)
+    ny = nx = cfg.nx
+    split = ny * nx
+    days_per = round(86400.0 / dyn.inner.dt)
+    T = analysis.shape[0]
+    stride = max(1, int(sample_days * days_per))
+    steps = list(range(0, T, stride))
+
+    obs = window["obs"].numpy()
+    cols = window["obs_columns"].numpy()
+    mask = window["obs_mask"].numpy()
+    obs_steps = np.where(mask)[0]
+    obs_vals = np.abs(obs[np.isfinite(obs)])
+    vmax_o = float(obs_vals.max()) if obs_vals.size else 1.0
+
+    truth_q1 = ref[:, :split].reshape(T, ny, nx)
+    analysis_q1 = analysis[:, :split].reshape(T, ny, nx)
+    vmax_q = max(np.nanmax(np.abs(truth_q1)), np.nanmax(np.abs(analysis_q1))) * 0.9
+
+    wind_state = window["wind_state_corrupted"].to(device)
+    windfields = dyn.inner.wind_curl_field(wind_state).detach().cpu().numpy()
+    vmax_w = float(np.nanmax(np.abs(windfields))) * 0.9 or 1.0
+
+    frames = []
+    for t in steps:
+        fig, axes = plt.subplots(1, 4, figsize=(17, 4.2))
+
+        ax = axes[0]
+        prior = obs_steps[obs_steps <= t]
+        t_obs = int(prior[-1]) if prior.size else (int(obs_steps[0]) if obs_steps.size else t)
+        img = np.full((ny, nx), np.nan)
+        xc = int(cols[t_obs])
+        if 0 <= xc < nx:
+            img[:, xc] = obs[t_obs]
+        ax.imshow(img, cmap=CMAP, vmin=-vmax_o, vmax=vmax_o, interpolation="nearest")
+        ax.set_title(f"raw obs psi1, 1 col/event (day {t_obs / days_per:.2f}, col {xc})",
+                     fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax = axes[1]
+        ax.imshow(windfields[t], cmap=CMAP, vmin=-vmax_w, vmax=vmax_w)
+        ax.set_title("wind-stress curl forcing", fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax = axes[2]
+        ax.imshow(truth_q1[t], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
+        ax.set_title("truth q1", fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax = axes[3]
+        ax.imshow(analysis_q1[t], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
+        ax.set_title("EnKF analysis q1", fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        fig.suptitle(f"S0 DA cycle ({window_label} window) -- day {t / days_per:.2f}",
+                     fontsize=10)
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
+        fig.canvas.draw()
+        buf = np.asarray(fig.canvas.buffer_rgba())
+        frames.append(Image.fromarray(buf).convert("RGB"))
+        plt.close(fig)
+
+    path = os.path.join(out_dir, f"qg_s0_dacycle_{window_label}.gif")
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=180, loop=0)
+    print(f"wrote {path} ({len(frames)} frames)")
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--etkf-json", required=True)
@@ -180,6 +266,10 @@ def main():
         # per-window subdir keeps all 3 windows' saved trajectories.
         window_save_dir = os.path.join(args.save_traj_dir, label)
         build_figure(label, w, cfg_ref, device, args.out_dir, window_save_dir)
+        # Reruns EnKF for this window (~20-30s, cheap) rather than threading
+        # build_figure's already-computed EnKF trajectory out -- keeps the two
+        # builders independent/simple.
+        build_animation(label, w, cfg_ref, device, args.out_dir, window_save_dir)
 
 
 if __name__ == "__main__":
