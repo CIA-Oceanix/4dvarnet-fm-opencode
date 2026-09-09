@@ -42,6 +42,8 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | DirectUNet+SDA3 | Neural (DirectUNet-M mean + SDA3-monai warm-started guidance) | As above, warm-starting SDA3-monai (noisy-params conditioned) instead of SDA1-monai. Best RMSE/EV among the DirectUNet-warm-started hybrids -- but see FDV1+SDA3-monai below, which beats it comfortably by swapping in a better mean-estimate model. |
 | FDV1(monai) | Neural (4DVarNet-style unrolled solver, monai backbone) | MonaiUNet1D backbone (`unet_backbone=monai`, `models/fourdvarnet.py::FourDVarNetSolver`) swapped into FDV1's `obs+state` unrolled solver (`x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, N_outer=10, zero-initialized, deterministic, no ensemble); M tier; 400 epochs. Rebased its branch onto `origin/master` first to pick up gradient checkpointing (PR #172), which fixes an earlier CUDA-OOM this exact backbone+solver combination hit at production scale. **Note:** its first eval attempt gave a nonsensical RMSE 3.47/EV -3.75 -- traced to `eval_neural_l96.py`'s `--n-outer` CLI default (1), which is correct for tau0-only CFM but silently starves this solver's zero-init refinement of the N_outer=10 iterations it needs; fixed by passing `--n-outer 10` explicitly, recovering a sane, in fact excellent, result. |
 | FDV1+SDA3(monai) | Neural (FDV1-monai mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as the DirectUNet+SDA hybrids above, but swapping in FDV1-monai (the unrolled solver) as the mean-estimate model instead of DirectUNet-M -- SDA3-monai is used to sample the anomaly around FDV1's point estimate. `tau0=0.3`, `guidance_weight=2.0` (own S0-only sweep over `tau0∈{0.1..0.5}×guidance_weight∈{0.5,1,2,5}`, converged on the exact same point as the DirectUNet+SDA hybrids' independent sweep). One real wrinkle specific to this combination: FDV1-monai was trained WITHOUT `data.normalize=true` (unlike DirectUNet-M/SDA3, which share that normalized space) -- feeding it normalized obs (as SDA expects) silently produced a garbage mean estimate that poisoned the whole hybrid (confirmed: RMSE 1.36/EV 0.35) before this was caught; fixed by preparing a SEPARATE raw-obs dataloader for FDV1's own `.sample()` call and normalizing its output before handing it to SDA as the warm start. **Best scheme in this table overall.** |
+| FDV1+SDA1(monai) | Neural (FDV1-monai mean + SDA1-monai warm-started guidance) | As FDV1+SDA3-monai but warm-starting SDA1-monai (unconditional prior) instead of SDA3-monai, for coherence with the DirectUNet+SDA1/2/3 family above. Same `tau0=0.3`/`guidance_weight=2.0` (not re-swept per SDA variant -- three independent sweeps this session all converged on this exact point regardless of SDA variant or mean model). |
+| FDV1+SDA2(monai) | Neural (FDV1-monai mean + SDA2-monai warm-started guidance) | As above, warm-starting SDA2-monai (true-params conditioned) instead of SDA1-monai. |
 
 Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the 24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what makes the DA-vs-neural comparison apples-to-apples.
 
@@ -85,6 +87,8 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 | DirectUNet+SDA3 | 0.4204 | 0.1849 | 0.5382 | 0.4183 | 0.1824 | 0.5362 | 0.995 |
 | FDV1(monai) | 0.4275 | 0.2125 | 0.5350 | 0.4235 | 0.2100 | 0.5302 | 0.991 |
 | FDV1+SDA3(monai) | **0.3783** | **0.1611** | **0.4870** | **0.3736** | **0.1578** | **0.4815** | 0.987 |
+| FDV1+SDA1(monai) | 0.3852 | 0.1770 | 0.4892 | 0.3801 | 0.1737 | 0.4833 | 0.987 |
+| FDV1+SDA2(monai) | 0.3845 | 0.1688 | 0.4924 | 0.3800 | 0.1650 | 0.4875 | 0.988 |
 
 Note on conventions: the DA metric cache stores the **mean of per-window RMSEs** (evaluation/run_l96.py), while this table uses the **pooled** convention (`sqrt(mean sq err)` over all windows/timesteps) for every method — the same convention as the neural evaluation. Pooled RMSE is ≤ mean-of-window RMSE, so DA values here are slightly lower (more favorable) than in the legacy cache; both orderings agree.
 
@@ -128,6 +132,8 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | DirectUNet+SDA3 | 0.9273 | 0.9908 | 0.8955 | 0.9275 | 0.9908 | 0.8958 |
 | FDV1(monai) | 0.9271 | 0.9879 | 0.8967 | 0.9280 | 0.9879 | 0.8981 |
 | FDV1+SDA3(monai) | **0.9406** | **0.9930** | **0.9144** | **0.9417** | **0.9931** | **0.9160** |
+| FDV1+SDA1(monai) | 0.9396 | 0.9916 | 0.9137 | 0.9408 | 0.9917 | 0.9154 |
+| FDV1+SDA2(monai) | 0.9391 | 0.9924 | 0.9125 | 0.9401 | 0.9925 | 0.9139 |
 
 ## Energy Score (lower is better)
 
@@ -169,6 +175,8 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | DirectUNet+SDA3 | 0.2472 | 0.1341 | 0.3037 | 0.2474 | 0.1323 | 0.3050 |
 | FDV1(monai) | 0.2721* | 0.1610* | 0.3276* | 0.2710* | 0.1588* | 0.3271* |
 | FDV1+SDA3(monai) | **0.2204** | **0.1178** | **0.2717** | **0.2188** | **0.1146** | **0.2709** |
+| FDV1+SDA1(monai) | 0.2282 | 0.1328 | 0.2760 | 0.2263 | 0.1293 | 0.2748 |
+| FDV1+SDA2(monai) | 0.2262 | 0.1239 | 0.2774 | 0.2247 | 0.1205 | 0.2768 |
 
 `*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
 
@@ -198,6 +206,8 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA3 | 0.403±0.074 | 0.180±0.033 | 0.514±0.103 | 0.401±0.073 | 0.177±0.034 | 0.513±0.100 |
 | FDV1(monai) | 0.410±0.078 | 0.207±0.037 | 0.511±0.104 | 0.407±0.074 | 0.204±0.039 | 0.509±0.099 |
 | FDV1+SDA3(monai) | 0.358±0.075 | 0.155±0.034 | 0.460±0.101 | 0.355±0.072 | 0.151±0.035 | 0.457±0.097 |
+| FDV1+SDA1(monai) | 0.365±0.074 | 0.172±0.033 | 0.462±0.101 | 0.362±0.071 | 0.167±0.037 | 0.459±0.097 |
+| FDV1+SDA2(monai) | 0.365±0.074 | 0.163±0.034 | 0.466±0.101 | 0.362±0.072 | 0.159±0.036 | 0.463±0.096 |
 
 ### EV per window (mean +/- std, higher is better)
 
@@ -221,6 +231,8 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA3 | 0.927±0.029 | 0.991±0.004 | 0.895±0.043 | 0.927±0.029 | 0.991±0.004 | 0.896±0.042 |
 | FDV1(monai) | 0.927±0.030 | 0.988±0.005 | 0.897±0.044 | 0.928±0.028 | 0.988±0.006 | 0.898±0.041 |
 | FDV1+SDA3(monai) | 0.941±0.027 | 0.993±0.004 | 0.914±0.040 | 0.942±0.026 | 0.993±0.004 | 0.916±0.037 |
+| FDV1+SDA1(monai) | 0.940±0.027 | 0.992±0.004 | 0.914±0.040 | 0.941±0.026 | 0.992±0.004 | 0.915±0.037 |
+| FDV1+SDA2(monai) | 0.939±0.027 | 0.992±0.004 | 0.913±0.040 | 0.940±0.026 | 0.993±0.004 | 0.914±0.038 |
 
 ### CRPS per window (mean +/- std, lower is better)
 
@@ -244,6 +256,8 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA3 | 0.208±0.036 | 0.109±0.023 | 0.257±0.048 | 0.208±0.036 | 0.107±0.024 | 0.258±0.047 |
 | FDV1(monai) | 0.272±0.046* | 0.161±0.029* | 0.328±0.060* | 0.271±0.046* | 0.159±0.031* | 0.327±0.058* |
 | FDV1+SDA3(monai) | 0.182±0.036 | 0.094±0.024 | 0.227±0.047 | 0.181±0.036 | 0.091±0.025 | 0.226±0.046 |
+| FDV1+SDA1(monai) | 0.189±0.037 | 0.106±0.025 | 0.231±0.049 | 0.188±0.037 | 0.103±0.027 | 0.230±0.048 |
+| FDV1+SDA2(monai) | 0.186±0.036 | 0.098±0.024 | 0.230±0.047 | 0.185±0.036 | 0.095±0.026 | 0.230±0.046 |
 
 `*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`.
 
@@ -256,14 +270,14 @@ Every table above pools all windows/timesteps into one number per method. This s
 
 Windows ranked by per-window pooled 24D RMSE of Strong-4DVar (best DA scheme); each figure shows rows = Truth/methods and columns = state / |error| maps for the slow X (8D) and fast Y (16D) blocks. State colors share one scale per figure; error maps share one scale across all rows/methods (99.5th-percentile cap, noted on the colorbar). Dotted vertical lines on the truth row mark observation times.
 
-| Case | Rank | Window | 4DVar win-RMSE | Strong-4DVar | DirectUNet-L(monai,cos) | CFM-M(monai,flat) | SDA3(monai) | DirectUNet+SDA3 |
-|---|---|---|---|---|---|---|---|---|
-| S0 | worst | 58 | 1.432 | 1.432 | 0.543 | 0.524 | 0.603 | 0.446 |
-| S0 | median | 187 | 0.794 | 0.794 | 0.498 | 0.474 | 0.580 | 0.433 |
-| S0 | best | 155 | 0.407 | 0.407 | 0.396 | 0.405 | 0.411 | 0.303 |
-| S1 | worst | 75 | 1.991 | 1.991 | 0.657 | 0.601 | 0.756 | 0.617 |
-| S1 | median | 198 | 1.482 | 1.482 | 0.475 | 0.461 | 0.503 | 0.422 |
-| S1 | best | 35 | 0.977 | 0.977 | 0.374 | 0.379 | 0.385 | 0.309 |
+| Case | Rank | Window | 4DVar win-RMSE | Strong-4DVar | DirectUNet-L(monai,cos) | CFM-M(monai,flat) | SDA3(monai) | DirectUNet+SDA3 | FDV1(monai) | FDV1+SDA3(monai) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| S0 | worst | 58 | 1.432 | 1.432 | 0.543 | 0.524 | 0.603 | 0.446 | 0.444 | 0.384 |
+| S0 | median | 187 | 0.794 | 0.794 | 0.498 | 0.474 | 0.580 | 0.433 | 0.408 | 0.359 |
+| S0 | best | 155 | 0.407 | 0.407 | 0.396 | 0.405 | 0.411 | 0.303 | 0.305 | 0.253 |
+| S1 | worst | 75 | 1.991 | 1.991 | 0.657 | 0.601 | 0.756 | 0.617 | 0.596 | 0.537 |
+| S1 | median | 198 | 1.482 | 1.482 | 0.475 | 0.461 | 0.503 | 0.422 | 0.404 | 0.351 |
+| S1 | best | 35 | 0.977 | 0.977 | 0.374 | 0.379 | 0.385 | 0.309 | 0.332 | 0.285 |
 
 ![s0-worst](figs/l96_hovm_s0_worst.png)
 

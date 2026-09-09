@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-09: FDV1+SDA1/SDA2(monai) hybrid coherence eval + final report regeneration
+
+**Summary:** Ran the FDV1-mean-warm-started SDA1/SDA2 hybrids (ens30, S0/S1)
+for coherence with the already-evaluated FDV1+SDA3 hybrid, using the same
+`eval_sda_mean_hybrid_l96.py`/`tau0=0.3`/`guidance_weight=2.0` recipe (see
+`4dvarnet-fm-fdv-monai`'s CHANGELOG). All three FDV1+SDA variants land within
+noise of each other (RMSE 0.385/0.380 SDA1, 0.385/0.380 SDA2, 0.378/0.374
+SDA3 on S0/S1) -- SDA3's noisy-params conditioning gives it a small but
+consistent edge, confirming the earlier single-variant finding wasn't a
+fluke. Symlinked both result dirs into `experiments/` (mirroring
+`FDV1_SDA3_monai_hybrid`) and regenerated the consolidated report; both
+built-in consistency checks (DA cache vs recomputed, neural stored truth vs
+dataset) still PASS.
+
+**Files modified:** `reports/l96/outputs/l96_consolidated_benchmark.md`,
+`reports/l96/outputs/figs/l96_hovm_*.png` (regenerated); bumped
+`batch/run_l96_consolidated_report.sbatch` to 140G (more `members_*.npz` now
+loaded simultaneously).
+
+**Rationale:** The user asked for FDV1+SDA1/SDA2 specifically for coherence
+with FDV1+SDA3, plus a widened reconstruction-figure comparison (best scheme
+per subcategory) and an explicit Obs row -- both already wired into the
+report generator; this entry is the eval run + regeneration that populates
+them with real data.
+
+**Verification:** job 52754 (`4dvarnet-fm-fdv-monai`) COMPLETED; report
+regeneration job 52757 COMPLETED with both consistency checks PASS; manual
+inspection of `l96_hovm_s0_worst.png` confirms the Obs row renders correctly
+(sparse/blank at unobserved times, real noisy values at observed times) and
+the figure now compares 7 methods (best-of-subcategory).
+
 ## 2026-09-09: Consolidated benchmark: monai schemes, per-trajectory detail, CRPS, Obs row
 
 **Summary:** Extends `reports/l96/generate_l96_consolidated_report.py` with every
