@@ -141,8 +141,8 @@ def build_figure(window_label, window, cfg, device, out_dir, save_dir):
             if c == 0:
                 ax.set_ylabel(lbl, fontsize=10)
     fig.suptitle(f"S0 reconstruction ({window_label} window) -- "
-                 f"lag={LAG_DAYS}d, noise={NOISE_FRAC}, step {t}")
-    fig.tight_layout()
+                 f"lag={LAG_DAYS}d, noise={NOISE_FRAC}, step {t}", y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
     path = os.path.join(out_dir, f"qg_s0_reconstruction_{window_label}.png")
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -174,7 +174,12 @@ def main():
         base_w = all_windows[idx]
         ic = QGS01Dataset._generate_obs_ic(cfg_ref, [base_w], [idx])
         w = dict(base_w, **ic[0])
-        build_figure(label, w, cfg_ref, device, args.out_dir, args.save_traj_dir)
+        # save_traj's filename doesn't encode window identity (just scenario/
+        # method/obs_var/lag), so a shared dir across windows would silently
+        # overwrite each window's trajectories with the next one's -- a
+        # per-window subdir keeps all 3 windows' saved trajectories.
+        window_save_dir = os.path.join(args.save_traj_dir, label)
+        build_figure(label, w, cfg_ref, device, args.out_dir, window_save_dir)
 
 
 if __name__ == "__main__":
