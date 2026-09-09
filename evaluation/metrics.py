@@ -20,6 +20,10 @@ def spread(ensemble_variance: np.ndarray) -> np.ndarray:
 
 
 def crps(ensemble: np.ndarray, truth: np.ndarray) -> float:
+    """Per-dimension fair-ensemble CRPS: E|X-y| - 0.5*E|X-X'| (lower is
+    better, 0 for a perfect deterministic forecast). A single-member
+    "ensemble" (N=1) degenerates to the mean absolute error, since the
+    pairwise-spread term vanishes."""
     N, T, D = ensemble.shape
     scores = np.zeros(D)
     for d in range(D):
@@ -28,7 +32,7 @@ def crps(ensemble: np.ndarray, truth: np.ndarray) -> float:
         abs_diff = np.abs(e[np.newaxis, :, :] - e[:, np.newaxis, :])
         pairwise = np.mean(abs_diff, axis=(0, 1))
         abs_err = np.mean(np.abs(e - t[np.newaxis, :]), axis=0)
-        scores[d] = np.mean(pairwise - abs_err)
+        scores[d] = np.mean(abs_err - 0.5 * pairwise)
     return scores
 
 
