@@ -976,11 +976,10 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
 
     payload = {"method": method_name, "nx": cfg.nx,
                "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
-
-    payload = {"method": method_name, "nx": cfg.nx,
-               "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
+               "loc_radius": loc_radius, "scenarios": summary,
+               "init_lag_days": init_lag_days,
+               "obs_noise_std_frac": cfg.obs_noise_std_frac,
+               "num_windows": cfg.num_windows}
     if out_path:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w") as f:
