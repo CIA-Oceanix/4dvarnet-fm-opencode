@@ -1,0 +1,40 @@
+# @package _global_
+# Cosine-annealing variant of L1b_monai_unet_s0s1_norm (M tier, [64,128,256],
+# num_res_blocks=2, 5,889,048 params). Identical to the flat-LR M-tier run
+# (RMSE 0.501/0.502) except training.stage1.use_cosine_scheduler is now true
+# (CosineAnnealingLR over the full 200-epoch run), added for consistency with
+# FDV2's cosine-annealed training (PR #168) so the S+/M/L tier comparison is
+# redone under the same scheduler policy.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

@@ -1,0 +1,44 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of L2b_vanilla_cfm_s0s1_norm: same tau=0 CFM
+# training contract, normalization, and hyperparameters -- only the backbone
+# (models.unet.UNet1D -> models.monai_unet_adapter.MonaiVanillaCFM's
+# MonaiUNet1D, FiLM-style timestep conditioning) differs. Reference
+# architecture tier (M: hidden_channels [64,128,256], num_res_blocks=2)
+# selected 2026-09-08 via the S+/M/L DirectUNet complexity-tier experiment
+# (M: S0/S1 RMSE 0.516/0.516, best of the three; see memory
+# project_l96_monai_unet_complexity_tiers).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: true
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

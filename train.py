@@ -76,14 +76,16 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None, use_biased_params=False,
-                         resample_bias_draws=False, bias_max=0.2, norm_stats=None):
+                         resample_bias_draws=False, bias_max=0.2, norm_stats=None,
+                         noisy_da_bias=False, noisy_da_max=1.5):
     kw = dict(batch_size=batch_size, collate_fn=make_collate_fm(norm_stats),
               num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
                  obs_var_indices=obs_var_indices,
                  use_biased_params=use_biased_params,
-                 resample_bias_draws=resample_bias_draws, bias_max=bias_max)
+                 resample_bias_draws=resample_bias_draws, bias_max=bias_max,
+                 noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
                             shuffle=True, **kw),
@@ -414,7 +416,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type == "vanilla_cfm":
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred, params = model.sample(batch, return_params=True)
@@ -444,7 +446,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -488,7 +490,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type == "vanilla_cfm":
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -503,7 +505,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -679,12 +681,15 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond")),
             obs_var_indices=obs_var_indices,
-            use_biased_params=(model_type in ("param_head", "param_head_unet")),
+            use_biased_params=(model_type in ("param_head", "param_head_unet")
+                               or dc.get("use_biased_params", False)),
             resample_bias_draws=dc.get("resample_bias_draws", False),
             bias_max=dc.get("bias_max", 0.2),
             norm_stats=norm_stats,
+            noisy_da_bias=dc.get("noisy_da_bias", False),
+            noisy_da_max=dc.get("noisy_da_max", 1.5),
         )
     else:
         loaders = make_experiment_dataloaders(
@@ -723,7 +728,7 @@ def main(cfg: DictConfig):
                                lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                                use_gradient_loss=cfg.training.loss.use_gradient,
                                gradient_weight=cfg.training.loss.gradient_weight,
-                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
+                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
                                max_epochs=epochs_s1,
                                obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
                                prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
@@ -745,7 +750,9 @@ def main(cfg: DictConfig):
             lit = LitModel(model, model_type=model_type, stage=2,
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
-                           gradient_weight=cfg.training.loss.gradient_weight)
+                           gradient_weight=cfg.training.loss.gradient_weight,
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
             trainer.fit(lit, loaders["train"], loaders["val"])
             path = cfg.paths.checkpoint_stage2
@@ -758,7 +765,9 @@ def main(cfg: DictConfig):
             lit = LitModel(model, model_type=model_type, stage=2,
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
-                           gradient_weight=cfg.training.loss.gradient_weight)
+                           gradient_weight=cfg.training.loss.gradient_weight,
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
             trainer.fit(lit, loaders["train"], loaders["val"])
             path = cfg.paths.checkpoint_stage2
@@ -828,8 +837,11 @@ def main(cfg: DictConfig):
     cs4 = results_metrics.get("test_cs4")
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
+              else cfg.model.get("monai_direct_unet") if model_type == "monai_direct_unet"
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
+              else cfg.model.get("monai_vanilla_cfm") if model_type == "monai_vanilla_cfm"
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
+              else cfg.model.get("monai_sda_prior") if model_type in ("monai_sda_prior", "monai_sda_prior_cond")
               else cfg.model.get("fdv") if model_type == "fourdvarnet"
               else cfg.model.get("fdv_cfm") if model_type == "fourdvarnet_cfm"
               else cfg.model)

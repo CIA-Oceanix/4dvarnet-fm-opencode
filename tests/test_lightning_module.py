@@ -15,19 +15,37 @@ def _make_lit(model_type="fourdvarnet", use_cosine_scheduler=False, max_epochs=N
 
 
 def _make_lit_cfm(obs_weight_lr_scale=1.0, trainable_obs_weight=True, update_input="grad+state",
-                   prior_unet_lr_scale=1.0):
+                   prior_unet_lr_scale=1.0, use_cosine_scheduler=False, max_epochs=None):
     """FourDVarNetPredictStateCFM is the model that still has a trainable
     obs_weight (_obs_weight_raw) -- FourDVarNetSolver switched to a trainable
-    prior_weight instead (see models/fourdvarnet.py)."""
+    prior_weight instead (see models/fourdvarnet.py).
+
+    use_cosine_scheduler defaults to False here (unlike LitModel's own
+    default) because these param-group-composition tests inspect
+    configure_optimizers()'s return value as a bare Optimizer -- orthogonal
+    to whether a scheduler is attached.
+    """
     model = FourDVarNetPredictStateCFM(state_dim=3, hidden_channels=[4, 8], N_outer=3,
                                         update_input=update_input,
                                         trainable_obs_weight=trainable_obs_weight)
     return LitModel(model, model_type="fourdvarnet_cfm", stage=1, lr=1e-3,
                      obs_weight_lr_scale=obs_weight_lr_scale,
-                     prior_unet_lr_scale=prior_unet_lr_scale)
+                     prior_unet_lr_scale=prior_unet_lr_scale,
+                     use_cosine_scheduler=use_cosine_scheduler, max_epochs=max_epochs)
 
 
 class TestCosineScheduler:
+    def test_use_cosine_scheduler_defaults_to_true(self):
+        """LitModel's own default (independent of any train.py call site) is
+        True -- cosine annealing is the default scheduler for all training
+        runs unless a config explicitly opts out."""
+        model = FourDVarNetSolver(state_dim=3, hidden_channels=[4, 8], N_outer=3)
+        lit = LitModel(model, model_type="direct_unet", stage=1, lr=1e-3, max_epochs=50)
+        assert lit.use_cosine_scheduler is True
+        out = lit.configure_optimizers()
+        assert isinstance(out, dict)
+        assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+
     def test_disabled_returns_plain_optimizer(self):
         lit = _make_lit(use_cosine_scheduler=False)
         out = lit.configure_optimizers()
@@ -47,10 +65,16 @@ class TestCosineScheduler:
         assert isinstance(out, dict)
         assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
 
-    def test_enabled_but_not_fourdvarnet_type_ignored(self):
+    def test_enabled_applies_regardless_of_model_type(self):
+        """Cosine annealing is the default scheduler for every model_type,
+        not just fourdvarnet/fourdvarnet_cfm -- FourDVarNetSolver is reused
+        here purely as a convenient nn.Module stand-in (configure_optimizers
+        no longer branches on model_type for the scheduler decision)."""
         lit = _make_lit(model_type="direct_unet", use_cosine_scheduler=True, max_epochs=50)
         out = lit.configure_optimizers()
-        assert isinstance(out, torch.optim.Optimizer)
+        assert isinstance(out, dict)
+        assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+        assert out["lr_scheduler"].T_max == 50
 
     def test_enabled_without_max_epochs_raises(self):
         lit = _make_lit(model_type="fourdvarnet", use_cosine_scheduler=True, max_epochs=None)
