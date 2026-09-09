@@ -155,11 +155,15 @@ ANIM_METHOD = next(m for m in METHODS if m[1] == "enkf")
 
 def build_animation(window_label, window, cfg, device, out_dir, save_dir,
                     sample_days=1.0):
-    """obs | wind forcing | truth | EnKF analysis, animated over the window
-    (one frame per `sample_days`). Panel layout/obs-hold logic mirrors
-    `generate_qg_s0s1_figs.py::fig_dacycle` (the closest existing prior art --
-    obs/truth/analysis, no wind panel); the wind-curl panel is new, following
-    `animate_qg_wind.py`'s `dyn.wind_curl_field(...)` pattern.
+    """Row 1: obs | wind forcing | truth q1 | EnKF analysis q1 (4 panels, in a
+    6-wide grid so it aligns with row 2). Row 2: truth/EnKF pairs for psi1,
+    psi2, q2 (6 panels) -- the 3 fields row 1 doesn't already cover.
+    Animated over the window, one frame per `sample_days`.
+
+    Row-1 obs-hold logic mirrors `generate_qg_s0s1_figs.py::fig_dacycle` (the
+    closest existing prior art -- obs/truth/analysis, no wind panel); the
+    wind-curl panel follows `animate_qg_wind.py`'s `dyn.wind_curl_field(...)`
+    pattern.
     """
     _label, method_name, method_kw = ANIM_METHOD
     analysis, _free, ref = run_one(method_name, method_kw, cfg, window, device, save_dir)
@@ -181,50 +185,61 @@ def build_animation(window_label, window, cfg, device, out_dir, save_dir,
 
     truth_q1 = ref[:, :split].reshape(T, ny, nx)
     analysis_q1 = analysis[:, :split].reshape(T, ny, nx)
-    vmax_q = max(np.nanmax(np.abs(truth_q1)), np.nanmax(np.abs(analysis_q1))) * 0.9
+    truth_q2 = ref[:, split:].reshape(T, ny, nx)
+    analysis_q2 = analysis[:, split:].reshape(T, ny, nx)
+    vmax_q1 = max(np.nanmax(np.abs(truth_q1)), np.nanmax(np.abs(analysis_q1))) * 0.9
+    vmax_q2 = max(np.nanmax(np.abs(truth_q2)), np.nanmax(np.abs(analysis_q2))) * 0.9
+
+    truth_psi = dyn.inner.streamfunctions(
+        torch.from_numpy(ref).float().to(device)).detach().cpu().numpy()
+    analysis_psi = dyn.inner.streamfunctions(
+        torch.from_numpy(analysis).float().to(device)).detach().cpu().numpy()
+    vmax_psi1 = max(np.nanmax(np.abs(truth_psi[:, 0])),
+                    np.nanmax(np.abs(analysis_psi[:, 0]))) * 0.9
+    vmax_psi2 = max(np.nanmax(np.abs(truth_psi[:, 1])),
+                    np.nanmax(np.abs(analysis_psi[:, 1]))) * 0.9
 
     wind_state = window["wind_state_corrupted"].to(device)
     windfields = dyn.inner.wind_curl_field(wind_state).detach().cpu().numpy()
-    vmax_w = float(np.nanmax(np.abs(windfields))) * 0.9 or 1.0
+    wind_absmax = float(np.nanmax(np.abs(windfields)))
+    vmax_w = wind_absmax * 0.9 or 1.0
+    wind_title = "wind-stress curl forcing" if wind_absmax > 0 else \
+        "wind-stress curl forcing (none: wind_amp=0 for this window)"
+
+    def panel(ax, field, vmax, title):
+        ax.imshow(field, cmap=CMAP, vmin=-vmax, vmax=vmax)
+        ax.set_title(title, fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
 
     frames = []
     for t in steps:
-        fig, axes = plt.subplots(1, 4, figsize=(17, 4.2))
+        fig, axes = plt.subplots(2, 6, figsize=(21, 8.4))
 
-        ax = axes[0]
         prior = obs_steps[obs_steps <= t]
         t_obs = int(prior[-1]) if prior.size else (int(obs_steps[0]) if obs_steps.size else t)
         img = np.full((ny, nx), np.nan)
         xc = int(cols[t_obs])
         if 0 <= xc < nx:
             img[:, xc] = obs[t_obs]
-        ax.imshow(img, cmap=CMAP, vmin=-vmax_o, vmax=vmax_o, interpolation="nearest")
-        ax.set_title(f"raw obs psi1, 1 col/event (day {t_obs / days_per:.2f}, col {xc})",
-                     fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        panel(axes[0, 0], img, vmax_o,
+              f"raw obs psi1, 1 col/event (day {t_obs / days_per:.2f}, col {xc})")
+        panel(axes[0, 1], windfields[t], vmax_w, wind_title)
+        panel(axes[0, 2], truth_q1[t], vmax_q1, "truth q1")
+        panel(axes[0, 3], analysis_q1[t], vmax_q1, "EnKF analysis q1")
+        axes[0, 4].axis("off")
+        axes[0, 5].axis("off")
 
-        ax = axes[1]
-        ax.imshow(windfields[t], cmap=CMAP, vmin=-vmax_w, vmax=vmax_w)
-        ax.set_title("wind-stress curl forcing", fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-        ax = axes[2]
-        ax.imshow(truth_q1[t], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
-        ax.set_title("truth q1", fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-        ax = axes[3]
-        ax.imshow(analysis_q1[t], cmap=CMAP, vmin=-vmax_q, vmax=vmax_q)
-        ax.set_title("EnKF analysis q1", fontsize=9)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        panel(axes[1, 0], truth_psi[t, 0], vmax_psi1, "truth psi1")
+        panel(axes[1, 1], analysis_psi[t, 0], vmax_psi1, "EnKF analysis psi1")
+        panel(axes[1, 2], truth_psi[t, 1], vmax_psi2, "truth psi2")
+        panel(axes[1, 3], analysis_psi[t, 1], vmax_psi2, "EnKF analysis psi2")
+        panel(axes[1, 4], truth_q2[t], vmax_q2, "truth q2")
+        panel(axes[1, 5], analysis_q2[t], vmax_q2, "EnKF analysis q2")
 
         fig.suptitle(f"S0 DA cycle ({window_label} window) -- day {t / days_per:.2f}",
-                     fontsize=10)
-        fig.tight_layout(rect=[0, 0, 1, 0.94])
+                     fontsize=11)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
         fig.canvas.draw()
         buf = np.asarray(fig.canvas.buffer_rgba())
         frames.append(Image.fromarray(buf).convert("RGB"))
