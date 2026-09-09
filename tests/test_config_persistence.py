@@ -103,6 +103,39 @@ class TestLoadCheckpointPrefersResolvedConfig:
         for k in src:
             assert torch.allclose(src[k], dst[k]), k
 
+    def test_explicit_resolved_config_path_is_also_trusted(self, tmp_path):
+        """A resolved_config.yaml explicitly passed via --config (e.g. an
+        sbatch script pointing straight at experiments/<exp>/resolved_config.yaml
+        instead of relying on auto-discovery) must be trusted exactly like an
+        auto-discovered one, skipping shape-inference. Regression test for a
+        real bug: an explicitly-passed resolved_config.yaml for a model type
+        with no shape-inference support (e.g. a Monai-backed CFM variant)
+        fell through to shape-inference and crashed with UnboundLocalError,
+        because the old check gated on *how* config_path was obtained
+        (auto-discovered vs explicit) rather than on the file itself.
+        """
+        cfg = _compose("L1_direct_unet_s0s1")
+        exp_dir = tmp_path / "L1_direct_unet_s0s1"
+        ckpt_dir = exp_dir / "checkpoints"
+        ckpt_dir.mkdir(parents=True)
+        resolved_path = exp_dir / RESOLVED_CONFIG_FILENAME
+        OmegaConf.save(cfg, str(resolved_path), resolve=True)
+
+        model = DirectUNet(state_dim=24, hidden_channels=[64, 128, 256],
+                           dropout=0.1, param_dim=0, cond_extra_dim=0)
+        ckpt_path = ckpt_dir / "stage1.ckpt"
+        self._save_lightning_ckpt(ckpt_path, model, "direct_unet")
+
+        # Explicit config_path, not auto-discovery.
+        loaded, loaded_cfg = load_model(str(ckpt_path), config_path=str(resolved_path))
+
+        assert isinstance(loaded, DirectUNet)
+        assert loaded_cfg.model.model_type == "direct_unet"
+        src, dst = model.state_dict(), loaded.state_dict()
+        assert set(src) == set(dst)
+        for k in src:
+            assert torch.allclose(src[k], dst[k]), k
+
     def test_overrides_reach_the_model_on_auto_discovered_config_path(self, tmp_path):
         """overrides must reach the model when built via train.model_factory
         too, not just the legacy flat/shape-inferred path -- L2b trains
@@ -161,10 +194,11 @@ class TestLoadCheckpointPrefersResolvedConfig:
         assert list(cfg.model.hidden_channels) == [32, 64, 128]
 
     def test_explicit_config_path_is_not_treated_as_resolved(self, tmp_path):
-        """An explicitly-passed --config (possibly an incomplete raw preset)
-        must keep going through the tolerant partial-merge path, not the
-        strict train.model_factory path -- only *auto-discovered*
-        resolved_config.yaml files are trusted to be fully field-complete.
+        """An explicitly-passed --config that is NOT named resolved_config.yaml
+        (possibly an incomplete raw preset) must keep going through the
+        tolerant partial-merge path, not the strict train.model_factory path
+        -- only a file literally named resolved_config.yaml is trusted to be
+        fully field-complete, regardless of auto-discovery vs explicit path.
         """
         from models.vanilla_cfm import TweedieCFM
 

@@ -109,7 +109,7 @@ def main():
 
     dataset, dataloaders, obs_var_indices = prepare_dataset(
         cfg, dataset_path, args.num_windows, args.obs_interval, obs_j=args.obs_j,
-        norm_stats=norm_stats,
+        norm_stats=norm_stats, batch_size=args.batch_size,
     )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")

@@ -76,7 +76,8 @@ class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
                  obs_var_indices=None, use_biased_params: bool = False,
-                 resample_bias_draws: bool = False, bias_max: float = 0.2):
+                 resample_bias_draws: bool = False, bias_max: float = 0.2,
+                 noisy_da_bias: bool = False, noisy_da_max: float = 1.5):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -88,11 +89,24 @@ class FlowMatchingDataset(Dataset):
         self.use_biased_params = use_biased_params
         self.resample_bias_draws = resample_bias_draws
         self.bias_max = bias_max
+        self.noisy_da_bias = noisy_da_bias
+        self.noisy_da_max = noisy_da_max
 
     def __len__(self):
         return len(self.source)
 
     def _extract_params(self, w):
+        if self.noisy_da_bias:
+            # Fresh per-access sample of a random fraction (0 to noisy_da_max,
+            # e.g. up to 1.5x) of the window's own true->DA bias, rather than
+            # always the full (fraction=1.0) DA bias or a bias-agnostic jitter.
+            # S0 windows carry no *_da entries, so _l96_biased_param_vector
+            # falls back to the true value there (bias vector = 0, so this is
+            # a no-op on S0 regardless of the sampled fraction).
+            true_vec = _l96_true_param_vector(w)
+            da_vec = _l96_biased_param_vector(w)
+            frac = torch.empty(len(true_vec)).uniform_(0.0, self.noisy_da_max)
+            return tuple(t + float(f) * (d - t) for t, d, f in zip(true_vec, da_vec, frac.tolist()))
         if self.resample_bias_draws:
             true = tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0))
                          for n in self.param_names)

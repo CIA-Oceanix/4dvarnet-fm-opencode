@@ -1,5 +1,136 @@
 # Changelog
 
+## 2026-09-09: Fix silent `use_cosine_scheduler` default flip (code review)
+
+**Summary:** The cosine-scheduler generalization below ("L96 monai-backbone
+tier sweep") correctly removed `use_cosine_scheduler`'s `model_type in
+("fourdvarnet", "fourdvarnet_cfm")` gate, but in doing so also silently
+flipped its *default value* from `False` to `True` in five places
+(`training/lightning_module.py`'s `LitModel.__init__`, `training/
+pipeline.py`, and three `stage_cfg.get(...)` call sites in `train.py`).
+`config/lorenz96_default.yaml` and 71/82 `config/experiment/*.yaml` files
+never set this key, so the flip wasn't a no-op: re-running any of those
+configs (including this session's own flat-LR baselines that the report
+explicitly contrasts against their `_cosine` siblings) would have silently
+switched them to cosine-annealed LR, contradicting their documented purpose.
+
+**Files modified:** `training/lightning_module.py`, `training/pipeline.py`,
+`train.py` (3 call sites) -- reverted the default back to `False`;
+`tests/test_lightning_module.py` -- fixed `TestCosineScheduler` (renamed
+`test_use_cosine_scheduler_defaults_to_true` ->
+`test_use_cosine_scheduler_defaults_to_false`, updated assertion) and a
+stale docstring in `_make_lit_cfm` that contrasted against the old default.
+
+**Rationale:** Caught by `rfablet-review` on PR #176: the model-type-gate
+removal was correct and intentional (any model type's config can now opt
+in), but the default should stay an explicit per-config opt-in
+(`training.stage1.use_cosine_scheduler: true`, already present in every
+`_cosine`-suffixed config -- verified none of the 11 configs that reference
+this key rely on the default), not a global behavior change silently
+affecting ~60 unrelated, untouched experiment configs.
+
+**Verification:** `pytest tests/test_lightning_module.py
+tests/test_config_persistence.py tests/test_estimate_metrics.py` (39
+passed); confirmed via `grep` that every config referencing
+`use_cosine_scheduler` sets it explicitly (none depend on the default).
+
+## 2026-09-09: FDV1+SDA1/SDA2(monai) hybrid coherence eval + final report regeneration
+
+**Summary:** Ran the FDV1-mean-warm-started SDA1/SDA2 hybrids (ens30, S0/S1)
+for coherence with the already-evaluated FDV1+SDA3 hybrid, using the same
+`eval_sda_mean_hybrid_l96.py`/`tau0=0.3`/`guidance_weight=2.0` recipe (see
+`4dvarnet-fm-fdv-monai`'s CHANGELOG). All three FDV1+SDA variants land within
+noise of each other (RMSE 0.385/0.380 SDA1, 0.385/0.380 SDA2, 0.378/0.374
+SDA3 on S0/S1) -- SDA3's noisy-params conditioning gives it a small but
+consistent edge, confirming the earlier single-variant finding wasn't a
+fluke. Symlinked both result dirs into `experiments/` (mirroring
+`FDV1_SDA3_monai_hybrid`) and regenerated the consolidated report; both
+built-in consistency checks (DA cache vs recomputed, neural stored truth vs
+dataset) still PASS.
+
+**Files modified:** `reports/l96/outputs/l96_consolidated_benchmark.md`,
+`reports/l96/outputs/figs/l96_hovm_*.png` (regenerated); bumped
+`batch/run_l96_consolidated_report.sbatch` to 140G (more `members_*.npz` now
+loaded simultaneously).
+
+**Rationale:** The user asked for FDV1+SDA1/SDA2 specifically for coherence
+with FDV1+SDA3, plus a widened reconstruction-figure comparison (best scheme
+per subcategory) and an explicit Obs row -- both already wired into the
+report generator; this entry is the eval run + regeneration that populates
+them with real data.
+
+**Verification:** job 52754 (`4dvarnet-fm-fdv-monai`) COMPLETED; report
+regeneration job 52757 COMPLETED with both consistency checks PASS; manual
+inspection of `l96_hovm_s0_worst.png` confirms the Obs row renders correctly
+(sparse/blank at unobserved times, real noisy values at observed times) and
+the figure now compares 7 methods (best-of-subcategory).
+
+## 2026-09-09: Consolidated benchmark: monai schemes, per-trajectory detail, CRPS, Obs row
+
+**Summary:** Extends `reports/l96/generate_l96_consolidated_report.py` with every
+monai-backbone scheme evaluated this session -- DirectUNet (S+/M-flat/M-cosine/
+L-cosine), VanillaCFM (M-flat/M-cosine/S+-cosine), SDA1/2/3, DirectUNet+SDA1/2/3
+warm-started hybrids, FDV1(monai), and FDV1+SDA1/2/3 hybrids (the latter two
+symlinked in from the sibling `4dvarnet-fm-fdv-monai` worktree, since
+`experiments/` is gitignored per-worktree) -- alongside the existing DA
+baselines and historical L-series rows. **FDV1+SDA3 is the best scheme found
+this session**: ens30 S0/S1 RMSE 0.378/0.374, EV 0.941/0.942 (see the
+dedicated `FDV1+SDA3` PR on the `4dvarnet-fm-fdv-monai` branch for how it was
+found). Adds a new "Per-trajectory detail" section (`per_window_rmse_ev`/
+`per_window_ensemble_crps`/`per_window_deterministic_crps` in
+`evaluation/estimate_metrics.py`) reporting mean +/- std across the ~200 test
+windows -- not just the pooled metric -- for the DA baselines + every monai
+scheme (`MONAI_ROWS`/`PER_WINDOW_ROWS`), including CRPS (the per-dimension
+Energy Score, proper ensemble formula from `members_*.npz` where available,
+N=1 MAE-equivalent otherwise, marked `*`). Widens the Hovmöller reconstruction
+figures' default comparison to the best scheme in every subcategory (DA,
+DirectUNet, CFM, SDA, DirectUNet+SDA, FDV1, FDV1+SDA -- 7 rows) and adds an
+explicit **Obs row** (the actual noisy observed values, NaN at unobserved
+timesteps, plus the real observation noise `|obs - truth|` in the error
+columns) between Truth and the model rows -- previously only obs *times* were
+marked as dotted lines on the truth row, not the observed *values* themselves.
+
+**Performance fix (not just a feature):** the per-window ensemble CRPS
+originally materialized a full `(M, M, T, D)` pairwise-difference array per
+window in a Python loop -- `O(M^2)` per cell, ~200 iterations of ~500MB
+temporaries at `M=30, T=3000` -- which OOM'd this interactive session's 16G
+cgroup and, even at 96G via a dedicated sbatch job, hit a 30-minute time
+limit with zero progress logged. Replaced with the standard order-statistic
+identity (sort each window/timestep/dim's M values ascending, weighted sum
+with coefficients `2k-M+1`) -- `O(M log M)`, no `(M,M)` intermediate ever
+materialized, no Python loop over windows at all. Verified numerically
+identical (float64) to the naive formula on synthetic data; real full-report
+regeneration (16 rows x 2 cases, most needing the ensemble CRPS) dropped from
+"never finishes" to 7-8 minutes.
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` -- `MONAI_ROWS`,
+  `PER_WINDOW_ROWS`, `short_name`/`SCHEME_DESCRIPTIONS` entries for every new
+  row, `collect_per_window_values`/`fmt_per_window_table`, `plot_hovmoller`'s
+  new Obs row (`obs_win` param, `nanmin`/`nanmax`/`nanpercentile` since the
+  Obs row is NaN outside observed times), widened `DEFAULT_FIGURE_METHODS`.
+- `evaluation/estimate_metrics.py`, `tests/test_estimate_metrics.py` --
+  `per_window_rmse_ev`, `per_window_ensemble_crps` (with the O(M log M)
+  rewrite), `per_window_deterministic_crps`; 16 new tests.
+- `batch/run_l96_consolidated_report.sbatch` (new) -- regenerates the report
+  with 96G (the interactive session's 16G cgroup OOM'd on the ensemble CRPS
+  computation before the O(M log M) fix).
+
+**Rationale:** The pooled metrics tell you the average; per-window mean+/-std
+tells you how much reconstruction quality actually varies window-to-window,
+which matters for a DA-style benchmark where individual-window failures are
+often more interesting than the average. The Obs row makes an implicit
+convention (dotted lines = obs times) into an explicit, literal answer to
+"what did the model actually see."
+
+**Verification:** `pytest tests/test_estimate_metrics.py` (16 passed);
+`ruff check evaluation/estimate_metrics.py reports/l96/generate_l96_consolidated_report.py`
+clean (2 pre-existing, unrelated `SIM115` issues in code this change doesn't
+touch); manual synthetic-data unit check of the Obs row rendering; multiple
+full report regenerations via the sbatch script, each verifying both
+consistency checks (DA cache vs recomputed, neural stored truth vs dataset)
+still PASS.
+
 ## 2026-09-08: torch.compile / JAX investigation notes for FDV
 
 **Summary:** New `docs/fdv_torch_compile_and_jax_notes.md`: records why
@@ -235,6 +366,124 @@ GPU memory (not wall-clock) is the binding constraint -- e.g. before scaling
 
 **Verification:** ran the script directly on GPU (`fdv` conda env);
 `ruff check reports/l96/generate_l96_grad_checkpoint_benchmark.py` clean.
+
+## 2026-09-08: L96 monai-backbone tier sweep: DirectUNet/VanillaCFM S+/M/L + cosine scheduler
+
+**Summary:** Adds the S+/M/L complexity-tier x {flat, cosine-annealed} LR
+sweep for DirectUNet(monai) and VanillaCFM(monai) (`config/experiment/
+L1b_monai_unet_s0s1_norm{_splus,,_l}{_cosine,}.yaml`, `L2b_monai_vanilla_cfm_
+s0s1_norm{_splus,,_l}{_cosine,}.yaml`). Generalizes `use_cosine_scheduler`
+support in `training/lightning_module.py`/`training/pipeline.py`: it was
+previously gated to `model_type in ("fourdvarnet", "fourdvarnet_cfm")` only
+(added for FDV2's trainable-`prior_weight` stabilization, PR #168) --
+removed that restriction so any model type's config can opt in via
+`training.stage1.use_cosine_scheduler: true`. **Real finding:** cosine
+annealing fixed the L-tier DirectUNet(monai) instability that made it the
+worst tier under a flat LR (RMSE 0.77-0.89 across two seeds) -- with cosine,
+L becomes the *best* DirectUNet tier (RMSE 0.487/0.487), a materially
+different conclusion than the flat-LR sweep alone would have given.
+
+**Files modified:**
+- `config/experiment/L1b_monai_unet_s0s1_norm{_splus,,_l}{_cosine,}.yaml`,
+  `L2b_monai_vanilla_cfm_s0s1_norm{_splus,,_l}{_cosine,}.yaml` (new).
+- `training/lightning_module.py` -- `use_cosine_scheduler` no longer
+  model-type-gated; `monai_vanilla_cfm`/`monai_sda_prior*` loss dispatch.
+- `training/pipeline.py` -- threads `use_cosine_scheduler`/`max_epochs`
+  through to `LitModel` (previously only wired for the eval-time path).
+- `batch/run_l96_monai_norm_tiers_cosine_train.sbatch`,
+  `run_l96_monai_vanilla_cfm_tiers_cosine_train.sbatch` (new) -- sequential
+  S+/M/L training+eval, one GPU each.
+
+**Rationale:** A flat-LR-only capacity sweep can silently mislead a
+"reference architecture" choice if instability at a given tier is actually
+an optimizer artifact, not a real capacity limitation -- worth checking
+before concluding a wider backbone doesn't help.
+
+**Verification:** `pytest tests/test_lightning_module.py` (passing, extended
+with monai-type coverage). Full training+eval runs for all six DirectUNet/
+CFM tier x scheduler combinations, each completing cleanly on an RTX8000.
+Note: the CFM L-tier (cosine) training run hit its SLURM time limit at epoch
+260/400 and did not complete -- excluded from the benchmark until relaunched
+with a longer budget.
+
+## 2026-09-08: SDA1/2/3(monai) training + eval_sda_l96.py normalization/batch-size fixes
+
+**Summary:** Adds monai-backbone SDA training configs
+(`SDA{1,2,3}_monai_..._l96_norm.yaml`, M-tier, `data.normalize=true`) and a
+non-monai `SDA3_cond_noisy_l96.yaml` companion (SDA2's params+forcing-
+conditioned prior, but trained on a noisy per-window params estimate instead
+of the true value -- `data.noisy_da_bias`/`noisy_da_max`, a fresh random
+0-1.5x fraction of the true-to-DA bias resampled every access, implemented in
+`data/dataloader.py::FlowMatchingDataset._extract_params`). Fixes two real
+bugs in `eval_sda_l96.py`: (1) no `--normalize-stats` support at all (added,
+mirroring `eval_neural_l96.py`'s existing pattern: normalize obs into both
+the model and the guidance cost, denormalize the sampled trajectories/members
+before scoring; `--r-var` is deliberately NOT rescaled since
+`sda_guided_sample`'s gradient-normalization step provably cancels any
+positive `R_var` scale factor -- verified empirically, R_var=0.5 vs 50.0 give
+trajectories differing only by float32 noise); (2) `--batch-size` was parsed
+but never forwarded to `prepare_dataset` (silently defaulting to 200) --
+guided sampling's real backward pass through all 200 windows at once
+reproducibly OOM'd (13.41GiB single allocation) even for the M-tier backbone;
+fixed by threading `args.batch_size` through, confirmed working at 16.
+`guidance_weight=40` (the established pure-noise-start convention from the
+original non-monai SDA benchmark) is required -- the CLI default of 1.0 gives
+RMSE ~1.76/EV~0 vs ~0.55/0.88 at 40.
+
+**Files modified:**
+- `config/experiment/SDA{1,2,3}_monai_..._l96_norm.yaml`,
+  `SDA3_cond_noisy_l96.yaml` (new).
+- `eval_sda_l96.py` -- `--normalize-stats`, `batch_size` fix.
+- `data/dataloader.py` -- `noisy_da_bias`/`noisy_da_max` support.
+- `batch/run_l96_sda_monai_tiers_train.sbatch`,
+  `run_l96_cfm_sda_ens30_eval*.sbatch`,
+  `run_l96_sda{1,2,3}_monai_norm_train.sbatch`,
+  `run_l96_vanilla_cfm_norm_eval_only.sbatch`,
+  `run_l96_l2b_vanilla_cfm_norm_train.sbatch`,
+  `run_l96_monai_norm_{l,m}*.sbatch` (new/supporting launch scripts).
+
+**Rationale:** Both bugs were caught by comparing a real training run's
+in-training numbers against the standalone eval script's output on the same
+checkpoint -- a recurring, cheap sanity check this session (also caught the
+FDV1 `--n-outer` bug on the sibling `4dvarnet-fm-fdv-monai` worktree the same
+way).
+
+**Verification:** Full ens30 S0/S1 training+eval for SDA1/2/3(monai)
+completed cleanly (RTX8000/L40S, chosen by real-time cluster availability --
+this workload doesn't need a faster GPU: it's a single UNet forward per
+training step, not an unrolled solver, unlike FDV).
+
+## 2026-09-09: DirectUNet-M-warm-started SDA guided-sampling hybrid
+
+**Summary:** Adds `eval_sda_directunet_hybrid_l96.py` and
+`sweep_sda_directunet_hybrid_l96.py`: SDA's guided sampling
+(`evaluation/sda_sampler.py`'s SDEdit-style `mean_estimate`/`tau0` warm start,
+previously only used for the non-monai FDV1+SDA hybrids) now also
+warm-starts from DirectUNet-M(monai)'s point estimate -- i.e. SDA samples the
+*anomaly* around DirectUNet's reconstruction instead of starting from pure
+noise. An S0-only grid sweep (`tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈
+{0,1,2,5,10,40,100}`, matching the FDV1+SDA hybrids' original sweep
+methodology) converged on `tau0=0.3`/`guidance_weight=2.0` for all three SDA
+variants. **DirectUNet+SDA3 was the best scheme in the table until FDV1+SDA3
+(on the sibling `4dvarnet-fm-fdv-monai` worktree) beat it**: ens30 S0/S1 RMSE
+0.420/0.418 vs DirectUNet-M alone's 0.501/0.503 and SDA3 alone's 0.537/0.536.
+
+**Files modified:**
+- `eval_sda_directunet_hybrid_l96.py`, `sweep_sda_directunet_hybrid_l96.py`
+  (new).
+- `batch/run_l96_sda_directunet_hybrid_sweep.sbatch`,
+  `run_l96_sda_directunet_hybrid_ens30.sbatch`,
+  `run_l96_cfm_sda_ens30_eval{,_ready}.sbatch` (new).
+
+**Rationale:** Once both DirectUNet(monai) and SDA(monai) were trained
+separately, combining them via the warm-start mechanism already built for
+the (non-monai) FDV1+SDA hybrids was a natural, cheap (same NFE budget)
+next question.
+
+**Verification:** `pytest tests/test_estimate_metrics.py` and the existing
+SDA sampler tests unaffected. Full ens30 S0/S1 sweep + eval runs completed
+cleanly on RTX8000 (idle-node-pinned via `--nodelist`, per real-time
+`sinfo` checks, to avoid contending with concurrently-running training jobs).
 
 ## 2026-09-08: Gradient checkpointing for the FourDVarNet unrolled solver loop
 

@@ -31,7 +31,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from evaluation.estimate_metrics import evaluate_estimates
+from evaluation.estimate_metrics import (
+    evaluate_estimates,
+    per_window_deterministic_crps,
+    per_window_ensemble_crps,
+    per_window_rmse_ev,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -67,6 +72,47 @@ NEURAL_EXP_DIRS = [
     "FDV1_SDA1_hybrid_l96",
     "FDV1_SDA2_hybrid_l96",
     "FDV1_FDV1CFM_hybrid_l96",
+    "L1b_monai_unet_s0s1_norm_splus_cosine",
+    "L1b_monai_unet_s0s1_norm",
+    "L1b_monai_unet_s0s1_norm_cosine",
+    "L1b_monai_unet_s0s1_norm_l_cosine",
+    "L2b_monai_vanilla_cfm_s0s1_norm",
+    "L2b_monai_vanilla_cfm_s0s1_norm_cosine",
+    "L2b_monai_vanilla_cfm_s0s1_norm_splus_cosine",
+    "SDA1_monai_prior_l96_norm",
+    "SDA2_monai_cond_mixed_l96_norm",
+    "SDA3_monai_cond_noisy_l96_norm",
+    "SDA1_monai_prior_l96_norm/directunet_hybrid",
+    "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid",
+    "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid",
+    "FDV1_unrolled_monai_unet_l96",
+    "FDV1_SDA3_monai_hybrid",
+    "FDV1_SDA1_monai_hybrid",
+    "FDV1_SDA2_monai_hybrid",
+]
+
+# The monai-backbone subset of NEURAL_EXP_DIRS -- used to scope the
+# per-trajectory (mean +/- std across windows) detail table to this session's
+# new schemes (plus the DA baselines) rather than re-deriving it for every
+# pre-existing row too.
+MONAI_ROWS = [
+    "L1b_monai_unet_s0s1_norm_splus_cosine",
+    "L1b_monai_unet_s0s1_norm",
+    "L1b_monai_unet_s0s1_norm_cosine",
+    "L1b_monai_unet_s0s1_norm_l_cosine",
+    "L2b_monai_vanilla_cfm_s0s1_norm",
+    "L2b_monai_vanilla_cfm_s0s1_norm_cosine",
+    "L2b_monai_vanilla_cfm_s0s1_norm_splus_cosine",
+    "SDA1_monai_prior_l96_norm",
+    "SDA2_monai_cond_mixed_l96_norm",
+    "SDA3_monai_cond_noisy_l96_norm",
+    "SDA1_monai_prior_l96_norm/directunet_hybrid",
+    "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid",
+    "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid",
+    "FDV1_unrolled_monai_unet_l96",
+    "FDV1_SDA3_monai_hybrid",
+    "FDV1_SDA1_monai_hybrid",
+    "FDV1_SDA2_monai_hybrid",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
@@ -75,7 +121,10 @@ NEURAL_EXP_DIRS = [
 # DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
 N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
                  "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
-                 "L6_vanilla_cfm_s0s1_forcing_cond", "FDV1_unrolled_unet_l96"}
+                 "L6_vanilla_cfm_s0s1_forcing_cond", "FDV1_unrolled_unet_l96",
+                 "L1b_monai_unet_s0s1_norm_splus_cosine", "L1b_monai_unet_s0s1_norm",
+                 "L1b_monai_unet_s0s1_norm_cosine", "L1b_monai_unet_s0s1_norm_l_cosine",
+                 "FDV1_unrolled_monai_unet_l96"}
 
 # Methods evaluated as N=30 ensembles (proper ensemble ES, not the N=1 MAE
 # proxy). L3, V2 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
@@ -126,14 +175,25 @@ ENS30_DIRS = {
 # S0 was the original ens30 study (dual-convention JSON); S1 the bug-fixed
 # single-ES follow-up (see PLAN.md "L3 ens30 on S1").
 L3_ENS30_DIR = ENS30_DIRS["L3_vanilla_cfm_s0s1"]
+# Best-of-each-family monai-backbone comparison (2026-09-08/09 session): best
+# DA scheme (Strong-4DVar) vs best DirectUNet (L-tier, cosine-annealed -- the
+# cosine schedule fixed an instability that made flat-LR L-tier much worse
+# than M-tier) vs best VanillaCFM (M-tier, flat LR -- cosine was a wash here)
+# vs best plain SDA (SDA3, noisy-params conditioning) vs best DirectUNet+SDA
+# hybrid (SDA3 warm-started from DirectUNet-M, tau0=0.3/guidance_weight=2.0 --
+# all three SDA variants converged on the same hyperparameters in the sweep,
+# SDA3 edged out SDA1/SDA2 on RMSE).
 DEFAULT_FIGURE_METHODS = [
     "Strong-4DVar",
-    "EnKF",
-    "ETKF",
-    "L4_direct_unet_s0s1_small",
-    "L2b_vanilla_cfm_s0s1",
+    "L1b_monai_unet_s0s1_norm_l_cosine",
+    "L2b_monai_vanilla_cfm_s0s1_norm",
+    "SDA3_monai_cond_noisy_l96_norm",
+    "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid",
+    "FDV1_unrolled_monai_unet_l96",
+    "FDV1_SDA3_monai_hybrid",
 ]
 DA_METHODS = ["ETKF", "EnKF", "Strong-4DVar"]
+PER_WINDOW_ROWS = DA_METHODS + MONAI_ROWS
 RANKS = ["worst", "median", "best"]
 CASES = ["s0", "s1"]
 GROUPS = ("all_obs", "slow", "obs_fast")
@@ -245,6 +305,84 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "Evaluated as a 30-member ensemble (`ens30×10`, N=30); no clamp activations observed in this "
       "evaluation (unlike FDV1CFM alone) since the shorter, better-anchored trajectory has much less "
       "room to diverge.")),
+    ("L1b_monai_unet_s0s1_norm_splus_cosine", "Neural (DirectUNet, monai backbone)",
+     ("MonaiUNet1D backbone (FiLM-conditioned ResBlocks vs UNet1D's additive-only conditioning; "
+      "`models/monai_unet_adapter.py`) swapped into L1b's single-pass regression, plus per-channel "
+      "z-score normalization (`data.normalize=true`); S+ capacity tier (hidden [32,64,128], "
+      "1.48M params), cosine-annealed LR; 200 epochs.")),
+    ("L1b_monai_unet_s0s1_norm", "Neural (DirectUNet, monai backbone)",
+     ("As above, M capacity tier (hidden [64,128,256], 5.89M params), flat LR; 200 epochs.")),
+    ("L1b_monai_unet_s0s1_norm_cosine", "Neural (DirectUNet, monai backbone)",
+     ("As above, M tier, cosine-annealed LR (near-identical to the flat-LR M result -- cosine's "
+      "gain is tier-dependent, see the L tier below).")),
+    ("L1b_monai_unet_s0s1_norm_l_cosine", "Neural (DirectUNet, monai backbone)",
+     ("As above, L capacity tier (hidden [128,256,512], 23.5M params), cosine-annealed LR. Flat LR "
+      "at this tier was badly unstable (RMSE 0.77-0.89 across two seeds, worse than S+/M); cosine "
+      "annealing fixed it entirely, making L the best DirectUNet tier overall. Its DA-benchmark eval "
+      "needs a reduced `--batch-size` (16, not the 200 default) -- the wider bottleneck OOMs a "
+      "single-batch pass at 200 (26.8GiB attention-adjacent allocation on a 44GB GPU).")),
+    ("L2b_monai_vanilla_cfm_s0s1_norm", "Neural (CFM, τ=0, monai backbone)",
+     ("MonaiUNet1D backbone swapped into L2b's τ=0 CFM, plus per-channel normalization; M tier, "
+      "flat LR; 400 epochs. Best single monai-backbone result of the non-hybrid schemes.")),
+    ("L2b_monai_vanilla_cfm_s0s1_norm_cosine", "Neural (CFM, τ=0, monai backbone)",
+     "As above, cosine-annealed LR (near-identical to flat -- a wash for this tier)."),
+    ("L2b_monai_vanilla_cfm_s0s1_norm_splus_cosine", "Neural (CFM, τ=0, monai backbone)",
+     "As above, S+ capacity tier (hidden [32,64,128]), cosine-annealed LR."),
+    ("SDA1_monai_prior_l96_norm", "Neural (SDA prior + DPS guidance, monai backbone)",
+     ("MonaiUNet1D backbone + per-channel normalization swapped into SDA1's unconditional prior; "
+      "M tier; 400 epochs. Same pure-noise-start guidance convention as the non-monai SDA1 above "
+      "(guidance_weight=40, N_outer=10, R_var=0.5; R_var's value is provably inert here -- the "
+      "DPS step normalizes its own gradient by its norm, which exactly cancels any positive R_var "
+      "scale factor -- verified empirically, R_var=0.5 vs 50.0 give trajectories differing only by "
+      "float32 noise).")),
+    ("SDA2_monai_cond_mixed_l96_norm", "Neural (SDA prior, params+forcing cond. + DPS guidance, monai backbone)",
+     "As SDA1-monai but params+forcing-conditioned, mirroring SDA2-mixed above."),
+    ("SDA3_monai_cond_noisy_l96_norm", "Neural (SDA prior, noisy-params cond. + DPS guidance, monai backbone)",
+     ("As SDA2-monai but conditioned on a per-window noisy params estimate (a fresh random 0-1.5x "
+      "fraction of the true-to-DA bias, `data.noisy_da_bias`/`noisy_da_max`) instead of the true "
+      "params -- tests robustness to imperfect conditioning. Best plain (non-hybrid) SDA result.")),
+    ("SDA1_monai_prior_l96_norm/directunet_hybrid", "Neural (DirectUNet-M mean + SDA1-monai warm-started guidance)",
+     ("Same SDEdit-style warm start as the FDV1+SDA hybrids (`evaluation/sda_sampler.py`'s "
+      "`mean_estimate`/`tau0`), but warm-starting from DirectUNet-M(monai)'s frozen point estimate "
+      "instead of FDV1's -- i.e. SDA is used to sample the *anomaly* around DirectUNet's "
+      "reconstruction rather than starting from pure noise. `tau0=0.3`, `guidance_weight=2.0` "
+      "(S0-only grid sweep over `tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈{0,1,2,5,10,40,100}`, "
+      "all three SDA variants converged on this same point).")),
+    ("SDA2_monai_cond_mixed_l96_norm/directunet_hybrid", "Neural (DirectUNet-M mean + SDA2-monai warm-started guidance)",
+     "As above, warm-starting SDA2-monai (params+forcing-conditioned) instead of SDA1-monai."),
+    ("SDA3_monai_cond_noisy_l96_norm/directunet_hybrid", "Neural (DirectUNet-M mean + SDA3-monai warm-started guidance)",
+     ("As above, warm-starting SDA3-monai (noisy-params conditioned) instead of SDA1-monai. Best "
+      "RMSE/EV among the DirectUNet-warm-started hybrids -- but see FDV1+SDA3-monai below, which "
+      "beats it comfortably by swapping in a better mean-estimate model.")),
+    ("FDV1_unrolled_monai_unet_l96", "Neural (4DVarNet-style unrolled solver, monai backbone)",
+     ("MonaiUNet1D backbone (`unet_backbone=monai`, `models/fourdvarnet.py::FourDVarNetSolver`) "
+      "swapped into FDV1's `obs+state` unrolled solver (`x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, "
+      "N_outer=10, zero-initialized, deterministic, no ensemble); M tier; 400 epochs. Rebased its "
+      "branch onto `origin/master` first to pick up gradient checkpointing (PR #172), which fixes "
+      "an earlier CUDA-OOM this exact backbone+solver combination hit at production scale. "
+      "**Note:** its first eval attempt gave a nonsensical RMSE 3.47/EV -3.75 -- traced to "
+      "`eval_neural_l96.py`'s `--n-outer` CLI default (1), which is correct for tau0-only CFM but "
+      "silently starves this solver's zero-init refinement of the N_outer=10 iterations it needs; "
+      "fixed by passing `--n-outer 10` explicitly, recovering a sane, in fact excellent, result.")),
+    ("FDV1_SDA3_monai_hybrid", "Neural (FDV1-monai mean + SDA3-monai warm-started guidance)",
+     ("Same SDEdit-style warm start as the DirectUNet+SDA hybrids above, but swapping in FDV1-monai "
+      "(the unrolled solver) as the mean-estimate model instead of DirectUNet-M -- SDA3-monai is used "
+      "to sample the anomaly around FDV1's point estimate. `tau0=0.3`, `guidance_weight=2.0` (own "
+      "S0-only sweep over `tau0∈{0.1..0.5}×guidance_weight∈{0.5,1,2,5}`, converged on the exact same "
+      "point as the DirectUNet+SDA hybrids' independent sweep). One real wrinkle specific to this "
+      "combination: FDV1-monai was trained WITHOUT `data.normalize=true` (unlike DirectUNet-M/SDA3, "
+      "which share that normalized space) -- feeding it normalized obs (as SDA expects) silently "
+      "produced a garbage mean estimate that poisoned the whole hybrid (confirmed: RMSE 1.36/EV 0.35) "
+      "before this was caught; fixed by preparing a SEPARATE raw-obs dataloader for FDV1's own "
+      "`.sample()` call and normalizing its output before handing it to SDA as the warm start. "
+      "**Best scheme in this table overall.**")),
+    ("FDV1_SDA1_monai_hybrid", "Neural (FDV1-monai mean + SDA1-monai warm-started guidance)",
+     ("As FDV1+SDA3-monai but warm-starting SDA1-monai (unconditional prior) instead of SDA3-monai, "
+      "for coherence with the DirectUNet+SDA1/2/3 family above. Same `tau0=0.3`/`guidance_weight=2.0` "
+      "(not re-swept per SDA variant -- three independent sweeps this session all converged on this "
+      "exact point regardless of SDA variant or mean model).")),
+    ("FDV1_SDA2_monai_hybrid", "Neural (FDV1-monai mean + SDA2-monai warm-started guidance)",
+     "As above, warm-starting SDA2-monai (true-params conditioned) instead of SDA1-monai."),
 ]
 
 
@@ -278,6 +416,27 @@ def short_name(name: str) -> str:
         return "FDV1+SDA2"
     if name == "FDV1_FDV1CFM_hybrid_l96":
         return "FDV1+FDV1CFM"
+    MONAI_SHORT_NAMES = {
+        "L1b_monai_unet_s0s1_norm_splus_cosine": "DirectUNet-S+(monai,cos)",
+        "L1b_monai_unet_s0s1_norm": "DirectUNet-M(monai,flat)",
+        "L1b_monai_unet_s0s1_norm_cosine": "DirectUNet-M(monai,cos)",
+        "L1b_monai_unet_s0s1_norm_l_cosine": "DirectUNet-L(monai,cos)",
+        "L2b_monai_vanilla_cfm_s0s1_norm": "CFM-M(monai,flat)",
+        "L2b_monai_vanilla_cfm_s0s1_norm_cosine": "CFM-M(monai,cos)",
+        "L2b_monai_vanilla_cfm_s0s1_norm_splus_cosine": "CFM-S+(monai,cos)",
+        "SDA1_monai_prior_l96_norm": "SDA1(monai)",
+        "SDA2_monai_cond_mixed_l96_norm": "SDA2(monai)",
+        "SDA3_monai_cond_noisy_l96_norm": "SDA3(monai)",
+        "SDA1_monai_prior_l96_norm/directunet_hybrid": "DirectUNet+SDA1",
+        "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid": "DirectUNet+SDA2",
+        "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid": "DirectUNet+SDA3",
+        "FDV1_unrolled_monai_unet_l96": "FDV1(monai)",
+        "FDV1_SDA3_monai_hybrid": "FDV1+SDA3(monai)",
+        "FDV1_SDA1_monai_hybrid": "FDV1+SDA1(monai)",
+        "FDV1_SDA2_monai_hybrid": "FDV1+SDA2(monai)",
+    }
+    if name in MONAI_SHORT_NAMES:
+        return MONAI_SHORT_NAMES[name]
     return name.split("_")[0] if "_" in name else name
 
 
@@ -480,6 +639,71 @@ def collect_metric_values(
     return values, n1_cells
 
 
+def load_members(dirname: str, case: str) -> np.ndarray | None:
+    """Load a row's members_{case}.npz (ensemble spread) if it exists."""
+    npz_path = ROOT / "experiments" / dirname / f"members_{case}.npz"
+    if not npz_path.exists():
+        return None
+    return np.load(npz_path)["members"].astype(np.float64)
+
+
+def collect_per_window_values(
+    row_order: list[str],
+    est: dict[str, dict[str, np.ndarray | None]],
+    truth: dict[str, np.ndarray],
+) -> tuple[dict, set[tuple[str, str]]]:
+    """Per-window (mean +/- std across the ~200 test windows) RMSE/EV/CRPS,
+    scoped to whichever rows the caller passes (this report uses it for
+    ``DA_METHODS + MONAI_ROWS``, not every historical row -- see MONAI_ROWS'
+    docstring). CRPS uses the proper ensemble formula (``members_{case}.npz``)
+    when available, else falls back to the N=1 MAE-equivalent (marked with a
+    returned n1_cells entry, same convention as the pooled ES table)."""
+    values: dict = {"rmse": {}, "ev": {}, "crps": {}}
+    n1_cells: set[tuple[str, str]] = set()
+    for row in row_order:
+        for case in CASES:
+            traj = est[row][case]
+            if traj is None:
+                values["rmse"][(row, case)] = None
+                values["ev"][(row, case)] = None
+                values["crps"][(row, case)] = None
+                continue
+            pw = per_window_rmse_ev(traj, truth[case])
+            values["rmse"][(row, case)] = pw["rmse"]
+            values["ev"][(row, case)] = pw["ev"]
+            members = load_members(row, case)
+            if members is not None:
+                values["crps"][(row, case)] = per_window_ensemble_crps(members, truth[case])
+            else:
+                values["crps"][(row, case)] = per_window_deterministic_crps(traj, truth[case])
+                n1_cells.add((row, case))
+    return values, n1_cells
+
+
+def fmt_per_window_table(
+    title: str,
+    block: dict[tuple[str, str], dict[str, dict[str, float]] | None],
+    row_order: list[str],
+    n1_cells: set[tuple[str, str]] | None = None,
+    is_crps: bool = False,
+) -> str:
+    header = "| Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast |"
+    sep = "|---|---|---|---|---|---|---|"
+    lines = [f"### {title}", "", header, sep]
+    for row in row_order:
+        cells = []
+        for case in CASES:
+            for group in GROUPS:
+                v = block[(row, case)]
+                cell = "  —  " if v is None else f"{v[group]['mean']:.3f}±{v[group]['std']:.3f}"
+                if is_crps and v is not None and n1_cells and (row, case) in n1_cells:
+                    cell += "*"
+                cells.append(cell)
+        lines.append(f"| {short_name(row)} | " + " | ".join(cells) + " |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def fmt_block_table(
     title: str,
     block: dict[tuple[str, str], dict[str, float | None]],
@@ -551,31 +775,51 @@ def plot_hovmoller(
     method_names: list[str],
     est_win: dict[str, np.ndarray],
     truth_win: np.ndarray,
+    obs_win: np.ndarray,
     obs_times: np.ndarray,
     dt: float,
 ) -> None:
-    labels = ["Truth"] + [short_name(m) for m in method_names]
+    # Obs row: the noisy, subsampled observed values actually fed to every
+    # model here (already restricted to the 24D observed subspace, same as
+    # truth_win, and already NaN-filled at unobserved timesteps by the
+    # cached dataset -- rendered as blank/background by pcolormesh, not a
+    # fabricated interpolation). Its "error" column is the actual
+    # observation noise (|obs - truth| at observed times only), not a
+    # reconstruction error -- a genuinely different, useful quantity: how
+    # noisy the raw input is, vs. how good each method's reconstruction is.
+    obs_masked = obs_win
+    labels = ["Truth", "Obs"] + [short_name(m) for m in method_names]
     n_rows = len(labels)
     fig, axes = plt.subplots(n_rows, 4, figsize=(15, 1.35 * n_rows + 1.0), constrained_layout=True)
     t = np.arange(truth_win.shape[0]) * dt
 
-    state_data: list[list[np.ndarray]] = [[truth_win[:, :NO], truth_win[:, NO:]]]
+    state_data: list[list[np.ndarray]] = [
+        [truth_win[:, :NO], truth_win[:, NO:]],
+        [obs_masked[:, :NO], obs_masked[:, NO:]],
+    ]
     for m in method_names:
         state_data.append([est_win[m][:, :NO], est_win[m][:, NO:]])
     err_data = [[np.abs(d - truth_block) for d, truth_block in zip(row, [truth_win[:, :NO], truth_win[:, NO:]])] for row in state_data]
 
     flat_state = [d for row in state_data for d in row]
-    s_vmin = min(d.min() for d in flat_state)
-    s_vmax = max(d.max() for d in flat_state)
-    e_vmax = float(np.percentile(np.concatenate([d.ravel() for row in err_data for d in row]), 99.5))
+    s_vmin = min(np.nanmin(d) for d in flat_state)
+    s_vmax = max(np.nanmax(d) for d in flat_state)
+    e_vmax = float(np.nanpercentile(np.concatenate([d.ravel() for row in err_data for d in row]), 99.5))
     cmap_state = plt.get_cmap("viridis")
     cmap_err = plt.get_cmap("inferno")
 
     im_state = None
     im_err = None
     for r, label in enumerate(labels):
-        win_rmse = float(np.sqrt(np.mean(np.concatenate(err_data[r], axis=1) ** 2)))
-        row_label = label if r == 0 else f"{label}\nRMSE {win_rmse:.3f}"
+        if label == "Obs":
+            # "RMSE" isn't meaningful for the raw observation row (it's data,
+            # not a reconstruction) -- report the actual observation noise
+            # (RMS of |obs - truth| at observed times only) instead.
+            row_rmse = float(np.sqrt(np.nanmean(np.concatenate(err_data[r], axis=1) ** 2)))
+            row_label = f"{label}\nobs noise {row_rmse:.3f}"
+        else:
+            win_rmse = float(np.sqrt(np.mean(np.concatenate(err_data[r], axis=1) ** 2)))
+            row_label = label if r == 0 else f"{label}\nRMSE {win_rmse:.3f}"
         for c in range(4):
             ax = axes[r, c]
             data, cmap, vmin, vmax = (
@@ -646,6 +890,7 @@ def main() -> None:
     table_rows = DA_METHODS + NEURAL_EXP_DIRS
 
     values, n1_cells = collect_metric_values(est, truth, table_rows, da_json_path)
+    pw_values, pw_n1_cells = collect_per_window_values(PER_WINDOW_ROWS, est, truth)
     with open(da_json_path) as f:
         cfg = json.load(f)["config"]
 
@@ -707,6 +952,31 @@ def main() -> None:
             "Strong-4DVar and other neural models are deterministic (N=1)."
         ),
         "",
+        "## Per-trajectory detail: mean +/- std across the 200 test windows",
+        "",
+        (
+            "Every table above pools all windows/timesteps into one number per method. This section "
+            "instead computes RMSE/EV/CRPS **per window** (pooled over that window's own timesteps "
+            "only) and reports the mean +/- std of that per-window distribution across the ~200 test "
+            "windows -- i.e. how much reconstruction quality varies window-to-window, not just its "
+            "average. Scoped to the DA baselines plus this session's monai-backbone schemes (not every "
+            "historical row, to keep this bounded); the pooled tables above already cover everything. "
+            "Note the RMSE means here are systematically a bit lower than the pooled RMSE above -- "
+            "mean(sqrt(x)) <= sqrt(mean(x)) (Jensen's inequality), not a discrepancy."
+        ),
+        "",
+        fmt_per_window_table("RMSE per window (mean +/- std, lower is better)",
+                             pw_values["rmse"], PER_WINDOW_ROWS),
+        fmt_per_window_table("EV per window (mean +/- std, higher is better)",
+                             pw_values["ev"], PER_WINDOW_ROWS),
+        fmt_per_window_table("CRPS per window (mean +/- std, lower is better)",
+                             pw_values["crps"], PER_WINDOW_ROWS, n1_cells=pw_n1_cells, is_crps=True),
+        (
+            "`*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the "
+            "N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension "
+            "Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`."
+        ),
+        "",
         "## Consistency checks",
         "",
         f"- DA cached metrics vs recomputed-from-npz ({n_checked} values): max |Δ| = {da_max_diff:.2e} → "
@@ -739,10 +1009,11 @@ def main() -> None:
             win_idx, sel_rmse = sel[rank]
             w = torch.load(dataset_path, map_location="cpu", weights_only=False)[f"test_{case}"][win_idx]
             obs_times = np.where(w["obs_mask"].numpy())[0]
+            obs_win = w["obs"].numpy().astype(np.float64)
             est_win = {name: est[name][case][win_idx] for name in figure_methods}
             truth_win = truth[case][win_idx]
             fig_path = figs_dir / f"l96_hovm_{case}_{rank}.png"
-            plot_hovmoller(fig_path, case, rank, win_idx, sel_rmse, figure_methods, est_win, truth_win, obs_times, float(cfg.get("dt", 0.001)))
+            plot_hovmoller(fig_path, case, rank, win_idx, sel_rmse, figure_methods, est_win, truth_win, obs_win, obs_times, float(cfg.get("dt", 0.001)))
             logger.info("Figure saved: %s", fig_path)
             cells = [f"{per_window_rmse(est[n][case][win_idx:win_idx + 1], truth_win[None])[0]:.3f}" for n in figure_methods]
             md.append(f"| {case.upper()} | {rank} | {win_idx} | {sel_rmse:.3f} | " + " | ".join(cells) + " |")

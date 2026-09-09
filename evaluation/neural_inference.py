@@ -161,12 +161,7 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
     # at experiments/<exp>/resolved_config.yaml). Any other --config may be a
     # raw experiment preset relying on un-merged defaults (e.g. from
     # lorenz96_default.yaml), so it keeps going through the tolerant
-    # partial-merge path below, as before. (Ported from the
-    # 4dvarnet-fm-l96-eval-config-persist worktree's independently-evolved
-    # fix for the same underlying gap: shape-inference cannot recover a
-    # monai-backbone config for ANY model type, not just FourDVarNetSolver,
-    # so trusting an explicitly-passed resolved_config.yaml generalizes the
-    # narrower fourdvarnet-only special case below to every model type.)
+    # partial-merge path below, as before.
     if config_path is None:
         config_path = _find_resolved_config(checkpoint_path)
         if config_path:
