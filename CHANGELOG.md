@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-09-09: L96 fast-Y observation-density-augmented TRAINING (DirectUNet-L/CFM-M)
+
+**Summary:** Follow-on to the obs-density generalization sweep below, which found DirectUNet-L/
+CFM-M degrade ~1.9-2.8x RMSE under randomly reduced fast-Y observation density while SDA3
+degrades much more gracefully with zero retraining. Added a TRAINING-time counterpart: randomly
+reduce fast-Y density during training too (mixing full-density and randomly-reduced-density
+observation events, redrawn every batch), so DirectUNet/CFM stop treating a dropped channel as
+an untrained-for input. SDA3/hybrid are out of scope (already robust without retraining).
+
+**Files modified:**
+- `evaluation/obs_density.py` -> `data/obs_density.py` (relocated -- now consumed by both
+  `evaluation/` and `data/`/`train.py`, so `data/` is the correct home).
+- `data/obs_density.py` -- new `random_variable_keep_mask` (per-slice-varying `keep_k`) and
+  `sample_training_density_mask` (full_prob-gated mixture of full/randomly-reduced density).
+- `data/dataloader.py::make_collate_fm` -- new `obs_density_cfg` param (default `None`, true
+  no-op).
+- `train.py::make_l96_dataloaders` -- train and val now use different collate fns; augmentation
+  applies to train only. Wired from new `conf/schema.py::DataConfig` fields
+  `obs_density_augment`/`obs_density_full_prob`/`obs_density_min_keep` (all default off/0.4/0).
+- `config/experiment/L1b_monai_unet_s0s1_norm_l_cosine_obsdensity.yaml`,
+  `L2b_monai_vanilla_cfm_s0s1_norm_obsdensity.yaml` (new) -- augmented variants of the current
+  best-of-subcategory checkpoints, architecture/hyperparameters otherwise identical.
+- `tests/test_obs_density.py`, `tests/test_l96_normalization.py`,
+  `tests/test_joint_estimation_l96_neural.py` -- new/extended coverage for the mask functions,
+  collate wiring, and train-only application.
+
+**Rationale:** No existing precedent in this codebase for a "sometimes augment" mixing scheme
+(checked: `noisy_da_bias` always randomizes, never skips) -- the `full_prob` mixture (default
+0.4 chance of full density, else uniform `keep_k` in `{0,...,15}`) is a deliberate design choice
+so the model doesn't lose sharpness on the still-common canonical case while learning a smooth
+degradation response across the whole density spectrum, not just eval's 4 discrete test points.
+Val/test are never augmented so their loss/metrics stay comparable across epochs and against the
+eval protocol.
+
+**Verification:** New/extended unit tests green; 1-epoch smoke tests of both new configs against
+real checkpoints/normalize-stats passed end-to-end (tiny window counts, no crashes); full
+`pytest` run mirroring the CI whitelist green (410 passed). Actual full-scale training
+(200/400 epochs) is a follow-up once this merges, then re-evaluated via `eval_obs_density_l96.py`
+(unchanged) for a direct before/after comparison.
+
 ## 2026-09-09: L96 fast-Y observation-density generalization study (implementation)
 
 **Summary:** Implemented an inference-time-only (no retraining) generalization test for

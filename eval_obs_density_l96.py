@@ -10,7 +10,7 @@ canonical fast-Y channels (2 per slow node), only ``keep_k`` are kept,
 harder OOD test vs. a fixed-per-window mask). The 8 slow-X channels always
 stay fully observed. ``keep_k=16`` is the full-density sanity check and must
 reproduce each scheme's canonical benchmark numbers exactly (see
-``evaluation/obs_density.py`` for the masking mechanics and the important
+``data/obs_density.py`` for the masking mechanics and the important
 caveat: DirectUNet/CFM never see a mask channel, only ``obs`` itself -- a
 dropped channel is indistinguishable from a genuine near-zero observation for
 them, unlike SDA's guidance cost which excludes it cleanly).
@@ -46,7 +46,7 @@ from evaluation.neural_inference import (
     prepare_dataset,
     run_inference,
 )
-from evaluation.obs_density import (
+from data.obs_density import (
     NUM_FAST,
     apply_density_mask_to_obs,
     fast_channel_keep_mask,

@@ -32,7 +32,7 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
     ``obs_channel_mask`` (optional; mutually exclusive with ``obs_indices``)
     is a boolean ``(..., D)`` mask broadcastable against ``x_hat_1``/``y``
     that may vary PER TIMESTEP (and per batch element) -- e.g.
-    ``evaluation/obs_density.py::fast_channel_keep_mask``'s per-(window,
+    ``data/obs_density.py::fast_channel_keep_mask``'s per-(window,
     obs-time) random fast-Y channel keep-mask for the observation-density
     generalization study. Combined multiplicatively with the temporal
     ``obs_mask`` rather than slicing (a per-timestep-varying subset can't be

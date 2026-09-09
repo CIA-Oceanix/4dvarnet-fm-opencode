@@ -78,9 +78,13 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None, use_biased_params=False,
                          resample_bias_draws=False, bias_max=0.2, norm_stats=None,
-                         noisy_da_bias=False, noisy_da_max=1.5):
-    kw = dict(batch_size=batch_size, collate_fn=make_collate_fm(norm_stats),
-              num_workers=4, pin_memory=True)
+                         noisy_da_bias=False, noisy_da_max=1.5, obs_density_cfg=None):
+    # obs_density_cfg (see make_collate_fm) is TRAINING-only augmentation --
+    # val must stay at full canonical density so its loss/metrics remain
+    # comparable across epochs and against the eval protocol
+    # (eval_obs_density_l96.py sweeps density separately, at eval time, on
+    # top of a checkpoint trained with or without this augmentation).
+    kw = dict(batch_size=batch_size, num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
                  obs_var_indices=obs_var_indices,
@@ -89,8 +93,9 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                  noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
-                            shuffle=True, **kw),
+                            shuffle=True, collate_fn=make_collate_fm(norm_stats, obs_density_cfg), **kw),
         "val": DataLoader(FlowMatchingDataset(datasets["val"], **fm_kw),
+                          collate_fn=make_collate_fm(norm_stats),
                           shuffle=False, **kw),
     }
 
@@ -679,6 +684,13 @@ def main(cfg: DictConfig):
                                       os.path.join(EXP_DIR, "l96_norm_stats_obsj2.pt"))
             norm_stats = load_norm_stats(norm_stats_path)
             logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
+        obs_density_cfg = None
+        if dc.get("obs_density_augment", False):
+            obs_density_cfg = {
+                "full_prob": dc.get("obs_density_full_prob", 0.4),
+                "min_keep": dc.get("obs_density_min_keep", 0),
+            }
+            logger.info(f"data.obs_density_augment=True: {obs_density_cfg}")
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
@@ -692,6 +704,7 @@ def main(cfg: DictConfig):
             norm_stats=norm_stats,
             noisy_da_bias=dc.get("noisy_da_bias", False),
             noisy_da_max=dc.get("noisy_da_max", 1.5),
+            obs_density_cfg=obs_density_cfg,
         )
     else:
         loaders = make_experiment_dataloaders(

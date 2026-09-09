@@ -22,6 +22,13 @@ Two independent consumption paths for the resulting mask:
   cost term. There the boolean keep-mask is passed through as
   ``obs_channel_mask`` and excludes dropped-channel terms from the cost
   directly -- no zero-imputation ambiguity, architecturally clean.
+
+Also home to the TRAINING-time counterpart (:func:`sample_training_density_mask`,
+wired into ``data/dataloader.py::make_collate_fm``): mixes full-density and
+randomly-reduced-density observation events within the same batch, so a
+direct-obs-consuming model (DirectUNet/CFM) sees partial-channel NaN patterns
+during training instead of only ever at eval time -- closing the OOD gap
+:func:`apply_density_mask_to_obs` otherwise exposes.
 """
 from __future__ import annotations
 
@@ -85,6 +92,77 @@ def fast_channel_keep_mask(
     """
     slow = torch.ones(batch_size, num_steps, num_slow, dtype=torch.bool, device=device)
     fast = random_keep_mask((batch_size, num_steps), num_fast, keep_k, device=device, generator=generator)
+    return torch.cat([slow, fast], dim=-1)
+
+
+def random_variable_keep_mask(
+    leading_shape: tuple[int, ...],
+    n_channels: int,
+    keep_k: torch.Tensor,
+    device=None,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Like :func:`random_keep_mask` but ``keep_k`` is a tensor broadcastable
+    to ``leading_shape`` instead of a single scalar, giving a possibly
+    different exact keep-count for every independent leading-dim slice (e.g.
+    training-time augmentation mixing full-density and randomly-reduced-
+    density observation events within the same batch -- see
+    :func:`sample_training_density_mask`).
+
+    Implemented via per-slice random-score ranks rather than ``topk`` (which
+    only supports one ``k`` for a whole tensor): ``rank[..., c]`` is channel
+    ``c``'s position in that slice's descending random-score order (0 =
+    highest score), and a channel is kept iff its rank is below that slice's
+    own ``keep_k`` -- equivalent in distribution to :func:`random_keep_mask`
+    when ``keep_k`` happens to be constant.
+    """
+    keep_k_t = torch.as_tensor(keep_k, device=device)
+    if keep_k_t.shape != tuple(leading_shape):
+        keep_k_t = keep_k_t.expand(leading_shape)
+    keep_k_t = keep_k_t.clamp(0, n_channels)
+    scores = torch.rand(*leading_shape, n_channels, device=device, generator=generator)
+    order = scores.argsort(dim=-1, descending=True)
+    rank = torch.empty_like(order)
+    idx = torch.arange(n_channels, device=device).expand(*leading_shape, n_channels)
+    rank.scatter_(-1, order, idx)
+    return rank < keep_k_t.unsqueeze(-1)
+
+
+def sample_training_density_mask(
+    batch_size: int,
+    num_steps: int,
+    full_prob: float,
+    min_keep: int = 0,
+    num_slow: int = NUM_SLOW,
+    num_fast: int = NUM_FAST,
+    device=None,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Full-width ``(B, T, num_slow + num_fast)`` training-augmentation
+    keep-mask.
+
+    Independently at every ``(window, timestep)`` pair: with probability
+    ``full_prob`` the event is full-density (all ``num_fast`` fast channels
+    kept, so the model keeps seeing the canonical/most-common regime);
+    otherwise ``keep_k`` is drawn uniformly from
+    ``{min_keep, ..., num_fast - 1}`` and exactly that many fast channels are
+    kept. Slow columns always stay ``True``. Matches
+    :func:`fast_channel_keep_mask`'s eval-time convention (per-obs-time
+    redraw, not per-window) so train- and eval-time masking are the same
+    mechanics -- only the ``keep_k`` distribution differs (a fixed grid at
+    eval, this mixture at train).
+    """
+    if not 0.0 <= full_prob <= 1.0:
+        raise ValueError(f"full_prob={full_prob} out of range [0, 1]")
+    if not 0 <= min_keep < num_fast:
+        raise ValueError(f"min_keep={min_keep} out of range [0, {num_fast})")
+    is_full = torch.rand(batch_size, num_steps, device=device, generator=generator) < full_prob
+    rand_keep_k = torch.randint(min_keep, num_fast, (batch_size, num_steps),
+                                device=device, generator=generator)
+    keep_k = torch.where(is_full, torch.full_like(rand_keep_k, num_fast), rand_keep_k)
+    slow = torch.ones(batch_size, num_steps, num_slow, dtype=torch.bool, device=device)
+    fast = random_variable_keep_mask((batch_size, num_steps), num_fast, keep_k,
+                                     device=device, generator=generator)
     return torch.cat([slow, fast], dim=-1)
 
 
