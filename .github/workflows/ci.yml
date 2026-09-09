@@ -59,7 +59,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install hydra-core omegaconf pytorch-lightning
+          pip install hydra-core omegaconf pytorch-lightning tensorboard
       - name: Run fast test suite
         run: |
           pytest \
