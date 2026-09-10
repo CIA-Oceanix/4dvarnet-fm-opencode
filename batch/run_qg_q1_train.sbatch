@@ -22,12 +22,23 @@ set -e
 # data/qg_neural.py's module docstring for the normalization rationale.
 # experiments/qg_psi_norm_stats.pt must exist first (run
 # precompute_qg_norm_stats.py, or batch/run_qg_precompute_norm_stats.sbatch).
+#
+# 2026-09-10: `direct_unet` now builds models.monai_unet_qg2d.MonaiDirectUNetQG
+# -- a genuine circular-padded 2D U-Net over the (ny,nx) grid (QG's domain is
+# doubly periodic; the old models.direct_unet.DirectUNet only convolved along
+# time and never used the field's spatial structure at all) -- with a cosine
+# LR schedule (train_qg_neural.py's --cosine-scheduler, on by default).
+# Requires fdv-monai-proto (see models.monai_unet_qg2d's docstring), not this
+# project's default fdv env. New --exp-dir (old Q1_direct_unet_s0/ holds the
+# prior 1D-architecture results; kept for comparison, not overwritten).
+# 2-epoch smoke test (job 52857): ~225s/epoch on 1 A40 -> 200 epochs ~12.5h,
+# PSI EV=0.86 already after 2 epochs.
 CACHE_DIR="/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 $PY train_qg_neural.py \
     --model-type direct_unet \
-    --exp-dir experiments/Q1_direct_unet_s0 \
+    --exp-dir experiments/Q1_direct_unet_s0_monai2d \
     --nx 64 --epochs 200 \
     --num-train 1000 --num-val 100 --num-test 100 \
     --batch-size 2 --cache-dir "$CACHE_DIR"

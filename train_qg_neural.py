@@ -64,7 +64,6 @@ from data.qg_neural import (
     q_from_psi_norm,
     qg_collate,
 )
-from models.direct_unet import DirectUNet
 from models.vanilla_cfm import VanillaCFM
 from training.pipeline import create_trainer
 
@@ -76,12 +75,20 @@ def build_cfg(**overrides) -> QGConfig:
     return QGConfig(**{k: v for k, v in overrides.items() if v is not None})
 
 
-def build_model(model_type: str, state_dim: int) -> torch.nn.Module:
+def build_model(model_type: str, cfg: QGConfig) -> torch.nn.Module:
     if model_type == "direct_unet":
-        return DirectUNet(state_dim=state_dim, param_dim=0, cond_extra_dim=0,
-                          hidden_channels=[64, 128, 256])
+        # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
+        # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
+        # unlike L96's DirectUNet (models.direct_unet), which only convolves
+        # along time and never exploits the field's 2D spatial/periodic
+        # structure. Requires the `fdv-monai-proto` env (see
+        # models.monai_unet_qg2d's docstring), not this project's default
+        # `fdv` env.
+        from models.monai_unet_qg2d import MonaiDirectUNetQG
+        return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=0,
+                                 cond_extra_dim=0, hidden_channels=[64, 128, 256])
     if model_type == "vanilla_cfm":
-        return VanillaCFM(state_dim=state_dim, param_dim=0, cond_extra_dim=0,
+        return VanillaCFM(state_dim=cfg.state_dim, param_dim=0, cond_extra_dim=0,
                           hidden_channels=[64, 128, 256], time_emb_dim=64,
                           N_outer=10, sigma_prior=0.5, dropout=0.1,
                           train_tau_0_only=True)
@@ -97,7 +104,8 @@ class QGNeuralLightning(pl.LightningModule):
 
     def __init__(self, model, model_type: str, norm: dict | None, qg_cfg: QGConfig,
                  q_loss_weight: float = 0.1, lr: float = 1e-3,
-                 gradient_clip_val: float = 10.0):
+                 gradient_clip_val: float = 10.0,
+                 use_cosine_scheduler: bool = True, max_epochs: int | None = None):
         super().__init__()
         self.model = model
         self.model_type = model_type
@@ -106,9 +114,18 @@ class QGNeuralLightning(pl.LightningModule):
         self.q_loss_weight = q_loss_weight
         self.lr = lr
         self.gradient_clip_val = gradient_clip_val
+        self.use_cosine_scheduler = use_cosine_scheduler
+        self.max_epochs = max_epochs
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        if self.use_cosine_scheduler:
+            if not self.max_epochs:
+                raise ValueError("use_cosine_scheduler=True requires max_epochs to be set")
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=self.max_epochs)
+            return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return optimizer
 
     def _estimate_and_psi_loss(self, batch):
         if self.model_type == "direct_unet":
@@ -228,6 +245,8 @@ def main():
                          "training.q_loss_weight if given.")
     ap.add_argument("--normalize", action=argparse.BooleanOptionalAction, default=None,
                     help="Overrides the experiment YAML's data.normalize if given.")
+    ap.add_argument("--cosine-scheduler", action=argparse.BooleanOptionalAction, default=True,
+                    help="Cosine-anneal the LR over training (default: on).")
     ap.add_argument("--norm-stats-path", default=None,
                     help="Overrides the experiment YAML's data.norm_stats_path if given "
                          "(psi mean/std produced by precompute_qg_norm_stats.py).")
@@ -330,14 +349,16 @@ def main():
     else:
         print("normalization disabled (--no-normalize)")
 
-    model = build_model(model_type, state_dim).to(device)
+    model = build_model(model_type, test_cfg).to(device)
 
     total_train = 0.0
     if args.eval_only is None:
         tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr)
         lit = QGNeuralLightning(model, model_type, norm, test_cfg,
                                 q_loss_weight=q_loss_weight, lr=args.lr,
-                                gradient_clip_val=10.0)
+                                gradient_clip_val=10.0,
+                                use_cosine_scheduler=args.cosine_scheduler,
+                                max_epochs=epochs)
         trainer = create_trainer(tcfg, 1)
         t0 = time.time()
         trainer.fit(lit, train_loader, val_loader)
@@ -346,7 +367,10 @@ def main():
         torch.save(lit.model.state_dict(), ckpt)
         print(f"Stage 1 done in {total_train:.1f}s, saved {ckpt}")
     else:
-        model.load_state_dict(torch.load(args.eval_only, map_location="cpu"))
+        loaded = torch.load(args.eval_only, map_location="cpu")
+        state_dict = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
+        state_dict = {(k[6:] if k.startswith("model.") else k): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
         print(f"Loaded checkpoint {args.eval_only}")
 
     model.eval()
