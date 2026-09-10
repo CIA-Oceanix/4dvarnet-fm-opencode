@@ -202,8 +202,6 @@ def model_architecture_summary():
     return lines
 
 def make_bar_charts(fig, exp_data):
-    labels = [eid.replace("_direct_unet_", "\n").replace("_vanilla_cfm_", "\n")
-              for eid in EXP_IDS]
     display = ["E1\ndefault", "E2\nsmall", "E3\nrand",
                "F1\ndefault", "F2\nsmall", "F3\nrand"]
 

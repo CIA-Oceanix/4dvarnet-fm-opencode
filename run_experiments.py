@@ -17,14 +17,14 @@ import torch
 import numpy as np
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
-from data.lorenz63 import Lorenz63Config, make_mixed_datasets
-from data.dataloader import ConcatFMDataset, collate_fm
-from torch.utils.data import DataLoader
-from models.solver import TweedieSolver
-from training.stage1 import train_stage1
-from training.stage2 import train_stage2
-from evaluation.metrics import rmse
-from evaluation.run import (
+from data.lorenz63 import Lorenz63Config, make_mixed_datasets  # noqa: E402
+from data.dataloader import ConcatFMDataset, collate_fm  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
+from models.solver import TweedieSolver  # noqa: E402
+from training.stage1 import train_stage1  # noqa: E402
+from training.stage2 import train_stage2  # noqa: E402
+from evaluation.metrics import rmse  # noqa: E402
+from evaluation.run import (  # noqa: E402
     fmt_rmse, run_and_cache_baselines,
     EXP_DIR,
 )
@@ -334,12 +334,12 @@ def main():
     bl_path = os.path.join(EXP_DIR, f"baselines{dws_suffix}.json")
     if os.path.exists(bl_path) and not args.baselines_only:
         with open(bl_path) as f:
-            baselines = json.load(f)
+            json.load(f)
         print(f"Baselines loaded from cache ({bl_path})")
     else:
         print()
-        baselines = run_and_cache_baselines(datasets, device, batch_size=args.baseline_batch_size,
-                                            da_window_steps=da_window_steps)
+        run_and_cache_baselines(datasets, device, batch_size=args.baseline_batch_size,
+                                 da_window_steps=da_window_steps)
 
     if args.baselines_only:
         return

@@ -253,7 +253,6 @@ def make_mixed_datasets(cfg: Lorenz63Config, *,
                         include_s1_test: bool = False,
                         param_noise: float = 0.2) -> Dict[str, Lorenz63Dataset]:
     from data.random_param_dataset import RandomParamLorenz63Dataset
-    base = _cfg_to_data_dict(cfg)
     dynamics = _make_lorenz63_dynamics(cfg)
 
     test_s0_cfg = Lorenz63Config(**{**cfg.__dict__, "case": 1, "param_bias": 0.0,
