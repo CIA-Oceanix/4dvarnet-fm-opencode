@@ -1,0 +1,8 @@
+target-version = "py310"
+
+[lint]
+# Pin explicitly to ruff's current default selection (pyflakes + a pycodestyle
+# subset) so a future ruff release bumping its defaults doesn't silently
+# reintroduce CI failures. Widen deliberately, not as a side effect of an
+# upgrade.
+select = ["E4", "E7", "E9", "F"]

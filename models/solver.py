@@ -64,7 +64,6 @@ class TweedieSolver(nn.Module):
         device = x.device
         y_diff = torch.zeros(B, D, T, device=device)
         if obs_operator is not None:
-            obs_T = obs.shape[1] if obs.dim() == 3 else obs.shape[0]
             if obs.dim() == 3:
                 y_pred = obs_operator(x.transpose(1, 2)).transpose(1, 2)
                 y_diff = obs.transpose(1, 2) - y_pred

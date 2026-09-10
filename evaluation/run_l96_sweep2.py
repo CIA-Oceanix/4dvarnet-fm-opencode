@@ -161,9 +161,12 @@ def run():
     if truth_fast_weights is not None:
         print(f"  truth_fast_weights={truth_fast_weights}")
     labels = []
-    if args.s1_single_scale: labels.append("single-scale DA")
-    if args.s1_no_inflation: labels.append("no inflation")
-    if labels: print(f"  S1 special: {', '.join(labels)}")
+    if args.s1_single_scale:
+        labels.append("single-scale DA")
+    if args.s1_no_inflation:
+        labels.append("no inflation")
+    if labels:
+        print(f"  S1 special: {', '.join(labels)}")
     if args.s1_f_bias != 0.0 or args.s1_c1_bias != 0.0 or args.s1_coupling_exponent != 1.0:
         print(f"  S1 DA biases: F_bias={args.s1_f_bias:+.2f}, c1_bias={args.s1_c1_bias:+.2f}, coupling_exponent={args.s1_coupling_exponent}")
 

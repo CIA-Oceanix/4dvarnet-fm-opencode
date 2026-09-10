@@ -79,7 +79,7 @@ print("============================================")
 # Generate PDF report
 report_dir = os.path.join(os.path.dirname(__file__), "..", "reports", "outputs")
 os.makedirs(report_dir, exist_ok=True)
-import subprocess
+import subprocess  # noqa: E402
 report_script = os.path.join(os.path.dirname(__file__), "..", "reports", "generate_baseline_report.py")
 pdf_path = os.path.join(report_dir, "synthesis_nancheck.pdf")
 traj_path = os.path.join(EXP_DIR, "baselines_trajectories_dws300_nancheck.npz")

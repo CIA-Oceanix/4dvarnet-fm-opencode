@@ -75,8 +75,6 @@ def main():
         print(f"DWS sweep: DWS={dws}, all methods (EnKF/ETKF at default inf=1.0)")
 
     suffix = "_cs567"
-    dws_suffix = f"_dws{dws}"
-    our_cache = os.path.join(EXP_DIR, f"baselines{dws_suffix}{suffix}.json")
 
     t1 = time.time()
     run_and_cache_baselines(

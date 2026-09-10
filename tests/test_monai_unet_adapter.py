@@ -3,7 +3,7 @@ import torch
 
 monai = pytest.importorskip("monai")
 
-from models.monai_unet_adapter import MonaiUNet1D
+from models.monai_unet_adapter import MonaiUNet1D  # noqa: E402
 
 
 @pytest.mark.parametrize("state_dim,obs_dim,length", [(1, 1, 64), (3, 3, 32), (40, 24, 200)])

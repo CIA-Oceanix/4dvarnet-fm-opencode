@@ -31,7 +31,6 @@ class RandomBiasDataset:
             return
 
         self.windows = []
-        total_steps = cfg.spinup_steps + cfg.num_steps
 
         for i in range(cfg.num_windows):
             base_seed = cfg.seed + i * 100
