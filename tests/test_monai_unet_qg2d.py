@@ -14,9 +14,45 @@ def _batch(B, T, ny, nx, cond_extra_dim=0, param_dim=0):
     D = 2 * ny * nx
     b = _FakeBatch()
     b.obs = torch.randn(B, T, D)
-    b.forcing = torch.zeros(B, T)
+    # forcing is always a (B, T, ny, nx) spatial field (the wind-curl map,
+    # see data.qg_neural's Q3/Q4 conditioning docstring) -- zeros when
+    # cond_extra_dim=0 since forward() never reads it in that case.
+    b.forcing = torch.zeros(B, T, ny, nx)
     b.params = torch.zeros(B, param_dim)
     return b
+
+
+def test_forward_with_forcing_and_params_conditioning():
+    """The forward pass actually uses forcing/params when cond_extra_dim/
+    param_dim > 0, not just accepting the shape: zeroing them out must
+    change the output vs. real conditioning (sanity-checks Q3/Q4's
+    conditioning is wired, not dead)."""
+    ny = nx = 8
+    days = 3
+    model = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, param_dim=4, cond_extra_dim=1,
+                              hidden_channels=[8, 16])
+    # MONAI's DiffusionModelUNet zero-initializes its output conv (standard
+    # diffusion-model init, see test_circular_shift_equivariance above) --
+    # break it so the output isn't trivially all-zero regardless of input.
+    final = model.unet.backbone.out[2].conv
+    torch.nn.init.normal_(final.weight, std=0.05)
+    torch.nn.init.normal_(final.bias, std=0.05)
+    model.eval()
+
+    b = _FakeBatch()
+    b.obs = torch.randn(1, days, 2 * ny * nx)
+    b.forcing = torch.randn(1, days, ny, nx)
+    b.params = torch.randn(1, 4)
+    out = model(b)
+    assert out.shape == (1, days, 2 * ny * nx)
+    assert torch.isfinite(out).all()
+
+    b_zero = _FakeBatch()
+    b_zero.obs = b.obs
+    b_zero.forcing = torch.zeros_like(b.forcing)
+    b_zero.params = torch.zeros_like(b.params)
+    out_zero = model(b_zero)
+    assert not torch.allclose(out, out_zero)
 
 
 def test_forward_shape():

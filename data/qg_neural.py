@@ -51,19 +51,56 @@ instead of one fixed draw, increasing training diversity without re-paying the
 truth rollout cost. The state/PV targets (``psi_daily``/``q_daily``) come from
 ``true_state`` and are unaffected. The ``test`` split keeps the original fixed,
 reproducible obs (``on_the_fly_obs=False``, the default) for stable evaluation.
+
+**Forcing + params conditioning (Q3/Q4, 2026-09-10):** ``QGNeuralDataset``
+can additionally condition the estimator on the wind-forcing field and the
+physical params (``rd``/``rek``/``beta``/``U1``), controlled by ``cond_mode``:
+
+* ``"none"`` (default, Q1/Q2 behavior) -- ``forcing`` is an all-zero
+  ``(days, ny, nx)`` field, ``params`` is ``None``.
+* ``"true"`` (Q3, oracle) -- ``forcing`` is the window's real ``wind_curl``
+  spatial field (from the *true* trajectory), daily-mean binned; ``params``
+  is the window's exact ``true_params`` vector ``[U1, rd, rek, beta]``. Both
+  are deterministic per window (no resampling).
+* ``"noisy"`` (Q4) -- mirrors the L96 SDA3 CFM study's per-step resampled
+  corruption (see PLAN.md's 2026-09-10 QG Q3/Q4 section) rather than one
+  fixed S1 bias: every ``__getitem__`` draws a fresh random severity
+  fraction in ``[0, noisy_max]`` of the full S1 corruption (``s1_amp_bias``/
+  ``s1_loc_sigma_frac``/``s1_sigma_eta_frac`` for the wind, ``s1_param_bias``
+  for ``rd``/``rek``), so training sees a distribution of corruption
+  severity rather than a single fixed operating point.
+
+``forcing``/``params`` are always returned in **physical units** from the
+dataset; z-score normalization (mirroring the psi/obs normalization above)
+is applied via an explicit ``param_norm_stats`` dict (``{"mean", "std"}``
+over ``[U1, rd, rek, beta]``, produced by ``precompute_qg_norm_stats.py``'s
+``--output-params``) -- required whenever ``cond_mode != "none"`` since the
+four physical params span ~9 orders of magnitude raw (see
+``precompute_qg_norm_stats.py``'s docstring). The forcing *field* is left
+unnormalized (its own per-grid-cell scale is already comparable to the
+z-scored obs/psi channels it's concatenated with; unlike the params it is
+not a small set of wildly-different-scale scalars).
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dc_replace
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from data.normalization import denormalize, normalize
-from data.qg import QGConfig, QGS01Dataset, expand_obs_to_grid
+from data.qg import (
+    QGConfig,
+    QGS01Dataset,
+    _make_corrupted_wind_state,
+    _make_qg_dynamics,
+    expand_obs_to_grid,
+)
 
 _INVERTER_CACHE: dict = {}
+
+PARAM_KEYS = ("U1", "rd", "rek", "beta")
 
 
 def steps_per_day(cfg: QGConfig) -> int:
@@ -85,6 +122,50 @@ def _daily_mean_bin(x: torch.Tensor, spd: int) -> torch.Tensor:
         raise ValueError(f"T={T} not divisible by steps_per_day={spd}")
     x = x.reshape(*lead, T // spd, spd, D)
     return x.mean(dim=-2)
+
+
+def _daily_mean_field(field: torch.Tensor, spd: int) -> torch.Tensor:
+    """Daily-mean bin a spatial (T, ny, nx) field to (days, ny, nx)."""
+    T, ny, nx = field.shape
+    if T % spd != 0:
+        raise ValueError(f"T={T} not divisible by steps_per_day={spd}")
+    return field.reshape(T // spd, spd, ny, nx).mean(dim=1)
+
+
+def _true_params_vector(window: dict) -> torch.Tensor:
+    tp = window["true_params"]
+    return torch.tensor([float(tp[k]) for k in PARAM_KEYS], dtype=torch.float32)
+
+
+def _true_forcing_and_params(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
+    """Q3 (oracle): the real true wind_curl field + exact true params, no jitter."""
+    forcing = _daily_mean_field(window["wind_curl"], steps_per_day(cfg))
+    return forcing, _true_params_vector(window)
+
+
+def _noisy_forcing_and_params(window: dict, cfg: QGConfig,
+                              noisy_max: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Q4: resample a fresh random severity fraction of the full S1
+    corruption (wind + rd/rek bias) every call, mirroring the L96 SDA3 CFM
+    study's per-step resampled noisy-params conditioning (see module
+    docstring) instead of one fixed S1 operating point.
+    """
+    draw = random.randrange(1, 1_000_000)
+    rng = np.random.RandomState(draw)
+    frac = float(rng.uniform(0.0, noisy_max))
+    scaled_cfg = _dc_replace(cfg, s1_amp_bias=cfg.s1_amp_bias * frac,
+                             s1_loc_sigma_frac=cfg.s1_loc_sigma_frac * frac,
+                             s1_sigma_eta_frac=cfg.s1_sigma_eta_frac * frac)
+    ws_corrupt = _make_corrupted_wind_state(scaled_cfg, window["wind_state_true"], draw)
+    dyn = _make_qg_dynamics(cfg)
+    wind_curl_corrupt = dyn.wind_curl_field(ws_corrupt)
+    forcing = _daily_mean_field(wind_curl_corrupt, steps_per_day(cfg))
+    tp = window["true_params"]
+    b = cfg.s1_param_bias * frac
+    params = torch.tensor(
+        [float(tp["U1"]), float(tp["rd"]) * (1.0 - b), float(tp["rek"]) * (1.0 - b),
+         float(tp["beta"])], dtype=torch.float32)
+    return forcing, params
 
 
 def _daily_obs_psi(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
@@ -236,11 +317,22 @@ class QGNeuralDataset(Dataset):
     """
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
-                 on_the_fly_obs: bool = False):
+                 on_the_fly_obs: bool = False, cond_mode: str = "none",
+                 param_norm_stats: dict | None = None, noisy_max: float = 1.5):
+        if cond_mode not in ("none", "true", "noisy"):
+            raise ValueError(f"unknown cond_mode {cond_mode!r}")
+        if cond_mode != "none" and param_norm_stats is None:
+            raise ValueError(
+                "param_norm_stats is required when cond_mode != 'none' -- the "
+                "4 physical params span ~9 orders of magnitude raw, see "
+                "precompute_qg_norm_stats.py --output-params")
         self.windows = windows
         self.cfg = cfg
         self.psi_norm_stats = psi_norm_stats
         self.on_the_fly_obs = on_the_fly_obs
+        self.cond_mode = cond_mode
+        self.param_norm_stats = param_norm_stats
+        self.noisy_max = noisy_max
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -279,9 +371,20 @@ class QGNeuralDataset(Dataset):
         obs_pad = torch.zeros(days, 2 * split)
         obs_pad[:, :split] = torch.nan_to_num(obs_d, nan=0.0)
         mask_full = mask_d.any(dim=-1)
-        forcing = torch.zeros(days, dtype=obs_pad.dtype)
         rd = torch.tensor([float(w["true_params"]["rd"])], dtype=torch.float32)
-        return psi_n, obs_pad, mask_full, forcing, qs, rd
+
+        if self.cond_mode == "none":
+            forcing = torch.zeros(days, self.cfg.ny, self.cfg.nx, dtype=obs_pad.dtype)
+            params = None
+        else:
+            if self.cond_mode == "true":
+                forcing, params = _true_forcing_and_params(w, self.cfg)
+            else:
+                forcing, params = _noisy_forcing_and_params(w, self.cfg, self.noisy_max)
+            forcing = forcing.to(obs_pad.dtype)
+            params = normalize(params, self.param_norm_stats)
+
+        return psi_n, obs_pad, mask_full, forcing, qs, rd, params
 
     def raw_psi(self, idx: int) -> torch.Tensor:
         return psi_daily(self.windows[idx], self.cfg)
@@ -303,7 +406,8 @@ def qg_collate(batch: list) -> QGBatch:
     forcing = torch.stack([b[3] for b in batch])
     states_q = torch.stack([b[4] for b in batch])
     rd = torch.stack([b[5] for b in batch]).squeeze(-1)
-    return QGBatch(states, obs, masks, forcing, states_q, rd)
+    params = None if batch[0][6] is None else torch.stack([b[6] for b in batch])
+    return QGBatch(states, obs, masks, forcing, states_q, rd, params=params)
 
 
 def denorm_psi(x: torch.Tensor, cfg: QGConfig, psi_norm_stats: dict | None) -> torch.Tensor:

@@ -544,6 +544,85 @@ jobs 52987/52988, will land as a small follow-up commit). Scratch drivers
 Not yet done: folding these S1 numbers into `qg_da_report.md`/
 `qg_neural_report.md` (currently S0-only) — separate follow-up.
 
+### QG neural schemes beyond Q1: Q3 (oracle) / Q4 (noisy) forcing+param
+### conditioning (2026-09-10, `feature/qg-q3q4-forcing-param-cond`)
+
+New DirectUNet variants that additionally condition on the wind-forcing
+field and physical params (`U1, rd, rek, beta`), alongside observations --
+answers whether exogenous conditioning helps a QG estimator, mirroring the
+L96 SDA CFM forcing/param-conditioning study (`models/sda.py`'s
+`ConditionalPriorCFM`, `SDA2_cond_nominal_l96.yaml`/`SDA2_cond_mixed_l96.yaml`/
+`SDA3_cond_noisy_l96.yaml`) rather than L96's earlier, weaker `L6_vanilla_
+cfm_s0s1_forcing_cond.yaml` (obs+corrupted-forcing on a 1D UNet, found
+neutral-to-slightly-negative — see the L96 Q3 note above).
+
+- **Bug fixed as a prerequisite**: `train_qg_neural.py`'s `build_model()`
+  hardcoded `param_dim=0, cond_extra_dim=0` directly in the
+  `MonaiDirectUNetQG`/`VanillaCFM` constructor calls, silently ignoring
+  `config/experiment/Q{1,2}_..._s0.yaml`'s `model.param_dim`/
+  `model.cond_extra_dim` keys entirely (dead YAML fields since those
+  configs were introduced). No behavior change for Q1/Q2 (their YAMLs
+  already say 0/0) but blocked any new conditioned scheme until fixed.
+  `build_model()` now takes explicit `param_dim`/`cond_extra_dim` args,
+  read from the experiment YAML in `main()`.
+- **Forcing representation**: the real spatial `wind_curl` field
+  (`(T, ny, nx)`, from the true or corrupted trajectory), daily-mean binned
+  to `(days, ny, nx)`, NOT a scalar broadcast to a spatially-uniform
+  channel -- the storm's location is exactly the physically meaningful
+  part of the forcing, and `MonaiDirectUNetQG` already treats a channel as
+  a spatial field, so broadcasting a scalar would have thrown that away.
+  `QGBatch.forcing`'s shape changed project-wide from `(B, days)` to
+  `(B, days, ny, nx)` (Q1/Q2 unaffected: their `cond_extra_dim=0` means the
+  model never reads it regardless of shape).
+- **Params**: `[U1, rd, rek, beta]` (U2 excluded -- always 0, no
+  information) broadcast as constant spatial channels (matches
+  `MonaiDirectUNetQG`'s existing, previously-dead broadcast code), z-scored
+  via a new `precompute_qg_norm_stats.py --output-params` companion stats
+  file (`experiments/qg_param_norm_stats.pt`) -- required whenever
+  `cond_mode != "none"` since the 4 params span ~9 orders of magnitude raw
+  (`rd≈1.5e4` vs `beta≈1.5e-11`); a raw constant-channel broadcast would
+  make one or two params numerically dominate or vanish next to the
+  z-scored psi/obs channels.
+- **Two variants, controlled by `data.qg_neural.QGNeuralDataset`'s new
+  `cond_mode`**:
+  - **Q3 (`cond_mode="true"`, oracle)** — the window's exact true
+    `wind_curl` field + exact `true_params`, no jitter, deterministic per
+    window. Config: `config/experiment/Q3_direct_unet_s0_oracle_cond.yaml`.
+  - **Q4 (`cond_mode="noisy"`)** — mirrors the L96 SDA3 CFM study's
+    per-step **resampled** corruption severity (not one fixed S1 bias):
+    every training draw samples a fresh random fraction in
+    `[0, noisy_max]` (default 1.5, matching L96's `noisy_da_max`) of the
+    full S1-style wind corruption (`s1_amp_bias`/`s1_loc_sigma_frac`/
+    `s1_sigma_eta_frac`, via `data.qg._make_corrupted_wind_state` at scaled
+    severity) and the `rd`/`rek` param bias (`s1_param_bias`), reusing the
+    existing S1 corruption machinery directly rather than a separate S1
+    dataset/scenario wrapper (the corruption is synthesized straight from
+    `wind_state_true`/`true_params`, so it works on the same base S0-scenario
+    windows Q1/Q2/Q3 already use — no new train/val window-loading path
+    needed). Config: `config/experiment/Q4_direct_unet_s1_noisy_cond.yaml`.
+- **Both configs share Q1's model_type=`direct_unet`** (MONAI circular 2D
+  U-Net), so `train_qg_neural.py` gained a new `--exp-id` flag to pick the
+  YAML explicitly (Q1/Q2's auto-derived `Q{1,2}_{model_type}_s0` naming
+  can't disambiguate Q1 vs Q3 vs Q4, all `direct_unet`) -- same split
+  seeds/obs protocol/psi normalization/cosine-LR default as Q1 (see Q1's
+  own config comments), only the forcing+param conditioning differs.
+- **Evaluation plan (not yet run)**: cross-scenario, mirroring the L96 SDA
+  study -- evaluate Q1 (obs-only), Q3, and Q4 all on **both** the S0 and S1
+  test windows (same base windows, `cond_mode="true"/"noisy"` synthesize
+  their own conditioning regardless of which scenario wrapper the window
+  carries), producing a degradation table parallel to the existing DA
+  S0→S1 table. L96's own finding here was that all three regimes
+  (true/corrupted-forcing/noisy-params) landed within noise of each other,
+  with only a small consistent edge for the noisy-param variant -- open
+  question whether QG (whose S1 story already differs qualitatively from
+  L96's, e.g. EnKF's clear edge, both 4DVar variants collapsing on q layer2)
+  replicates that small-effect finding or shows something QG-specific.
+- **Tests**: `tests/test_qg_neural.py` (cond_mode none/true/noisy shapes +
+  determinism/diversity contracts, param-norm-stats requirement, collate
+  params stacking, `build_model` YAML-wiring regression) and
+  `tests/test_monai_unet_qg2d.py` (forward-pass conditioning sanity check:
+  zeroing forcing/params must change the output).
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

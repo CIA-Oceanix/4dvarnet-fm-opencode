@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from data.normalization import compute_channel_stats
@@ -9,6 +10,7 @@ from data.qg import (
     make_qg_s0_s1_datasets,
 )
 from data.qg_neural import (
+    PARAM_KEYS,
     QGNeuralDataset,
     denorm_psi,
     layer_split,
@@ -39,6 +41,17 @@ def _window(cfg=None, **kw):
     return cfg, ds["test_s0"][0]
 
 
+def _window_with_wind(**kw):
+    """Like `_window`, but window index 1 (not 0): `data.qg._S1_WIND_LEVELS`
+    starts at 0.0, so index 0 always has a flat all-zero wind_curl field
+    (see PLAN.md's 2026-09-03 illustration-fix note for the same gotcha) --
+    unsuitable for testing forcing conditioning."""
+    cfg = _cfg(num_windows=2, **kw)
+    ds = make_qg_s0_s1_datasets(cfg, num_test_windows=2,
+                                cache_dir="/tmp/qg_neural_test_cache")
+    return cfg, ds["test_s0"][1]
+
+
 def _psi_norm_stats(cfg, windows):
     """Global per-layer psi (mean, std) stats, same shape `data.normalization`
     (and `precompute_qg_norm_stats.py`) produce, over the given windows."""
@@ -50,6 +63,20 @@ def _psi_norm_stats(cfg, windows):
         layer2.append(ps[:, split:].reshape(-1))
     psi_layers = torch.stack([torch.cat(layer1), torch.cat(layer2)], dim=-1)
     return compute_channel_stats(psi_layers)
+
+
+def _param_norm_stats(windows):
+    """Global [U1,rd,rek,beta] (mean, std) stats, same shape/format
+    `precompute_qg_norm_stats.py --output-params` produces. `std` is
+    clamped away from 0 -- in these tests' 1-2-window fixtures the params
+    can be degenerate (identical across the "split"), unlike the real
+    1000-window train split precompute_qg_norm_stats.py runs against."""
+    params = torch.tensor(
+        [[float(w["true_params"][k]) for k in PARAM_KEYS] for w in windows],
+        dtype=torch.float32)
+    stats = compute_channel_stats(params)
+    stats["std"] = stats["std"].clamp(min=1e-6)
+    return stats
 
 
 def test_psi_daily_matches_upper_field_daily_mean():
@@ -97,15 +124,17 @@ def test_dataset_and_collate_shapes():
     norm = _psi_norm_stats(cfg, [w])
     ds = QGNeuralDataset([w], cfg, norm)
     item = ds[0]
-    psi_n, obs_pad, mask, forcing, q_raw, rd = item
+    psi_n, obs_pad, mask, forcing, q_raw, rd, params = item
     split = layer_split(cfg)
     days = 2
     assert psi_n.shape == (days, 2 * split)
     assert obs_pad.shape == (days, 2 * split)
     assert mask.shape == (days,)
-    assert forcing.shape == (days,)
+    assert forcing.shape == (days, cfg.ny, cfg.nx)
+    assert torch.equal(forcing, torch.zeros_like(forcing))
     assert q_raw.shape == (days, 2 * split)
     assert rd.shape == (1,)
+    assert params is None
     # obs (upper-layer psi) padded into the psi1 channel region only, no NaN
     assert not torch.isnan(obs_pad).any()
     assert obs_pad[:, split:].abs().sum() == 0.0
@@ -113,6 +142,8 @@ def test_dataset_and_collate_shapes():
     assert batch.states.shape == (2, days, 2 * split)
     assert batch.states_q.shape == (2, days, 2 * split)
     assert batch.rd.shape == (2,)
+    assert batch.forcing.shape == (2, days, cfg.ny, cfg.nx)
+    assert batch.params is None
 
 
 def test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw():
@@ -122,7 +153,7 @@ def test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])  # stats computed on the same window(s)
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, q_raw, _rd = ds[0]
+    psi_n, _obs, _mask, _f, q_raw, _rd, _params = ds[0]
     qs = q_daily(w, cfg)
     assert torch.allclose(q_raw, qs)
     # normalized against its own stats -> exactly unit variance per layer
@@ -134,7 +165,7 @@ def test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw():
 def test_dataset_without_norm_stats_is_raw_identity():
     cfg, w = _window()
     ds = QGNeuralDataset([w], cfg, psi_norm_stats=None)
-    psi_n, _obs, _mask, _f, _q, _rd = ds[0]
+    psi_n, _obs, _mask, _f, _q, _rd, _params = ds[0]
     assert torch.allclose(psi_n, psi_daily(w, cfg))
 
 
@@ -150,7 +181,7 @@ def test_denorm_psi_round_trip():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, _q, _rd = ds[0]
+    psi_n, _obs, _mask, _f, _q, _rd, _params = ds[0]
     back = denorm_psi(psi_n, cfg, norm)
     ps = psi_daily(w, cfg)
     assert torch.allclose(back, ps, atol=1e-3 * ps.abs().max())
@@ -168,7 +199,7 @@ def test_q_from_psi_norm_matches_raw_pv():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, q_true, _rd = ds[0]
+    psi_n, _obs, _mask, _f, q_true, _rd, _params = ds[0]
     q_pred = q_from_psi_norm(psi_n, float(w["true_params"]["rd"]), cfg, norm,
                              torch.device("cpu"))
     assert torch.allclose(q_pred, q_true, atol=1e-3 * q_true.abs().max())
@@ -203,12 +234,14 @@ def _synth_batch(split=64, days=30, rd=15000.0, b=2):
     whose normalized targets have O(1) per-layer scale like the real dataset."""
     from data.qg_neural import QGBatch
     split = int(split)
+    nyx = int(round(split ** 0.5))
+    assert nyx * nyx == split, "split must be a perfect square (QG is ny==nx)"
     D = 2 * split
     states = torch.randn(b, days, D)
     states_q = torch.randn(b, days, D) * 1e-6
     obs = torch.randn(b, days, D) * 0.5
     mask = torch.ones(b, days, dtype=torch.bool)
-    forcing = torch.zeros(b, days)
+    forcing = torch.zeros(b, days, nyx, nyx)
     rd_t = torch.full((b,), rd, dtype=torch.float32)
     return QGBatch(states, obs, mask, forcing, states_q, rd_t)
 
@@ -292,8 +325,8 @@ def test_on_the_fly_obs_varies_across_draws_target_fixed():
     cfg = _cfg()
     windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
     ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True)
-    psi_a, obs_a, _mask_a, _f_a, q_a, _rd_a = ds[0]
-    psi_b, obs_b, _mask_b, _f_b, q_b, _rd_b = ds[0]
+    psi_a, obs_a, _mask_a, _f_a, q_a, _rd_a, _params_a = ds[0]
+    psi_b, obs_b, _mask_b, _f_b, q_b, _rd_b, _params_b = ds[0]
     assert torch.equal(psi_a, psi_b)
     assert torch.equal(q_a, q_b)
     assert not torch.equal(obs_a, obs_b)
@@ -309,3 +342,91 @@ def test_fixed_obs_dataset_is_deterministic_across_draws():
     for a, b in zip(item_a, item_b):
         if isinstance(a, torch.Tensor):
             assert torch.equal(a, b)
+
+
+def test_cond_mode_none_requires_no_param_norm_stats():
+    cfg, w = _window()
+    QGNeuralDataset([w], cfg, cond_mode="none")  # must not raise
+
+
+def test_cond_mode_true_or_noisy_requires_param_norm_stats():
+    cfg, w = _window()
+    for mode in ("true", "noisy"):
+        try:
+            QGNeuralDataset([w], cfg, cond_mode=mode)
+            assert False, f"expected ValueError for cond_mode={mode!r} with no param stats"
+        except ValueError:
+            pass
+
+
+def test_cond_mode_true_matches_true_forcing_and_params():
+    """Q3 (oracle): forcing is the real true wind_curl field (daily-binned,
+    nonzero, matching the window's own wind_curl), params are the exact
+    normalized true_params -- deterministic across repeated draws."""
+    cfg, w = _window_with_wind()
+    pstats = _param_norm_stats([w, w])
+    ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats)
+    _psi, _obs, _mask, forcing, _q, _rd, params = ds[0]
+    assert forcing.shape == (2, cfg.ny, cfg.nx)
+    assert forcing.abs().sum() > 0.0
+    spd = steps_per_day(cfg)
+    expected_forcing = w["wind_curl"].reshape(2, spd, cfg.ny, cfg.nx).mean(dim=1)
+    assert torch.allclose(forcing, expected_forcing, atol=1e-5)
+    assert params.shape == (4,)
+    true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
+    expected_params = (true_vec - pstats["mean"]) / pstats["std"]
+    assert torch.allclose(params, expected_params, atol=1e-4)
+    # deterministic: repeated draws give identical forcing/params
+    _psi2, _obs2, _mask2, forcing2, _q2, _rd2, params2 = ds[0]
+    assert torch.equal(forcing, forcing2)
+    assert torch.equal(params, params2)
+
+
+def test_cond_mode_noisy_varies_across_draws_and_stays_finite():
+    """Q4: every draw resamples a fresh corruption severity -- forcing/params
+    should differ across repeated __getitem__ calls (unlike Q3's oracle),
+    while remaining finite and (params) still centered near the true value
+    since bias only ever reduces rd/rek toward, never past, 0."""
+    cfg, w = _window_with_wind()
+    pstats = _param_norm_stats([w, w])
+    ds = QGNeuralDataset([w], cfg, cond_mode="noisy", param_norm_stats=pstats, noisy_max=1.5)
+    draws = [ds[0] for _ in range(5)]
+    forcings = torch.stack([d[3] for d in draws])
+    params = torch.stack([d[6] for d in draws])
+    assert torch.isfinite(forcings).all()
+    assert torch.isfinite(params).all()
+    assert not torch.equal(forcings[0], forcings[1])
+    assert not torch.equal(params[0], params[1])
+    # U1/beta are never biased by the noisy-params mechanism (only rd/rek are)
+    true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
+    expected_u1 = (true_vec[0] - pstats["mean"][0]) / pstats["std"][0]
+    expected_beta = (true_vec[3] - pstats["mean"][3]) / pstats["std"][3]
+    assert torch.allclose(params[:, 0], expected_u1.expand(5), atol=1e-4)
+    assert torch.allclose(params[:, 3], expected_beta.expand(5), atol=1e-4)
+
+
+def test_qg_collate_stacks_params_when_present():
+    cfg, w = _window()
+    pstats = _param_norm_stats([w, w])
+    ds = QGNeuralDataset([w, w], cfg, cond_mode="true", param_norm_stats=pstats)
+    batch = qg_collate([ds[0], ds[1]])
+    assert batch.params is not None
+    assert batch.params.shape == (2, 4)
+    assert batch.forcing.shape == (2, 2, cfg.ny, cfg.nx)
+
+
+def test_build_model_honors_yaml_param_dim_and_cond_extra_dim():
+    """Regression test for a bug where build_model() hardcoded param_dim=0/
+    cond_extra_dim=0 regardless of the experiment YAML's model.* fields.
+    QG's "direct_unet" is MONAI-backed (models.monai_unet_qg2d), so this
+    needs the fdv-monai-proto env -- skip if monai isn't installed (matches
+    tests/test_monai_unet_qg2d.py's gating; CI's default env has no monai,
+    see .github/workflows/ci.yml)."""
+    pytest.importorskip("monai")
+    from train_qg_neural import build_model
+    cfg = _cfg()
+    model = build_model("direct_unet", cfg, param_dim=4, cond_extra_dim=1)
+    assert model.param_dim == 4
+    assert model.cond_extra_dim == 1
+    obs_channels = model.unet.obs_channels
+    assert obs_channels == model.nlayers + 1 + 4

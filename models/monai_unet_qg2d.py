@@ -135,8 +135,13 @@ class MonaiDirectUNetQG(nn.Module):
         obs_grid = obs_clean.reshape(B * T, self.nlayers, self.ny, self.nx)
         cond = [obs_grid]
         if self.cond_extra_dim > 0:
-            forcing = batch.forcing.reshape(B * T, 1, 1, 1).expand(
-                B * T, self.cond_extra_dim, self.ny, self.nx)
+            # `batch.forcing` is a genuine (B, T, ny, nx) spatial field (the
+            # wind-curl forcing map, see data.qg_neural's Q3/Q4 conditioning
+            # docstring) -- reshape into cond_extra_dim (=1) channel(s), no
+            # spatial broadcast: unlike a scalar param, the forcing map's
+            # spatial structure (storm location) is exactly the physically
+            # meaningful signal.
+            forcing = batch.forcing.reshape(B * T, self.cond_extra_dim, self.ny, self.nx)
             cond.append(forcing)
         if self.param_dim > 0:
             params_t = batch.params.unsqueeze(1).expand(B, T, -1).reshape(

@@ -17,11 +17,20 @@ convention as `train_qg_neural.py`'s defaults), and computes:
   derived `q_loss_weight = 1 / Var(q)` so the auxiliary PV loss contributes
   comparably to the z-scored psi loss (which has target variance ~1) even
   though q itself is left in raw physical units.
+* Optionally (`--output-params`, for the Q3/Q4 forcing+param-conditioned
+  DirectUNet schemes, see PLAN.md's 2026-09-10 section): global mean/std of
+  the 4 physical params `[U1, rd, rek, beta]` pooled over the train split's
+  `true_params`, in the same `{"mean", "std"}` format `data.normalization`
+  uses for psi -- required because the 4 params span ~9 orders of magnitude
+  raw (e.g. rd~1.5e4 vs beta~1.5e-11), so a constant-channel broadcast of
+  the raw values would make one or two params numerically dominate or
+  vanish next to the z-scored psi/obs channels they're concatenated with.
 
 Usage:
     python precompute_qg_norm_stats.py \
         --cache-dir /path/to/qg_windows_1000_100_100/cache \
-        --output experiments/qg_psi_norm_stats.pt
+        --output experiments/qg_psi_norm_stats.pt \
+        --output-params experiments/qg_param_norm_stats.pt
 """
 import argparse
 import logging
@@ -31,6 +40,7 @@ import torch
 from data.normalization import compute_channel_stats, save_norm_stats
 from data.qg import QGConfig
 from data.qg_neural import (
+    PARAM_KEYS,
     ensure_truth_cache,
     layer_split,
     psi_daily,
@@ -49,6 +59,9 @@ def main():
     ap.add_argument("--num-train", type=int, default=1000)
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument("--output", default="experiments/qg_psi_norm_stats.pt")
+    ap.add_argument("--output-params", default=None,
+                    help="Also compute+save [U1,rd,rek,beta] norm stats here "
+                         "(Q3/Q4 forcing+param conditioning). Skipped if omitted.")
     args = ap.parse_args()
 
     cfg = QGConfig(nx=args.nx, seed=args.train_seed, num_windows=args.num_train)
@@ -99,6 +112,16 @@ def main():
                 f"min={win_psi2_std.min():.4e} p10={win_psi2_std.quantile(0.1):.4e} "
                 f"median={win_psi2_std.median():.4e} p90={win_psi2_std.quantile(0.9):.4e} "
                 f"max={win_psi2_std.max():.4e}  (max/min={win_psi2_std.max() / win_psi2_std.min():.1f}x)")
+
+    if args.output_params:
+        params = torch.tensor(
+            [[float(w["true_params"][k]) for k in PARAM_KEYS] for w in windows],
+            dtype=torch.float32)
+        param_stats = compute_channel_stats(params)
+        for k, m, s in zip(PARAM_KEYS, param_stats["mean"], param_stats["std"]):
+            logger.info(f"param {k}: mean={m:.4e} std={s:.4e}")
+        save_norm_stats(args.output_params, param_stats)
+        logger.info(f"Saved param norm stats ({list(PARAM_KEYS)}) to {args.output_params}")
 
     save_norm_stats(args.output, psi_stats)
     extra = {
