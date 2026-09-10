@@ -20,11 +20,13 @@ Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q (both 
 
 | scheme | ψ EV | PV-q EV | CRPS (norm.) |
 |---|---|---|---|
-| EnKF | 0.9474 | 0.4812 | 0.2802 |
-| ETKF | 0.9212 | 0.4050 | 0.3200 |
-| Weak-4DVar | 0.9660 | -0.0345 | 0.4524* |
-| Strong-4DVar | 0.9714 | -0.1257 | 0.4538* |
+| EnKF | 0.9474 | **0.4812** | **0.2802** |
+| ETKF | 0.9212 | *0.4050* | *0.3200* |
+| Weak-4DVar | *0.9660* | -0.0345 | 0.4524* |
+| Strong-4DVar | **0.9714** | -0.1257 | 0.4538* |
 | Q1 (DirectUNet) † | 0.8971 | 0.1605 | -- |
+
+(Best per column **bolded**, second-best *italicized*.)
 
 \* CRPS is deterministic (degenerates to MAE, no ensemble spread).
 

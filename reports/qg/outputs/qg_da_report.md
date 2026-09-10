@@ -9,10 +9,12 @@ CRPS is computed per-window on the q-state: ensemble methods (ETKF/EnKF) score t
 | method | PV RMSE | improv | CRPS | CRPS (norm.) | PV EV | PV q1 EV | PV q2 EV | ψ EV |
 |---|---|---|---|---|---|---|---|---|
 | _free forecast_ | 1.93e-05 | 1.0 | -- | -- | -0.0312 | -0.0443 | -0.0180 | 0.8854 |
-| EnKF | 1.25e-05 | 1.5417 | 5.69e-06 | 0.2802 | 0.4812 | 0.5686 | 0.3938 | 0.9474 |
-| ETKF | 1.39e-05 | 1.3863 | 6.50e-06 | 0.3200 | 0.4050 | 0.4694 | 0.3406 | 0.9212 |
-| Weak-4DVar | 1.41e-05 | 1.3691 | 9.19e-06* | 0.4524* | -0.0345 | 0.4677 | -0.5367 | 0.9660 |
-| Strong-4DVar | 1.40e-05 | 1.3793 | 9.22e-06* | 0.4538* | -0.1257 | 0.4830 | -0.7344 | 0.9714 |
+| EnKF | **1.25e-05** | **1.5417** | **5.69e-06** | **0.2802** | **0.4812** | **0.5686** | **0.3938** | 0.9474 |
+| ETKF | *1.39e-05* | *1.3863* | *6.50e-06* | *0.3200* | *0.4050* | 0.4694 | *0.3406* | 0.9212 |
+| Weak-4DVar | 1.41e-05 | 1.3691 | 9.19e-06* | 0.4524* | -0.0345 | 0.4677 | -0.5367 | *0.9660* |
+| Strong-4DVar | 1.40e-05 | 1.3793 | 9.22e-06* | 0.4538* | -0.1257 | *0.4830* | -0.7344 | **0.9714** |
+
+(Best per column **bolded**, second-best *italicized*, ranked among the 4 DA methods -- the free-forecast reference row above is excluded.)
 
 > **Caveat:** Weak-4DVar, Strong-4DVar collapse on PV q layer2 (the unobserved lower layer) at this reference case -- their PV EV is negative there despite psi EV being the best of all 4 methods. This is consistent with PV being a Laplacian-like operator on psi (q ≈ ∇²ψ): small high-wavenumber errors in an otherwise excellent psi analysis get amplified when inverted to PV, especially in the layer with no direct observations. EnKF is the only method strongly positive on **both** psi and PV q at this setting.
 

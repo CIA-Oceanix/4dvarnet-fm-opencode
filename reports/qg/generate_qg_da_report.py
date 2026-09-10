@@ -48,6 +48,30 @@ def fmt_sci(x, nd=2) -> str:
     return f"{x:.{nd}e}" if x is not None else "--"
 
 
+def rank_marks(values: list, higher_is_better: bool = True) -> dict:
+    """{index: 'bold'|'italic'} for the best/second-best of `values` (None skipped).
+
+    Project-level report convention: bold the best score per metric column,
+    italicize the second-best (ranked within that column only).
+    """
+    present = [(i, v) for i, v in enumerate(values) if v is not None]
+    present.sort(key=lambda t: t[1], reverse=higher_is_better)
+    marks = {}
+    if len(present) >= 1:
+        marks[present[0][0]] = "bold"
+    if len(present) >= 2:
+        marks[present[1][0]] = "italic"
+    return marks
+
+
+def mark(s: str, kind: str | None) -> str:
+    if kind == "bold":
+        return f"**{s}**"
+    if kind == "italic":
+        return f"*{s}*"
+    return s
+
+
 def load_da_baselines(root: Path) -> list[dict]:
     out = []
     for label, fname in METHODS:
@@ -130,17 +154,37 @@ def main() -> None:
             f"{fmt(first_valid['q2_ev_free'])} | {fmt(first_valid['psi_ev_free'])} |")
     else:
         add("| _free forecast_ | -- | -- | -- | -- | -- | -- | -- | -- |")
-    for row in da:
+    # Ranked (bold=best, italic=second-best) among the 4 DA methods only --
+    # the free-forecast row above is a reference baseline, not a competing
+    # method, so it's excluded from ranking.
+    cols = ["rmse", "improv", "crps", "crps_normalized", "q_ev", "q1_ev", "q2_ev", "psi_ev"]
+    higher_better = {"rmse": False, "improv": True, "crps": False, "crps_normalized": False,
+                     "q_ev": True, "q1_ev": True, "q2_ev": True, "psi_ev": True}
+    col_marks = {}
+    for c in cols:
+        vals = [row["data"][c] if row["data"] is not None else None for row in da]
+        col_marks[c] = rank_marks(vals, higher_is_better=higher_better[c])
+
+    for i, row in enumerate(da):
         d = row["data"]
         if d is None:
             add(f"| {row['label']} | -- | -- | -- | -- | -- | -- | -- | -- |")
             continue
         star = "*" if d["crps_is_deterministic"] else ""
-        crps_str = fmt_sci(d["crps"]) + star
-        crps_norm_str = fmt(d["crps_normalized"]) + star
-        add(f"| {row['label']} | {fmt_sci(d['rmse'])} | {fmt(d['improv'])} | "
-            f"{crps_str} | {crps_norm_str} | {fmt(d['q_ev'])} | {fmt(d['q1_ev'])} | "
-            f"{fmt(d['q2_ev'])} | {fmt(d['psi_ev'])} |")
+        crps_str = mark(fmt_sci(d["crps"]) + star, col_marks["crps"].get(i))
+        crps_norm_str = mark(fmt(d["crps_normalized"]) + star, col_marks["crps_normalized"].get(i))
+        rmse_str = mark(fmt_sci(d["rmse"]), col_marks["rmse"].get(i))
+        improv_str = mark(fmt(d["improv"]), col_marks["improv"].get(i))
+        q_ev_str = mark(fmt(d["q_ev"]), col_marks["q_ev"].get(i))
+        q1_ev_str = mark(fmt(d["q1_ev"]), col_marks["q1_ev"].get(i))
+        q2_ev_str = mark(fmt(d["q2_ev"]), col_marks["q2_ev"].get(i))
+        psi_ev_str = mark(fmt(d["psi_ev"]), col_marks["psi_ev"].get(i))
+        add(f"| {row['label']} | {rmse_str} | {improv_str} | "
+            f"{crps_str} | {crps_norm_str} | {q_ev_str} | {q1_ev_str} | "
+            f"{q2_ev_str} | {psi_ev_str} |")
+    add("")
+    add("(Best per column **bolded**, second-best *italicized*, ranked among "
+        "the 4 DA methods -- the free-forecast reference row above is excluded.)")
     add("")
 
     have_data = [row["data"] for row in da if row["data"] is not None]
