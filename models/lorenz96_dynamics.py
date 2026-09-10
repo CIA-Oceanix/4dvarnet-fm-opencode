@@ -195,9 +195,7 @@ class Lorenz96Dynamics(DynamicsBase):
         if device is None:
             device = torch.device("cpu")
         NO, J = self.NO, self.J
-        sd = self.state_dim
 
-        rng = np.random.RandomState(seed)
         W_arr = self._build_forcing(num_steps + spinup_steps, seed,
                                      self.c1, self.c2, self.gamma,
                                      self.W_L_bar, self.sigma_0, self.sigma_L,

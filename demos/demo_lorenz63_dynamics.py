@@ -38,8 +38,7 @@ def plot_3d_attractor(trajectory, save_path):
     
     # Color by time
     time_steps = np.arange(len(X))
-    colors = plt.cm.viridis(time_steps / len(time_steps))
-    
+
     # Scatter plot with time coloring
     scatter = ax.scatter(X, Y, Z, c=time_steps, cmap='viridis', s=1, alpha=0.6)
     

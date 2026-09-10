@@ -90,7 +90,6 @@ def _build_qg_loc_matrices(state_dim: int, obs_indices_t: list, nlayers: int,
             Ly_t.append(None)
             continue
         idx = torch.tensor(idx_t, dtype=torch.long, device=device)
-        od = len(idx)
         obs_layer = idx.to(device).to(torch.float64) // gpl
         gg = (idx.to(device) % gpl).to(torch.float64)
         obs_y = gg // nx
@@ -1126,10 +1125,8 @@ class EnKF:
 
         if self.R_var_vec is not None:
             r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
-            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
         else:
             r_sqrt = np.sqrt(self.R_var)
-            r_inv = 1.0 / self.R_var
 
         if self.init_ensemble is not None:
             ensemble = self.init_ensemble.clone()
@@ -1221,10 +1218,8 @@ class EnKF:
 
         if self.R_var_vec is not None:
             r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
-            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
         else:
             r_sqrt = np.sqrt(self.R_var)
-            r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations, obs_mask)
         if self.init_ensemble is not None:
@@ -1356,7 +1351,6 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         sd = self.state_dim
@@ -1440,7 +1434,6 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         sd = self.state_dim
@@ -1558,7 +1551,6 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         sd = self.state_dim
@@ -1636,7 +1628,6 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         sd = self.state_dim
@@ -1769,7 +1760,6 @@ class JointEnKF(EnKF):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         N = self.N_ensemble
@@ -1838,7 +1828,6 @@ class JointEnKF(EnKF):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
@@ -1933,7 +1922,6 @@ class JointETKF(ETKF):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         N = self.N_ensemble
@@ -2021,7 +2009,6 @@ class JointETKF(ETKF):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         N = self.N_ensemble

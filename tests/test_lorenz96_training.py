@@ -574,8 +574,10 @@ class TestEsfixGateMissingES:
         orig = {"s0": {"EnKF": {"mean": 0.90, "ev": {"groups": {"all_obs": 0.50, "slow": 0.80, "obs_fast": 0.30}}}}}
         new = {"s0": {"EnKF": {"mean": 0.905, "ev": {"groups": {"all_obs": 0.505, "slow": 0.805, "obs_fast": 0.305}},
                               "es": {"groups": {"all_obs": 0.45, "slow": 0.30, "obs_fast": 0.50}}}}}
-        op = tmp_path / "orig.json"; json.dump(orig, open(op, "w"))
-        np = tmp_path / "new.json"; json.dump(new, open(np, "w"))
+        op = tmp_path / "orig.json"
+        json.dump(orig, open(op, "w"))
+        np = tmp_path / "new.json"
+        json.dump(new, open(np, "w"))
         rep = validate(str(op), str(np))
         assert rep["ok"] is True
         assert rep["checks"]["s0/EnKF"]["status"] == "OK"

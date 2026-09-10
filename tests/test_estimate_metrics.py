@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from evaluation.estimate_metrics import (
-    L96_PARAM_ORDER,
     nrmse_param,
     trajectory_forecast_skill,
 )

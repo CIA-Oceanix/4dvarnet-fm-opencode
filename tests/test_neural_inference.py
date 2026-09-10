@@ -3,9 +3,8 @@
 import pytest
 import torch
 import numpy as np
-from pathlib import Path
 from omegaconf import OmegaConf
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from evaluation.neural_inference import (
     load_checkpoint,

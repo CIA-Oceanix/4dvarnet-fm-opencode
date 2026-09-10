@@ -29,7 +29,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 
 from evaluation.estimate_metrics import (
     evaluate_ensemble_estimates,

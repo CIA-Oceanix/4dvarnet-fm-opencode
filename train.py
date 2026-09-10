@@ -22,16 +22,16 @@ torch.set_float32_matmul_precision('medium')
 
 logger = logging.getLogger(__name__)
 
-from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval
-from data.random_param_dataset import RandomParamLorenz63Dataset
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm, make_collate_fm
-from torch.utils.data import DataLoader
-from models.solver import TweedieSolver
-from models.direct_unet import DirectUNet
-from models.vanilla_cfm import VanillaCFM
-from training.pipeline import create_trainer, train_stage
-from training.lightning_module import LitModel
-from evaluation.metrics import rmse, param_rmse
+from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval  # noqa: E402
+from data.random_param_dataset import RandomParamLorenz63Dataset  # noqa: E402
+from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm, make_collate_fm  # noqa: E402
+from torch.utils.data import DataLoader  # noqa: E402
+from models.solver import TweedieSolver  # noqa: E402
+from models.direct_unet import DirectUNet  # noqa: E402
+from models.vanilla_cfm import VanillaCFM  # noqa: E402
+from training.pipeline import create_trainer, train_stage  # noqa: E402
+from training.lightning_module import LitModel  # noqa: E402
+from evaluation.metrics import rmse, param_rmse  # noqa: E402
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXP_DIR = os.path.join(BASE, "experiments")
@@ -498,7 +498,6 @@ def main(cfg: DictConfig):
     exp_dir = os.path.join(EXP_DIR, exp_id)
     os.makedirs(exp_dir, exist_ok=True)
     results_path = os.path.join(exp_dir, "results.json")
-    trajs_path = os.path.join(exp_dir, "trajectories.npz")
 
     # Persist the fully-resolved (defaults-composed) config next to the
     # checkpoints unconditionally, so eval scripts can recover exactly what a
