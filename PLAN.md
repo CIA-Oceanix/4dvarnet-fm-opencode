@@ -964,6 +964,47 @@ retraining (architecturally robust via the guidance-cost exclusion, not the obs-
   normalization), `tests/test_joint_estimation_l96_neural.py`
   (`make_l96_dataloaders` augments train only, val stays clean).
 
+### Fast-Y observation-density-augmented training -- results (2026-09-10)
+
+Follow-up to the plan above, run interactively (not yet a separate PR-tracked branch at the
+time of writing -- code lives on `feature/l96-obs-density-augmented-report`).
+
+- **L-tier collapsed, M-tier fixed it.** DirectUNet-**L**(cosine, augmented) converged on
+  `val_loss` but collapsed toward the fast-Y conditional mean at eval time (variance ratio
+  ~35%, correlation ~0.55-0.64) -- root-caused via a side-by-side diagnostic against CFM-M's
+  *identical* augmentation pipeline (variance ratio ~96%, correlation ~0.94-0.95 there),
+  ruling out a data/eval bug and pointing at an L-tier-specific pathology. Retrained
+  DirectUNet-**M** with cosine (`L1b_monai_unet_s0s1_norm_obsdensity.yaml`, new): variance
+  ratio 99%, correlation 0.94 -- fully healthy, and RMSE (0.473/0.476) improved on the
+  non-augmented M-tier baseline (0.501-0.507). Cosine annealing adopted as the default for
+  all obs-density-augmented training going forward, not just L.
+- **Reduced-density payoff confirmed.** `eval_obs_density_l96.py` against both healthy
+  augmented checkpoints: degradation ratio at `keep_k=8` dropped from ~1.9x to **1.49x** for
+  both CFM-M and DirectUNet-M, without sacrificing (in fact slightly improving) the
+  full-density baseline.
+- **Best scheme of the whole investigation:** SDA3 guidance warm-started from the *augmented*
+  DirectUNet-M mean estimate (instead of the original non-augmented one) -- full-density RMSE
+  **0.389** (best of every scheme tested this session, non-augmented or augmented) and the
+  best absolute worst-case RMSE at `keep_k=0` (**1.065**, ahead of even SDA3's own 1.082).
+  SDA3 alone still has the flattest *relative* degradation curve (2.02x vs the hybrid's
+  2.74x) -- the hybrid's much lower starting point means even a larger relative drop still
+  lands ahead in absolute terms, not a contradiction, just two different ways to read
+  "robustness."
+- **New dedicated report** `reports/l96/generate_l96_obs_density_augmented_report.py` ->
+  `l96_obs_density_augmented_training.md`: experiment description, a combined summary table
+  across all 7 method variants (2 non-augmented baselines, 2 augmented alone, SDA3, the
+  non-augmented hybrid, the augmented hybrid), and a best/median/worst-window analysis
+  (mirroring `generate_l96_consolidated_report.py`'s `select_windows` convention, but with
+  `keep_k` as the varying axis for the best method instead of comparing methods at fixed
+  density) with both a per-keep_k RMSE table and a Hovmöller-style figure per rank.
+- **Consolidated benchmark updated**: added `DirectUNet-M(monai,cos,obsdensity)` /
+  `CFM-M(monai,flat,obsdensity)` rows to every table in `l96_consolidated_benchmark.md`
+  (scheme description, RMSE/EV/ES pooled, RMSE/EV/CRPS per-window) computed directly from
+  their `estimates_{s0,s1}.npz` via `evaluation/estimate_metrics.py` -- not a full script
+  regeneration, which needs DA-baseline/joint-comparison cache files living only in a
+  different worktree; both rows explicitly noted as N=1 single-pass evaluations (marked `*`
+  in ES/CRPS), unlike the ensemble (N=30) convention the original CFM-M rows use.
+
 ## Phases
 
 ### Phase 0: Plan
