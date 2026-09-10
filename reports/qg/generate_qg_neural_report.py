@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""Generate the QG S0 DA-baselines report.
+"""Generate the QG case-study overview report.
 
-JSON-only generator (no QG/neural code imports). Reads the four DA baselines
-(ETKF/EnKF/Strong-4DVar/Weak-4DVar) from ``reports/qg/outputs/
-qg_repro_validation/`` and renders a comparison table (RMSE, CRPS, EV,
-free-forecast EV) on the S0 scenario, plus pointers to the reconstruction
-figures (see ``generate_qg_reconstruction_figs.py``).
+JSON-only generator (no QG/neural code imports). Two sections:
 
-Reference case (2026-09-08): lag=5.0d, noise_frac=0.05, N=100 test windows --
-supersedes the earlier lag=1.0d/noise=0.01 case, which was found to be
-unrealistically favorable (the background/free forecast alone already
-explained most of the DA skill; see PLAN.md's "DA reference-case realism"
-section for the full sensitivity analysis).
+1. **Benchmarked schemes** -- a description table covering all 5 schemes
+   (the 4 DA baselines + Q1/DirectUNet): type, key hyperparameters, one-line
+   description. Full DA-method detail (reference-case config, reconstruction
+   figures) lives in ``qg_da_report.md`` (see ``generate_qg_da_report.py``);
+   this section only summarizes enough to compare schemes side by side.
+2. **Summary metrics** -- S0-only pooled EV/CRPS table combining the 4 DA
+   baselines (``qg_repro_validation/*.json``, reference case lag=5.0d/
+   noise=0.05) with Q1 (``qg_repro_validation/q1_direct_unet_lag5_noise05.json``,
+   see ``eval_qg_q1_lag5_noise05.py``).
 
-Does NOT cover the Q1/Q2 neural estimators -- see git history for the
-previous version of this report if you need that section back.
+**Apples-to-apples caveat (2026-09-10):** Q1's row is NOT a fully fair
+comparison -- the checkpoint was *trained* at ``train_qg_neural.py``'s old
+defaults (lag=1.0d, noise_frac=0.01), and only *re-evaluated* (not retrained)
+at the DA baselines' lag=5.0d/noise=0.05 reference case, so it's being tested
+outside its training distribution. This report flags that explicitly in the
+table rather than presenting it as a like-for-like result; a genuinely fair
+comparison needs a matched retrain (see PLAN.md).
 
 Run from the repository root::
 
@@ -26,8 +31,52 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-METHODS = [("EnKF", "enkf"), ("ETKF", "etkf"),
-           ("Weak-4DVar", "weak4dvar"), ("Strong-4DVar", "strong4dvar")]
+DA_METHODS = [("EnKF", "enkf"), ("ETKF", "etkf"),
+              ("Weak-4DVar", "weak4dvar"), ("Strong-4DVar", "strong4dvar")]
+
+SCHEMES = [
+    {
+        "name": "ETKF",
+        "type": "Ensemble DA (deterministic square-root)",
+        "config": "N=80, inflation=1.0, loc_radius=6.0",
+        "desc": "Ensemble Transform Kalman Filter -- deterministic ensemble-square-root "
+                "analysis update, sequentially cycled over the assimilation window. "
+                "No stochastic observation perturbation.",
+    },
+    {
+        "name": "EnKF",
+        "type": "Ensemble DA (stochastic, perturbed-obs)",
+        "config": "N=80, inflation=1.0, loc_radius=6.0",
+        "desc": "Perturbed-observation Ensemble Kalman Filter -- each ensemble member "
+                "assimilates an independently perturbed observation. Same hyperparameters "
+                "as ETKF for a controlled comparison.",
+    },
+    {
+        "name": "Strong-4DVar",
+        "type": "Variational DA (deterministic, perfect-model)",
+        "config": "window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0",
+        "desc": "4D-Var assuming the DA dynamical model is exact over the assimilation "
+                "window (strong constraint) -- optimizes only the initial condition.",
+    },
+    {
+        "name": "Weak-4DVar",
+        "type": "Variational DA (deterministic, weak-constraint)",
+        "config": "window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0, q_var_scale=0.1",
+        "desc": "4D-Var with an added per-step model-error control term (weak constraint) "
+                "-- can partially compensate for a biased/mismatched dynamical model, at "
+                "the cost of a larger control space.",
+    },
+    {
+        "name": "Q1 (DirectUNet)",
+        "type": "Neural (deterministic, single-pass, supervised)",
+        "config": "MONAI circular 2D U-Net, hidden=[64,128,256] (M tier), cosine LR, "
+                  "200 epochs",
+        "desc": "Direct single forward-pass estimator mapping observations to the full "
+                "state (no iterative assimilation cycle, no dynamical model at inference "
+                "time). Circular-padded Conv2d over the doubly-periodic (ny,nx) grid; "
+                "trained via supervised regression on a combined psi + weighted PV-q loss.",
+    },
+]
 
 
 def load_json(path: Path) -> dict:
@@ -43,9 +92,9 @@ def fmt_sci(x, nd=2) -> str:
     return f"{x:.{nd}e}" if x is not None else "--"
 
 
-def load_da_baselines(root: Path) -> list[dict]:
+def load_da_summary(root: Path) -> list[dict]:
     out = []
-    for label, fname in METHODS:
+    for label, fname in DA_METHODS:
         p = root / "qg_repro_validation" / f"{fname}.json"
         if not p.exists():
             out.append({"label": label, "data": None})
@@ -53,32 +102,30 @@ def load_da_baselines(root: Path) -> list[dict]:
         d = load_json(p)
         s0 = d.get("scenarios", {}).get("test_s0", {})
         q = s0.get("metrics_per_field", {}).get("q", {})
-        psy = s0.get("metrics_per_field", {}).get("psi", {})
+        psi = s0.get("metrics_per_field", {}).get("psi", {})
         out.append({
             "label": label,
             "data": {
-                "rmse": s0.get("rmse_mean"),
-                "free_rmse": s0.get("forecast_rmse_mean"),
-                "improv": s0.get("forecast_improvement"),
-                "crps": s0.get("crps_mean"),
+                "psi_ev": psi.get("full", {}).get("ev"),
+                "q_ev": q.get("full", {}).get("ev"),
                 "crps_normalized": s0.get("crps_normalized"),
                 "crps_is_deterministic": s0.get("crps_is_deterministic"),
-                "q_ev": q.get("full", {}).get("ev"),
-                "q_ev_free": q.get("full", {}).get("ev_free"),
-                "q1_ev": q.get("layer1", {}).get("ev"),
-                "q1_ev_free": q.get("layer1", {}).get("ev_free"),
-                "q2_ev": q.get("layer2", {}).get("ev"),
-                "q2_ev_free": q.get("layer2", {}).get("ev_free"),
-                "psi_ev": psy.get("full", {}).get("ev"),
-                "psi_ev_free": psy.get("full", {}).get("ev_free"),
-                "psi1_ev": psy.get("layer1", {}).get("ev"),
-                "psi2_ev": psy.get("layer2", {}).get("ev"),
-                "lag_days": d.get("init_lag_days"),
-                "noise_frac": d.get("obs_noise_std_frac"),
-                "num_windows": len(s0.get("rmse_list", [])) or None,
             },
         })
     return out
+
+
+def load_q1_summary(root: Path) -> dict | None:
+    p = root / "qg_repro_validation" / "q1_direct_unet_lag5_noise05.json"
+    if not p.exists():
+        return None
+    d = load_json(p)
+    return {
+        "psi_ev": d["psi"]["pooled_ev"],
+        "q_ev": d["q"]["pooled_ev"],
+        "eval_config": d["eval_config"],
+        "caveat": d["train_test_mismatch_caveat"],
+    }
 
 
 def main() -> None:
@@ -88,114 +135,58 @@ def main() -> None:
     args = ap.parse_args()
 
     out_root = Path(args.json_root)
-    da = load_da_baselines(out_root)
+    da = load_da_summary(out_root)
+    q1 = load_q1_summary(out_root)
 
     lines = []
     add = lines.append
-    add("# QG DA Baselines (S0 reference case)")
+    add("# QG Case Study: Benchmarked Schemes Overview")
     add("")
-    add("Reference case (2026-09-08): **lag=5.0d, noise_frac=0.05, N=100 test "
-        "windows**. Supersedes the earlier lag=1.0d/noise=0.01 case, which was "
-        "found to be unrealistically favorable -- at that setting the "
-        "background (free forecast, no assimilation) alone already reached "
-        "psi full EV≈0.98, so DA's high score there was mostly inherited from "
-        "the background rather than earned from the observational update. "
-        "See `PLAN.md`'s \"DA reference-case realism\" section for the full "
-        "lag/noise sensitivity analysis behind this choice.")
+    add("Two-layer quasi-geostrophic (QG) Phillips-channel case study -- the four DA "
+        "baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus the Q1 neural "
+        "estimator (DirectUNet), on the S0 (no model error) reference case.")
     add("")
 
-    add("## DA baselines (S0, PV-q and ψ)")
+    add("## 1. Benchmarked schemes")
     add("")
-    add("CRPS is computed per-window on the q-state: ensemble methods "
-        "(ETKF/EnKF) score their real per-member spread; deterministic "
-        "methods (4DVar) have no ensemble, so CRPS degenerates exactly to "
-        "the mean absolute error (marked `*`) -- lower is better for both. "
-        "CRPS (norm.) divides by the pooled truth PV std over the whole "
-        "test set (not per-window -- avoids the distortion a low-variance "
-        "window would introduce), giving a dimensionless, cross-method-"
-        "comparable score.")
+    add("| scheme | type | key config | description |")
+    add("|---|---|---|---|")
+    for s in SCHEMES:
+        add(f"| {s['name']} | {s['type']} | {s['config']} | {s['desc']} |")
     add("")
-    add("| method | PV RMSE | improv | CRPS | CRPS (norm.) | PV EV | PV q1 EV | "
-        "PV q2 EV | ψ EV |")
-    add("|---|---|---|---|---|---|---|---|---|")
-    first_valid = next((row["data"] for row in da if row["data"] is not None), None)
-    if first_valid is not None:
-        add(f"| _free forecast_ | {fmt_sci(first_valid['free_rmse'])} | 1.0 | -- | -- | "
-            f"{fmt(first_valid['q_ev_free'])} | {fmt(first_valid['q1_ev_free'])} | "
-            f"{fmt(first_valid['q2_ev_free'])} | {fmt(first_valid['psi_ev_free'])} |")
-    else:
-        add("| _free forecast_ | -- | -- | -- | -- | -- | -- | -- | -- |")
+    add("DA-method reference-case detail (full lag/noise sensitivity analysis, "
+        "per-layer breakdown, reconstruction figures) is in `qg_da_report.md` "
+        "(`generate_qg_da_report.py`) -- not repeated here.")
+    add("")
+
+    add("## 2. Summary metrics (S0 reference case, N=100)")
+    add("")
+    add("Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q "
+        "(both layers), plus normalized CRPS where available.")
+    add("")
+    add("| scheme | ψ EV | PV-q EV | CRPS (norm.) |")
+    add("|---|---|---|---|")
     for row in da:
         d = row["data"]
         if d is None:
-            add(f"| {row['label']} | -- | -- | -- | -- | -- | -- | -- | -- |")
+            add(f"| {row['label']} | -- | -- | -- |")
             continue
         star = "*" if d["crps_is_deterministic"] else ""
-        crps_str = fmt_sci(d["crps"]) + star
-        crps_norm_str = fmt(d["crps_normalized"]) + star
-        add(f"| {row['label']} | {fmt_sci(d['rmse'])} | {fmt(d['improv'])} | "
-            f"{crps_str} | {crps_norm_str} | {fmt(d['q_ev'])} | {fmt(d['q1_ev'])} | "
-            f"{fmt(d['q2_ev'])} | {fmt(d['psi_ev'])} |")
+        add(f"| {row['label']} | {fmt(d['psi_ev'])} | {fmt(d['q_ev'])} | "
+            f"{fmt(d['crps_normalized'])}{star} |")
+    if q1 is not None:
+        add(f"| Q1 (DirectUNet) † | {fmt(q1['psi_ev'])} | {fmt(q1['q_ev'])} | -- |")
+    else:
+        add("| Q1 (DirectUNet) † | -- | -- | -- | (not yet evaluated) |")
     add("")
-
-    have_data = [row["data"] for row in da if row["data"] is not None]
-    q2_collapse = [row["label"] for row in da if row["data"] is not None
-                   and row["data"]["q2_ev"] is not None and row["data"]["q2_ev"] < 0]
-    if q2_collapse:
-        add(f"> **Caveat:** {', '.join(q2_collapse)} collapse on PV q layer2 "
-            "(the unobserved lower layer) at this reference case -- their "
-            "PV EV is negative there despite psi EV being the best of all "
-            "4 methods. This is consistent with PV being a Laplacian-like "
-            "operator on psi (q ≈ ∇²ψ): small high-wavenumber errors in an "
-            "otherwise excellent psi analysis get amplified when inverted "
-            "to PV, especially in the layer with no direct observations. "
-            "EnKF is the only method strongly positive on **both** psi and "
-            "PV q at this setting.")
-        add("")
-
-    if have_data:
-        n = have_data[0].get("num_windows")
-        lag = have_data[0].get("lag_days")
-        noise = have_data[0].get("noise_frac")
-        add(f"Computed on N={n} test windows, lag={lag}, noise_frac={noise} "
-            "(should match the reference case above -- if not, these JSONs "
-            "are stale, regenerate them).")
-        add("")
-
-    add("## Reconstruction examples")
+    add("\\* CRPS is deterministic (degenerates to MAE, no ensemble spread).")
     add("")
-    add("3 example test windows (best/median/worst by ETKF's per-window "
-        "pooled PV-q RMSE) x all 4 methods, showing truth | free-forecast | "
-        "analysis for streamfunction (ψ, both layers) and PV (q, both "
-        "layers), plus an animated DA cycle (raw obs | wind-stress curl "
-        "forcing | truth | EnKF analysis, PV q1) over the 30-day window. "
-        "Generated by `generate_qg_reconstruction_figs.py`.")
+    if q1 is not None:
+        add(f"† **Not apples-to-apples**: {q1['caveat']}")
+    else:
+        add("† Q1 row pending: run `eval_qg_q1_lag5_noise05.py` against the trained "
+            "checkpoint first.")
     add("")
-    fig_dir = out_root / "figs"
-    report_dir = Path(args.out).resolve().parent
-
-    def _rel(fig_path):
-        # Relative to the report file's own directory (not out_root/json-root
-        # in general -- Markdown image paths resolve relative to the file
-        # containing them), so the link works regardless of where --out or
-        # --json-root point.
-        return fig_path.resolve().relative_to(report_dir) if fig_path.exists() else None
-
-    for label in ("best", "median", "worst"):
-        add(f"### {label.capitalize()} window")
-        add("")
-        static_rel = _rel(fig_dir / f"qg_s0_reconstruction_{label}.png")
-        if static_rel is not None:
-            add(f"![{label} window reconstruction]({static_rel.as_posix()})")
-        else:
-            add("`--` (figure not yet generated).")
-        add("")
-        anim_rel = _rel(fig_dir / f"qg_s0_dacycle_{label}.gif")
-        if anim_rel is not None:
-            add(f"![{label} window DA-cycle animation (EnKF)]({anim_rel.as_posix()})")
-        else:
-            add("`--` (animation not yet generated).")
-        add("")
 
     out_path = Path(args.out)
     out_path.write_text("\n".join(lines) + "\n")
