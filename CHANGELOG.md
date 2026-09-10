@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-10: QG — fix cross-resolution deterministic-method CRPS double-upsample crash
+
+**Summary:** `evaluation/run_qg_baselines.py`'s `run()` crashed for any deterministic
+method (Strong/Weak-4DVar) under a cross-resolution S1 DA model (`da_nx != cfg.nx`):
+the trajectory used as CRPS's single-member ensemble fallback (`ens = traj_da[None]`)
+had already been upsampled to truth resolution, but the CRPS block unconditionally
+re-upsampled it again, treating truth-resolution data as if still at `da_nx` --
+`RuntimeError` on reshape. S0's tests never exercised `cross_res=True` with a
+deterministic method (only ETKF), so this went uncaught until the revised S1
+reference-case campaign's Strong-4DVar run hit it after ~9.5h of compute.
+**Files modified:** `evaluation/run_qg_baselines.py` — guard the CRPS ensemble
+upsample/psi_to_q conversion on `ens_raw is not None` (a real da_nx-resolution
+ensemble); `tests/test_qg_baselines_4dvar.py` — new regression test
+(`test_strong4dvar_cross_res_run_smoke`), verified to fail with the exact pre-fix
+error and pass with the fix.
+**Rationale:** Without the fix, no deterministic DA method can ever be evaluated
+under S1's cross-resolution structural-mismatch scenario.
+**Verification:** `pytest tests/test_qg_baselines_4dvar.py tests/test_qg_baselines.py -m "not slow"` — 34 passed.
+
 ## 2026-09-10: L96 obs-density-augmented training: M-tier fix, reduced-density payoff, dedicated report
 
 **Summary:** Closes out the fast-Y observation-density-augmented training investigation
