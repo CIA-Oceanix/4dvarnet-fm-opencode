@@ -46,6 +46,45 @@ jobs:
             echo "No changed Python files to lint."
           fi
 
+  changelog-policy:
+    name: changelog fragments policy
+    runs-on: ubuntu-latest
+    # Blocking (no continue-on-error): a direct CHANGELOG.md edit is exactly
+    # the thing CHANGELOG.d/ exists to prevent (see CHANGELOG.d/README.md) --
+    # every concurrently-open PR editing that file's top section is what
+    # caused repeated merge conflicts before this policy. The one legitimate
+    # way CHANGELOG.md changes is scripts/assemble_changelog.py, which always
+    # deletes the fragment files it consumes in the same diff -- so a
+    # CHANGELOG.md change paired with at least one CHANGELOG.d/*.md deletion
+    # is allowed; any other CHANGELOG.md change fails the build.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CHANGELOG.md was not hand-edited
+        run: |
+          BASE_SHA="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- CHANGELOG.md)
+          if [ -z "$CHANGED" ]; then
+            echo "CHANGELOG.md not touched -- OK."
+            exit 0
+          fi
+          MARKER='<!-- AUTO-ASSEMBLED FROM CHANGELOG.d/ -- do not hand-edit above this line; add new files to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -->'
+          if ! git show "$BASE_SHA:CHANGELOG.md" 2>/dev/null | grep -qF "$MARKER"; then
+            echo "Marker absent from CHANGELOG.md in the base commit -- this is the one-time bootstrap PR introducing the CHANGELOG.d/ policy itself. OK."
+            exit 0
+          fi
+          DELETED_FRAGMENTS=$(git diff --name-only --diff-filter=D "$BASE_SHA" HEAD -- 'CHANGELOG.d/*.md')
+          if [ -z "$DELETED_FRAGMENTS" ]; then
+            echo "::error::CHANGELOG.md was edited directly. Add a new file to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -- do not hand-edit CHANGELOG.md. It may only change as part of running scripts/assemble_changelog.py, which also deletes the fragment files it consumes; no CHANGELOG.d/*.md files were deleted in this diff."
+            exit 1
+          fi
+          echo "CHANGELOG.md changed, but paired with fragment deletions -- looks like a legitimate scripts/assemble_changelog.py run:"
+          echo "$DELETED_FRAGMENTS"
+
   test:
     name: pytest
     runs-on: ubuntu-latest

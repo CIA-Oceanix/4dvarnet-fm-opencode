@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- AUTO-ASSEMBLED FROM CHANGELOG.d/ -- do not hand-edit above this line; add new files to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -->
+
 ## 2026-09-10: L96 obs-density reports — disambiguate DA-baselines report, retire redundant sweep outputs
 
 **Summary:** The `l96_obs_density_*.md` naming prefix had accumulated two unrelated report

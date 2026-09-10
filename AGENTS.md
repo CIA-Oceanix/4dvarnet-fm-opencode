@@ -79,11 +79,19 @@ Stop for user input only on a genuine external blocker:
 ### Hygiene
 
 - Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
-- Add a CHANGELOG.md entry (see format below) for every merged change.
+- Add a CHANGELOG.d/ fragment (see format below) for every merged change.
 
 ## Changelog Format
 
-Each entry in `CHANGELOG.md` should follow this format:
+**Do NOT edit `CHANGELOG.md` directly.** Editing a single shared file's top
+section is exactly what makes every concurrently-open PR conflict with every
+other one (each inserts its entry at the same spot). Instead, add a new file
+to `CHANGELOG.d/` as part of the same PR that makes the change — new files
+never conflict with each other in git, which removes that conflict class
+entirely. See `CHANGELOG.d/README.md` for the full convention.
+
+Filename: `YYYY-MM-DD-<short-slug>.md`. Content — the same format as before,
+just in its own file now:
 
 ```
 ## YYYY-MM-DD: Short Title
@@ -93,6 +101,10 @@ Each entry in `CHANGELOG.md` should follow this format:
 **Rationale:** Why this change was made.
 **Verification:** Test command run and result.
 ```
+
+Periodically (not part of any individual PR), run
+`python scripts/assemble_changelog.py` to fold all pending fragments into
+`CHANGELOG.md` (newest first) and delete the consumed fragment files.
 
 ## Build, Lint, and Test Commands
 
