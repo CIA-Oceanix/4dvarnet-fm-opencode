@@ -19,12 +19,16 @@ convention as `train_qg_neural.py`'s defaults), and computes:
   though q itself is left in raw physical units.
 * Optionally (`--output-params`, for the Q3/Q4 forcing+param-conditioned
   DirectUNet schemes, see PLAN.md's 2026-09-10 section): global mean/std of
-  the 4 physical params `[U1, rd, rek, beta]` pooled over the train split's
-  `true_params`, in the same `{"mean", "std"}` format `data.normalization`
-  uses for psi -- required because the 4 params span ~9 orders of magnitude
-  raw (e.g. rd~1.5e4 vs beta~1.5e-11), so a constant-channel broadcast of
-  the raw values would make one or two params numerically dominate or
-  vanish next to the z-scored psi/obs channels they're concatenated with.
+  the 3 physical params `[U1, rd, rek]` (`data.qg_neural.PARAM_KEYS` --
+  deliberately excludes `beta`, which is never jittered so is an exact
+  constant across the train split; z-scoring a zero-variance channel divides
+  by std=0 -- confirmed by a training smoke test producing NaN loss when
+  beta was included) pooled over the train split's `true_params`, in the
+  same `{"mean", "std"}` format `data.normalization` uses for psi --
+  required because the 3 params span ~9 orders of magnitude raw (e.g.
+  rd~1.5e4 vs rek~5.8e-7), so a constant-channel broadcast of the raw
+  values would make one or two params numerically dominate or vanish next
+  to the z-scored psi/obs channels they're concatenated with.
 
 Usage:
     python precompute_qg_norm_stats.py \
@@ -60,7 +64,7 @@ def main():
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument("--output", default="experiments/qg_psi_norm_stats.pt")
     ap.add_argument("--output-params", default=None,
-                    help="Also compute+save [U1,rd,rek,beta] norm stats here "
+                    help="Also compute+save [U1,rd,rek] norm stats here "
                          "(Q3/Q4 forcing+param conditioning). Skipped if omitted.")
     args = ap.parse_args()
 

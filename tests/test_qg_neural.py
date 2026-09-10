@@ -66,7 +66,7 @@ def _psi_norm_stats(cfg, windows):
 
 
 def _param_norm_stats(windows):
-    """Global [U1,rd,rek,beta] (mean, std) stats, same shape/format
+    """Global [U1,rd,rek] (mean, std) stats, same shape/format
     `precompute_qg_norm_stats.py --output-params` produces. `std` is
     clamped away from 0 -- in these tests' 1-2-window fixtures the params
     can be degenerate (identical across the "split"), unlike the real
@@ -372,7 +372,7 @@ def test_cond_mode_true_matches_true_forcing_and_params():
     spd = steps_per_day(cfg)
     expected_forcing = w["wind_curl"].reshape(2, spd, cfg.ny, cfg.nx).mean(dim=1)
     assert torch.allclose(forcing, expected_forcing, atol=1e-5)
-    assert params.shape == (4,)
+    assert params.shape == (3,)
     true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
     expected_params = (true_vec - pstats["mean"]) / pstats["std"]
     assert torch.allclose(params, expected_params, atol=1e-4)
@@ -397,12 +397,10 @@ def test_cond_mode_noisy_varies_across_draws_and_stays_finite():
     assert torch.isfinite(params).all()
     assert not torch.equal(forcings[0], forcings[1])
     assert not torch.equal(params[0], params[1])
-    # U1/beta are never biased by the noisy-params mechanism (only rd/rek are)
+    # U1 is never biased by the noisy-params mechanism (only rd/rek are)
     true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
     expected_u1 = (true_vec[0] - pstats["mean"][0]) / pstats["std"][0]
-    expected_beta = (true_vec[3] - pstats["mean"][3]) / pstats["std"][3]
     assert torch.allclose(params[:, 0], expected_u1.expand(5), atol=1e-4)
-    assert torch.allclose(params[:, 3], expected_beta.expand(5), atol=1e-4)
 
 
 def test_qg_collate_stacks_params_when_present():
@@ -411,7 +409,7 @@ def test_qg_collate_stacks_params_when_present():
     ds = QGNeuralDataset([w, w], cfg, cond_mode="true", param_norm_stats=pstats)
     batch = qg_collate([ds[0], ds[1]])
     assert batch.params is not None
-    assert batch.params.shape == (2, 4)
+    assert batch.params.shape == (2, 3)
     assert batch.forcing.shape == (2, 2, cfg.ny, cfg.nx)
 
 
@@ -430,6 +428,24 @@ def test_build_model_honors_yaml_param_dim_and_cond_extra_dim():
     assert model.cond_extra_dim == 1
     obs_channels = model.unet.obs_channels
     assert obs_channels == model.nlayers + 1 + 4
+
+
+def test_param_keys_are_never_zero_variance_across_windows():
+    """Regression test for a real bug caught by a training smoke test: `beta`
+    was originally included in PARAM_KEYS but `QGS01Dataset._generate_truth_only`
+    never jitters it (only U1/rd/rek get a per-window random draw, see
+    data/qg.py) -- it's an exact constant across the whole train split, so
+    z-scoring it divides by std=0 and poisons the loss to NaN within the
+    first epoch. Guards against reintroducing any such zero-variance key by
+    checking PARAM_KEYS' values actually differ across two independently
+    generated windows."""
+    from data.qg import QGS01Dataset
+    cfg = _cfg(num_windows=2)
+    windows = QGS01Dataset._generate_truth_only(cfg, 2)
+    for k in PARAM_KEYS:
+        v0, v1 = windows[0]["true_params"][k], windows[1]["true_params"][k]
+        assert v0 != v1, f"PARAM_KEYS entry {k!r} is constant across windows " \
+                          f"(both {v0!r}) -- would divide by std=0 when normalized"
 
 
 def test_q3_q4_yaml_configs_parse_cond_mode_as_string():
@@ -453,5 +469,5 @@ def test_q3_q4_yaml_configs_parse_cond_mode_as_string():
             f"{name}.yaml: cond_mode parsed as {type(cond_mode).__name__} "
             f"({cond_mode!r}), not a string -- likely an unquoted YAML boolean")
         assert cond_mode == expected_mode
-        assert int(cfg.model.param_dim) == 4
+        assert int(cfg.model.param_dim) == 3
         assert int(cfg.model.cond_extra_dim) == 1

@@ -41,7 +41,8 @@ qg:
   obs_field: psi
 model:
   hidden_channels: [64, 128, 256]
-  param_dim: 4
+  # [U1, rd, rek] -- beta excluded, see data/qg_neural.py's PARAM_KEYS comment.
+  param_dim: 3
   cond_extra_dim: 1
 training:
   epochs: 200

@@ -35,8 +35,9 @@ qg:
 model:
   hidden_channels: [64, 128, 256]
   # +1 forcing-field channel (the real wind-curl map, see cond_mode="true")
-  # +4 param channels ([U1, rd, rek, beta], z-scored via param_norm_stats).
-  param_dim: 4
+  # +3 param channels ([U1, rd, rek], z-scored via param_norm_stats -- beta
+  # is deliberately excluded, see data/qg_neural.py's PARAM_KEYS comment).
+  param_dim: 3
   cond_extra_dim: 1
 training:
   epochs: 200
@@ -53,6 +54,6 @@ data:
   cache_dir: reports/qg_cache
   normalize: true
   norm_stats_path: experiments/qg_psi_norm_stats.pt
-  # Oracle: exact true wind_curl field + true [U1,rd,rek,beta], no jitter.
+  # Oracle: exact true wind_curl field + true [U1,rd,rek], no jitter.
   cond_mode: "true"  # quoted: bare `true` parses as a YAML boolean, not this string
   param_norm_stats_path: experiments/qg_param_norm_stats.pt

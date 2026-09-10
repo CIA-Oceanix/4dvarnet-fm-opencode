@@ -548,7 +548,7 @@ Not yet done: folding these S1 numbers into `qg_da_report.md`/
 ### conditioning (2026-09-10, `feature/qg-q3q4-forcing-param-cond`)
 
 New DirectUNet variants that additionally condition on the wind-forcing
-field and physical params (`U1, rd, rek, beta`), alongside observations --
+field and physical params (`U1, rd, rek`), alongside observations --
 answers whether exogenous conditioning helps a QG estimator, mirroring the
 L96 SDA CFM forcing/param-conditioning study (`models/sda.py`'s
 `ConditionalPriorCFM`, `SDA2_cond_nominal_l96.yaml`/`SDA2_cond_mixed_l96.yaml`/
@@ -574,13 +574,19 @@ neutral-to-slightly-negative — see the L96 Q3 note above).
   `QGBatch.forcing`'s shape changed project-wide from `(B, days)` to
   `(B, days, ny, nx)` (Q1/Q2 unaffected: their `cond_extra_dim=0` means the
   model never reads it regardless of shape).
-- **Params**: `[U1, rd, rek, beta]` (U2 excluded -- always 0, no
-  information) broadcast as constant spatial channels (matches
+- **Params**: `[U1, rd, rek]` (`U2` and `beta` excluded -- `U2` is always 0
+  and `beta` is never jittered by `QGS01Dataset._generate_truth_only`
+  (only `U1`/`rd`/`rek` get a per-window random draw), so both are exact
+  constants across the train split; z-scoring a zero-variance channel
+  divides by std=0 -- **caught by a training smoke test** (job 53016)
+  producing NaN loss within the first epoch when `beta` was originally
+  included, before this fix -- see `data/qg_neural.py`'s `PARAM_KEYS`
+  comment) broadcast as constant spatial channels (matches
   `MonaiDirectUNetQG`'s existing, previously-dead broadcast code), z-scored
   via a new `precompute_qg_norm_stats.py --output-params` companion stats
   file (`experiments/qg_param_norm_stats.pt`) -- required whenever
-  `cond_mode != "none"` since the 4 params span ~9 orders of magnitude raw
-  (`rd≈1.5e4` vs `beta≈1.5e-11`); a raw constant-channel broadcast would
+  `cond_mode != "none"` since the 3 params span ~9 orders of magnitude raw
+  (`rd≈1.5e4` vs `rek≈5.8e-7`); a raw constant-channel broadcast would
   make one or two params numerically dominate or vanish next to the
   z-scored psi/obs channels.
 - **Two variants, controlled by `data.qg_neural.QGNeuralDataset`'s new

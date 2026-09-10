@@ -54,13 +54,15 @@ reproducible obs (``on_the_fly_obs=False``, the default) for stable evaluation.
 
 **Forcing + params conditioning (Q3/Q4, 2026-09-10):** ``QGNeuralDataset``
 can additionally condition the estimator on the wind-forcing field and the
-physical params (``rd``/``rek``/``beta``/``U1``), controlled by ``cond_mode``:
+physical params (``rd``/``rek``/``U1`` -- **not** ``beta``, see
+``PARAM_KEYS``'s comment: it's an exact constant across the train split,
+so z-scoring it divides by zero), controlled by ``cond_mode``:
 
 * ``"none"`` (default, Q1/Q2 behavior) -- ``forcing`` is an all-zero
   ``(days, ny, nx)`` field, ``params`` is ``None``.
 * ``"true"`` (Q3, oracle) -- ``forcing`` is the window's real ``wind_curl``
   spatial field (from the *true* trajectory), daily-mean binned; ``params``
-  is the window's exact ``true_params`` vector ``[U1, rd, rek, beta]``. Both
+  is the window's exact ``true_params`` vector ``[U1, rd, rek]``. Both
   are deterministic per window (no resampling).
 * ``"noisy"`` (Q4) -- mirrors the L96 SDA3 CFM study's per-step resampled
   corruption (see PLAN.md's 2026-09-10 QG Q3/Q4 section) rather than one
@@ -73,9 +75,9 @@ physical params (``rd``/``rek``/``beta``/``U1``), controlled by ``cond_mode``:
 ``forcing``/``params`` are always returned in **physical units** from the
 dataset; z-score normalization (mirroring the psi/obs normalization above)
 is applied via an explicit ``param_norm_stats`` dict (``{"mean", "std"}``
-over ``[U1, rd, rek, beta]``, produced by ``precompute_qg_norm_stats.py``'s
+over ``[U1, rd, rek]``, produced by ``precompute_qg_norm_stats.py``'s
 ``--output-params``) -- required whenever ``cond_mode != "none"`` since the
-four physical params span ~9 orders of magnitude raw (see
+3 physical params span ~9 orders of magnitude raw (see
 ``precompute_qg_norm_stats.py``'s docstring). The forcing *field* is left
 unnormalized (its own per-grid-cell scale is already comparable to the
 z-scored obs/psi channels it's concatenated with; unlike the params it is
@@ -100,7 +102,14 @@ from data.qg import (
 
 _INVERTER_CACHE: dict = {}
 
-PARAM_KEYS = ("U1", "rd", "rek", "beta")
+PARAM_KEYS = ("U1", "rd", "rek")
+# `beta` is deliberately excluded: `QGS01Dataset._generate_truth_only` never
+# jitters it (only U1/rd/rek get a per-window `u,r,k` random draw, see
+# data/qg.py), so it is an exact constant across the whole train split --
+# z-score normalizing a zero-variance channel divides by std=0 (confirmed by
+# a training smoke test: param_dim=4 with beta included produced NaN loss
+# within the first epoch). A constant channel also carries zero information
+# for the network to condition on regardless of normalization.
 
 
 def steps_per_day(cfg: QGConfig) -> int:
@@ -163,8 +172,8 @@ def _noisy_forcing_and_params(window: dict, cfg: QGConfig,
     tp = window["true_params"]
     b = cfg.s1_param_bias * frac
     params = torch.tensor(
-        [float(tp["U1"]), float(tp["rd"]) * (1.0 - b), float(tp["rek"]) * (1.0 - b),
-         float(tp["beta"])], dtype=torch.float32)
+        [float(tp["U1"]), float(tp["rd"]) * (1.0 - b), float(tp["rek"]) * (1.0 - b)],
+        dtype=torch.float32)
     return forcing, params
 
 
@@ -327,7 +336,7 @@ class QGNeuralDataset(Dataset):
         if cond_mode != "none" and param_norm_stats is None:
             raise ValueError(
                 "param_norm_stats is required when cond_mode != 'none' -- the "
-                "4 physical params span ~9 orders of magnitude raw, see "
+                "3 physical params span ~9 orders of magnitude raw, see "
                 "precompute_qg_norm_stats.py --output-params")
         self.windows = windows
         self.cfg = cfg
