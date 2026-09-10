@@ -476,6 +476,74 @@ generate_qg_reconstruction_figs.py` for 3 example-window reconstruction
 figures, best/median/worst by ETKF's per-window q RMSE). Scratch driver
 (not committed): `qg_da_sensitivity_scratch.py` in the repo root.
 
+### Revised S1 (model-error) reference case (2026-09-10)
+
+Redefined S1 to share S0's initial-uncertainty setup exactly (lag=5.0d,
+noise_frac=0.05) and add three independent model-error sources on top:
+**param bias** (`rd`/`rek` scaled by `1 - s1_param_bias`), **corrupted wind**
+(amplitude bias + always-on storm-location OU jitter, std=62.5km,
+correlation=10d, plus amplitude OU jitter — see `_make_corrupted_wind_state`),
+and **structural resolution mismatch** (`da_nx=32`, half the truth grid,
+`qg2l_lores`). Obs are always drawn from the true (unbiased, full-res)
+trajectory regardless of scenario — only the DA method's own model sees the
+corruption.
+
+**Bias level chosen (0.1/0.1, not the 0.15/0.15 project default)**: an
+isolated per-factor sensitivity sweep (N=10, ETKF, `da_nx=64` — no structural
+mismatch, so each factor is tested alone) found the two error sources behave
+very differently. Wind-forcing bias is nearly harmless to the DA analysis
+even at 0.30 (ψ EV 0.82→0.78, q EV 0.40→0.39) — frequent obs updates correct
+it before it accumulates, even though the *free forecast* degrades a lot
+(ψ EV(free) 0.75→0.36). Param bias is the dangerous one: mild (0.05) costs
+little, but by the project default 0.15 the analysis is already badly
+degraded (q EV 0.40→0.11), and at 0.30 ETKF **diverges outright**
+(EV=-9.2, worse than climatology) despite the free forecast barely
+changing — a filter-divergence signature, not gradual degradation. Chose
+0.1/0.1 for the combined (param+wind+da_nx=32) scenario as meaningfully hard
+without being degenerate — confirmed via an N=10 check with all three
+factors combined: ψ EV 0.82→0.70, q EV 0.40→0.25, no divergence. Sensitivity
+sweep data: `reports/qg/outputs/qg_repro_validation_s1_sensitivity/*.json`.
+
+**ETKF inflation sweep (N=10, revised S1 combined config) — open question**:
+tested whether under-inflation explains EnKF's consistent edge over ETKF
+(see results below). Found the opposite of the hypothesis: ANY inflation
+above 1.0 (1.05/1.1/1.2/1.3) causes immediate catastrophic ETKF divergence
+(q EV -39.5/-250.8/-345.7/-375.9 respectively, vs 0.253 at inflation=1.0) —
+not a gradual improve-then-degrade curve. `inflation=1.0` (off) appears
+necessary for stability in this nonlinear, already-biased/coarse setting,
+not an undertuned default. EnKF's edge over ETKF here remains unexplained;
+data at `reports/qg/outputs/qg_repro_validation_s1/etkf_n10_infl*.json`.
+
+**Full N=100 results (revised S1 vs S0, all via `qg_da_s1_scratch.py`,
+scratch driver, not committed)**:
+
+| method | S0 ψ EV | S0 q EV | S1 ψ EV | S1 q EV |
+|---|---|---|---|---|
+| ETKF | 0.921 | 0.405 | 0.874 | 0.307 |
+| EnKF | 0.947 | 0.481 | 0.896 | 0.331 |
+| Strong-4DVar | 0.971 | -0.126 | 0.931 | -0.857 |
+| Weak-4DVar | 0.966 | -0.035 | 0.947 | -0.501 |
+
+EnKF is the clear S1 winner overall — the only method staying positive and
+reasonably stable on q, while both 4DVar methods go from mildly negative
+(S0) to badly negative (S1) once real model error is added. ψ stays
+reasonably robust for everyone; the PV/q story is where S1 separates the
+methods, consistent with 4DVar's strong reliance on a (nearly) correct
+dynamical model, which S1 deliberately violates.
+
+Committed data: `reports/qg/outputs/qg_repro_validation_s1/{etkf,enkf}.json`
+(N=100) + `etkf_n10*.json` (the N=10 sanity checks/inflation sweep above).
+Strong-4DVar/Weak-4DVar's N=100 runs are NOT yet in this table's source data
+in this PR (SLURM jobs 52911/52912 completed successfully but their output
+JSONs were lost to a `git stash -u` accident before being committed — see
+`feedback_stash_u_deletes_untracked_scratch_files` memory; re-running as
+jobs 52987/52988, will land as a small follow-up commit). Scratch drivers
+(not committed): `qg_da_s1_scratch.py`,
+`qg_da_s1_factor_sensitivity_scratch.py` in the repo root.
+
+Not yet done: folding these S1 numbers into `qg_da_report.md`/
+`qg_neural_report.md` (currently S0-only) — separate follow-up.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
