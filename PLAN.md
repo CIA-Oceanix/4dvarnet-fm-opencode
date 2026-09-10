@@ -895,12 +895,120 @@ schemes, a per-obs-time randomly redrawn density sweep.
   (RMSE relative to the keep_k=16 baseline per method/case).
 - **New `batch/run_l96_obs_density_generalization.sbatch`** launches the sweep + report on the
   cluster (checkpoints/cached dataset live only in `experiments/` on the HPC filesystem, not in
-  this git worktree) -- **not yet run**; this PR is the implementation, the actual sweep results
-  are a follow-up once the sbatch job completes.
+  this git worktree).
 - Tests: `tests/test_obs_density.py` (mask exact-count/shape/no-op invariants),
   `tests/test_sda_sampler.py` (obs_channel_mask restricts/varies-per-timestep/mutual-exclusion/
   zero-guidance-equivalence), `tests/test_neural_inference.py` (obs_density_keep_k NaNs the
   right channels for direct-obs models, no-ops at keep_k=16, forwards correctly to the SDA path).
+
+**Sweep results (job 52845, run 2026-09-09 via an ad-hoc launcher pointing at the
+`4dvarnet-fm-l96-eval-config-persist` worktree's checkpoints, `--n-repeats 3`):** `keep_k=16`
+reproduces the canonical benchmark exactly for all 3 completed methods (DirectUNet-L 0.4863/0.4865,
+CFM-M 0.4809/0.4783, SDA3 0.5369/0.5363, S0/S1). DirectUNet-L and CFM-M degrade steeply and near-
+identically: **~1.9x RMSE at keep_k=8, ~2.3x at keep_k=4, ~2.7x at keep_k=0** -- confirming the
+architecture-driven OOD caveat above is real, not just theoretical. SDA3 degrades far more
+gracefully (**~1.45x / ~1.72x / ~2.0x** at the same keep_k values) and at `keep_k=0` its RMSE
+(1.08) is actually *better* than DirectUNet/CFM's (1.29/1.32) despite starting from a worse
+full-density baseline -- confirming the "obs excluded cleanly from the guidance cost" design is
+architecturally robust with zero retraining, exactly as predicted. DirectUNet+SDA3 hybrid
+(warm-started) inherits much of SDA3's graceful-degradation benefit (e.g. S0 keep_k=8: 0.803 vs.
+plain DirectUNet's 0.906) while keeping its better full-density baseline (0.420 vs. SDA3's 0.537).
+Repeat-to-repeat std stays tiny throughout (≤0.006 RMSE), confirming `n_repeats=3` was sufficient.
+Full tables: `reports/l96/outputs/l96_obs_density_generalization.md`. **This result is the direct
+motivation for the follow-on training-augmentation work below.**
+
+### Fast-Y observation-density-augmented TRAINING (2026-09-09, `feature/l96-obs-density-training`)
+
+Follow-on to the generalization study above: instead of only measuring the OOD failure at eval
+time, train DirectUNet-L(cos)/CFM-M(flat) with the same fast-Y density reduction applied as a
+TRAINING-time augmentation, so a dropped channel stops being an untrained-for input pattern.
+SDA3/the hybrid are excluded from this work -- the sweep above already showed they need no
+retraining (architecturally robust via the guidance-cost exclusion, not the obs-consuming path).
+
+- **Relocated `evaluation/obs_density.py` -> `data/obs_density.py`** (all references updated: 
+  `evaluation/neural_inference.py`, `evaluation/sda_sampler.py` docstring, `eval_obs_density_l96.py`,
+  `tests/test_obs_density.py`, `tests/test_neural_inference.py`) -- the masking primitives are
+  consumed by both `evaluation/` (eval-time) and now `data/`/`train.py` (train-time), so `data/`
+  is the correct home; importing "up" from a training consumer into `evaluation/` would have been
+  backwards.
+- **New `data/obs_density.py::random_variable_keep_mask`**: generalizes the eval-time
+  `random_keep_mask`'s single scalar `keep_k` to a per-(window,timestep)-varying tensor, via
+  per-slice random-score ranks (topk only supports one `k` for a whole tensor) -- needed because
+  training mixes full-density and randomly-reduced-density events within the same batch, unlike
+  eval's one-keep_k-per-sweep-cell design.
+- **New `data/obs_density.py::sample_training_density_mask`**: independently at every
+  (window, obs-time), with probability `full_prob` (default 0.4) keeps full density (so the model
+  doesn't lose sharpness on the still-common canonical case); otherwise draws `keep_k` uniformly
+  from `{min_keep,...,15}` (default `min_keep=0`) -- broad coverage of the whole degradation
+  spectrum, not just the eval sweep's 4 discrete points, so the model learns a smooth
+  interpolation. No existing precedent in this codebase for a "sometimes augment" mixing scheme
+  (checked: only prior precedent, `noisy_da_bias`, always randomizes, never skips) -- this
+  mixing probability is the one genuinely new design choice here.
+- **`data/dataloader.py::make_collate_fm`** gained an `obs_density_cfg` param (dict with
+  `full_prob`/`min_keep`, or `None` -- true no-op, the default): draws a fresh mask every batch
+  and NaNs the dropped fast-Y channels of `obs` before normalization. Requires the canonical
+  24D (8 slow + 16 fast) obsj2 subspace, raises otherwise.
+- **`train.py::make_l96_dataloaders`** now builds train and val with *different* collate fns --
+  `obs_density_cfg` only ever applies to `"train"`; `"val"` always stays at full canonical density
+  so its loss/metrics remain comparable across epochs and against the eval protocol. Wired from
+  new `DataConfig` fields `obs_density_augment: bool = False` / `obs_density_full_prob: float = 0.4`
+  / `obs_density_min_keep: int = 0` (`conf/schema.py`) -- default `False` leaves every existing
+  config byte-for-byte unaffected (verified: `make_collate_fm(norm_stats, obs_density_cfg=None)`
+  reproduces plain `collate_fm`/the pre-existing normalize-only path exactly).
+- **New experiment configs** `L1b_monai_unet_s0s1_norm_l_cosine_obsdensity.yaml` /
+  `L2b_monai_vanilla_cfm_s0s1_norm_obsdensity.yaml`: identical architecture/hyperparameters to
+  the current best-of-subcategory checkpoints, changing only `data.obs_density_augment=true` --
+  isolates the augmentation's effect cleanly. Not yet trained at full scale (200/400 epochs) --
+  1-epoch smoke tests on both passed (real checkpoints, tiny window counts, confirmed the
+  augmented collate path runs end-to-end with no crashes); full training is a follow-up once
+  this PR merges, then re-run through `eval_obs_density_l96.py` (unchanged) for a direct
+  before/after comparison against today's baseline numbers.
+- Tests: `tests/test_obs_density.py` (new mask functions' exact-count/shape/mixture/range-
+  validation invariants), `tests/test_l96_normalization.py` (`make_collate_fm`'s
+  `obs_density_cfg` -- NaN pattern, full_prob=1.0 no-op, wrong-dim raises, composes with
+  normalization), `tests/test_joint_estimation_l96_neural.py`
+  (`make_l96_dataloaders` augments train only, val stays clean).
+
+### Fast-Y observation-density-augmented training -- results (2026-09-10)
+
+Follow-up to the plan above, run interactively (not yet a separate PR-tracked branch at the
+time of writing -- code lives on `feature/l96-obs-density-augmented-report`).
+
+- **L-tier collapsed, M-tier fixed it.** DirectUNet-**L**(cosine, augmented) converged on
+  `val_loss` but collapsed toward the fast-Y conditional mean at eval time (variance ratio
+  ~35%, correlation ~0.55-0.64) -- root-caused via a side-by-side diagnostic against CFM-M's
+  *identical* augmentation pipeline (variance ratio ~96%, correlation ~0.94-0.95 there),
+  ruling out a data/eval bug and pointing at an L-tier-specific pathology. Retrained
+  DirectUNet-**M** with cosine (`L1b_monai_unet_s0s1_norm_obsdensity.yaml`, new): variance
+  ratio 99%, correlation 0.94 -- fully healthy, and RMSE (0.473/0.476) improved on the
+  non-augmented M-tier baseline (0.501-0.507). Cosine annealing adopted as the default for
+  all obs-density-augmented training going forward, not just L.
+- **Reduced-density payoff confirmed.** `eval_obs_density_l96.py` against both healthy
+  augmented checkpoints: degradation ratio at `keep_k=8` dropped from ~1.9x to **1.49x** for
+  both CFM-M and DirectUNet-M, without sacrificing (in fact slightly improving) the
+  full-density baseline.
+- **Best scheme of the whole investigation:** SDA3 guidance warm-started from the *augmented*
+  DirectUNet-M mean estimate (instead of the original non-augmented one) -- full-density RMSE
+  **0.389** (best of every scheme tested this session, non-augmented or augmented) and the
+  best absolute worst-case RMSE at `keep_k=0` (**1.065**, ahead of even SDA3's own 1.082).
+  SDA3 alone still has the flattest *relative* degradation curve (2.02x vs the hybrid's
+  2.74x) -- the hybrid's much lower starting point means even a larger relative drop still
+  lands ahead in absolute terms, not a contradiction, just two different ways to read
+  "robustness."
+- **New dedicated report** `reports/l96/generate_l96_obs_density_augmented_report.py` ->
+  `l96_obs_density_augmented_training.md`: experiment description, a combined summary table
+  across all 7 method variants (2 non-augmented baselines, 2 augmented alone, SDA3, the
+  non-augmented hybrid, the augmented hybrid), and a best/median/worst-window analysis
+  (mirroring `generate_l96_consolidated_report.py`'s `select_windows` convention, but with
+  `keep_k` as the varying axis for the best method instead of comparing methods at fixed
+  density) with both a per-keep_k RMSE table and a Hovmöller-style figure per rank.
+- **Consolidated benchmark updated**: added `DirectUNet-M(monai,cos,obsdensity)` /
+  `CFM-M(monai,flat,obsdensity)` rows to every table in `l96_consolidated_benchmark.md`
+  (scheme description, RMSE/EV/ES pooled, RMSE/EV/CRPS per-window) computed directly from
+  their `estimates_{s0,s1}.npz` via `evaluation/estimate_metrics.py` -- not a full script
+  regeneration, which needs DA-baseline/joint-comparison cache files living only in a
+  different worktree; both rows explicitly noted as N=1 single-pass evaluations (marked `*`
+  in ES/CRPS), unlike the ensemble (N=30) convention the original CFM-M rows use.
 
 ## Phases
 

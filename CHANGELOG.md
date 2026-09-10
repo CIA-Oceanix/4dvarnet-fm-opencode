@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-09-10: L96 obs-density-augmented training: M-tier fix, reduced-density payoff, dedicated report
+
+**Summary:** Closes out the fast-Y observation-density-augmented training investigation
+(started 2026-09-09 below). The first training attempt was DirectUNet-**L**(cosine) --
+converged fine on `val_loss` but collapsed toward the fast-Y conditional mean at eval time
+even at full density (predicted/true variance ratio ~35%, per-channel correlation
+~0.55-0.64). Root-caused via a comparison diagnostic: CFM-M's *identical* augmentation
+pipeline reconstructed fast-Y almost fully (variance ratio ~96%, correlation ~0.94-0.95) on
+the same data/eval framework, ruling out a bug and pointing at an L-tier-specific training
+pathology (consistent with L-tier's pre-existing flat-LR instability). Retrained at
+**DirectUNet-M with cosine annealing** (`config/experiment/L1b_monai_unet_s0s1_norm_obsdensity.yaml`,
+new) -- fully avoided the collapse (variance ratio 99%, correlation 0.94) and improved on the
+non-augmented M-tier baseline (RMSE 0.473/0.476 vs 0.501-0.507). Adopted cosine annealing as
+the default scheduler for all obs-density-augmented training going forward (not just L),
+independent of PR #176's now-reverted accidental default flip.
+
+Ran the real payoff test: `eval_obs_density_l96.py` against both healthy augmented checkpoints
+(CFM-M, DirectUNet-M) across the full keep_k sweep. Degradation ratio at keep_k=8 dropped from
+~1.9x to **1.49x** for both methods. Also tried warm-starting SDA3's guidance from the
+augmented DirectUNet-M mean estimate instead of the original: this combination is the best
+scheme found across the whole investigation -- full-density RMSE 0.389 (best of anything
+tested) **and** the best absolute worst-case RMSE at keep_k=0 (1.065, edging out even SDA3's
+1.082), though SDA3 still has the flattest *relative* degradation curve since the hybrid's
+much lower starting point means even a larger relative drop lands ahead in absolute terms.
+
+**Files added:**
+- `config/experiment/L1b_monai_unet_s0s1_norm_obsdensity.yaml` -- DirectUNet-M, cosine,
+  `obs_density_augment=true`.
+- `reports/l96/generate_l96_obs_density_augmented_report.py` (new) -- dedicated report:
+  experiment description, combined summary table across all 7 method variants, and a
+  best/median/worst-window keep_k-impact analysis (table + Hovmöller-style figure per rank,
+  mirroring `generate_l96_consolidated_report.py`'s `select_windows` convention but with
+  `keep_k` as the varying axis instead of method) -- `l96_obs_density_augmented_training.md`
+  + `figs_obs_density_augmented/*.png`.
+- `reports/l96/outputs/l96_obs_density_generalization.md`,
+  `l96_obs_density_augmented_checkpoints.md`, `l96_obs_density_directunet_aug_sda3_hybrid.md`
+  (generated sweep outputs, committed for provenance).
+- `reports/l96/outputs/l96_consolidated_benchmark.md` -- added
+  `DirectUNet-M(monai,cos,obsdensity)`/`CFM-M(monai,flat,obsdensity)` rows to every pooled and
+  per-window table, computed directly from their `estimates_{s0,s1}.npz` via
+  `evaluation/estimate_metrics.py` (not a full script regeneration -- that path needs
+  DA-baseline/joint-comparison cache files that live only in a different worktree; noted
+  explicitly in the report).
+
+**Verification:** report generator ran cleanly end-to-end (tables + 3 figures); `ruff check`
+clean; all sweep numbers cross-checked against the raw per-repeat log lines before being
+written up.
+
 ## 2026-09-10: FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default
 
 **Summary:** Fixes the root cause of FDV2(monai)'s NaN divergence at epoch 190/400 (job 52672,
