@@ -225,7 +225,12 @@ def _test_lightning_forward_backward(model_type):
         model = VanillaCFM(state_dim=cfg.state_dim, param_dim=0, cond_extra_dim=0,
                            hidden_channels=[8, 16, 32], time_emb_dim=16, N_outer=10,
                            sigma_prior=0.5, dropout=0.1, train_tau_0_only=True)
-    lit = QGNeuralLightning(model, model_type, norm, cfg, q_loss_weight=0.1)
+    # Cosine scheduler off: this test is about forward/backward loss
+    # correctness, not LR scheduling -- `opt` below is used as a plain
+    # optimizer (`opt.zero_grad()`), which configure_optimizers() only
+    # returns when the scheduler is disabled.
+    lit = QGNeuralLightning(model, model_type, norm, cfg, q_loss_weight=0.1,
+                            use_cosine_scheduler=False)
     opt = lit.configure_optimizers()
     loss, _lp, _lq = lit._total_loss(batch)
     assert torch.isfinite(loss)

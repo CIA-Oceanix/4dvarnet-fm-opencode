@@ -19,6 +19,36 @@ error and pass with the fix.
 under S1's cross-resolution structural-mismatch scenario.
 **Verification:** `pytest tests/test_qg_baselines_4dvar.py tests/test_qg_baselines.py -m "not slow"` — 34 passed.
 
+## 2026-09-10: QG Q1 — MONAI circular 2D U-Net (doubly-periodic domain) + cosine LR default
+
+**Summary:** `models.direct_unet.DirectUNet` (built for L96's 1D ring) never applied a
+spatial convolution for QG at all -- it flattened the (ny, nx) field into a plain channel
+axis and only convolved along the time/day axis, ignoring the field's actual 2D
+doubly-periodic structure (`models.qg_dynamics.QGDynamics`: "double-periodic beta-plane
+channel"). Replaced with `models.monai_unet_qg2d.MonaiDirectUNetQG`, a MONAI
+`DiffusionModelUNet` (spatial_dims=2) with every conv patched to `padding_mode="circular"`
+(MONAI exposes no such option itself) via the public `LayerFactory.add_factory_callable`
+mechanism -- verified shift-equivariant to numerical precision for shifts aligned with the
+backbone's pooling stride, in both x and y. Also switched `QGNeuralLightning` to a
+cosine-annealed LR by default (`use_cosine_scheduler=True`, matching L96's already-adopted
+default, see the L96 entry above) and added `eval_qg_q1_lag5_noise05.py`, a diagnostic
+re-eval of a trained checkpoint against the DA baselines' `lag=5.0d/noise=0.05` reference
+case (train/test-distribution-mismatched, not a matched retrain -- see `qg_neural_report.md`).
+**Files modified:** `models/monai_unet_qg2d.py` (new) — circular 2D backbone;
+`train_qg_neural.py` — `build_model` now builds it, `QGNeuralLightning` cosine scheduler;
+`tests/test_monai_unet_qg2d.py` (new, `pytest.importorskip("monai")`) — forward shape, NaN-obs
+handling, circular shift-equivariance; `tests/test_qg_neural.py` — disabled the scheduler in
+the loss-forward/backward unit test (out of scope for what it tests); `batch/run_qg_q1_smoke.sbatch`,
+`batch/run_qg_q1_train.sbatch` — point at the `fdv-monai-proto` env (monai needs torch
+2.8.0+cu126, see `models.monai_unet_adapter`'s docstring); `eval_qg_q1_lag5_noise05.py` (new).
+**Rationale:** the old architecture couldn't exploit the QG domain's translation-invariant
+structure at all; a genuine periodic-aware backbone is a real capacity/inductive-bias upgrade,
+not a cosmetic change (2-epoch smoke test already reached ψ EV=0.86; full 200-epoch run reached
+ψ EV=0.91).
+**Verification:** `pytest tests/test_qg_neural.py -m "not slow"` — 18 passed;
+`pytest tests/test_monai_unet_qg2d.py` (fdv-monai-proto env) — 3 passed; full 200-epoch training
+job (SLURM 52858) completed without error.
+
 ## 2026-09-10: L96 obs-density-augmented training: M-tier fix, reduced-density payoff, dedicated report
 
 **Summary:** Closes out the fast-Y observation-density-augmented training investigation
