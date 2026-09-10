@@ -34,6 +34,29 @@ def test_strong4dvar_psi_run_smoke():
     assert s0["rmse_mean"] < 1.0
 
 
+def test_strong4dvar_cross_res_run_smoke():
+    """Regression test: a deterministic method (no `.ensemble`) under a
+    cross-resolution S1 DA model (`da_nx != cfg.nx`) must not double-upsample
+    its trajectory-derived fallback "ensemble" (`ens = traj_da[None]`, itself
+    already upsampled to truth resolution) when computing CRPS -- this used
+    to crash with a reshape error (`_upsample_to_truth` treating already-
+    truth-resolution data as still being at `da_nx`), since S0's own tests
+    never exercised `cross_res=True` with a deterministic method."""
+    cfg = QGConfig(nx=16, window_days=6.0, spinup_years=0.05,
+                   num_windows=1, obs_geometry="random_columns",
+                   cols_per_day=2, seed=3, da_nx=8)
+    ds = make_qg_s0_s1_datasets(cfg)
+    from evaluation.run_qg_baselines import run
+    p = run("strong4dvar", cfg, device=torch.device("cpu"),
+            scenarios=("test_s1",), init="lagged", init_lag_days=0.5,
+            geometry="random_columns", obs_var="psi", band_half=0.25,
+            da_window_steps=12, optimizer="adam", fourdvar_opt_steps=40,
+            fourdvar_lr=0.05, b_var_scale=1.0, ds=ds)
+    s1 = p["scenarios"]["test_s1"]
+    assert np.isfinite(s1["rmse_mean"])
+    assert np.isfinite(s1["crps_mean"])
+
+
 def test_weak4dvar_psi_run_smoke():
     cfg = _cfg()
     ds = make_qg_s0_s1_datasets(cfg)

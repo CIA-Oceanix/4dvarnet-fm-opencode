@@ -870,13 +870,16 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             # deterministic methods (4DVar, no `.ensemble` attr) fall back to
             # a single-member "ensemble", which crps() degenerates to MAE for.
             ens_raw = getattr(res, "ensemble", None)
+            # traj_da has already been upsampled to truth resolution above
+            # (if cross_res) -- only a real da_nx-resolution ensemble
+            # (ens_raw is not None) still needs that upsampling here.
             ens = traj_da[None] if ens_raw is None else ens_raw
-            if is_psi_state:
+            if is_psi_state and ens_raw is not None:
                 ens_flat = ens.reshape(-1, ens.shape[-1])
                 ens_flat = dyn.inner.psi_to_q(
                     torch.from_numpy(ens_flat).float().to(device))
                 ens = ens_flat.detach().cpu().numpy().reshape(ens.shape[0], ens.shape[1], -1)
-            if cross_res:
+            if cross_res and ens_raw is not None:
                 ens = np.stack([
                     _upsample_to_truth(ens[n], da_nx, nlayers, cfg.nx, device)
                     for n in range(ens.shape[0])
