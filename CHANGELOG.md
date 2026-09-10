@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-10: L96 obs-density reports — disambiguate DA-baselines report, retire redundant sweep outputs
+
+**Summary:** The `l96_obs_density_*.md` naming prefix had accumulated two unrelated report
+families (classical DA obsj2-vs-obsj0 baselines vs. neural fast-Y `keep_k` generalization
+sweeps) plus stale intermediate diagnostic outputs from the training-augmentation
+investigation. Renamed `l96_obs_density_da_baselines.md` -> `l96_da_baselines_obsj2_vs_obsj0.md`
+(classical DA/SDA-guidance obsj2-vs-slow-only-obsj0 comparison -- unrelated to fast-Y density)
+to make the two families visually distinct. Deleted `l96_obs_density_generalization.md`
+(PR #180's original non-augmented sweep), `l96_obs_density_augmented_checkpoints.md`, and
+`l96_obs_density_directunet_aug_sda3_hybrid.md` (two ad-hoc diagnostic re-runs from the
+training-augmentation investigation) -- verified every number in all three is already
+reproduced inside `l96_obs_density_augmented_training.md`'s consolidated §2 summary table
+(PR #188), so nothing is lost; that report is now the single source of truth for the whole
+fast-Y density sweep across non-augmented and augmented checkpoints.
+**Files modified:** `reports/l96/generate_l96_obs_density_report.py` (docstring + `DEFAULT_OUT`
+updated to the new filename); `reports/l96/generate_l96_obs_density_augmented_report.py` +
+`reports/l96/outputs/l96_obs_density_augmented_training.md` (dropped the now-dangling
+`l96_obs_density_generalization.md` filename citation, kept the PR #180 citation; added the
+missing SDA3 `guidance_weight=40.0` protocol detail that was only in the retired file);
+`reports/l96/outputs/l96_consolidated_benchmark.md` (same dangling-citation fix); `PLAN.md`
+(both filename references updated, noted the retirement).
+**Rationale:** User asked for the two report families to be clearly distinguished by name and
+for the redundant intermediate outputs to be consolidated into the one dedicated report, since
+they added no information beyond what it already contains.
+**Verification:** `ruff check` clean on both touched generator scripts; `python -m py_compile`
+clean; `grep` sweep confirmed no remaining references to the deleted filenames outside
+historical `CHANGELOG.md` entries (left untouched, correct at the time they were written).
+
 ## 2026-09-10: QG — fix cross-resolution deterministic-method CRPS double-upsample crash
 
 **Summary:** `evaluation/run_qg_baselines.py`'s `run()` crashed for any deterministic

@@ -23,7 +23,7 @@ forcing fix):
   and cached test set are reused, restricting only which channels the DPS
   guidance cost is allowed to see.
 
-Generates ``reports/l96/outputs/l96_obs_density_da_baselines.md``.
+Generates ``reports/l96/outputs/l96_da_baselines_obsj2_vs_obsj0.md``.
 """
 import json
 import logging
@@ -44,7 +44,7 @@ CANON_JOINT_JSON = ROOT / "experiments/l96_joint_comparison.json"
 SLOW_STATE_JSON = ROOT / "experiments/l96_baselines_dws500_slowobs_inf2.0_etkf_inf2.0_obsj0_s1j2_int100.json"
 SLOW_JOINT_JSON = ROOT / "experiments/l96_joint_comparison_slowobs.json"
 
-DEFAULT_OUT = ROOT / "reports/l96/outputs/l96_obs_density_da_baselines.md"
+DEFAULT_OUT = ROOT / "reports/l96/outputs/l96_da_baselines_obsj2_vs_obsj0.md"
 
 PARAM_NAMES = ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]
 STATE_ONLY_METHODS = ["Strong-4DVar", "EnKF", "ETKF"]

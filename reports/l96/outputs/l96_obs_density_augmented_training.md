@@ -3,7 +3,7 @@
 ## 1. Experiments
 
 **Motivation.** The original fast-Y observation-density generalization sweep
-(`l96_obs_density_generalization.md`, PR #180) found that DirectUNet-L(cos)
+(PR #180) found that DirectUNet-L(cos)
 and CFM-M(flat) -- which consume `obs` only via `torch.nan_to_num(obs,
 nan=0.0)`, with no separate mask channel -- degrade steeply under randomly
 reduced fast-Y observation density (RMSE ~1.9x at half density, ~2.7x at
@@ -52,8 +52,8 @@ set; `keep_k in {16, 8, 4, 0}` of the 16 canonical fast-Y channels kept,
 (harder than a fixed-per-window mask); `n_repeats=3` independent seed
 reruns per (method, case, keep_k) cell (fresh mask redraw, and fresh
 sampling noise for the stochastic methods); `n_outer=10`, `n_members=30`,
-`r_var=0.5` for the ensemble/guided methods; hybrid `tau0=0.3`,
-`guidance_weight=2.0`.
+`r_var=0.5` for the ensemble/guided methods; SDA3 `guidance_weight=40.0`;
+hybrid `tau0=0.3`, `guidance_weight=2.0`.
 
 ## 2. Summary: RMSE / EV(all_obs) vs. fast-Y density (all methods, S0; S1 tracks within noise)
 

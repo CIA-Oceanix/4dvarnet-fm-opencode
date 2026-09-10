@@ -845,7 +845,7 @@ baselines (obsj0, Obs30, 200 windows): S0 EnKF 1.27 / ETKF 1.25 / Strong-4DVar 1
 dominated by the **unobserved** obs_fast group (S0 obs_fast ≈ 1.6–1.95 vs 0.88–1.10 obsj2) while the
 **slow subgroup is preserved** (S0 slow ≈ 0.41–0.46). Joint-DA param recovery: S1 Joint-ETKF
 0.130→0.158 (hx/F degrade), S0 slightly improves (0.045 vs 0.054, F-driven). Full tables:
-`reports/l96/outputs/l96_obs_density_da_baselines.md`.
+`reports/l96/outputs/l96_da_baselines_obsj2_vs_obsj0.md`.
 
 ### Fast-Y observation-density generalization study (2026-09-09, `feature/l96-obs-density-generalization`)
 
@@ -858,7 +858,7 @@ reduced: only `keep_k` of the 16 canonical fast-Y channels (2 per slow node) are
 chosen over a simpler fixed-per-window mask); the 8 slow-X channels always stay fully
 observed. `keep_k ∈ {16 (sanity check), 8, 4, 0}`.
 
-Distinct from the pre-existing `l96_obs_density_da_baselines.md` above: that study is DA
+Distinct from the pre-existing `l96_da_baselines_obsj2_vs_obsj0.md` above: that study is DA
 baselines only, a single fixed slow-only (obsj0) config; this one is the 4 best neural/SDA
 schemes, a per-obs-time randomly redrawn density sweep.
 
@@ -914,8 +914,11 @@ architecturally robust with zero retraining, exactly as predicted. DirectUNet+SD
 (warm-started) inherits much of SDA3's graceful-degradation benefit (e.g. S0 keep_k=8: 0.803 vs.
 plain DirectUNet's 0.906) while keeping its better full-density baseline (0.420 vs. SDA3's 0.537).
 Repeat-to-repeat std stays tiny throughout (≤0.006 RMSE), confirming `n_repeats=3` was sufficient.
-Full tables: `reports/l96/outputs/l96_obs_density_generalization.md`. **This result is the direct
-motivation for the follow-on training-augmentation work below.**
+**This result is the direct motivation for the follow-on training-augmentation work below**; its
+full tables were superseded by (and are reproduced inside) the consolidated summary table in
+`reports/l96/outputs/l96_obs_density_augmented_training.md` (2026-09-10 cleanup: this report's
+own standalone output, `l96_obs_density_generalization.md`, was retired as a redundant subset --
+see that report's §2 for the equivalent non-augmented rows).
 
 ### Fast-Y observation-density-augmented TRAINING (2026-09-09, `feature/l96-obs-density-training`)
 
