@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-09-10: FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default
+
+**Summary:** Fixes the root cause of FDV2(monai)'s NaN divergence at epoch 190/400 (job 52672,
+`grad+state`, fixed `prior_weight`): `_normalize_channels` floored its RMS norm at `1e-8` but
+never ceiling-clamped the resulting normalized gradient channel, unlike the state branch's own
+`clip_range=50.0` clamp -- as training converged and the raw gradient's RMS shrank toward that
+floor, dividing by a near-zero norm inflated the channel unboundedly, overflowing through the
+`create_graph=True` double-backward. Also makes cosine-annealed LR scheduling the deliberate
+default for all training runs going forward, per explicit user request -- **not** a repeat of
+the accidental `use_cosine_scheduler` flip PR #176 caught and reverted (that one was an
+unintended side effect touching ~71 untouched configs with no explanation; this one is
+intentional, documented here, and the reasoning is cross-referenced at every site it touches so
+it isn't mistaken for the same accident and reverted again).
+
+**Files modified:**
+- `models/fourdvarnet.py` -- `_normalize_channels` gained a `clip_range=50.0` parameter (same
+  default/convention as `FourDVarNetSolver`/`FourDVarNetPredictStateCFM`'s own state-branch
+  clamp) and now returns `torch.clamp(t / norm, -clip_range, clip_range)` instead of the
+  unbounded `t / norm`; docstring updated to record the NaN mechanism this closes.
+- `conf/schema.py` -- `StageConfig.use_cosine_scheduler` default flipped `False` -> `True`.
+- `train.py`, `training/pipeline.py` -- the `stage_cfg.get("use_cosine_scheduler", ...)`
+  fallback used when a config never sets the key flipped `False` -> `True` (kept consistent
+  with the schema default above; belt-and-suspenders since Hydra structured configs always
+  populate the key from the schema default in practice).
+- `training/lightning_module.py` -- `LitModel.__init__`'s own `use_cosine_scheduler` default
+  flipped `False` -> `True`, so the class-level default matches the config-level one even when
+  constructed directly (as tests do).
+- `tests/test_lightning_module.py` -- `test_use_cosine_scheduler_defaults_to_false` renamed to
+  `test_use_cosine_scheduler_defaults_to_true` and rewritten to assert the new default and that
+  `configure_optimizers()` now returns a `CosineAnnealingLR` scheduler dict by default.
+- `batch/run_l96_fdv2_monai_train.sbatch` -- switched `--gres` from `gpu:h200:1` to
+  `gpu:h100:1` (job 52672 already ran this exact architecture/memory footprint 190 epochs on an
+  H100 with no OOM under PR #172's gradient checkpointing, so the H200-only requirement was
+  stale) and added the post-training `eval_neural_l96.py --n-outer 10` evaluation step the
+  standalone script was missing (mirroring `run_l96_fdv_monai_deterministic_train.sbatch`'s
+  pattern) -- without `--n-outer 10` explicit, `eval_neural_l96.py`'s CLI default of 1 silently
+  produces a garbage eval for this solver's N_outer=10 unrolled refinement (the same trap that
+  already hit `FDV1_unrolled_monai_unet_l96` twice).
+
+**Rationale:** The clamp closes an actual, evidenced numerical-safety gap (see job 52672's
+loss trace: stable 1.06-1.18 through epoch 189, `nan` at epoch 190 with no gradual drift) that
+could recur on any future `grad+state`/`grad-only` run regardless of `prior_weight`
+trainability. The cosine-scheduler default change is a deliberate, user-requested policy
+decision (see project memory `feedback_cosine_scheduler_default`), made explicit here so it
+reads as intended behavior rather than the accident PR #176 reverted.
+
+**Verification:** `pytest tests/test_lightning_module.py tests/test_fourdvarnet.py
+tests/test_fourdvarnet_monai.py -v -m "not slow"` -- 82 passed. Full CI merge-gate list
+(`tests/test_lorenz96_training.py ... tests/test_resume.py -m "not slow"`, the exact set from
+`.github/workflows/ci.yml`) -- 410 passed, 11 deselected. Both run via `srun` on
+`Odyssey_GPU`/`gpu:h100:1`.
+
 ## 2026-09-10: L96 FDV1(monai) corrected re-eval + FDV2(monai) unavailable row
 
 **Summary:** The FDV1(monai)/FDV1+SDA3(monai) checkpoints were accidentally retrained from

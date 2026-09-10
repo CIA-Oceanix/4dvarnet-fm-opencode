@@ -326,7 +326,7 @@ class StageConfig:
     epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
-    use_cosine_scheduler: bool = False
+    use_cosine_scheduler: bool = True  # deliberate default since 2026-09-10, see CHANGELOG.md
     obs_weight_lr_scale: float = 1.0
     prior_unet_lr_scale: float = 1.0
 
