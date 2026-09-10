@@ -167,7 +167,7 @@ def _prior_cost(prior_unet, state, tau=None):
     return F.mse_loss(state, _prior_ae(prior_unet, state, tau), reduction="sum")
 
 
-def _normalize_channels(t, cache=None, key=None):
+def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
     """RMS normalization by a single global (whole-tensor) scalar -- matches
     ocean4dvarnet's ``ConvLstmGradModel.forward`` exactly: ``self._grad_norm
     = (x**2).mean().sqrt(); x = x / self._grad_norm``. A raw, unnormalized
@@ -175,6 +175,17 @@ def _normalize_channels(t, cache=None, key=None):
     underlying var_cost is an unbounded sum-of-squares over all elements),
     and feeding that directly into a plain UNet1D is numerically fragile over
     long training runs.
+
+    ``norm`` is floored at ``1e-8`` but that alone doesn't bound the output:
+    late in training the raw gradient's RMS can shrink toward that floor
+    (both prior/obs residuals shrinking as the model converges), and dividing
+    by a near-zero norm inflates ``t / norm`` unboundedly -- this fed a
+    ``grad+state`` MonaiUNet1D run's ``create_graph=True`` double-backward
+    into a NaN (job 52672, 2026-09-10). The state branch ``x`` was already
+    clamped to ``[-clip_range, clip_range]`` every iteration
+    (``FourDVarNetSolver``/``FourDVarNetPredictStateCFM``'s own
+    ``clip_range=50.0``); this clamps the normalized channel the same way,
+    for the same reason.
 
     ``cache``/``key`` (both optional) reproduce the *caching* granularity
     ocean4dvarnet also uses: the norm is computed once, on the first call for
@@ -211,7 +222,7 @@ def _normalize_channels(t, cache=None, key=None):
     norm = (t ** 2).mean().sqrt().clamp_min(1e-8).detach()
     if cache is not None:
         norm = cache.setdefault(key, norm)
-    return t / norm
+    return torch.clamp(t / norm, -clip_range, clip_range)
 
 
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,

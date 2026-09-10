@@ -126,6 +126,13 @@ Always run tests after making changes.
 - **Two-stage training** pattern: Stage 1 trains the mean estimator, Stage 2 freezes it and trains the residual
 - **Data** is generated on-the-fly; no large data files committed to git
 - **Tests** use `pytest` with markers (`@pytest.mark.slow`) for expensive tests
+- **LR scheduling default (as of 2026-09-10):** cosine-annealed LR (`use_cosine_scheduler:
+  true`) is the deliberate, standing default for training runs -- not opt-in. This is a
+  project policy decision, not an accident: an earlier *unintentional* version of this same
+  flip was caught and reverted during PR #176's review specifically because it would have
+  silently retrained ~71 untouched configs with no explanation. See CHANGELOG.md's
+  2026-09-10 "FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default"
+  entry before reverting this default on sight.
 
 ## When Making Model Changes
 

@@ -172,8 +172,12 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   to `estimates_s0.npz` + `results.json` (`s0.psi`, `s0.q`).
 - **Configs**: `config/experiment/Q1_direct_unet_s0.yaml`,
   `Q2_vanilla_cfm_s0.yaml` (documentation specs → CLI flags; not Hydra).
-- **Report**: `reports/qg/generate_qg_neural_report.py` → `qg_neural_report.md`
-  renders Q1/Q2 vs the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ.
+- **Report**: `reports/qg/generate_qg_da_report.py` → `qg_da_report.md` renders
+  the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ; `reports/qg/
+  generate_qg_neural_report.py` → `qg_neural_report.md` is the case-study
+  overview (scheme descriptions + a combined DA/Q1 summary table, linking
+  back to `qg_da_report.md` for DA detail). Renamed 2026-09-10 (previously
+  one script/file covered both).
 - **Tests**: `tests/test_qg_neural.py` (12 fast tests: psi-day matches the
   window's own upper-psi target, per-window scale O(1), dataset/collate shapes,
   denorm round-trip, `norm_q_from_psi` round-trip, per-device inverter-cache
@@ -466,7 +470,8 @@ see `evaluation/metrics.py`'s `crps()` fix and `run_qg_baselines.py`'s
 per-window CRPS wiring, same PR) are committed to
 `reports/qg/outputs/qg_repro_validation/*.json` for the first time — that
 directory never actually existed on master before (see `reports/qg/
-generate_qg_neural_report.py`, now DA-baselines-only, and `reports/qg/
+generate_qg_da_report.py`, DA-baselines-only — renamed 2026-09-10 from
+`generate_qg_neural_report.py`, see above — and `reports/qg/
 generate_qg_reconstruction_figs.py` for 3 example-window reconstruction
 figures, best/median/worst by ETKF's per-window q RMSE). Scratch driver
 (not committed): `qg_da_sensitivity_scratch.py` in the repo root.

@@ -1,42 +1,34 @@
-# QG DA Baselines (S0 reference case)
+# QG Case Study: Benchmarked Schemes Overview
 
-Reference case (2026-09-08): **lag=5.0d, noise_frac=0.05, N=100 test windows**. Supersedes the earlier lag=1.0d/noise=0.01 case, which was found to be unrealistically favorable -- at that setting the background (free forecast, no assimilation) alone already reached psi full EV≈0.98, so DA's high score there was mostly inherited from the background rather than earned from the observational update. See `PLAN.md`'s "DA reference-case realism" section for the full lag/noise sensitivity analysis behind this choice.
+Two-layer quasi-geostrophic (QG) Phillips-channel case study -- the four DA baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus the Q1 neural estimator (DirectUNet), on the S0 (no model error) reference case.
 
-## DA baselines (S0, PV-q and ψ)
+## 1. Benchmarked schemes
 
-CRPS is computed per-window on the q-state: ensemble methods (ETKF/EnKF) score their real per-member spread; deterministic methods (4DVar) have no ensemble, so CRPS degenerates exactly to the mean absolute error (marked `*`) -- lower is better for both. CRPS (norm.) divides by the pooled truth PV std over the whole test set (not per-window -- avoids the distortion a low-variance window would introduce), giving a dimensionless, cross-method-comparable score.
+| scheme | type | key config | description |
+|---|---|---|---|
+| ETKF | Ensemble DA (deterministic square-root) | N=80, inflation=1.0, loc_radius=6.0 | Ensemble Transform Kalman Filter -- deterministic ensemble-square-root analysis update, sequentially cycled over the assimilation window. No stochastic observation perturbation. |
+| EnKF | Ensemble DA (stochastic, perturbed-obs) | N=80, inflation=1.0, loc_radius=6.0 | Perturbed-observation Ensemble Kalman Filter -- each ensemble member assimilates an independently perturbed observation. Same hyperparameters as ETKF for a controlled comparison. |
+| Strong-4DVar | Variational DA (deterministic, perfect-model) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0 | 4D-Var assuming the DA dynamical model is exact over the assimilation window (strong constraint) -- optimizes only the initial condition. |
+| Weak-4DVar | Variational DA (deterministic, weak-constraint) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0, q_var_scale=0.1 | 4D-Var with an added per-step model-error control term (weak constraint) -- can partially compensate for a biased/mismatched dynamical model, at the cost of a larger control space. |
+| Q1 (DirectUNet) | Neural (deterministic, single-pass, supervised) | MONAI circular 2D U-Net, hidden=[64,128,256] (M tier), cosine LR, 200 epochs | Direct single forward-pass estimator mapping observations to the full state (no iterative assimilation cycle, no dynamical model at inference time). Circular-padded Conv2d over the doubly-periodic (ny,nx) grid; trained via supervised regression on a combined psi + weighted PV-q loss. |
 
-| method | PV RMSE | improv | CRPS | CRPS (norm.) | PV EV | PV q1 EV | PV q2 EV | ψ EV |
-|---|---|---|---|---|---|---|---|---|
-| _free forecast_ | 1.93e-05 | 1.0 | -- | -- | -0.0312 | -0.0443 | -0.0180 | 0.8854 |
-| EnKF | 1.25e-05 | 1.5417 | 5.69e-06 | 0.2802 | 0.4812 | 0.5686 | 0.3938 | 0.9474 |
-| ETKF | 1.39e-05 | 1.3863 | 6.50e-06 | 0.3200 | 0.4050 | 0.4694 | 0.3406 | 0.9212 |
-| Weak-4DVar | 1.41e-05 | 1.3691 | 9.19e-06* | 0.4524* | -0.0345 | 0.4677 | -0.5367 | 0.9660 |
-| Strong-4DVar | 1.40e-05 | 1.3793 | 9.22e-06* | 0.4538* | -0.1257 | 0.4830 | -0.7344 | 0.9714 |
+DA-method reference-case detail (full lag/noise sensitivity analysis, per-layer breakdown, reconstruction figures) is in `qg_da_report.md` (`generate_qg_da_report.py`) -- not repeated here.
 
-> **Caveat:** Weak-4DVar, Strong-4DVar collapse on PV q layer2 (the unobserved lower layer) at this reference case -- their PV EV is negative there despite psi EV being the best of all 4 methods. This is consistent with PV being a Laplacian-like operator on psi (q ≈ ∇²ψ): small high-wavenumber errors in an otherwise excellent psi analysis get amplified when inverted to PV, especially in the layer with no direct observations. EnKF is the only method strongly positive on **both** psi and PV q at this setting.
+## 2. Summary metrics (S0 reference case, N=100)
 
-Computed on N=100 test windows, lag=5.0, noise_frac=0.05 (should match the reference case above -- if not, these JSONs are stale, regenerate them).
+Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q (both layers), plus normalized CRPS where available.
 
-## Reconstruction examples
+| scheme | ψ EV | PV-q EV | CRPS (norm.) |
+|---|---|---|---|
+| EnKF | 0.9474 | **0.4812** | **0.2802** |
+| ETKF | 0.9212 | *0.4050* | *0.3200* |
+| Weak-4DVar | *0.9660* | -0.0345 | 0.4524* |
+| Strong-4DVar | **0.9714** | -0.1257 | 0.4538* |
+| Q1 (DirectUNet) † | 0.8971 | 0.1605 | -- |
 
-3 example test windows (best/median/worst by ETKF's per-window pooled PV-q RMSE) x all 4 methods, showing truth | free-forecast | analysis for streamfunction (ψ, both layers) and PV (q, both layers), plus an animated DA cycle (raw obs | wind-stress curl forcing | truth | EnKF analysis, PV q1) over the 30-day window. Generated by `generate_qg_reconstruction_figs.py`.
+(Best per column **bolded**, second-best *italicized*.)
 
-### Best window
+\* CRPS is deterministic (degenerates to MAE, no ensemble spread).
 
-![best window reconstruction](figs/qg_s0_reconstruction_best.png)
-
-![best window DA-cycle animation (EnKF)](figs/qg_s0_dacycle_best.gif)
-
-### Median window
-
-![median window reconstruction](figs/qg_s0_reconstruction_median.png)
-
-![median window DA-cycle animation (EnKF)](figs/qg_s0_dacycle_median.gif)
-
-### Worst window
-
-![worst window reconstruction](figs/qg_s0_reconstruction_worst.png)
-
-![worst window DA-cycle animation (EnKF)](figs/qg_s0_dacycle_worst.gif)
+† **Not apples-to-apples**: Checkpoint trained at lag=1.0d/noise=0.01 (train_qg_neural.py defaults); this eval redraws obs at lag=5.0d/noise=0.05 to match the DA baselines' reference case, but the model was NOT retrained for this distribution -- not a fully fair comparison.
 
