@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-10: L96 FDV1(monai) corrected re-eval + FDV2(monai) unavailable row
+
+**Summary:** The FDV1(monai)/FDV1+SDA3(monai) checkpoints were accidentally retrained from
+scratch by a later job's `rm -rf` (see PLAN.md/CHANGELOG history), then correctly re-evaluated
+with `--n-outer 10`; this regenerates the consolidated benchmark report and its Hovmöller
+figures from those corrected `estimates_*.npz` via the existing report generator (not a hand
+edit), and adds an FDV2(monai) row (grad+state, fixed prior_weight) marked unavailable -- that
+run diverged to NaN at epoch 190/400 and was killed, with no valid checkpoint to evaluate.
+
+**Files modified:**
+- `reports/l96/generate_l96_consolidated_report.py` -- added `FDV2_grad_state_monai_l96_fixedw`
+  to `NEURAL_EXP_DIRS`/`MONAI_ROWS`/`MONAI_SHORT_NAMES` (as "FDV2(monai)") plus a
+  `SCHEME_DESCRIPTIONS` entry documenting the NaN divergence and its root cause
+  (`models/fourdvarnet.py::_normalize_channels` floors but never ceiling-clamps the
+  `grad+state` cost-gradient channel's RMS norm, unlike the state branch's `clip_range=50.0`
+  clamp); no matching `estimates_*.npz` exists for it, so it renders as a dash/"n/a" row
+  automatically via the generator's existing missing-estimates handling.
+- `reports/l96/outputs/l96_consolidated_benchmark.md` -- regenerated: FDV1(monai)/
+  FDV1+SDA3(monai) pooled RMSE/EV/ES and per-window mean+/-std tables updated to the corrected
+  checkpoint's numbers (RMSE 0.4251/0.4218 S0/S1 for FDV1(monai), matching the standalone
+  `--n-outer 10` re-eval to within rounding); new FDV2(monai) dash row added to every table.
+- `reports/l96/outputs/figs/l96_hovm_{s0,s1}_{worst,median,best}.png` -- regenerated; the
+  FDV1(monai)/FDV1+SDA3(monai) reconstruction panels and per-window RMSE annotations changed
+  meaningfully at some ranked windows (e.g. S0 worst window 58: FDV1(monai) 0.444->0.512),
+  confirming the corrected checkpoint's difference is not just a rounding-level pooled-metric
+  shift.
+
+**Rationale:** A prior session hand-edited only the pooled tables as a stopgap; this properly
+re-derives the full report (including figures, which also depend on the corrected checkpoint)
+from the actual generator script so all sections stay consistent, and records FDV2(monai)'s
+current unavailable status rather than leaving it undocumented.
+
+**Verification:** `python reports/l96/generate_l96_consolidated_report.py` (via `srun` on
+`Odyssey_GPU`, `--mem=64G`) completed with all 6 figures + report written; diffed against the
+prior hand-edited version to confirm the pooled numbers matched within rounding.
+
 ## 2026-09-09: L96 fast-Y observation-density-augmented TRAINING (DirectUNet-L/CFM-M)
 
 **Summary:** Follow-on to the obs-density generalization sweep below, which found DirectUNet-L/

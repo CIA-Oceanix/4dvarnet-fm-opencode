@@ -86,6 +86,7 @@ NEURAL_EXP_DIRS = [
     "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid",
     "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid",
     "FDV1_unrolled_monai_unet_l96",
+    "FDV2_grad_state_monai_l96_fixedw",
     "FDV1_SDA3_monai_hybrid",
     "FDV1_SDA1_monai_hybrid",
     "FDV1_SDA2_monai_hybrid",
@@ -110,6 +111,7 @@ MONAI_ROWS = [
     "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid",
     "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid",
     "FDV1_unrolled_monai_unet_l96",
+    "FDV2_grad_state_monai_l96_fixedw",
     "FDV1_SDA3_monai_hybrid",
     "FDV1_SDA1_monai_hybrid",
     "FDV1_SDA2_monai_hybrid",
@@ -364,6 +366,23 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "`eval_neural_l96.py`'s `--n-outer` CLI default (1), which is correct for tau0-only CFM but "
       "silently starves this solver's zero-init refinement of the N_outer=10 iterations it needs; "
       "fixed by passing `--n-outer 10` explicitly, recovering a sane, in fact excellent, result.")),
+    ("FDV2_grad_state_monai_l96_fixedw", "Neural (4DVarNet-style unrolled solver, gradient-conditioned, monai backbone)",
+     ("MonaiUNet1D backbone swapped into FDV2's `update_input='grad+state'` solver (each of N_outer=10 "
+      "iterations builds a real variational cost `prior_cost(state) + obs_weight*obs_cost(state, obs)` "
+      "and feeds the UNet its true `torch.autograd.grad(..., create_graph=True)`), with a **fixed** "
+      "(non-trainable) `prior_weight=1.0` held for all 400 epochs at a constant `lr=0.001` -- the "
+      "\"fixedw\" variant. **Diverged to NaN at epoch 190/400** (val_loss NaN first, train_loss still "
+      "normal mid-epoch -- a sudden collapse, not gradual drift); root-caused to "
+      "`models/fourdvarnet.py::_normalize_channels`, which only floors the `grad+state` cost-gradient "
+      "channel's RMS norm (`clamp_min(1e-8)`) with no matching ceiling, unlike the state branch `x` "
+      "(clamped every iteration via `clip_range=50.0`) -- as the model converges and the raw gradient's "
+      "RMS shrinks toward that floor, dividing by it can blow the normalized channel up unbounded. The "
+      "one config difference from the FDV2/UNet1D run that stayed stable (job 52305): there "
+      "`prior_weight` was trainable and was actively shrinking (0.99->0.76 over 60 epochs), damping the "
+      "gradient magnitude away from this regime; fixed at 1.0 here, nothing does. Job killed rather than "
+      "left to burn its remaining epochs post-NaN. **No valid trained result -- unavailable below.** Fix "
+      "for a retry: trainable `prior_weight` (as in the stable UNet1D recipe) and/or an upper clamp on "
+      "the normalized gradient channel symmetric to the state branch's `clip_range=50.0`.")),
     ("FDV1_SDA3_monai_hybrid", "Neural (FDV1-monai mean + SDA3-monai warm-started guidance)",
      ("Same SDEdit-style warm start as the DirectUNet+SDA hybrids above, but swapping in FDV1-monai "
       "(the unrolled solver) as the mean-estimate model instead of DirectUNet-M -- SDA3-monai is used "
@@ -431,6 +450,7 @@ def short_name(name: str) -> str:
         "SDA2_monai_cond_mixed_l96_norm/directunet_hybrid": "DirectUNet+SDA2",
         "SDA3_monai_cond_noisy_l96_norm/directunet_hybrid": "DirectUNet+SDA3",
         "FDV1_unrolled_monai_unet_l96": "FDV1(monai)",
+        "FDV2_grad_state_monai_l96_fixedw": "FDV2(monai)",
         "FDV1_SDA3_monai_hybrid": "FDV1+SDA3(monai)",
         "FDV1_SDA1_monai_hybrid": "FDV1+SDA1(monai)",
         "FDV1_SDA2_monai_hybrid": "FDV1+SDA2(monai)",
