@@ -66,8 +66,9 @@ METHOD_ROWS = [
 ]
 
 # The 4 "headline" methods shown in the per-window keep_k-impact table/figure
-# (dropping the two non-augmented rows there -- already characterized in
-# l96_obs_density_generalization.md, and cluttering the per-window comparison).
+# (dropping the two non-augmented rows there -- already characterized in the
+# PR #180 generalization sweep summarized in section 1, and cluttering the
+# per-window comparison).
 HEADLINE_ROWS = [
     "DirectUNet-M(cos) [augmented]",
     "CFM-M(flat) [augmented]",
@@ -79,7 +80,7 @@ EXPERIMENT_DESCRIPTION = """\
 ## 1. Experiments
 
 **Motivation.** The original fast-Y observation-density generalization sweep
-(`l96_obs_density_generalization.md`, PR #180) found that DirectUNet-L(cos)
+(PR #180) found that DirectUNet-L(cos)
 and CFM-M(flat) -- which consume `obs` only via `torch.nan_to_num(obs,
 nan=0.0)`, with no separate mask channel -- degrade steeply under randomly
 reduced fast-Y observation density (RMSE ~1.9x at half density, ~2.7x at
