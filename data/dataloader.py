@@ -76,7 +76,8 @@ class FlowMatchingDataset(Dataset):
     def __init__(self, lorenz_dataset, T_max: float = 5.0, with_params: bool = False,
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
                  obs_var_indices=None, use_biased_params: bool = False,
-                 resample_bias_draws: bool = False, bias_max: float = 0.2):
+                 resample_bias_draws: bool = False, bias_max: float = 0.2,
+                 noisy_da_bias: bool = False, noisy_da_max: float = 1.5):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -88,11 +89,24 @@ class FlowMatchingDataset(Dataset):
         self.use_biased_params = use_biased_params
         self.resample_bias_draws = resample_bias_draws
         self.bias_max = bias_max
+        self.noisy_da_bias = noisy_da_bias
+        self.noisy_da_max = noisy_da_max
 
     def __len__(self):
         return len(self.source)
 
     def _extract_params(self, w):
+        if self.noisy_da_bias:
+            # Fresh per-access sample of a random fraction (0 to noisy_da_max,
+            # e.g. up to 1.5x) of the window's own true->DA bias, rather than
+            # always the full (fraction=1.0) DA bias or a bias-agnostic jitter.
+            # S0 windows carry no *_da entries, so _l96_biased_param_vector
+            # falls back to the true value there (bias vector = 0, so this is
+            # a no-op on S0 regardless of the sampled fraction).
+            true_vec = _l96_true_param_vector(w)
+            da_vec = _l96_biased_param_vector(w)
+            frac = torch.empty(len(true_vec)).uniform_(0.0, self.noisy_da_max)
+            return tuple(t + float(f) * (d - t) for t, d, f in zip(true_vec, da_vec, frac.tolist()))
         if self.resample_bias_draws:
             true = tuple(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0))
                          for n in self.param_names)
@@ -188,21 +202,57 @@ def collate_fm(batch):
     return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params)
 
 
-def make_collate_fm(norm_stats: dict | None = None):
+def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None = None):
     """Return a ``collate_fm``-compatible collate fn that additionally
-    z-score normalizes ``states``/``obs`` when ``norm_stats`` is given.
+    z-score normalizes ``states``/``obs`` when ``norm_stats`` is given, and/or
+    applies TRAINING-time fast-Y observation-density augmentation when
+    ``obs_density_cfg`` is given.
 
-    ``norm_stats is None`` reproduces plain ``collate_fm`` exactly.
+    ``obs_density_cfg`` (optional dict, keys ``full_prob`` default 0.4 and
+    ``min_keep`` default 0) draws a fresh
+    ``data.obs_density.sample_training_density_mask`` every batch and NaNs
+    out the dropped fast-Y channels of ``obs`` -- so the model sees
+    partial-channel-dropout obs patterns during training instead of only at
+    eval time (see ``eval_obs_density_l96.py`` / ``data/obs_density.py``'s
+    module docstring for why that gap matters: DirectUNet/CFM read obs only
+    via ``nan_to_num``, with no separate mask channel, so an untrained-for
+    dropped channel is indistinguishable from a real near-zero observation).
+    Requires the canonical 24D (8 slow-X + 16 fast-Y) obsj2 observed
+    subspace -- raises if ``obs``'s last dim doesn't match.
+
+    ``norm_stats is None and obs_density_cfg is None`` reproduces plain
+    ``collate_fm`` exactly.
     """
-    if norm_stats is None:
+    if norm_stats is None and obs_density_cfg is None:
         return collate_fm
 
     from data.normalization import normalize
 
     def _collate(batch):
         fm_batch = collate_fm(batch)
-        fm_batch.states = normalize(fm_batch.states, norm_stats)
-        fm_batch.obs = normalize(fm_batch.obs, norm_stats)
+        if obs_density_cfg is not None:
+            from data.obs_density import (
+                NUM_FAST,
+                NUM_SLOW,
+                apply_density_mask_to_obs,
+                sample_training_density_mask,
+            )
+            B, T, D = fm_batch.obs.shape
+            if D != NUM_SLOW + NUM_FAST:
+                raise ValueError(
+                    f"obs_density_cfg requires the canonical {NUM_SLOW}+{NUM_FAST}D "
+                    f"obsj2 observed subspace, got obs dim {D}"
+                )
+            keep_mask = sample_training_density_mask(
+                B, T,
+                full_prob=obs_density_cfg.get("full_prob", 0.4),
+                min_keep=obs_density_cfg.get("min_keep", 0),
+                device=fm_batch.obs.device,
+            )
+            fm_batch.obs = apply_density_mask_to_obs(fm_batch.obs, keep_mask)
+        if norm_stats is not None:
+            fm_batch.states = normalize(fm_batch.states, norm_stats)
+            fm_batch.obs = normalize(fm_batch.obs, norm_stats)
         return fm_batch
 
     return _collate

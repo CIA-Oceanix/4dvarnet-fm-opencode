@@ -32,12 +32,12 @@ case "${SLURM_ARRAY_TASK_ID}" in
     echo "============================================"
     echo
 
-    rm -rf "experiments/${EXPERIMENT}"
     python train.py \
       --config-name experiment/${EXPERIMENT} \
       hydra.run.dir=. \
       hydra.output_subdir=null \
-      training.stage1.epochs=1
+      training.stage1.epochs=1 \
+      +fresh=true
 
     ;;
 
@@ -51,12 +51,12 @@ case "${SLURM_ARRAY_TASK_ID}" in
     echo "============================================"
     echo
 
-    rm -rf "experiments/${EXPERIMENT}"
     python train.py \
       --config-name experiment/${EXPERIMENT} \
       hydra.run.dir=. \
       hydra.output_subdir=null \
-      training.stage1.epochs=1 training.stage2.epochs=1
+      training.stage1.epochs=1 training.stage2.epochs=1 \
+      +fresh=true
 
     ;;
 

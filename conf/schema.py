@@ -63,6 +63,12 @@ class DataConfig:
     test_cache: Optional[str] = None
     resample_bias_draws: bool = False
     bias_max: float = 0.2
+    # Training-time fast-Y observation-density augmentation (see
+    # data/obs_density.py::sample_training_density_mask, wired via
+    # data/dataloader.py::make_collate_fm) -- val/test are never augmented.
+    obs_density_augment: bool = False
+    obs_density_full_prob: float = 0.4
+    obs_density_min_keep: int = 0
 
     # Device
     device: str = "cpu"
@@ -268,6 +274,8 @@ class FourDVarNetConfig:
     trainable_prior_weight: bool = True
     aux_var_cost_weight: float = 0.0
     prior_tau_conditioning: bool = False
+    unet_backbone: str = "unet1d"
+    monai_norm_num_groups: int = 32
 
 
 @dataclass
@@ -318,7 +326,7 @@ class StageConfig:
     epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
-    use_cosine_scheduler: bool = False
+    use_cosine_scheduler: bool = True  # deliberate default since 2026-09-10, see CHANGELOG.md
     obs_weight_lr_scale: float = 1.0
     prior_unet_lr_scale: float = 1.0
 

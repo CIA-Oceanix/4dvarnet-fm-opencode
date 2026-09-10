@@ -17,6 +17,7 @@ from evaluation.baselines import (
     _build_qg_col_loc_matrices,
     _build_qg_loc_matrices,
 )
+from evaluation.metrics import crps as _crps
 from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
@@ -710,6 +711,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         if scen not in ds:
             continue
         rmse_list = []
+        crps_list = []
         fcast_rmse = []
         analyses = []
         refs = []
@@ -863,6 +865,25 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             refs.append(ref)
             rmse_list.append(float(np.sqrt(np.mean(
                 (traj_da - ref) ** 2))))
+            # Per-window CRPS on the q-state: ensemble methods (ETKF/EnKF)
+            # score their real per-member spread (BaselineResult.ensemble);
+            # deterministic methods (4DVar, no `.ensemble` attr) fall back to
+            # a single-member "ensemble", which crps() degenerates to MAE for.
+            ens_raw = getattr(res, "ensemble", None)
+            ens = traj_da[None] if ens_raw is None else ens_raw
+            if is_psi_state:
+                ens_flat = ens.reshape(-1, ens.shape[-1])
+                ens_flat = dyn.inner.psi_to_q(
+                    torch.from_numpy(ens_flat).float().to(device))
+                ens = ens_flat.detach().cpu().numpy().reshape(ens.shape[0], ens.shape[1], -1)
+            if cross_res:
+                ens = np.stack([
+                    _upsample_to_truth(ens[n], da_nx, nlayers, cfg.nx, device)
+                    for n in range(ens.shape[0])
+                ])
+            if is_qg1l:
+                ens = ens[:, :, :per_layer]
+            crps_list.append(float(np.mean(_crps(ens, ref))))
             fcast_rmse.append(_free_forecast_rmse(
                 cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l,
                 psi_state=is_psi_state))
@@ -885,6 +906,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],
             [r[:, :per_layer] for r in refs])
+        # Pooled (not per-window) truth std, so a normalized CRPS is
+        # dimensionless and comparable across fields/methods without the
+        # per-window-normalization distortion a low-energy window would
+        # otherwise introduce (a window with small true variance would get
+        # an inflated normalized score if divided by its own std instead).
+        q_std_pooled = float(np.std(np.concatenate(refs, axis=0)))
         da_r = float(np.mean(rmse_list))
         fc_r = float(np.mean(fcast_rmse))
         ev_free = None
@@ -933,6 +960,11 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         summary[scen] = {
             "rmse_mean": da_r,
             "rmse_list": rmse_list,
+            "crps_mean": float(np.mean(crps_list)),
+            "crps_list": crps_list,
+            "crps_normalized": float(np.mean(crps_list)) / max(q_std_pooled, 1e-30),
+            "q_std_pooled": q_std_pooled,
+            "crps_is_deterministic": getattr(res, "ensemble", None) is None,
             "forecast_rmse_mean": fc_r,
             "forecast_improvement": fc_r / max(da_r, 1e-30),
             "expvar_full": float(np.mean(ev)),
@@ -946,15 +978,17 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
               f"ev_full={summary[scen]['expvar_full']:.3f} "
-              f"ev_free={summary[scen]['expvar_free']:.3f}")
+              f"ev_free={summary[scen]['expvar_free']:.3f} "
+              f"crps={summary[scen]['crps_mean']:.4e} "
+              f"crps_norm={summary[scen]['crps_normalized']:.4f}"
+              f"{' (=MAE, deterministic)' if summary[scen]['crps_is_deterministic'] else ''}")
 
     payload = {"method": method_name, "nx": cfg.nx,
                "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
-
-    payload = {"method": method_name, "nx": cfg.nx,
-               "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
+               "loc_radius": loc_radius, "scenarios": summary,
+               "init_lag_days": init_lag_days,
+               "obs_noise_std_frac": cfg.obs_noise_std_frac,
+               "num_windows": cfg.num_windows}
     if out_path:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w") as f:

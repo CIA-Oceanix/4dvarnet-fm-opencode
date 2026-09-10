@@ -92,6 +92,18 @@ def main():
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="sda_eval_results.json", help="Output JSON")
+    parser.add_argument("--normalize-stats", default=None,
+                        help="Path to a per-channel norm stats .pt (mean/std). When given, "
+                             "obs is z-score normalized before each model/guidance call and "
+                             "predictions are denormalized back to raw physical units before "
+                             "scoring. --r-var is NOT rescaled: sda_guided_sample's guidance "
+                             "step normalizes its own gradient by its norm, which exactly "
+                             "cancels any positive R_var scale factor (verified: R_var=0.5 vs "
+                             "R_var=50.0 give trajectories identical to float32 noise, "
+                             "~1e-7 max abs diff) -- R_var only ever divides the guidance cost "
+                             "before that gradient is taken, so its numeric value never affects "
+                             "the sampled trajectory. Omitting this flag is a true no-op "
+                             "(identical to not passing it).")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -113,10 +125,18 @@ def main():
             dataset_path = str(candidates[0])
             logger.info(f"Auto-detected dataset: {dataset_path}")
 
+    norm_stats = None
+    if args.normalize_stats:
+        from data.normalization import load_norm_stats
+        norm_stats = load_norm_stats(args.normalize_stats)
+        logger.info(f"Loaded normalize-stats from {args.normalize_stats}: "
+                    f"mean/std shape {tuple(norm_stats['mean'].shape)}")
+
     is_conditioned = isinstance(model, ConditionalPriorCFM)
     dataset, dataloaders, obs_var_indices = prepare_dataset(
         cfg, dataset_path, args.num_windows, args.obs_interval,
-        obs_j=args.obs_j, is_joint=is_conditioned,
+        obs_j=args.obs_j, is_joint=is_conditioned, norm_stats=norm_stats,
+        batch_size=args.batch_size,
     )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
@@ -137,6 +157,22 @@ def main():
         r_var=args.r_var, guidance_weight=args.guidance_weight,
         obs_indices=guide_indices,
     )
+
+    if norm_stats is not None:
+        # obs was fed to the model/guidance cost normalized; the sampled
+        # states come back in normalized space and must be denormalized to
+        # raw physical units before scoring (truth is already raw, since
+        # collate_eval/collate_joint_eval never touch true_state).
+        from data.normalization import denormalize
+        for est in estimates.values():
+            est["trajectories"] = denormalize(est["trajectories"], norm_stats)
+            if "members" in est:
+                # members: (W, T, D, M) -- channel dim D is second-to-last, not
+                # last, so swap it into the last axis for the per-channel
+                # broadcast then swap back.
+                m = np.swapaxes(est["members"], -1, -2)
+                m = denormalize(m, norm_stats)
+                est["members"] = np.swapaxes(m, -1, -2)
 
     # Save per-case .npz estimates + truth, and compute generic metrics (step 2)
     output_path = Path(args.output)

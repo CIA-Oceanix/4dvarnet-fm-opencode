@@ -30,6 +30,7 @@ from models.solver import TweedieSolver  # noqa: E402
 from models.direct_unet import DirectUNet  # noqa: E402
 from models.vanilla_cfm import VanillaCFM  # noqa: E402
 from training.pipeline import create_trainer, train_stage  # noqa: E402
+from training.resume import resolve_experiment_dir, resume_ckpt_path  # noqa: E402
 from training.lightning_module import LitModel  # noqa: E402
 from evaluation.metrics import rmse, param_rmse  # noqa: E402
 
@@ -76,18 +77,25 @@ def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
 def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None, use_biased_params=False,
-                         resample_bias_draws=False, bias_max=0.2, norm_stats=None):
-    kw = dict(batch_size=batch_size, collate_fn=make_collate_fm(norm_stats),
-              num_workers=4, pin_memory=True)
+                         resample_bias_draws=False, bias_max=0.2, norm_stats=None,
+                         noisy_da_bias=False, noisy_da_max=1.5, obs_density_cfg=None):
+    # obs_density_cfg (see make_collate_fm) is TRAINING-only augmentation --
+    # val must stay at full canonical density so its loss/metrics remain
+    # comparable across epochs and against the eval protocol
+    # (eval_obs_density_l96.py sweeps density separately, at eval time, on
+    # top of a checkpoint trained with or without this augmentation).
+    kw = dict(batch_size=batch_size, num_workers=4, pin_memory=True)
     fm_kw = dict(obs_interval=obs_interval, R_var=R_var,
                  with_params=with_params, param_names=list(param_names),
                  obs_var_indices=obs_var_indices,
                  use_biased_params=use_biased_params,
-                 resample_bias_draws=resample_bias_draws, bias_max=bias_max)
+                 resample_bias_draws=resample_bias_draws, bias_max=bias_max,
+                 noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
-                            shuffle=True, **kw),
+                            shuffle=True, collate_fn=make_collate_fm(norm_stats, obs_density_cfg), **kw),
         "val": DataLoader(FlowMatchingDataset(datasets["val"], **fm_kw),
+                          collate_fn=make_collate_fm(norm_stats),
                           shuffle=False, **kw),
     }
 
@@ -142,6 +150,22 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=vc.get("train_tau_0_only", False),
             param_dim=param_dim,
             cond_extra_dim=vc.get("cond_extra_dim", 1 + param_dim),
+        )
+    elif model_type == "monai_vanilla_cfm":
+        from models.monai_unet_adapter import MonaiVanillaCFM
+        mvc = cfg.model.monai_vanilla_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = MonaiVanillaCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mvc.hidden_channels,
+            N_outer=mvc.N_outer,
+            sigma_prior=mvc.sigma_prior,
+            dropout=mvc.dropout,
+            train_tau_0_only=mvc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            cond_extra_dim=mvc.get("cond_extra_dim", 1 + param_dim),
+            num_res_blocks=mvc.get("num_res_blocks", 2),
+            norm_num_groups=mvc.get("norm_num_groups", 32),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
@@ -281,6 +305,31 @@ def model_factory(cfg: DictConfig, device: torch.device):
             sigma_prior=sp.sigma_prior,
             dropout=sp.dropout,
         )
+    elif model_type == "monai_sda_prior":
+        from models.monai_unet_adapter import MonaiUnconditionalPriorCFM
+        sp = cfg.model.monai_sda_prior
+        model = MonaiUnconditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 32),
+        )
+    elif model_type == "monai_sda_prior_cond":
+        from models.monai_unet_adapter import MonaiConditionalPriorCFM
+        sp = cfg.model.monai_sda_prior
+        model = MonaiConditionalPriorCFM(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 32),
+        )
     elif model_type == "fourdvarnet":
         from models.fourdvarnet import FourDVarNetSolver
         fdv = cfg.model.fdv
@@ -297,6 +346,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             trainable_prior_weight=fdv.get("trainable_prior_weight", True),
             aux_var_cost_weight=fdv.get("aux_var_cost_weight", 0.0),
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
+            unet_backbone=fdv.get("unet_backbone", "unet1d"),
+            monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
@@ -371,7 +422,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type == "vanilla_cfm":
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred, params = model.sample(batch, return_params=True)
@@ -401,7 +452,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -445,7 +496,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type == "vanilla_cfm":
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -460,7 +511,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -496,6 +547,7 @@ def main(cfg: DictConfig):
         exp_id = hcfg.job.config_name.replace("experiment/", "")
 
     exp_dir = os.path.join(EXP_DIR, exp_id)
+    resolve_experiment_dir(exp_dir, cfg, fresh=cfg.get("fresh", False))
     os.makedirs(exp_dir, exist_ok=True)
     results_path = os.path.join(exp_dir, "results.json")
 
@@ -631,16 +683,27 @@ def main(cfg: DictConfig):
                                       os.path.join(EXP_DIR, "l96_norm_stats_obsj2.pt"))
             norm_stats = load_norm_stats(norm_stats_path)
             logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
+        obs_density_cfg = None
+        if dc.get("obs_density_augment", False):
+            obs_density_cfg = {
+                "full_prob": dc.get("obs_density_full_prob", 0.4),
+                "min_keep": dc.get("obs_density_min_keep", 0),
+            }
+            logger.info(f"data.obs_density_augment=True: {obs_density_cfg}")
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond")),
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond")),
             obs_var_indices=obs_var_indices,
-            use_biased_params=(model_type in ("param_head", "param_head_unet")),
+            use_biased_params=(model_type in ("param_head", "param_head_unet")
+                               or dc.get("use_biased_params", False)),
             resample_bias_draws=dc.get("resample_bias_draws", False),
             bias_max=dc.get("bias_max", 0.2),
             norm_stats=norm_stats,
+            noisy_da_bias=dc.get("noisy_da_bias", False),
+            noisy_da_max=dc.get("noisy_da_max", 1.5),
+            obs_density_cfg=obs_density_cfg,
         )
     else:
         loaders = make_experiment_dataloaders(
@@ -679,12 +742,12 @@ def main(cfg: DictConfig):
                                lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                                use_gradient_loss=cfg.training.loss.use_gradient,
                                gradient_weight=cfg.training.loss.gradient_weight,
-                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", False),
+                               use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
                                max_epochs=epochs_s1,
                                obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
                                prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
                 trainer = create_trainer(cfg, 1)
-                trainer.fit(lit, loaders["train"], loaders["val"])
+                trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(1))
                 path = cfg.paths.checkpoint_stage1
                 torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
@@ -701,9 +764,11 @@ def main(cfg: DictConfig):
             lit = LitModel(model, model_type=model_type, stage=2,
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
-                           gradient_weight=cfg.training.loss.gradient_weight)
+                           gradient_weight=cfg.training.loss.gradient_weight,
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
-            trainer.fit(lit, loaders["train"], loaders["val"])
+            trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(2))
             path = cfg.paths.checkpoint_stage2
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
@@ -714,9 +779,11 @@ def main(cfg: DictConfig):
             lit = LitModel(model, model_type=model_type, stage=2,
                            lr=stage_cfg.lr, gradient_clip_val=stage_cfg.gradient_clip_val,
                            use_gradient_loss=cfg.training.loss.use_gradient,
-                           gradient_weight=cfg.training.loss.gradient_weight)
+                           gradient_weight=cfg.training.loss.gradient_weight,
+                           use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+                           max_epochs=epochs_s2)
             trainer = create_trainer(cfg, 2)
-            trainer.fit(lit, loaders["train"], loaders["val"])
+            trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(2))
             path = cfg.paths.checkpoint_stage2
             torch.save(lit.model.state_dict(), path)
             train_time += time.time() - t0
@@ -784,8 +851,11 @@ def main(cfg: DictConfig):
     cs4 = results_metrics.get("test_cs4")
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
+              else cfg.model.get("monai_direct_unet") if model_type == "monai_direct_unet"
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
+              else cfg.model.get("monai_vanilla_cfm") if model_type == "monai_vanilla_cfm"
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
+              else cfg.model.get("monai_sda_prior") if model_type in ("monai_sda_prior", "monai_sda_prior_cond")
               else cfg.model.get("fdv") if model_type == "fourdvarnet"
               else cfg.model.get("fdv_cfm") if model_type == "fourdvarnet_cfm"
               else cfg.model)

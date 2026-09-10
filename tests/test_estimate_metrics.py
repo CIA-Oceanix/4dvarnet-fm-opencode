@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 
 from evaluation.estimate_metrics import (
+    L96_PARAM_ORDER,
+    evaluate_ensemble_estimates,
     nrmse_param,
+    per_window_deterministic_crps,
+    per_window_ensemble_crps,
+    per_window_rmse_ev,
     trajectory_forecast_skill,
 )
 from evaluation.run_l96 import make_obs_j_indices
@@ -108,3 +113,60 @@ class TestTrajectoryForecastSkill:
         res = trajectory_forecast_skill(
             dyn, x0s, forces, tp, tp, n_steps=150, obs_var_indices=OBS_IDX)
         assert res["n_steps"] == 150
+
+
+class TestPerWindowMetrics:
+    @pytest.fixture
+    def rng(self):
+        return np.random.default_rng(0)
+
+    def test_perfect_reconstruction_zero_error(self, rng):
+        truth = rng.normal(size=(5, 20, 24))
+        pw = per_window_rmse_ev(truth.copy(), truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert pw["rmse"][group]["mean"] == pytest.approx(0.0, abs=1e-8)
+            assert pw["rmse"][group]["std"] == pytest.approx(0.0, abs=1e-8)
+            assert pw["ev"][group]["mean"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_grouped_keys_present(self, rng):
+        traj = rng.normal(size=(6, 15, 24))
+        truth = rng.normal(size=(6, 15, 24))
+        pw = per_window_rmse_ev(traj, truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert group in pw["rmse"] and {"mean", "std"} <= pw["rmse"][group].keys()
+            assert group in pw["ev"] and {"mean", "std"} <= pw["ev"][group].keys()
+
+    def test_per_window_crps_mean_matches_pooled_es(self, rng):
+        # Equal-length windows -> mean of per-window CRPS must equal the
+        # pooled Energy Score (evaluate_ensemble_estimates), since averaging
+        # a per-window mean over equal-sized groups is the same as pooling.
+        truth = rng.normal(size=(8, 10, 24))
+        members = truth[:, :, :, None] + rng.normal(scale=0.3, size=(8, 10, 24, 12))
+        pooled = evaluate_ensemble_estimates(members, truth)
+        pw_crps = per_window_ensemble_crps(members, truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert pw_crps[group]["mean"] == pytest.approx(
+                pooled["ensemble"]["es"]["groups"][group], abs=1e-6)
+            assert pw_crps[group]["std"] >= 0.0
+
+    def test_perfect_ensemble_zero_crps(self, rng):
+        truth = rng.normal(size=(4, 10, 24))
+        members = np.repeat(truth[:, :, :, None], 5, axis=-1)
+        pw_crps = per_window_ensemble_crps(members, truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert pw_crps[group]["mean"] == pytest.approx(0.0, abs=1e-8)
+
+    def test_deterministic_crps_equals_mae_and_matches_ensemble_n1(self, rng):
+        traj = rng.normal(size=(6, 12, 24))
+        truth = rng.normal(size=(6, 12, 24))
+        det = per_window_deterministic_crps(traj, truth)
+        ens = per_window_ensemble_crps(traj[:, :, :, None], truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert det[group]["mean"] == pytest.approx(ens[group]["mean"], abs=1e-6)
+            assert det[group]["std"] == pytest.approx(ens[group]["std"], abs=1e-6)
+
+    def test_deterministic_crps_zero_for_perfect(self, rng):
+        truth = rng.normal(size=(4, 10, 24))
+        det = per_window_deterministic_crps(truth.copy(), truth)
+        for group in ("slow", "obs_fast", "all_obs"):
+            assert det[group]["mean"] == pytest.approx(0.0, abs=1e-8)

@@ -240,6 +240,32 @@ def test_joint_dataloader_with_params(l96_joint_cfg):
     assert b.true_params.shape[1] == PD
 
 
+def test_obs_density_augment_applies_to_train_only(l96_joint_cfg):
+    """obs_density_cfg must augment the train loader's obs but leave val at
+    full canonical density -- val/eval-time comparability across epochs
+    would otherwise be broken by a randomly-varying density."""
+    torch.manual_seed(0)
+    dyn = _make_lorenz96_dynamics(l96_joint_cfg)
+    cfg_val = Lorenz96Config(**{**l96_joint_cfg.__dict__, "seed": 99})
+    datasets = {
+        "train": RandomParamLorenz96Dataset(l96_joint_cfg, param_noise=0.2, dynamics=dyn),
+        "val": RandomParamLorenz96Dataset(cfg_val, param_noise=0.2, dynamics=dyn),
+    }
+    loaders = make_l96_dataloaders(
+        datasets, batch_size=2, obs_interval=20, R_var=0.5,
+        obs_var_indices=l96_joint_cfg.obs_var_indices,
+        obs_density_cfg={"full_prob": 0.0},
+    )
+    train_batch = next(iter(loaders["train"]))
+    val_batch = next(iter(loaders["val"]))
+    assert torch.isnan(train_batch.obs[..., 8:]).any()
+    # val's own NaN pattern is exactly its pre-existing obs_mask-driven one --
+    # every genuinely-observed timestep still has all 16 fast channels
+    # present (full density), unaffected by the train-side augmentation.
+    observed_fast = val_batch.obs[..., 8:][val_batch.obs_mask]
+    assert not torch.isnan(observed_fast).any()
+
+
 def test_make_eval_batch_l96_joint(l96_joint_dataset):
     w = l96_joint_dataset[0]
     device = torch.device("cpu")

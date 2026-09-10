@@ -172,8 +172,12 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   to `estimates_s0.npz` + `results.json` (`s0.psi`, `s0.q`).
 - **Configs**: `config/experiment/Q1_direct_unet_s0.yaml`,
   `Q2_vanilla_cfm_s0.yaml` (documentation specs → CLI flags; not Hydra).
-- **Report**: `reports/qg/generate_qg_neural_report.py` → `qg_neural_report.md`
-  renders Q1/Q2 vs the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ.
+- **Report**: `reports/qg/generate_qg_da_report.py` → `qg_da_report.md` renders
+  the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ; `reports/qg/
+  generate_qg_neural_report.py` → `qg_neural_report.md` is the case-study
+  overview (scheme descriptions + a combined DA/Q1 summary table, linking
+  back to `qg_da_report.md` for DA detail). Renamed 2026-09-10 (previously
+  one script/file covered both).
 - **Tests**: `tests/test_qg_neural.py` (12 fast tests: psi-day matches the
   window's own upper-psi target, per-window scale O(1), dataset/collate shapes,
   denorm round-trip, `norm_q_from_psi` round-trip, per-device inverter-cache
@@ -380,6 +384,97 @@ cache (`reports/qg/outputs/qg_windows_1000_100_100/cache/`, 41GB, built by the
 
 **Q1 status:** launched via `sbatch batch/run_qg_q1_train.sbatch` (job id
 recorded in CHANGELOG 2026-09-07); monitor for completion before starting Q2.
+
+### DA reference-case realism: lag/noise sensitivity (2026-09-08)
+
+The S0 DA-baseline reference case (`lag=1.0`, `noise_frac=0.01`, i.e.
+`qg_repro_validation`'s EnKF/ETKF/4DVar numbers: psi full EV 0.97-0.99,
+q full EV 0.75-0.80) was flagged as unrealistically favorable: at `lag=1.0`
+the DA background/init state is the **true state from only ~1 day earlier**,
+rolled forward with the (near-)true model (`evaluation/run_qg_baselines.py`'s
+`_sample_init_state`) — not an independent forecast. The **free forecast
+alone** (no assimilation) already has psi full EV=0.979 at that lag, higher
+than 2 of the 4 DA baselines post-assimilation; DA's high psi score there is
+almost entirely inherited from the background, not the observational update.
+
+Ran an ETKF-only sensitivity sweep (`--geometry random_columns --cols-per-day
+4 --obs-var psi`, N=80 ensemble, inflation=1.0, loc=6.0 — matching
+`qg_repro_validation`'s ETKF settings) varying `init_lag_days` (1/3/5/7/10)
+and `obs_noise_std_frac` (0.01/0.05/0.10/0.20) independently, first on a
+10-window subset of the production S0 test cache (fast iteration; real but
+noisy at that sample size -- e.g. its psi full EV at lag=5/noise=0.05 was
+0.843 vs. 0.922 on the full set, see below), then a combined
+lag=5/noise=0.05 joint sweep (1-5 days), then consolidated on the **full
+100-window test set**:
+
+- **Lag alone** (noise fixed at 0.01): psi full EV falls monotonically
+  0.962(lag1) -> 0.910(3) -> 0.858(5) -> 0.783(7) -> 0.715(10); free-forecast
+  q EV crosses zero around lag=5 (the point past which the background is no
+  longer informative on its own).
+- **Noise alone** (lag fixed at 1.0): psi full EV falls 0.962(0.01) ->
+  0.931(0.05) -> 0.866(0.10) -> 0.755(0.20).
+- **Joint lag x noise=0.05** (10-window subset): at `lag<=2d` DA is
+  neutral-to-**negative** on psi relative to the free forecast (obs too
+  noisy to help a still-fresh background); the sign flips positive around
+  `lag=3d` and grows through `lag=5d`, while q's DA contribution is large
+  and positive from `lag>=2d` on (free-forecast q EV is already negative by
+  `lag=5d`). Also confirmed **`init_lag_days` is physical days**, not model
+  steps (`_sample_init_state`'s `lag_steps = lag_days * steps_per_day`,
+  `steps_per_day = round(86400/cfg.dt)`).
+- **Consolidated reference case — `lag=5.0d, noise_frac=0.05`, full 100-window
+  S0 test set** (chosen as the new candidate realistic reference; upper=layer1
+  is the only observed layer):
+
+  | field.layer | EV (DA) | EV (free) | delta |
+  |---|---|---|---|
+  | psi layer1 | 0.909 | 0.836 | +0.073 |
+  | psi layer2 | 0.935 | 0.935 | +0.000 |
+  | **psi full** | **0.922** | 0.885 | **+0.036** |
+  | q layer1 | 0.470 | -0.044 | +0.514 |
+  | q layer2 | 0.339 | -0.018 | +0.357 |
+  | **q full** | **0.405** | -0.031 | **+0.436** |
+
+  (psi std over these 100 windows: mean=14494, range=[4058, 59030] -- the
+  10-window dev subset's mean of 10306 understated this, hence the psi-EV gap
+  above.) psi full EV=0.92 is just above the 80-90% target band; q full is a
+  clear, well-earned DA contribution (free-forecast q EV is negative here).
+  If a tighter 85-90% psi band is wanted, nudge lag to ~6-7d or noise to
+  ~0.07-0.08 from this point.
+
+**All 4 methods confirmed at lag=5.0d/noise=0.05, N=100** (2026-09-08,
+follow-up to the ETKF-only numbers above): the psi-vs-q story is genuinely
+different per method, not just a matter of degree —
+
+| method | psi full EV | q full EV |
+|---|---|---|
+| ETKF | 0.922 | 0.405 |
+| EnKF | 0.948 | 0.484 |
+| Strong-4DVar | **0.971** (best) | **-0.126** (worse than free forecast) |
+| Weak-4DVar | 0.966 | -0.035 |
+
+Both 4DVar variants have the best psi analysis of all 4 methods but
+**collapse on q layer2** (the unobserved lower layer: ETKF/EnKF stay
+positive there, +0.34/+0.40, while Strong/Weak-4DVar go to -0.73/-0.54) —
+q layer1 (the observed layer) stays positive and consistent across all 4
+methods (0.47-0.57), so this isn't a general 4DVar weakness, it's specific to
+inferring the unobserved layer. Consistent with PV being a Laplacian-like
+operator on psi (`q ≈ ∇²ψ`): small high-wavenumber psi errors get amplified
+when inverted to PV. Weak's per-step model-error controls soften this
+(Δq_full -0.003 vs Strong's -0.095) without reversing it. **EnKF is the only
+method strongly positive on both fields** — worth keeping in mind if a
+single "headline" DA number is ever needed.
+
+**This lag=5.0d/noise=0.05 case is now the actual reference case**: full
+N=100 reruns for all 4 methods (this time also computing per-window CRPS —
+see `evaluation/metrics.py`'s `crps()` fix and `run_qg_baselines.py`'s
+per-window CRPS wiring, same PR) are committed to
+`reports/qg/outputs/qg_repro_validation/*.json` for the first time — that
+directory never actually existed on master before (see `reports/qg/
+generate_qg_da_report.py`, DA-baselines-only — renamed 2026-09-10 from
+`generate_qg_neural_report.py`, see above — and `reports/qg/
+generate_qg_reconstruction_figs.py` for 3 example-window reconstruction
+figures, best/median/worst by ETKF's per-window q RMSE). Scratch driver
+(not committed): `qg_da_sensitivity_scratch.py` in the repo root.
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
@@ -751,6 +846,61 @@ dominated by the **unobserved** obs_fast group (S0 obs_fast ≈ 1.6–1.95 vs 0.
 **slow subgroup is preserved** (S0 slow ≈ 0.41–0.46). Joint-DA param recovery: S1 Joint-ETKF
 0.130→0.158 (hx/F degrade), S0 slightly improves (0.045 vs 0.054, F-driven). Full tables:
 `reports/l96/outputs/l96_obs_density_da_baselines.md`.
+
+### Fast-Y observation-density generalization study (2026-09-09, `feature/l96-obs-density-generalization`)
+
+Inference-time-only generalization test (no retraining) for the 4 best-of-subcategory
+monai-backbone schemes from the consolidated benchmark (`l96_consolidated_benchmark.md`) --
+**DirectUNet-L(monai,cos)**, **CFM-M(monai,flat)**, **SDA3(monai)**, **DirectUNet+SDA3** -- on
+the same 200-window S0/S1 cached test set, with the fast-Y observation density randomly
+reduced: only `keep_k` of the 16 canonical fast-Y channels (2 per slow node) are kept,
+**redrawn independently at every observation time** within a window (the harder OOD test,
+chosen over a simpler fixed-per-window mask); the 8 slow-X channels always stay fully
+observed. `keep_k ∈ {16 (sanity check), 8, 4, 0}`.
+
+Distinct from the pre-existing `l96_obs_density_da_baselines.md` above: that study is DA
+baselines only, a single fixed slow-only (obsj0) config; this one is the 4 best neural/SDA
+schemes, a per-obs-time randomly redrawn density sweep.
+
+- **New utility `evaluation/obs_density.py`**: `fast_channel_keep_mask` draws an exact-count
+  random keep-mask per (window, obs-time) via per-slice `topk` scores (not a Bernoulli
+  approximation); `apply_density_mask_to_obs` NaNs out the dropped channels directly in `obs`.
+- **Architecture-driven design split** (verified against the code, not assumed): DirectUNet/
+  VanillaCFM/FourDVarNet/Joint* consume `obs` only via `torch.nan_to_num(obs, nan=0.0)`, no
+  separate mask channel -- trained only on whole-timestep NaN blocks, never partial-channel NaN
+  within an observed timestep, so a dropped fast-Y channel is genuinely indistinguishable from a
+  real near-zero observation for them (flagged as an explicit, unfixable-without-retraining
+  caveat in the report). SDA's prior network never conditions on raw obs at all (only the
+  guided-sampling cost, `evaluation/sda_sampler.py::guided_obs_cost`, reads it) -- architecturally
+  clean, no zero-imputation ambiguity there.
+- **`evaluation/sda_sampler.py`**: `guided_obs_cost`/`sda_guided_sample` generalized with a new
+  `obs_channel_mask` param (boolean, may vary per timestep/batch element -- unlike the
+  pre-existing `obs_indices`, which applies one fixed subset across the whole trajectory;
+  mutually exclusive with it), combined multiplicatively with the existing temporal `obs_mask`.
+- **`evaluation/neural_inference.py`**: `_run_case_inference`/`run_inference` gained
+  `obs_density_keep_k` (mutually exclusive with `obs_indices`), applied uniformly across every
+  model type dispatched there -- NaNs `batch["obs"]` for direct-obs-consuming models, forwards
+  `obs_channel_mask` to `sda_guided_sample` for the SDA priors. `None` (default) is a true no-op.
+- **New `eval_obs_density_l96.py`**: orchestrates all 4 methods x {S0,S1} x keep_k x
+  `--n-repeats` (independent seed reruns; default 3 -- each run already averages over ~30
+  obs-times x 200 windows of independent random draws, so a small repeat count suffices to
+  sanity-check aggregate RNG sensitivity) x reusing each scheme's existing checkpoint at its
+  canonical benchmark hyperparameters (n_members/n_outer/guidance_weight/tau0 all match
+  `l96_consolidated_benchmark.md` exactly, so `keep_k=16` is a reproduction sanity check, not
+  just a nominal baseline). The hybrid's DirectUNet-M warm start gets the density-masked obs
+  directly (same ambiguity as plain DirectUNet); its SDA3 guidance stage gets `obs_channel_mask`
+  (clean).
+- **New `reports/l96/generate_l96_obs_density_generalization_report.py`**: RMSE/EV(all_obs)
+  table (rows=keep_k, columns=method x case, mean±std across repeats) + a degradation table
+  (RMSE relative to the keep_k=16 baseline per method/case).
+- **New `batch/run_l96_obs_density_generalization.sbatch`** launches the sweep + report on the
+  cluster (checkpoints/cached dataset live only in `experiments/` on the HPC filesystem, not in
+  this git worktree) -- **not yet run**; this PR is the implementation, the actual sweep results
+  are a follow-up once the sbatch job completes.
+- Tests: `tests/test_obs_density.py` (mask exact-count/shape/no-op invariants),
+  `tests/test_sda_sampler.py` (obs_channel_mask restricts/varies-per-timestep/mutual-exclusion/
+  zero-guidance-equivalence), `tests/test_neural_inference.py` (obs_density_keep_k NaNs the
+  right channels for direct-obs models, no-ops at keep_k=16, forwards correctly to the SDA path).
 
 ## Phases
 

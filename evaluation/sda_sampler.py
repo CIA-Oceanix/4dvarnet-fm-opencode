@@ -7,7 +7,7 @@ _INTERPOLANT = LinearInterpolant(nu=1.0)
 
 def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
                      obs_mask: torch.Tensor, R_var: float,
-                     obs_indices=None) -> torch.Tensor:
+                     obs_indices=None, obs_channel_mask: torch.Tensor | None = None) -> torch.Tensor:
     """Observation cost sum(||y - x_hat_1||^2) / R_var over observed steps only.
 
     ``x_hat_1``/``y`` already live in the CFM models' observed-subspace state
@@ -26,13 +26,27 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
     slow ``X`` variables first) without regenerating a narrower dataset: the
     excluded channels of ``y`` simply never enter the sum, which for SDA is
     exactly equivalent to not having observed them, since obs is never a
-    network input here -- only this cost term ever reads it.
+    network input here -- only this cost term ever reads it. ``obs_indices``
+    applies the SAME subset uniformly across every timestep.
+
+    ``obs_channel_mask`` (optional; mutually exclusive with ``obs_indices``)
+    is a boolean ``(..., D)`` mask broadcastable against ``x_hat_1``/``y``
+    that may vary PER TIMESTEP (and per batch element) -- e.g.
+    ``data/obs_density.py::fast_channel_keep_mask``'s per-(window,
+    obs-time) random fast-Y channel keep-mask for the observation-density
+    generalization study. Combined multiplicatively with the temporal
+    ``obs_mask`` rather than slicing (a per-timestep-varying subset can't be
+    expressed as a fixed slice of the channel dimension).
     """
+    if obs_indices is not None and obs_channel_mask is not None:
+        raise ValueError("obs_indices and obs_channel_mask are mutually exclusive")
     if obs_indices is not None:
         x_hat_1 = x_hat_1[..., obs_indices]
         y = y[..., obs_indices]
     y_clean = torch.nan_to_num(y, nan=0.0)
     mask = obs_mask.to(x_hat_1.dtype).unsqueeze(-1)
+    if obs_channel_mask is not None:
+        mask = mask * obs_channel_mask.to(x_hat_1.dtype)
     sq_diff = (x_hat_1 - y_clean) ** 2 * mask
     return sq_diff.sum() / R_var
 
@@ -40,7 +54,8 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
 def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
                        guidance_weight=1.0, n_members: int = 1,
                        interpolant: LinearInterpolant = None, obs_indices=None,
-                       mean_estimate=None, tau0: float = 0.0):
+                       mean_estimate=None, tau0: float = 0.0,
+                       obs_channel_mask: torch.Tensor | None = None):
     """DPS/Pi-GDM-style guided sampling from an unconditional prior.
 
     At each Euler step, nudges the prior's ODE update by the *normalized*
@@ -66,10 +81,12 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
     instance of the soft/weighted-prior design axis (see
     ``docs/research_notes_cfm_da_originality_and_benchmarking.md`` sec 4/5).
 
-    ``obs_indices`` is forwarded to ``guided_obs_cost`` unchanged (see there)
-    -- passing e.g. ``range(8)`` simulates slow-only observation density on
-    top of an existing 24D-cached test set/checkpoint, with no retraining and
-    no new dataset.
+    ``obs_indices``/``obs_channel_mask`` are forwarded to ``guided_obs_cost``
+    unchanged (see there, mutually exclusive) -- passing e.g. ``range(8)`` as
+    ``obs_indices`` simulates slow-only observation density on top of an
+    existing 24D-cached test set/checkpoint, with no retraining and no new
+    dataset; ``obs_channel_mask`` does the same for a per-timestep-varying
+    density (the obs-density generalization study).
 
     ``guidance_weight == 0`` everywhere must reduce EXACTLY to the model's
     unconditional ``sample(batch, N_outer=N_outer)`` (same RNG draw, same
@@ -135,7 +152,7 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
                     v = model.forward(x, batch, tau)
                     x_hat_1 = interpolant.x1_hat(x, v, tau)
                     cost = guided_obs_cost(x_hat_1, batch.obs, batch.obs_mask, R_var,
-                                            obs_indices=obs_indices)
+                                            obs_indices=obs_indices, obs_channel_mask=obs_channel_mask)
                     grad = torch.autograd.grad(cost, x)[0]
                 grad_norm = grad.flatten(1).norm(dim=1).clamp_min(1e-8)
                 grad_norm = grad_norm.view(B, *([1] * (grad.dim() - 1)))

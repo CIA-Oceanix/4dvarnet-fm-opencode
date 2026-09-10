@@ -14,7 +14,7 @@ class LitModel(pl.LightningModule):
         gradient_clip_val: float = 10.0,
         use_gradient_loss: bool = True,
         gradient_weight: float = 0.1,
-        use_cosine_scheduler: bool = False,
+        use_cosine_scheduler: bool = True,  # deliberate default since 2026-09-10, see CHANGELOG.md
         max_epochs: int = None,
         obs_weight_lr_scale: float = 1.0,
         prior_unet_lr_scale: float = 1.0,
@@ -93,7 +93,7 @@ class LitModel(pl.LightningModule):
             optimizer = torch.optim.Adam(groups)
         else:
             optimizer = torch.optim.Adam(params, lr=self.lr)
-        if self.use_cosine_scheduler and self.model_type in ("fourdvarnet", "fourdvarnet_cfm"):
+        if self.use_cosine_scheduler:
             if not self.max_epochs:
                 raise ValueError("use_cosine_scheduler=True requires max_epochs to be set")
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_epochs)
@@ -157,7 +157,7 @@ class LitModel(pl.LightningModule):
         elif self.model_type in ("direct_unet", "monai_direct_unet"):
             pred = self.model(batch)
             loss = self.loss_fn(pred, batch.states)
-        elif self.model_type == "vanilla_cfm":
+        elif self.model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type in ("joint_cfm", "joint_cfm_coupled"):
             loss = self.model.compute_param_loss(batch) if self.stage == 2 \
@@ -171,7 +171,7 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_loss(batch)
         elif self.model_type in ("param_head", "param_head_unet"):
             loss = self.model.compute_loss(batch)
-        elif self.model_type in ("sda_prior", "sda_prior_cond"):
+        elif self.model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type == "fourdvarnet":
             loss = self.model.compute_loss(batch)
