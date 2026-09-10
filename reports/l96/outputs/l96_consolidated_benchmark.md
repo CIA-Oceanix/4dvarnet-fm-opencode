@@ -41,6 +41,7 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | DirectUNet+SDA2 | Neural (DirectUNet-M mean + SDA2-monai warm-started guidance) | As above, warm-starting SDA2-monai (params+forcing-conditioned) instead of SDA1-monai. |
 | DirectUNet+SDA3 | Neural (DirectUNet-M mean + SDA3-monai warm-started guidance) | As above, warm-starting SDA3-monai (noisy-params conditioned) instead of SDA1-monai. Best RMSE/EV among the DirectUNet-warm-started hybrids -- but see FDV1+SDA3-monai below, which beats it comfortably by swapping in a better mean-estimate model. |
 | FDV1(monai) | Neural (4DVarNet-style unrolled solver, monai backbone) | MonaiUNet1D backbone (`unet_backbone=monai`, `models/fourdvarnet.py::FourDVarNetSolver`) swapped into FDV1's `obs+state` unrolled solver (`x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, N_outer=10, zero-initialized, deterministic, no ensemble); M tier; 400 epochs. Rebased its branch onto `origin/master` first to pick up gradient checkpointing (PR #172), which fixes an earlier CUDA-OOM this exact backbone+solver combination hit at production scale. **Note:** its first eval attempt gave a nonsensical RMSE 3.47/EV -3.75 -- traced to `eval_neural_l96.py`'s `--n-outer` CLI default (1), which is correct for tau0-only CFM but silently starves this solver's zero-init refinement of the N_outer=10 iterations it needs; fixed by passing `--n-outer 10` explicitly, recovering a sane, in fact excellent, result. |
+| FDV2(monai) | Neural (4DVarNet-style unrolled solver, gradient-conditioned, monai backbone) | MonaiUNet1D backbone swapped into FDV2's `update_input='grad+state'` solver (each of N_outer=10 iterations builds a real variational cost `prior_cost(state) + obs_weight*obs_cost(state, obs)` and feeds the UNet its true `torch.autograd.grad(..., create_graph=True)`), with a **fixed** (non-trainable) `prior_weight=1.0` held for all 400 epochs at a constant `lr=0.001` -- the "fixedw" variant. **Diverged to NaN at epoch 190/400** (val_loss NaN first, train_loss still normal mid-epoch -- a sudden collapse, not gradual drift); root-caused to `models/fourdvarnet.py::_normalize_channels`, which only floors the `grad+state` cost-gradient channel's RMS norm (`clamp_min(1e-8)`) with no matching ceiling, unlike the state branch `x` (clamped every iteration via `clip_range=50.0`) -- as the model converges and the raw gradient's RMS shrinks toward that floor, dividing by it can blow the normalized channel up unbounded. The one config difference from the FDV2/UNet1D run that stayed stable (job 52305): there `prior_weight` was trainable and was actively shrinking (0.99->0.76 over 60 epochs), damping the gradient magnitude away from this regime; fixed at 1.0 here, nothing does. Job killed rather than left to burn its remaining epochs post-NaN. **No valid trained result -- unavailable below.** Fix for a retry: trainable `prior_weight` (as in the stable UNet1D recipe) and/or an upper clamp on the normalized gradient channel symmetric to the state branch's `clip_range=50.0`. |
 | FDV1+SDA3(monai) | Neural (FDV1-monai mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as the DirectUNet+SDA hybrids above, but swapping in FDV1-monai (the unrolled solver) as the mean-estimate model instead of DirectUNet-M -- SDA3-monai is used to sample the anomaly around FDV1's point estimate. `tau0=0.3`, `guidance_weight=2.0` (own S0-only sweep over `tau0∈{0.1..0.5}×guidance_weight∈{0.5,1,2,5}`, converged on the exact same point as the DirectUNet+SDA hybrids' independent sweep). One real wrinkle specific to this combination: FDV1-monai was trained WITHOUT `data.normalize=true` (unlike DirectUNet-M/SDA3, which share that normalized space) -- feeding it normalized obs (as SDA expects) silently produced a garbage mean estimate that poisoned the whole hybrid (confirmed: RMSE 1.36/EV 0.35) before this was caught; fixed by preparing a SEPARATE raw-obs dataloader for FDV1's own `.sample()` call and normalizing its output before handing it to SDA as the warm start. **Best scheme in this table overall.** |
 | FDV1+SDA1(monai) | Neural (FDV1-monai mean + SDA1-monai warm-started guidance) | As FDV1+SDA3-monai but warm-starting SDA1-monai (unconditional prior) instead of SDA3-monai, for coherence with the DirectUNet+SDA1/2/3 family above. Same `tau0=0.3`/`guidance_weight=2.0` (not re-swept per SDA variant -- three independent sweeps this session all converged on this exact point regardless of SDA variant or mean model). |
 | FDV1+SDA2(monai) | Neural (FDV1-monai mean + SDA2-monai warm-started guidance) | As above, warm-starting SDA2-monai (true-params conditioned) instead of SDA1-monai. |
@@ -85,8 +86,9 @@ Shared setup: all L-series neural models are trained and evaluated on the identi
 | DirectUNet+SDA1 | 0.4274 | 0.1989 | 0.5416 | 0.4252 | 0.1967 | 0.5394 | 0.995 |
 | DirectUNet+SDA2 | 0.4288 | 0.1942 | 0.5461 | 0.4268 | 0.1912 | 0.5446 | 0.995 |
 | DirectUNet+SDA3 | 0.4204 | 0.1849 | 0.5382 | 0.4183 | 0.1824 | 0.5362 | 0.995 |
-| FDV1(monai) | 0.4275 | 0.2125 | 0.5350 | 0.4235 | 0.2100 | 0.5302 | 0.991 |
-| FDV1+SDA3(monai) | **0.3783** | **0.1611** | **0.4870** | **0.3736** | **0.1578** | **0.4815** | 0.987 |
+| FDV1(monai) | 0.4251 | 0.2111 | 0.5320 | 0.4218 | 0.2093 | 0.5280 | 0.992 |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   | n/a |
+| FDV1+SDA3(monai) | **0.3787** | **0.1619** | **0.4871** | **0.3740** | **0.1580** | **0.4820** | 0.988 |
 | FDV1+SDA1(monai) | 0.3852 | 0.1770 | 0.4892 | 0.3801 | 0.1737 | 0.4833 | 0.987 |
 | FDV1+SDA2(monai) | 0.3845 | 0.1688 | 0.4924 | 0.3800 | 0.1650 | 0.4875 | 0.988 |
 
@@ -130,8 +132,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | DirectUNet+SDA1 | 0.9259 | 0.9894 | 0.8941 | 0.9261 | 0.9893 | 0.8945 |
 | DirectUNet+SDA2 | 0.9249 | 0.9899 | 0.8924 | 0.9250 | 0.9899 | 0.8925 |
 | DirectUNet+SDA3 | 0.9273 | 0.9908 | 0.8955 | 0.9275 | 0.9908 | 0.8958 |
-| FDV1(monai) | 0.9271 | 0.9879 | 0.8967 | 0.9280 | 0.9879 | 0.8981 |
-| FDV1+SDA3(monai) | **0.9406** | **0.9930** | **0.9144** | **0.9417** | **0.9931** | **0.9160** |
+| FDV1(monai) | 0.9279 | 0.9880 | 0.8979 | 0.9287 | 0.9879 | 0.8990 |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| FDV1+SDA3(monai) | **0.9406** | **0.9930** | **0.9144** | **0.9416** | **0.9931** | **0.9159** |
 | FDV1+SDA1(monai) | 0.9396 | 0.9916 | 0.9137 | 0.9408 | 0.9917 | 0.9154 |
 | FDV1+SDA2(monai) | 0.9391 | 0.9924 | 0.9125 | 0.9401 | 0.9925 | 0.9139 |
 
@@ -173,8 +176,9 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | DirectUNet+SDA1 | 0.2558 | 0.1477 | 0.3099 | 0.2556 | 0.1457 | 0.3105 |
 | DirectUNet+SDA2 | 0.2544 | 0.1415 | 0.3108 | 0.2545 | 0.1392 | 0.3122 |
 | DirectUNet+SDA3 | 0.2472 | 0.1341 | 0.3037 | 0.2474 | 0.1323 | 0.3050 |
-| FDV1(monai) | 0.2721* | 0.1610* | 0.3276* | 0.2710* | 0.1588* | 0.3271* |
-| FDV1+SDA3(monai) | **0.2204** | **0.1178** | **0.2717** | **0.2188** | **0.1146** | **0.2709** |
+| FDV1(monai) | 0.2668* | 0.1582* | 0.3211* | 0.2667* | 0.1575* | 0.3213* |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| FDV1+SDA3(monai) | **0.2200** | **0.1177** | **0.2712** | **0.2187** | **0.1150** | **0.2706** |
 | FDV1+SDA1(monai) | 0.2282 | 0.1328 | 0.2760 | 0.2263 | 0.1293 | 0.2748 |
 | FDV1+SDA2(monai) | 0.2262 | 0.1239 | 0.2774 | 0.2247 | 0.1205 | 0.2768 |
 
@@ -204,8 +208,9 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA1 | 0.410±0.074 | 0.194±0.034 | 0.518±0.103 | 0.408±0.073 | 0.191±0.036 | 0.516±0.100 |
 | DirectUNet+SDA2 | 0.411±0.074 | 0.189±0.033 | 0.522±0.102 | 0.410±0.072 | 0.186±0.035 | 0.522±0.100 |
 | DirectUNet+SDA3 | 0.403±0.074 | 0.180±0.033 | 0.514±0.103 | 0.401±0.073 | 0.177±0.034 | 0.513±0.100 |
-| FDV1(monai) | 0.410±0.078 | 0.207±0.037 | 0.511±0.104 | 0.407±0.074 | 0.204±0.039 | 0.509±0.099 |
-| FDV1+SDA3(monai) | 0.358±0.075 | 0.155±0.034 | 0.460±0.101 | 0.355±0.072 | 0.151±0.035 | 0.457±0.097 |
+| FDV1(monai) | 0.407±0.079 | 0.205±0.039 | 0.508±0.106 | 0.405±0.074 | 0.204±0.037 | 0.506±0.099 |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| FDV1+SDA3(monai) | 0.358±0.077 | 0.156±0.034 | 0.460±0.105 | 0.355±0.073 | 0.152±0.033 | 0.457±0.099 |
 | FDV1+SDA1(monai) | 0.365±0.074 | 0.172±0.033 | 0.462±0.101 | 0.362±0.071 | 0.167±0.037 | 0.459±0.097 |
 | FDV1+SDA2(monai) | 0.365±0.074 | 0.163±0.034 | 0.466±0.101 | 0.362±0.072 | 0.159±0.036 | 0.463±0.096 |
 
@@ -229,8 +234,9 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA1 | 0.926±0.029 | 0.989±0.004 | 0.894±0.043 | 0.926±0.029 | 0.989±0.005 | 0.894±0.042 |
 | DirectUNet+SDA2 | 0.925±0.030 | 0.990±0.004 | 0.892±0.043 | 0.925±0.029 | 0.990±0.005 | 0.892±0.043 |
 | DirectUNet+SDA3 | 0.927±0.029 | 0.991±0.004 | 0.895±0.043 | 0.927±0.029 | 0.991±0.004 | 0.896±0.042 |
-| FDV1(monai) | 0.927±0.030 | 0.988±0.005 | 0.897±0.044 | 0.928±0.028 | 0.988±0.006 | 0.898±0.041 |
-| FDV1+SDA3(monai) | 0.941±0.027 | 0.993±0.004 | 0.914±0.040 | 0.942±0.026 | 0.993±0.004 | 0.916±0.037 |
+| FDV1(monai) | 0.928±0.031 | 0.988±0.005 | 0.898±0.044 | 0.929±0.029 | 0.988±0.005 | 0.899±0.041 |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| FDV1+SDA3(monai) | 0.941±0.028 | 0.993±0.004 | 0.914±0.041 | 0.942±0.026 | 0.993±0.004 | 0.916±0.038 |
 | FDV1+SDA1(monai) | 0.940±0.027 | 0.992±0.004 | 0.914±0.040 | 0.941±0.026 | 0.992±0.004 | 0.915±0.037 |
 | FDV1+SDA2(monai) | 0.939±0.027 | 0.992±0.004 | 0.913±0.040 | 0.940±0.026 | 0.993±0.004 | 0.914±0.038 |
 
@@ -254,8 +260,9 @@ Every table above pools all windows/timesteps into one number per method. This s
 | DirectUNet+SDA1 | 0.216±0.038 | 0.120±0.024 | 0.263±0.051 | 0.215±0.038 | 0.119±0.026 | 0.264±0.049 |
 | DirectUNet+SDA2 | 0.213±0.036 | 0.114±0.023 | 0.262±0.049 | 0.213±0.036 | 0.112±0.025 | 0.263±0.047 |
 | DirectUNet+SDA3 | 0.208±0.036 | 0.109±0.023 | 0.257±0.048 | 0.208±0.036 | 0.107±0.024 | 0.258±0.047 |
-| FDV1(monai) | 0.272±0.046* | 0.161±0.029* | 0.328±0.060* | 0.271±0.046* | 0.159±0.031* | 0.327±0.058* |
-| FDV1+SDA3(monai) | 0.182±0.036 | 0.094±0.024 | 0.227±0.047 | 0.181±0.036 | 0.091±0.025 | 0.226±0.046 |
+| FDV1(monai) | 0.267±0.047* | 0.158±0.031* | 0.321±0.060* | 0.267±0.044* | 0.158±0.030* | 0.321±0.056* |
+| FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| FDV1+SDA3(monai) | 0.182±0.036 | 0.094±0.024 | 0.226±0.047 | 0.181±0.035 | 0.091±0.024 | 0.226±0.045 |
 | FDV1+SDA1(monai) | 0.189±0.037 | 0.106±0.025 | 0.231±0.049 | 0.188±0.037 | 0.103±0.027 | 0.230±0.048 |
 | FDV1+SDA2(monai) | 0.186±0.036 | 0.098±0.024 | 0.230±0.047 | 0.185±0.036 | 0.095±0.026 | 0.230±0.046 |
 
@@ -272,12 +279,12 @@ Windows ranked by per-window pooled 24D RMSE of Strong-4DVar (best DA scheme); e
 
 | Case | Rank | Window | 4DVar win-RMSE | Strong-4DVar | DirectUNet-L(monai,cos) | CFM-M(monai,flat) | SDA3(monai) | DirectUNet+SDA3 | FDV1(monai) | FDV1+SDA3(monai) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| S0 | worst | 58 | 1.432 | 1.432 | 0.543 | 0.524 | 0.603 | 0.446 | 0.444 | 0.384 |
-| S0 | median | 187 | 0.794 | 0.794 | 0.498 | 0.474 | 0.580 | 0.433 | 0.408 | 0.359 |
-| S0 | best | 155 | 0.407 | 0.407 | 0.396 | 0.405 | 0.411 | 0.303 | 0.305 | 0.253 |
-| S1 | worst | 75 | 1.991 | 1.991 | 0.657 | 0.601 | 0.756 | 0.617 | 0.596 | 0.537 |
-| S1 | median | 198 | 1.482 | 1.482 | 0.475 | 0.461 | 0.503 | 0.422 | 0.404 | 0.351 |
-| S1 | best | 35 | 0.977 | 0.977 | 0.374 | 0.379 | 0.385 | 0.309 | 0.332 | 0.285 |
+| S0 | worst | 58 | 1.432 | 1.432 | 0.543 | 0.524 | 0.603 | 0.446 | 0.512 | 0.469 |
+| S0 | median | 187 | 0.794 | 0.794 | 0.498 | 0.474 | 0.580 | 0.433 | 0.400 | 0.360 |
+| S0 | best | 155 | 0.407 | 0.407 | 0.396 | 0.405 | 0.411 | 0.303 | 0.381 | 0.323 |
+| S1 | worst | 75 | 1.991 | 1.991 | 0.657 | 0.601 | 0.756 | 0.617 | 0.607 | 0.550 |
+| S1 | median | 198 | 1.482 | 1.482 | 0.475 | 0.461 | 0.503 | 0.422 | 0.421 | 0.366 |
+| S1 | best | 35 | 0.977 | 0.977 | 0.374 | 0.379 | 0.385 | 0.309 | 0.357 | 0.307 |
 
 ![s0-worst](figs/l96_hovm_s0_worst.png)
 
