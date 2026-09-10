@@ -30,16 +30,18 @@ def _make_lit_cfm(obs_weight_lr_scale=1.0, trainable_obs_weight=True, update_inp
 
 
 class TestCosineScheduler:
-    def test_use_cosine_scheduler_defaults_to_false(self):
+    def test_use_cosine_scheduler_defaults_to_true(self):
         """LitModel's own default (independent of any train.py call site) is
-        False -- cosine annealing is opt-in per config
-        (``training.stage*.use_cosine_scheduler: true``), not a global
-        default, so configs that never set the key keep their flat LR."""
+        True as of 2026-09-10 (see CHANGELOG.md) -- cosine annealing is now
+        the deliberate default LR scheme for training runs, not opt-in.
+        (An earlier accidental version of this same flip was caught and
+        reverted in PR #176; this one is intentional and documented.)"""
         model = FourDVarNetSolver(state_dim=3, hidden_channels=[4, 8], N_outer=3)
         lit = LitModel(model, model_type="direct_unet", stage=1, lr=1e-3, max_epochs=50)
-        assert lit.use_cosine_scheduler is False
+        assert lit.use_cosine_scheduler is True
         out = lit.configure_optimizers()
-        assert isinstance(out, torch.optim.Optimizer)
+        assert isinstance(out, dict)
+        assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
 
     def test_disabled_returns_plain_optimizer(self):
         lit = _make_lit(use_cosine_scheduler=False)
