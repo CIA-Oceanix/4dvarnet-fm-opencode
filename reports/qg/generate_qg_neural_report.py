@@ -92,6 +92,30 @@ def fmt_sci(x, nd=2) -> str:
     return f"{x:.{nd}e}" if x is not None else "--"
 
 
+def rank_marks(values: list, higher_is_better: bool = True) -> dict:
+    """{index: 'bold'|'italic'} for the best/second-best of `values` (None skipped).
+
+    Project-level report convention: bold the best score per metric column,
+    italicize the second-best (ranked within that column only).
+    """
+    present = [(i, v) for i, v in enumerate(values) if v is not None]
+    present.sort(key=lambda t: t[1], reverse=higher_is_better)
+    marks = {}
+    if len(present) >= 1:
+        marks[present[0][0]] = "bold"
+    if len(present) >= 2:
+        marks[present[1][0]] = "italic"
+    return marks
+
+
+def mark(s: str, kind: str | None) -> str:
+    if kind == "bold":
+        return f"**{s}**"
+    if kind == "italic":
+        return f"*{s}*"
+    return s
+
+
 def load_da_summary(root: Path) -> list[dict]:
     out = []
     for label, fname in DA_METHODS:
@@ -166,18 +190,37 @@ def main() -> None:
     add("")
     add("| scheme | ψ EV | PV-q EV | CRPS (norm.) |")
     add("|---|---|---|---|")
-    for row in da:
+    # Ranked (bold=best, italic=second-best) per column across all 5 rows,
+    # including Q1 -- despite the apples-to-apples caveat below, the project
+    # convention applies unconditionally to every report table.
+    psi_evs = [row["data"]["psi_ev"] if row["data"] is not None else None for row in da]
+    q_evs = [row["data"]["q_ev"] if row["data"] is not None else None for row in da]
+    crps_norms = [row["data"]["crps_normalized"] if row["data"] is not None else None for row in da]
+    if q1 is not None:
+        psi_evs.append(q1["psi_ev"])
+        q_evs.append(q1["q_ev"])
+        crps_norms.append(None)
+    psi_marks = rank_marks(psi_evs, higher_is_better=True)
+    q_marks = rank_marks(q_evs, higher_is_better=True)
+    crps_marks = rank_marks(crps_norms, higher_is_better=False)
+
+    for i, row in enumerate(da):
         d = row["data"]
         if d is None:
             add(f"| {row['label']} | -- | -- | -- |")
             continue
         star = "*" if d["crps_is_deterministic"] else ""
-        add(f"| {row['label']} | {fmt(d['psi_ev'])} | {fmt(d['q_ev'])} | "
-            f"{fmt(d['crps_normalized'])}{star} |")
+        add(f"| {row['label']} | {mark(fmt(d['psi_ev']), psi_marks.get(i))} | "
+            f"{mark(fmt(d['q_ev']), q_marks.get(i))} | "
+            f"{mark(fmt(d['crps_normalized']) + star, crps_marks.get(i))} |")
     if q1 is not None:
-        add(f"| Q1 (DirectUNet) † | {fmt(q1['psi_ev'])} | {fmt(q1['q_ev'])} | -- |")
+        i = len(da)
+        add(f"| Q1 (DirectUNet) † | {mark(fmt(q1['psi_ev']), psi_marks.get(i))} | "
+            f"{mark(fmt(q1['q_ev']), q_marks.get(i))} | -- |")
     else:
         add("| Q1 (DirectUNet) † | -- | -- | -- | (not yet evaluated) |")
+    add("")
+    add("(Best per column **bolded**, second-best *italicized*.)")
     add("")
     add("\\* CRPS is deterministic (degenerates to MAE, no ensemble spread).")
     add("")
