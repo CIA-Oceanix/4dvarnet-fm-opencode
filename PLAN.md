@@ -172,8 +172,12 @@ case study, comparing against the QG DA baselines. Not wired into `train.py`
   to `estimates_s0.npz` + `results.json` (`s0.psi`, `s0.q`).
 - **Configs**: `config/experiment/Q1_direct_unet_s0.yaml`,
   `Q2_vanilla_cfm_s0.yaml` (documentation specs → CLI flags; not Hydra).
-- **Report**: `reports/qg/generate_qg_neural_report.py` → `qg_neural_report.md`
-  renders Q1/Q2 vs the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ.
+- **Report**: `reports/qg/generate_qg_da_report.py` → `qg_da_report.md` renders
+  the 4 DA baselines (`qg_repro_validation`) on PV-q + ψ; `reports/qg/
+  generate_qg_neural_report.py` → `qg_neural_report.md` is the case-study
+  overview (scheme descriptions + a combined DA/Q1 summary table, linking
+  back to `qg_da_report.md` for DA detail). Renamed 2026-09-10 (previously
+  one script/file covered both).
 - **Tests**: `tests/test_qg_neural.py` (12 fast tests: psi-day matches the
   window's own upper-psi target, per-window scale O(1), dataset/collate shapes,
   denorm round-trip, `norm_q_from_psi` round-trip, per-device inverter-cache
@@ -466,7 +470,8 @@ see `evaluation/metrics.py`'s `crps()` fix and `run_qg_baselines.py`'s
 per-window CRPS wiring, same PR) are committed to
 `reports/qg/outputs/qg_repro_validation/*.json` for the first time — that
 directory never actually existed on master before (see `reports/qg/
-generate_qg_neural_report.py`, now DA-baselines-only, and `reports/qg/
+generate_qg_da_report.py`, DA-baselines-only — renamed 2026-09-10 from
+`generate_qg_neural_report.py`, see above — and `reports/qg/
 generate_qg_reconstruction_figs.py` for 3 example-window reconstruction
 figures, best/median/worst by ETKF's per-window q RMSE). Scratch driver
 (not committed): `qg_da_sensitivity_scratch.py` in the repo root.
@@ -890,79 +895,12 @@ schemes, a per-obs-time randomly redrawn density sweep.
   (RMSE relative to the keep_k=16 baseline per method/case).
 - **New `batch/run_l96_obs_density_generalization.sbatch`** launches the sweep + report on the
   cluster (checkpoints/cached dataset live only in `experiments/` on the HPC filesystem, not in
-  this git worktree).
+  this git worktree) -- **not yet run**; this PR is the implementation, the actual sweep results
+  are a follow-up once the sbatch job completes.
 - Tests: `tests/test_obs_density.py` (mask exact-count/shape/no-op invariants),
   `tests/test_sda_sampler.py` (obs_channel_mask restricts/varies-per-timestep/mutual-exclusion/
   zero-guidance-equivalence), `tests/test_neural_inference.py` (obs_density_keep_k NaNs the
   right channels for direct-obs models, no-ops at keep_k=16, forwards correctly to the SDA path).
-
-**Sweep results (job 52845, run 2026-09-09 via an ad-hoc launcher pointing at the
-`4dvarnet-fm-l96-eval-config-persist` worktree's checkpoints, `--n-repeats 3`):** `keep_k=16`
-reproduces the canonical benchmark exactly for all 3 completed methods (DirectUNet-L 0.4863/0.4865,
-CFM-M 0.4809/0.4783, SDA3 0.5369/0.5363, S0/S1). DirectUNet-L and CFM-M degrade steeply and near-
-identically: **~1.9x RMSE at keep_k=8, ~2.3x at keep_k=4, ~2.7x at keep_k=0** -- confirming the
-architecture-driven OOD caveat above is real, not just theoretical. SDA3 degrades far more
-gracefully (**~1.45x / ~1.72x / ~2.0x** at the same keep_k values) and at `keep_k=0` its RMSE
-(1.08) is actually *better* than DirectUNet/CFM's (1.29/1.32) despite starting from a worse
-full-density baseline -- confirming the "obs excluded cleanly from the guidance cost" design is
-architecturally robust with zero retraining, exactly as predicted. DirectUNet+SDA3 hybrid
-(warm-started) inherits much of SDA3's graceful-degradation benefit (e.g. S0 keep_k=8: 0.803 vs.
-plain DirectUNet's 0.906) while keeping its better full-density baseline (0.420 vs. SDA3's 0.537).
-Repeat-to-repeat std stays tiny throughout (≤0.006 RMSE), confirming `n_repeats=3` was sufficient.
-Full tables: `reports/l96/outputs/l96_obs_density_generalization.md`. **This result is the direct
-motivation for the follow-on training-augmentation work below.**
-
-### Fast-Y observation-density-augmented TRAINING (2026-09-09, `feature/l96-obs-density-training`)
-
-Follow-on to the generalization study above: instead of only measuring the OOD failure at eval
-time, train DirectUNet-L(cos)/CFM-M(flat) with the same fast-Y density reduction applied as a
-TRAINING-time augmentation, so a dropped channel stops being an untrained-for input pattern.
-SDA3/the hybrid are excluded from this work -- the sweep above already showed they need no
-retraining (architecturally robust via the guidance-cost exclusion, not the obs-consuming path).
-
-- **Relocated `evaluation/obs_density.py` -> `data/obs_density.py`** (all references updated: 
-  `evaluation/neural_inference.py`, `evaluation/sda_sampler.py` docstring, `eval_obs_density_l96.py`,
-  `tests/test_obs_density.py`, `tests/test_neural_inference.py`) -- the masking primitives are
-  consumed by both `evaluation/` (eval-time) and now `data/`/`train.py` (train-time), so `data/`
-  is the correct home; importing "up" from a training consumer into `evaluation/` would have been
-  backwards.
-- **New `data/obs_density.py::random_variable_keep_mask`**: generalizes the eval-time
-  `random_keep_mask`'s single scalar `keep_k` to a per-(window,timestep)-varying tensor, via
-  per-slice random-score ranks (topk only supports one `k` for a whole tensor) -- needed because
-  training mixes full-density and randomly-reduced-density events within the same batch, unlike
-  eval's one-keep_k-per-sweep-cell design.
-- **New `data/obs_density.py::sample_training_density_mask`**: independently at every
-  (window, obs-time), with probability `full_prob` (default 0.4) keeps full density (so the model
-  doesn't lose sharpness on the still-common canonical case); otherwise draws `keep_k` uniformly
-  from `{min_keep,...,15}` (default `min_keep=0`) -- broad coverage of the whole degradation
-  spectrum, not just the eval sweep's 4 discrete points, so the model learns a smooth
-  interpolation. No existing precedent in this codebase for a "sometimes augment" mixing scheme
-  (checked: only prior precedent, `noisy_da_bias`, always randomizes, never skips) -- this
-  mixing probability is the one genuinely new design choice here.
-- **`data/dataloader.py::make_collate_fm`** gained an `obs_density_cfg` param (dict with
-  `full_prob`/`min_keep`, or `None` -- true no-op, the default): draws a fresh mask every batch
-  and NaNs the dropped fast-Y channels of `obs` before normalization. Requires the canonical
-  24D (8 slow + 16 fast) obsj2 subspace, raises otherwise.
-- **`train.py::make_l96_dataloaders`** now builds train and val with *different* collate fns --
-  `obs_density_cfg` only ever applies to `"train"`; `"val"` always stays at full canonical density
-  so its loss/metrics remain comparable across epochs and against the eval protocol. Wired from
-  new `DataConfig` fields `obs_density_augment: bool = False` / `obs_density_full_prob: float = 0.4`
-  / `obs_density_min_keep: int = 0` (`conf/schema.py`) -- default `False` leaves every existing
-  config byte-for-byte unaffected (verified: `make_collate_fm(norm_stats, obs_density_cfg=None)`
-  reproduces plain `collate_fm`/the pre-existing normalize-only path exactly).
-- **New experiment configs** `L1b_monai_unet_s0s1_norm_l_cosine_obsdensity.yaml` /
-  `L2b_monai_vanilla_cfm_s0s1_norm_obsdensity.yaml`: identical architecture/hyperparameters to
-  the current best-of-subcategory checkpoints, changing only `data.obs_density_augment=true` --
-  isolates the augmentation's effect cleanly. Not yet trained at full scale (200/400 epochs) --
-  1-epoch smoke tests on both passed (real checkpoints, tiny window counts, confirmed the
-  augmented collate path runs end-to-end with no crashes); full training is a follow-up once
-  this PR merges, then re-run through `eval_obs_density_l96.py` (unchanged) for a direct
-  before/after comparison against today's baseline numbers.
-- Tests: `tests/test_obs_density.py` (new mask functions' exact-count/shape/mixture/range-
-  validation invariants), `tests/test_l96_normalization.py` (`make_collate_fm`'s
-  `obs_density_cfg` -- NaN pattern, full_prob=1.0 no-op, wrong-dim raises, composes with
-  normalization), `tests/test_joint_estimation_l96_neural.py`
-  (`make_l96_dataloaders` augments train only, val stays clean).
 
 ## Phases
 
