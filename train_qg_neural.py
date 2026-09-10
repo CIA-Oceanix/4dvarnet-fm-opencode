@@ -290,6 +290,13 @@ def main():
                          "the fly from the cached truth each epoch.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
+    ap.add_argument("--num-workers", type=int, default=4,
+                    help="DataLoader worker processes for train/val (default 4). "
+                         "num_workers=1 serializes each __getitem__'s CPU work "
+                         "(obs/forcing prep) with GPU training -- a measured ~2x "
+                         "epoch-time bottleneck for Q4's noisy-forcing conditioning "
+                         "(see PLAN.md's 2026-09-10 QG Q3/Q4 section). Match sbatch's "
+                         "--cpus-per-task to this + a couple cores for the main process.")
     ap.add_argument("--nx", type=int, default=None)
     ap.add_argument("--n-members", type=int, default=1)
     # Split seeds match the production 1000/100/100 truth-generation convention
@@ -382,9 +389,11 @@ def main():
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                                  collate_fn=qg_collate, num_workers=1)
+                                  collate_fn=qg_collate, num_workers=args.num_workers,
+                                  persistent_workers=args.num_workers > 0)
         val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                                collate_fn=qg_collate, num_workers=1)
+                                collate_fn=qg_collate, num_workers=args.num_workers,
+                                persistent_workers=args.num_workers > 0)
 
     print(f"Device: {device}  model={model_type}  epochs={epochs}  state_dim={state_dim}"
           f"  q_loss_weight={q_loss_weight:.4e}")

@@ -403,6 +403,30 @@ def test_cond_mode_noisy_varies_across_draws_and_stays_finite():
     assert torch.allclose(params[:, 0], expected_u1.expand(5), atol=1e-4)
 
 
+def test_cached_qg_dynamics_reused_and_matches_uncached():
+    """Regression test for the Q4 epoch-time fix: `_cached_qg_dynamics(cfg)`
+    must return the SAME object across repeated calls with an equal `cfg`
+    (not rebuild it every draw -- that rebuild was a measured ~2x epoch-time
+    bottleneck for Q4, since it happened on every training draw), and the
+    cached object's `wind_curl_field` output must be bitwise-identical to a
+    freshly-built one (the caching is a pure performance fix, no behavior
+    change)."""
+    from data.qg import _make_qg_dynamics
+    from data.qg_neural import _DYN_CACHE, _cached_qg_dynamics
+    _DYN_CACHE.clear()
+    cfg = _cfg()
+    dyn_a = _cached_qg_dynamics(cfg)
+    dyn_b = _cached_qg_dynamics(cfg)
+    assert dyn_a is dyn_b
+    fresh = _make_qg_dynamics(cfg)
+    wind_state = torch.tensor([[1e-11, cfg.L / 2, 0.0]] * 4, dtype=torch.float32)
+    assert torch.equal(dyn_a.wind_curl_field(wind_state), fresh.wind_curl_field(wind_state))
+    # a materially different cfg must NOT reuse the same cached object
+    cfg2 = _cfg(wind_sigma=cfg.wind_sigma * 2)
+    dyn_c = _cached_qg_dynamics(cfg2)
+    assert dyn_c is not dyn_a
+
+
 def test_qg_collate_stacks_params_when_present():
     cfg, w = _window()
     pstats = _param_norm_stats([w, w])

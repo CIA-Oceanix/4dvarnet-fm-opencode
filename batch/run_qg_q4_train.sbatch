@@ -2,6 +2,7 @@
 #SBATCH --job-name=qg_q4_train
 #SBATCH --partition=Odyssey_GPU
 #SBATCH --gres=gpu:a40:1
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=96G
 #SBATCH --time=24:00:00
 #SBATCH --output=batch/logs/qg_q4_train_%j.out
@@ -20,6 +21,14 @@ set -e
 #
 # experiments/qg_psi_norm_stats.pt AND experiments/qg_param_norm_stats.pt
 # must exist first (batch/run_qg_param_stats.sbatch).
+#
+# --cpus-per-task=6 backs train_qg_neural.py's --num-workers default of 4
+# (+ headroom for the main process/collate) -- num_workers=1 serialized
+# each draw's CPU-bound forcing/param prep with GPU training, a measured
+# ~2x epoch-time cost for Q4's noisy-forcing recomputation (caught by a
+# training smoke test; also fixed at the source by caching the QGDynamics
+# object instead of rebuilding it every draw, data/qg_neural.py's
+# `_cached_qg_dynamics`).
 CACHE_DIR="/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
 PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 

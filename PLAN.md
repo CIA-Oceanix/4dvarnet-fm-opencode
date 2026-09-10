@@ -612,6 +612,35 @@ neutral-to-slightly-negative — see the L96 Q3 note above).
   can't disambiguate Q1 vs Q3 vs Q4, all `direct_unet`) -- same split
   seeds/obs protocol/psi normalization/cosine-LR default as Q1 (see Q1's
   own config comments), only the forcing+param conditioning differs.
+- **Training smoke tests + perf fix (2026-09-10)**: 2-epoch smoke tests on
+  an A40 (matching Q1's own recorded ~225s/epoch) validated both configs
+  train cleanly end-to-end: Q3 ~220s/epoch (essentially free -- its
+  conditioning just daily-bins the already-computed true `wind_curl`), Q4
+  ~504-533s/epoch (~2.4x slower). Root-caused: Q4's `cond_mode="noisy"`
+  path called `data.qg._make_qg_dynamics(cfg)` -- which rebuilds the *full*
+  spectral PV-inversion machinery (wavenumber grids, filters) from scratch,
+  none of which `wind_curl_field` actually needs -- on **every training
+  draw** (~1000/epoch at batch_size=2), serialized with GPU training since
+  `train_qg_neural.py` hardcoded `num_workers=1` (the exact bottleneck
+  PyTorch Lightning's own "may be a bottleneck" warning flagged in the
+  logs). Fixed at the source with two changes, not a GPU-side rewrite of
+  the curl computation itself (moving that math to GPU wouldn't have
+  addressed either the redundant object rebuild or the lack of CPU/GPU
+  overlap, and doing GPU work inside forked DataLoader workers is awkward
+  regardless): (1) `data/qg_neural.py`'s `_cached_qg_dynamics(cfg)` caches
+  the `QGDynamics` object per-cfg (deterministic given `cfg`, so no result
+  change -- confirmed bitwise-identical `wind_curl_field` output vs. an
+  uncached rebuild); (2) `train_qg_neural.py` gained `--num-workers`
+  (default 4, was hardcoded 1) + `persistent_workers=True` so multiple
+  draws' CPU-bound prep happens in parallel across worker processes while
+  the GPU trains on the previous batch, instead of serially blocking it --
+  `batch/run_qg_q{3,4}_train.sbatch` bumped to `--cpus-per-task=6` to back
+  this. First full-run launch was also switched from A40 to an idle A100
+  node (`sl-mee-br-206`) for additional speed: Q3 (GPU-bound) got a real
+  ~2.7x speedup there (~82s/epoch steady-state); Q4 (CPU-bound before this
+  fix) only got ~1.28x, confirming the diagnosis that Q4's bottleneck
+  wasn't GPU throughput. Both jobs were restarted with the worker/caching
+  fix applied before any significant training progress was lost.
 - **Evaluation plan (not yet run)**: cross-scenario, mirroring the L96 SDA
   study -- evaluate Q1 (obs-only), Q3, and Q4 all on **both** the S0 and S1
   test windows (same base windows, `cond_mode="true"/"noisy"` synthesize

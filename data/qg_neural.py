@@ -101,8 +101,29 @@ from data.qg import (
 )
 
 _INVERTER_CACHE: dict = {}
+_DYN_CACHE: dict = {}
 
 PARAM_KEYS = ("U1", "rd", "rek")
+
+
+def _cached_qg_dynamics(cfg: QGConfig):
+    """Per-cfg cached `QGDynamics`, mirroring `_reconstruct_inverter`'s cache
+    pattern. `_make_qg_dynamics(cfg)` rebuilds the full spectral PV-inversion
+    machinery (wavenumber grids, filters) from scratch, none of which
+    `wind_curl_field` actually needs (only the (x,y) grid + wind_sigma/L/W)
+    -- but the real fix is not recomputing it at all: this was being called
+    once per training draw (~1000/epoch at batch_size=2), a measured ~2x
+    epoch-time bottleneck in Q4 that a training run caught (see PLAN.md's
+    2026-09-10 QG Q3/Q4 section). Deterministic given `cfg`, so caching by
+    the exact fields `_make_qg_dynamics` reads is safe (no result change).
+    """
+    key = (cfg.nx, cfg.L, cfg.dt, cfg.beta, cfg.rd, cfg.delta, cfg.U1, cfg.U2,
+           cfg.rek, cfg.filterfac, cfg.wind_amp, cfg.wind_tau_days, cfg.wind_sigma,
+           cfg.wind_cx, cfg.wind_cy, cfg.wind_drift_tau_days, cfg.wind_drift_sigma,
+           cfg.wind_seed)
+    if key not in _DYN_CACHE:
+        _DYN_CACHE[key] = _make_qg_dynamics(cfg)
+    return _DYN_CACHE[key]
 # `beta` is deliberately excluded: `QGS01Dataset._generate_truth_only` never
 # jitters it (only U1/rd/rek get a per-window `u,r,k` random draw, see
 # data/qg.py), so it is an exact constant across the whole train split --
@@ -166,7 +187,7 @@ def _noisy_forcing_and_params(window: dict, cfg: QGConfig,
                              s1_loc_sigma_frac=cfg.s1_loc_sigma_frac * frac,
                              s1_sigma_eta_frac=cfg.s1_sigma_eta_frac * frac)
     ws_corrupt = _make_corrupted_wind_state(scaled_cfg, window["wind_state_true"], draw)
-    dyn = _make_qg_dynamics(cfg)
+    dyn = _cached_qg_dynamics(cfg)
     wind_curl_corrupt = dyn.wind_curl_field(ws_corrupt)
     forcing = _daily_mean_field(wind_curl_corrupt, steps_per_day(cfg))
     tp = window["true_params"]
