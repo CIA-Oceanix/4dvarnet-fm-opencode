@@ -320,7 +320,10 @@ class QGNeuralDataset(Dataset):
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5):
         if cond_mode not in ("none", "true", "noisy"):
-            raise ValueError(f"unknown cond_mode {cond_mode!r}")
+            hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
+                    "this string -- quote it as `cond_mode: \"true\"`)"
+                    if isinstance(cond_mode, bool) else "")
+            raise ValueError(f"unknown cond_mode {cond_mode!r}{hint}")
         if cond_mode != "none" and param_norm_stats is None:
             raise ValueError(
                 "param_norm_stats is required when cond_mode != 'none' -- the "

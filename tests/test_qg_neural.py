@@ -430,3 +430,28 @@ def test_build_model_honors_yaml_param_dim_and_cond_extra_dim():
     assert model.cond_extra_dim == 1
     obs_channels = model.unet.obs_channels
     assert obs_channels == model.nlayers + 1 + 4
+
+
+def test_q3_q4_yaml_configs_parse_cond_mode_as_string():
+    """Regression test for a real bug caught by a training smoke test: bare
+    `cond_mode: true` in YAML parses as the Python boolean True (a YAML
+    boolean literal), not the string "true" QGNeuralDataset expects --
+    train_qg_neural.py's main() would then pass cond_mode=True straight into
+    QGNeuralDataset, which raises ValueError. Q3's config must quote it
+    (`cond_mode: "true"`); this test loads the actual YAML files (unlike
+    the other cond_mode tests, which pass the Python string literal
+    directly and would never have caught this)."""
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name, expected_mode in [("Q3_direct_unet_s0_oracle_cond", "true"),
+                                ("Q4_direct_unet_s1_noisy_cond", "noisy")]:
+        cfg = OmegaConf.load(os.path.join(base, "config", "experiment", f"{name}.yaml"))
+        cond_mode = cfg.data.cond_mode
+        assert isinstance(cond_mode, str), (
+            f"{name}.yaml: cond_mode parsed as {type(cond_mode).__name__} "
+            f"({cond_mode!r}), not a string -- likely an unquoted YAML boolean")
+        assert cond_mode == expected_mode
+        assert int(cfg.model.param_dim) == 4
+        assert int(cfg.model.cond_extra_dim) == 1

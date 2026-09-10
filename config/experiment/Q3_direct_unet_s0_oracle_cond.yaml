@@ -54,5 +54,5 @@ data:
   normalize: true
   norm_stats_path: experiments/qg_psi_norm_stats.pt
   # Oracle: exact true wind_curl field + true [U1,rd,rek,beta], no jitter.
-  cond_mode: true
+  cond_mode: "true"  # quoted: bare `true` parses as a YAML boolean, not this string
   param_norm_stats_path: experiments/qg_param_norm_stats.pt
