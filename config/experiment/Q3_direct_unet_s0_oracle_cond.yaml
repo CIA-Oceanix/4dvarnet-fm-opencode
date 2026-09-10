@@ -57,3 +57,7 @@ data:
   # Oracle: exact true wind_curl field + true [U1,rd,rek], no jitter.
   cond_mode: "true"  # quoted: bare `true` parses as a YAML boolean, not this string
   param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  # Required: raw wind_curl is ~1e-13-1e-12, unnormalized it collapsed a
+  # real 200-epoch training run at epoch 28 (see data/qg_neural.py's
+  # module docstring). Global scalar mean/std, not per-grid-cell.
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt

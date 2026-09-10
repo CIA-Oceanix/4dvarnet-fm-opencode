@@ -59,6 +59,10 @@ data:
   norm_stats_path: experiments/qg_psi_norm_stats.pt
   cond_mode: noisy
   param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  # Required: raw wind_curl is ~1e-13-1e-12, unnormalized it collapsed a
+  # real 200-epoch training run at epoch 28 (see data/qg_neural.py's
+  # module docstring). Global scalar mean/std, not per-grid-cell.
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
   # Per-draw corruption-severity fraction resampled in [0, noisy_max]
   # (matches the L96 SDA3 noisy_da_max convention).
   noisy_max: 1.5

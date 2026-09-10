@@ -74,14 +74,28 @@ so z-scoring it divides by zero), controlled by ``cond_mode``:
 
 ``forcing``/``params`` are always returned in **physical units** from the
 dataset; z-score normalization (mirroring the psi/obs normalization above)
-is applied via an explicit ``param_norm_stats`` dict (``{"mean", "std"}``
-over ``[U1, rd, rek]``, produced by ``precompute_qg_norm_stats.py``'s
-``--output-params``) -- required whenever ``cond_mode != "none"`` since the
-3 physical params span ~9 orders of magnitude raw (see
-``precompute_qg_norm_stats.py``'s docstring). The forcing *field* is left
-unnormalized (its own per-grid-cell scale is already comparable to the
-z-scored obs/psi channels it's concatenated with; unlike the params it is
-not a small set of wildly-different-scale scalars).
+is applied via explicit stats dicts -- required whenever ``cond_mode !=
+"none"``:
+
+* ``param_norm_stats`` (``{"mean", "std"}`` over ``[U1, rd, rek]``,
+  produced by ``precompute_qg_norm_stats.py``'s ``--output-params``) --
+  the 3 physical params span ~9 orders of magnitude raw.
+* ``forcing_norm_stats`` (a single global scalar ``{"mean", "std"}`` over
+  the pooled ``wind_curl`` field, produced by ``precompute_qg_norm_stats.py``'s
+  ``--output-forcing``). **Added 2026-09-10 after a real training failure**:
+  the forcing field was originally left unnormalized on the (unverified)
+  assumption its per-grid-cell scale was "already comparable" to the
+  z-scored obs/psi channels -- it is not: raw ``wind_curl`` is
+  ``O(1e-13)-O(1e-12)`` (`wind_amp` ranges 0-3e-11 over a Witch-of-Agnesi
+  profile peaking at ~1), roughly 12-13 orders of magnitude smaller than
+  the unit-variance psi/obs/param channels it is concatenated with. A full
+  200-epoch Q3 training run collapsed at epoch 28 (loss frozen thereafter
+  at exactly the "predict-the-zero-mean" baseline, ``loss_psi≈1 +
+  q_loss_weight·loss_q≈1``, i.e. the model died) -- the forcing channel's
+  negligible raw scale is the leading suspect (a conv layer needing large
+  weights to extract any signal from a ~1e-12-scale channel is a plausible
+  destabilization mechanism). Spatial structure (storm location) is
+  preserved by z-scoring with one global scalar, not per-grid-cell, stats.
 """
 
 import random
@@ -348,7 +362,8 @@ class QGNeuralDataset(Dataset):
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
-                 param_norm_stats: dict | None = None, noisy_max: float = 1.5):
+                 param_norm_stats: dict | None = None, noisy_max: float = 1.5,
+                 forcing_norm_stats: dict | None = None):
         if cond_mode not in ("none", "true", "noisy"):
             hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
                     "this string -- quote it as `cond_mode: \"true\"`)"
@@ -359,6 +374,13 @@ class QGNeuralDataset(Dataset):
                 "param_norm_stats is required when cond_mode != 'none' -- the "
                 "3 physical params span ~9 orders of magnitude raw, see "
                 "precompute_qg_norm_stats.py --output-params")
+        if cond_mode != "none" and forcing_norm_stats is None:
+            raise ValueError(
+                "forcing_norm_stats is required when cond_mode != 'none' -- raw "
+                "wind_curl is ~1e-13-1e-12, ~12 orders of magnitude smaller than "
+                "the unit-variance psi/obs/param channels it's concatenated with; "
+                "leaving it unnormalized destabilized a real training run (see "
+                "module docstring), see precompute_qg_norm_stats.py --output-forcing")
         self.windows = windows
         self.cfg = cfg
         self.psi_norm_stats = psi_norm_stats
@@ -366,6 +388,7 @@ class QGNeuralDataset(Dataset):
         self.cond_mode = cond_mode
         self.param_norm_stats = param_norm_stats
         self.noisy_max = noisy_max
+        self.forcing_norm_stats = forcing_norm_stats
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -415,6 +438,7 @@ class QGNeuralDataset(Dataset):
             else:
                 forcing, params = _noisy_forcing_and_params(w, self.cfg, self.noisy_max)
             forcing = forcing.to(obs_pad.dtype)
+            forcing = normalize(forcing, self.forcing_norm_stats)
             params = normalize(params, self.param_norm_stats)
 
         return psi_n, obs_pad, mask_full, forcing, qs, rd, params

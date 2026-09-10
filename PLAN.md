@@ -641,6 +641,35 @@ neutral-to-slightly-negative — see the L96 Q3 note above).
   fix) only got ~1.28x, confirming the diagnosis that Q4's bottleneck
   wasn't GPU throughput. Both jobs were restarted with the worker/caching
   fix applied before any significant training progress was lost.
+- **Training collapse + forcing-normalization fix (2026-09-10)**: the
+  relaunched full 200-epoch Q3 run (A100, with the perf fix) collapsed at
+  epoch 28 -- train/val loss froze at an exact constant (train_loss≈2.0,
+  val_loss≈1.732) for 13+ consecutive epochs after declining healthily
+  through epoch 27, confirmed via the raw PyTorch Lightning CSV logger (not
+  a tqdm-rendering artifact). The frozen value is diagnostic: it exactly
+  matches the loss a model gets from predicting the (normalized) zero mean
+  for both targets -- `loss_psi≈1` (MSE of 0 vs. a unit-variance z-scored
+  target) `+ q_loss_weight·loss_q≈1` (same zero-prediction baseline, scaled
+  by the derived `q_loss_weight=1/Var(q)`) `≈2.0` -- i.e. **the network
+  died** (collapsed to a constant output) after some destabilizing event.
+  Root cause: the forcing field was left unnormalized on an *unverified*
+  design assumption ("its own per-grid-cell scale is already comparable to
+  the z-scored channels it's concatenated with") -- empirically checked
+  after the collapse and found false by ~12-13 orders of magnitude: raw
+  `wind_curl` is `O(1e-13)-O(1e-12)` (`wind_amp` ranges 0-3e-11 over a
+  Witch-of-Agnesi profile peaking at ~1), vs. the unit-variance psi/obs/
+  z-scored-param channels it's concatenated with. **Fixed**: forcing is now
+  z-scored too, with a single **global scalar** mean/std (not per-grid-cell,
+  to preserve the spatially-meaningful storm-location pattern, just rescale
+  its overall magnitude) computed by `precompute_qg_norm_stats.py`'s new
+  `--output-forcing` -> `experiments/qg_forcing_norm_stats.pt`, required
+  (like `param_norm_stats`) whenever `cond_mode != "none"`. Both jobs were
+  stopped before completing (Q4 hadn't reached a comparable epoch count
+  yet, at ~epoch 21, so it's unknown whether it would have hit the same
+  failure, but the same latent bug applied to it too) -- relaunch pending
+  a longer validation run (a 2-epoch smoke test cannot catch a divergence
+  that only manifests dozens of epochs in; this failure was invisible to
+  every smoke test run so far).
 - **Evaluation plan (not yet run)**: cross-scenario, mirroring the L96 SDA
   study -- evaluate Q1 (obs-only), Q3, and Q4 all on **both** the S0 and S1
   test windows (same base windows, `cond_mode="true"/"noisy"` synthesize

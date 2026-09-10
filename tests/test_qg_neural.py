@@ -79,6 +79,17 @@ def _param_norm_stats(windows):
     return stats
 
 
+def _forcing_norm_stats(cfg, windows):
+    """Global scalar wind_curl (mean, std), same format
+    `precompute_qg_norm_stats.py --output-forcing` produces."""
+    from data.qg_neural import _daily_mean_field
+    spd = steps_per_day(cfg)
+    forcing = torch.cat([_daily_mean_field(w["wind_curl"], spd).reshape(-1) for w in windows])
+    stats = compute_channel_stats(forcing.reshape(-1, 1))
+    stats["std"] = stats["std"].clamp(min=1e-20)
+    return stats
+
+
 def test_psi_daily_matches_upper_field_daily_mean():
     """`psi_daily` (streamfunctions of daily-mean q) matches the window's own
     upper-layer psi target, daily-binned — the linearity psi=invert(q) holds."""
@@ -359,18 +370,38 @@ def test_cond_mode_true_or_noisy_requires_param_norm_stats():
             pass
 
 
+def test_cond_mode_true_or_noisy_requires_forcing_norm_stats():
+    """Regression test for a real bug: leaving the forcing field unnormalized
+    collapsed a full 200-epoch Q3 training run at epoch 28 (raw wind_curl is
+    ~1e-13-1e-12, ~12 orders of magnitude smaller than the unit-variance psi/
+    obs/param channels it's concatenated with). param_norm_stats alone must
+    not be enough -- forcing_norm_stats is also required."""
+    cfg, w = _window()
+    pstats = _param_norm_stats([w, w])
+    for mode in ("true", "noisy"):
+        try:
+            QGNeuralDataset([w], cfg, cond_mode=mode, param_norm_stats=pstats)
+            assert False, f"expected ValueError for cond_mode={mode!r} with no forcing stats"
+        except ValueError:
+            pass
+
+
 def test_cond_mode_true_matches_true_forcing_and_params():
     """Q3 (oracle): forcing is the real true wind_curl field (daily-binned,
-    nonzero, matching the window's own wind_curl), params are the exact
-    normalized true_params -- deterministic across repeated draws."""
+    z-scored, nonzero, matching the window's own normalized wind_curl),
+    params are the exact normalized true_params -- deterministic across
+    repeated draws."""
     cfg, w = _window_with_wind()
     pstats = _param_norm_stats([w, w])
-    ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats)
+    fstats = _forcing_norm_stats(cfg, [w, w])
+    ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats,
+                        forcing_norm_stats=fstats)
     _psi, _obs, _mask, forcing, _q, _rd, params = ds[0]
     assert forcing.shape == (2, cfg.ny, cfg.nx)
     assert forcing.abs().sum() > 0.0
     spd = steps_per_day(cfg)
-    expected_forcing = w["wind_curl"].reshape(2, spd, cfg.ny, cfg.nx).mean(dim=1)
+    raw_forcing = w["wind_curl"].reshape(2, spd, cfg.ny, cfg.nx).mean(dim=1)
+    expected_forcing = (raw_forcing - fstats["mean"][0]) / fstats["std"][0]
     assert torch.allclose(forcing, expected_forcing, atol=1e-5)
     assert params.shape == (3,)
     true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
@@ -389,7 +420,9 @@ def test_cond_mode_noisy_varies_across_draws_and_stays_finite():
     since bias only ever reduces rd/rek toward, never past, 0."""
     cfg, w = _window_with_wind()
     pstats = _param_norm_stats([w, w])
-    ds = QGNeuralDataset([w], cfg, cond_mode="noisy", param_norm_stats=pstats, noisy_max=1.5)
+    fstats = _forcing_norm_stats(cfg, [w, w])
+    ds = QGNeuralDataset([w], cfg, cond_mode="noisy", param_norm_stats=pstats,
+                        forcing_norm_stats=fstats, noisy_max=1.5)
     draws = [ds[0] for _ in range(5)]
     forcings = torch.stack([d[3] for d in draws])
     params = torch.stack([d[6] for d in draws])
@@ -430,7 +463,9 @@ def test_cached_qg_dynamics_reused_and_matches_uncached():
 def test_qg_collate_stacks_params_when_present():
     cfg, w = _window()
     pstats = _param_norm_stats([w, w])
-    ds = QGNeuralDataset([w, w], cfg, cond_mode="true", param_norm_stats=pstats)
+    fstats = _forcing_norm_stats(cfg, [w, w])
+    ds = QGNeuralDataset([w, w], cfg, cond_mode="true", param_norm_stats=pstats,
+                        forcing_norm_stats=fstats)
     batch = qg_collate([ds[0], ds[1]])
     assert batch.params is not None
     assert batch.params.shape == (2, 3)
@@ -495,3 +530,25 @@ def test_q3_q4_yaml_configs_parse_cond_mode_as_string():
         assert cond_mode == expected_mode
         assert int(cfg.model.param_dim) == 3
         assert int(cfg.model.cond_extra_dim) == 1
+        assert cfg.data.param_norm_stats_path
+        assert cfg.data.forcing_norm_stats_path
+
+
+def test_normalized_forcing_is_order_one_not_raw_scale():
+    """Regression test for the training-collapse bug: raw wind_curl is
+    ~1e-13-1e-12 (see data/qg_neural.py's module docstring), ~12-13 orders
+    of magnitude smaller than the unit-variance psi/obs/param channels it's
+    concatenated with. After normalization the forcing values actually fed
+    to the model must be O(1)-ish (not still ~1e-12), or the fix is a no-op."""
+    cfg, w = _window_with_wind()
+    pstats = _param_norm_stats([w, w])
+    fstats = _forcing_norm_stats(cfg, [w, w])
+    raw_forcing = w["wind_curl"]
+    assert raw_forcing.abs().max() < 1e-9, (
+        "sanity check on the fixture itself: raw wind_curl should be tiny")
+    ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats,
+                        forcing_norm_stats=fstats)
+    _psi, _obs, _mask, forcing, _q, _rd, _params = ds[0]
+    assert forcing.std() > 1e-3, (
+        f"normalized forcing std={forcing.std():.3e} is still tiny -- "
+        "normalization did not actually rescale it")

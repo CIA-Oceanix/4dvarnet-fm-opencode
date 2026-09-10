@@ -204,10 +204,12 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
 
 
 def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1,
-                     cond_mode="none", param_norm_stats=None, noisy_max=1.5):
+                     cond_mode="none", param_norm_stats=None, noisy_max=1.5,
+                     forcing_norm_stats=None):
     """Return per-window physical psi estimates (W, days, 2*ny*nx) + per-window rd list."""
     dataset = QGNeuralDataset(windows, cfg, norm, cond_mode=cond_mode,
-                              param_norm_stats=param_norm_stats, noisy_max=noisy_max)
+                              param_norm_stats=param_norm_stats, noisy_max=noisy_max,
+                              forcing_norm_stats=forcing_norm_stats)
     loader = DataLoader(dataset, batch_size=8, shuffle=False, collate_fn=qg_collate)
     rds = [float(dataset.rd(i)) for i in range(len(windows))]
     model = model.to(device)
@@ -273,9 +275,15 @@ def main():
                          "'noisy' (Q4, resampled-severity corrupted forcing+params).")
     ap.add_argument("--param-norm-stats-path", default=None,
                     help="Overrides the experiment YAML's data.param_norm_stats_path if "
-                         "given (rd/rek/beta/U1 mean/std produced by "
+                         "given ([U1,rd,rek] mean/std produced by "
                          "precompute_qg_norm_stats.py --output-params). Required "
                          "whenever cond_mode != 'none'.")
+    ap.add_argument("--forcing-norm-stats-path", default=None,
+                    help="Overrides the experiment YAML's data.forcing_norm_stats_path "
+                         "if given (global scalar wind_curl mean/std produced by "
+                         "precompute_qg_norm_stats.py --output-forcing). Required "
+                         "whenever cond_mode != 'none' -- see data/qg_neural.py's "
+                         "module docstring for why (a training run collapsed without it).")
     ap.add_argument("--noisy-max", type=float, default=None,
                     help="Overrides the experiment YAML's data.noisy_max if given -- "
                          "Q4's per-draw corruption-severity fraction is resampled in "
@@ -349,6 +357,14 @@ def main():
         raise ValueError(f"cond_mode={cond_mode!r} requires data.param_norm_stats_path "
                          "(see precompute_qg_norm_stats.py --output-params)")
     param_norm = load_norm_stats(param_norm_stats_path) if cond_mode != "none" else None
+    forcing_norm_stats_path = (args.forcing_norm_stats_path or
+                               exp_cfg.data.get("forcing_norm_stats_path", None))
+    if cond_mode != "none" and not forcing_norm_stats_path:
+        raise ValueError(f"cond_mode={cond_mode!r} requires data.forcing_norm_stats_path "
+                         "(see precompute_qg_norm_stats.py --output-forcing -- leaving "
+                         "the forcing field unnormalized collapsed a real training run, "
+                         "see data/qg_neural.py's module docstring)")
+    forcing_norm = load_norm_stats(forcing_norm_stats_path) if cond_mode != "none" else None
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -384,10 +400,10 @@ def main():
 
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
-                                   noisy_max=noisy_max)
+                                   noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
-                                 noisy_max=noisy_max)
+                                 noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                   collate_fn=qg_collate, num_workers=args.num_workers,
                                   persistent_workers=args.num_workers > 0)
@@ -434,7 +450,7 @@ def main():
     est_psi, est_rd = estimate_windows(model, test_windows, test_cfg, model_type,
                                        device, norm=norm, n_members=args.n_members,
                                        cond_mode=cond_mode, param_norm_stats=param_norm,
-                                       noisy_max=noisy_max)
+                                       noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
 
     truth_psi = np.stack([psi_daily(w, test_cfg).numpy() for w in test_windows])
     truth_q = np.stack([q_daily(w, test_cfg).numpy() for w in test_windows])
@@ -470,7 +486,8 @@ def main():
                    "normalize": do_normalize, "norm_stats_path": norm_stats_path,
                    "cond_mode": cond_mode, "param_dim": param_dim,
                    "cond_extra_dim": cond_extra_dim, "noisy_max": noisy_max,
-                   "param_norm_stats_path": param_norm_stats_path},
+                   "param_norm_stats_path": param_norm_stats_path,
+                   "forcing_norm_stats_path": forcing_norm_stats_path},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),
