@@ -531,14 +531,15 @@ reasonably robust for everyone; the PV/q story is where S1 separates the
 methods, consistent with 4DVar's strong reliance on a (nearly) correct
 dynamical model, which S1 deliberately violates.
 
-Committed data: `reports/qg/outputs/qg_repro_validation_s1/{etkf,enkf}.json`
-(N=100) + `etkf_n10*.json` (the N=10 sanity checks/inflation sweep above).
-Strong-4DVar/Weak-4DVar's N=100 runs are NOT yet in this table's source data
-in this PR (SLURM jobs 52911/52912 completed successfully but their output
+Committed data: `reports/qg/outputs/qg_repro_validation_s1/{etkf,enkf,
+strong4dvar,weak4dvar}.json` (N=100, all 4 methods) + `etkf_n10*.json` (the
+N=10 sanity checks/inflation sweep above). Strong-4DVar/Weak-4DVar's first
+N=100 runs (SLURM jobs 52911/52912) completed successfully but their output
 JSONs were lost to a `git stash -u` accident before being committed — see
-`feedback_stash_u_deletes_untracked_scratch_files` memory; re-running as
-jobs 52987/52988, will land as a small follow-up commit). Scratch drivers
-(not committed): `qg_da_s1_scratch.py`,
+`feedback_stash_u_deletes_untracked_scratch_files` memory; re-run (jobs
+52994/52995, after also fixing a stale-`.pyc`-bytecode-cache issue that
+broke two earlier re-run attempts) reproduced bit-for-bit identical numbers.
+Scratch drivers (not committed): `qg_da_s1_scratch.py`,
 `qg_da_s1_factor_sensitivity_scratch.py` in the repo root.
 
 Not yet done: folding these S1 numbers into `qg_da_report.md`/
