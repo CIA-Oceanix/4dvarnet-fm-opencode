@@ -276,6 +276,22 @@ class FourDVarNetConfig:
     prior_tau_conditioning: bool = False
     unet_backbone: str = "unet1d"
     monai_norm_num_groups: int = 32
+    # None (default) = prior_unet shares hidden_channels with the main solver
+    # unet, i.e. today's behavior. Set to a narrower tier (e.g. [32,64,128],
+    # the S+ tier) to give the solver more relative capacity than the prior,
+    # matching CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch
+    # convention (glo12-sla-4th-unrolling-ossev1.yaml: solver model_channels=64
+    # vs prior model_channels=32).
+    prior_hidden_channels: Optional[List[int]] = None
+    # Truncated-BPTT over the N_outer unroll: split it into tbptt_n_blocks
+    # contiguous blocks of tbptt_block_size iterations each (must multiply to
+    # N_outer), detach the state between blocks, and average the training
+    # loss computed at the end of every block. Default (n_blocks=1,
+    # block_size=None -> derived as N_outer) is a single block, i.e. today's
+    # behavior (one continuous backward graph, loss from the final iteration
+    # only) -- fully backward-compatible with every existing config/checkpoint.
+    tbptt_n_blocks: int = 1
+    tbptt_block_size: Optional[int] = None
 
 
 @dataclass

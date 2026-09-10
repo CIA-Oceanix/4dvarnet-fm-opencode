@@ -390,7 +390,10 @@ class FourDVarNetSolver(nn.Module):
                  aux_var_cost_weight=0.0,
                  prior_tau_conditioning=False,
                  unet_backbone="unet1d",
-                 monai_norm_num_groups=32):
+                 monai_norm_num_groups=32,
+                 prior_hidden_channels=None,
+                 tbptt_n_blocks=1,
+                 tbptt_block_size=None):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -401,6 +404,19 @@ class FourDVarNetSolver(nn.Module):
                 "no such MonaiUNet1D checkpoint exists, so this combination is "
                 "not supported (see _build_backbone_unet)."
             )
+        if tbptt_block_size is None:
+            if tbptt_n_blocks != 1:
+                raise ValueError(
+                    "tbptt_block_size must be set explicitly whenever "
+                    "tbptt_n_blocks != 1 -- both must be given together in "
+                    "the config, no derivation from N_outer alone."
+                )
+            tbptt_block_size = N_outer
+        if tbptt_n_blocks * tbptt_block_size != N_outer:
+            raise ValueError(
+                f"tbptt_n_blocks ({tbptt_n_blocks}) * tbptt_block_size "
+                f"({tbptt_block_size}) must equal N_outer ({N_outer})."
+            )
         self.update_input = update_input
         self.state_dim = state_dim
         self.N_outer = N_outer
@@ -409,6 +425,8 @@ class FourDVarNetSolver(nn.Module):
         self.aux_var_cost_weight = aux_var_cost_weight
         self.prior_tau_conditioning = prior_tau_conditioning
         self.unet_backbone = unet_backbone
+        self.tbptt_n_blocks = tbptt_n_blocks
+        self.tbptt_block_size = tbptt_block_size
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -444,10 +462,18 @@ class FourDVarNetSolver(nn.Module):
             # real time_proj weights (shape-mismatch skip in load_model),
             # evaluating a model that behaves differently from how it was
             # actually trained. New configs should leave this False.
+            #
+            # prior_hidden_channels (None by default): the prior_unet shares
+            # the main solver's hidden_channels unless a narrower tier is
+            # given explicitly here -- see ronan_devs' own convention
+            # (glo12-sla-4th-unrolling-ossev1.yaml gives the prior UNet half
+            # the solver's model_channels), which this codebase did not
+            # previously reproduce (both networks were always equal capacity).
             self.prior_unet = _build_backbone_unet(
                 unet_backbone,
                 state_dim=state_dim,
-                hidden_channels=hidden_channels,
+                hidden_channels=(prior_hidden_channels if prior_hidden_channels is not None
+                                  else hidden_channels),
                 time_emb_dim=(time_emb_dim if prior_tau_conditioning else 0),
                 dropout=dropout,
                 output_dim=state_dim,
@@ -474,7 +500,28 @@ class FourDVarNetSolver(nn.Module):
             return self._prior_weight_fixed
         return self._prior_weight_raw ** 2
 
-    def forward(self, batch, N_outer=None):
+    def _unrolled_blocks(self, batch, N_outer=None):
+        """Runs the ``N``-iteration unroll and returns the state at the end
+        of every truncated-BPTT block (``self.tbptt_n_blocks`` elements, the
+        last being the usual final estimate). ``forward()`` returns just the
+        last one (unchanged external contract); ``compute_loss()`` averages
+        an MSE term over all of them.
+
+        Block-truncated BPTT only applies when running at the configured
+        ``self.N_outer`` (``N_outer=None``) with ``self.tbptt_n_blocks>1`` --
+        an explicit ``N_outer`` override (e.g. eval-time ``--n-outer``) always
+        runs as one continuous block, since ``self.tbptt_block_size`` need
+        not divide an arbitrary override. Between blocks, ``x`` is
+        ``.detach()``-ed (severing the backward graph there -- standard
+        truncated-BPTT for this weight-tied unroll, ported from the
+        ``detach()``-at-a-stage-boundary + averaged multi-stage loss pattern
+        in ``4dvarnet-global-mapping``'s ``ronan_devs`` branch,
+        ``Lit4dVarNetTwoSolvers.base_step`` -- adapted here to one weight-tied
+        solver called repeatedly rather than two distinct solver instances).
+        This changes nothing about the forward *values* (detach is a no-op on
+        values, only on the graph), so ``tbptt_n_blocks=1`` (the default)
+        reproduces the pre-existing single-block behavior exactly.
+        """
         N = self.N_outer if N_outer is None else N_outer
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
         obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
@@ -484,6 +531,8 @@ class FourDVarNetSolver(nn.Module):
             x = x.detach().requires_grad_(True)
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
+        block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
+        block_states = []
         for k in range(N):
             tau_k = torch.full((B,), k / denom, device=x.device)
             # prior_tau_k=None (default): the prior operator gets no
@@ -500,12 +549,45 @@ class FourDVarNetSolver(nn.Module):
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
-        return x
+            if (k + 1) % block_size == 0:
+                block_states.append(x)
+                if k + 1 < N:
+                    x = x.detach()
+                    if self.update_input in _AUTOGRAD_MODES:
+                        x = x.requires_grad_(True)
+        if not block_states:
+            # N=0 (no iterations at all, e.g. a degenerate-N_outer test):
+            # the loop never runs and never hits a block boundary -- the
+            # sole "final" state is just the untouched x_0.
+            block_states.append(x)
+        return block_states
+
+    def forward(self, batch, N_outer=None):
+        return self._unrolled_blocks(batch, N_outer=N_outer)[-1]
 
     def compute_loss(self, batch):
-        """``F.mse_loss(x_final, states)`` (weight 1.0), plus -- only when
-        ``prior_unet`` exists (``_PRIOR_MODES``) and ``aux_var_cost_weight>0``
-        -- two auxiliary terms at ``aux_var_cost_weight`` each:
+        """**Training** (``self.training``, i.e. ``LitModel``'s
+        ``training_step``): mean of ``F.mse_loss(block_state, states)`` over
+        every truncated-BPTT block's end-of-block state (weight 1.0 total,
+        evenly split) -- the deep-supervision signal that makes the mid-unroll
+        blocks' weights get a gradient even though their own forward path is
+        detached from later blocks. With the default ``tbptt_n_blocks=1``
+        this is exactly ``F.mse_loss(x_final, states)``, unchanged.
+
+        **Validation/eval** (``not self.training``, i.e. ``validation_step``
+        and any other eval-mode call): ``F.mse_loss(x_final, states)`` only
+        -- the actual final-iteration answer's quality, deliberately NOT
+        averaged with the mid-unroll blocks' (necessarily worse,
+        still-refining) intermediate estimates. This keeps ``val_loss`` (and
+        therefore ``stage1_best.ckpt`` checkpoint selection) measuring what
+        the model is actually deployed to produce, regardless of
+        ``tbptt_n_blocks`` -- the training-time deep-supervision objective
+        and the eval-time model-selection metric are deliberately different
+        functions of the same unroll.
+
+        Both cases add -- only when ``prior_unet`` exists (``_PRIOR_MODES``)
+        and ``aux_var_cost_weight>0`` -- two auxiliary terms at
+        ``aux_var_cost_weight`` each, evaluated at the *final* block only:
         ``var_cost(x_final, obs)`` and ``var_cost(states, obs)``, both using
         the same ``prior_weight*prior_cost + obs_cost`` formula as the per-
         iteration ``_build_update_input`` gradient (``tau=None``, matching
@@ -530,8 +612,12 @@ class FourDVarNetSolver(nn.Module):
         actually controls the intended balance against the MSE term instead
         of being swamped by a convention mismatch.
         """
-        x_final = self.forward(batch)
-        loss = F.mse_loss(x_final, batch.states)
+        block_states = self._unrolled_blocks(batch)
+        x_final = block_states[-1]
+        if self.training:
+            loss = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        else:
+            loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
             obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
             obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)

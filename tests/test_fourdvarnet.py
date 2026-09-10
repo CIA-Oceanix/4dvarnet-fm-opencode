@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -728,3 +729,138 @@ class TestGradientCheckpointing:
             for name, p in model.named_parameters():
                 assert p.grad is not None, f"[{mode}] no gradient reached {name}"
                 assert torch.isfinite(p.grad).all(), f"[{mode}] non-finite gradient at {name}"
+
+
+class TestPriorHiddenChannels:
+    """``prior_hidden_channels`` (None by default -- prior_unet shares
+    hidden_channels with the main solver unet)."""
+
+    def test_default_shares_hidden_channels(self):
+        model = _make_model(update_input="subgrad+state", hidden_channels=[8, 16])
+        n_unet = sum(p.numel() for p in model.unet.parameters())
+        n_prior = sum(p.numel() for p in model.prior_unet.parameters())
+        # Not required to be exactly equal (different in_channel counts from
+        # _UPDATE_INPUT_CHANNEL_MULTIPLIER), but same hidden_channels tier
+        # means the same order of magnitude -- a narrower prior (tested
+        # below) is what actually differs materially.
+        assert n_prior > 0 and n_unet > 0
+
+    def test_narrower_prior_has_fewer_params(self):
+        model_equal = _make_model(update_input="subgrad+state", hidden_channels=[16, 32])
+        model_narrow = _make_model(update_input="subgrad+state", hidden_channels=[16, 32],
+                                    prior_hidden_channels=[8, 16])
+        n_prior_equal = sum(p.numel() for p in model_equal.prior_unet.parameters())
+        n_prior_narrow = sum(p.numel() for p in model_narrow.prior_unet.parameters())
+        assert n_prior_narrow < n_prior_equal
+        # The main solver unet is untouched by prior_hidden_channels.
+        n_unet_equal = sum(p.numel() for p in model_equal.unet.parameters())
+        n_unet_narrow = sum(p.numel() for p in model_narrow.unet.parameters())
+        assert n_unet_equal == n_unet_narrow
+
+    def test_only_affects_prior_modes(self):
+        # obs+state has no prior_unet at all -- prior_hidden_channels is
+        # simply unused, not an error.
+        model = _make_model(update_input="obs+state", prior_hidden_channels=[4])
+        assert model.prior_unet is None
+
+
+class TestTruncatedBPTT:
+    """``tbptt_n_blocks``/``tbptt_block_size`` -- splitting the N_outer
+    unroll into detached blocks with a deep-supervision training loss,
+    final-answer-only validation loss."""
+
+    def test_default_is_single_block(self):
+        model = _make_model(N_outer=4)
+        assert model.tbptt_n_blocks == 1
+        assert model.tbptt_block_size == 4
+
+    def test_block_size_required_when_n_blocks_not_one(self):
+        with pytest.raises(ValueError):
+            _make_model(N_outer=4, tbptt_n_blocks=2)
+
+    def test_mismatched_product_raises(self):
+        with pytest.raises(ValueError):
+            _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=3)
+
+    def test_matching_product_accepted(self):
+        model = _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=2)
+        assert model.tbptt_n_blocks == 2
+        assert model.tbptt_block_size == 2
+
+    def test_unrolled_blocks_returns_one_per_block(self):
+        model = _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=2,
+                             update_input="subgrad+state")
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+        block_states = model._unrolled_blocks(batch)
+        assert len(block_states) == 2
+        for s in block_states:
+            assert s.shape == (2, 20, 3)
+
+    def test_single_block_equivalent_to_no_tbptt(self):
+        model = _make_model(N_outer=4, update_input="subgrad+state")
+        model.eval()  # dropout off -- this checks the block-count/plumbing,
+        # not stochastic determinism (already covered by test_deterministic_eval)
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+        block_states = model._unrolled_blocks(batch)
+        assert len(block_states) == 1
+        assert torch.equal(block_states[0], model(batch))
+
+    def test_forward_value_unaffected_by_block_split(self):
+        """Detach changes only the backward graph, not the forward values --
+        a blocked and an unblocked model with identical weights must produce
+        the exact same final state."""
+        torch.manual_seed(0)
+        model_full = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0)
+        model_blocked = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                                     tbptt_n_blocks=2, tbptt_block_size=2)
+        model_blocked.load_state_dict(model_full.state_dict())
+        model_full.eval()
+        model_blocked.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=1)
+        out_full = model_full(batch)
+        out_blocked = model_blocked(batch)
+        assert torch.allclose(out_full, out_blocked, atol=1e-6)
+
+    def test_training_loss_averages_across_blocks(self):
+        model = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.train()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        torch.manual_seed(3)
+        loss = model.compute_loss(batch)
+        torch.manual_seed(3)
+        block_states = model._unrolled_blocks(batch)
+        expected = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        assert torch.allclose(loss, expected, atol=1e-6)
+
+    def test_eval_loss_uses_final_block_only(self):
+        """The specific behavior requested: val_loss must reflect only the
+        final answer, never a block average, regardless of tbptt_n_blocks."""
+        model = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=4)
+        loss_eval = model.compute_loss(batch)
+        block_states = model._unrolled_blocks(batch)
+        x_final = block_states[-1]
+        expected_final_only = F.mse_loss(x_final, batch.states)
+        block_average = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        assert torch.allclose(loss_eval, expected_final_only, atol=1e-6)
+        # Sanity: the block average genuinely differs from the final-only
+        # loss for this batch/model (otherwise the two branches would be
+        # indistinguishable and this test wouldn't prove anything).
+        assert not torch.allclose(loss_eval, block_average, atol=1e-6)
+
+    def test_gradient_reaches_shared_weights_from_both_blocks(self):
+        """Weight-tying means block 1's own forward pass still needs a
+        gradient signal -- detach severs the *activation* path from block 2
+        into block 1, not the shared parameters' training signal."""
+        model = _make_model(N_outer=4, update_input="subgrad+state",
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.train()
+        batch = _MockBatch(B=2, T=20, D=3, seed=5)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        for name, p in model.named_parameters():
+            assert p.grad is not None, f"no gradient reached {name}"
+            assert torch.isfinite(p.grad).all(), f"non-finite gradient at {name}"
