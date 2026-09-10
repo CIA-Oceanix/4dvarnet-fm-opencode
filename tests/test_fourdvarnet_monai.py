@@ -109,3 +109,42 @@ class TestMonaiBackboneForwardFDV2GradState:
         model = _make_monai_model(update_input="grad+state", trainable_prior_weight=True)
         assert model._prior_weight_raw is not None
         assert model.prior_weight > 0
+
+
+class TestMonaiBackboneForwardFDV2SubgradState:
+    """update_input='subgrad+state' -- the two-residual proxy-gradient FDV2
+    variant (never calls torch.autograd.grad); same self.unet/self.prior_unet
+    monai swap as grad+state above."""
+
+    def test_forward_shape(self):
+        model = _make_monai_model(update_input="subgrad+state")
+        batch = _MockBatch(B=2, T=32, D=3)
+        out = model(batch)
+        assert out.shape == (2, 32, 3)
+
+    def test_forward_finite(self):
+        model = _make_monai_model(update_input="subgrad+state")
+        batch = _MockBatch(B=2, T=32, D=3)
+        out = model(batch)
+        assert torch.isfinite(out).all()
+
+    def test_backward_reaches_unet_and_prior_unet_params(self):
+        model = _make_monai_model(update_input="subgrad+state", aux_var_cost_weight=0.1)
+        batch = _MockBatch(B=2, T=32, D=3)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        unet_grads = [p.grad for p in model.unet.parameters() if p.requires_grad]
+        prior_grads = [p.grad for p in model.prior_unet.parameters() if p.requires_grad]
+        assert any(g is not None and g.abs().sum() > 0 for g in unet_grads)
+        assert any(g is not None and g.abs().sum() > 0 for g in prior_grads)
+
+    def test_trainable_prior_weight_is_a_noop(self):
+        """subgrad+state is not in _AUTOGRAD_MODES, so trainable_prior_weight
+        has no effect (prior_weight stays fixed at 1.0, unlike grad+state)."""
+        model = _make_monai_model(update_input="subgrad+state", trainable_prior_weight=True)
+        assert model._prior_weight_raw is None
+        assert model.prior_weight == 1.0
+
+    def test_monai_prior_unet_built(self):
+        model = _make_monai_model(update_input="subgrad+state")
+        assert isinstance(model.prior_unet, MonaiUNet1D)
