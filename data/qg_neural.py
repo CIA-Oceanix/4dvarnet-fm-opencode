@@ -71,6 +71,13 @@ so z-scoring it divides by zero), controlled by ``cond_mode``:
   ``s1_loc_sigma_frac``/``s1_sigma_eta_frac`` for the wind, ``s1_param_bias``
   for ``rd``/``rek``), so training sees a distribution of corruption
   severity rather than a single fixed operating point.
+* ``"scenario"`` (cross-scenario S0/S1 **eval only**, not used for training)
+  -- deterministic, no resampling: reads whatever the window's own S0/S1
+  scenario wrapper (``QGS01Dataset._scenario_window``) designates as
+  believed (``wind_state_corrupted``/``da_params``, which equal
+  ``wind_state_true``/``true_params`` exactly for an S0-scenario window) --
+  the same biased forcing/params a DA method's dynamical model sees under
+  S1, unlike ``"true"``/``"noisy"`` which always ignore the scenario label.
 
 ``forcing``/``params`` are always returned in **physical units** from the
 dataset; z-score normalization (mirroring the psi/obs normalization above)
@@ -185,6 +192,32 @@ def _true_forcing_and_params(window: dict, cfg: QGConfig) -> tuple[torch.Tensor,
     """Q3 (oracle): the real true wind_curl field + exact true params, no jitter."""
     forcing = _daily_mean_field(window["wind_curl"], steps_per_day(cfg))
     return forcing, _true_params_vector(window)
+
+
+def _scenario_forcing_and_params(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cross-scenario eval (Q3/Q4 evaluated on S0 vs S1 test windows,
+    see PLAN.md's 2026-09-10 QG Q3/Q4 evaluation-plan section): deterministic,
+    no resampling -- reads whatever the window's *own* scenario wrapper
+    (`data.qg.QGS01Dataset._scenario_window`) designates as the "believed"
+    model: `wind_state_corrupted`/`da_params` for an S1-scenario window (the
+    exact same biased forcing/params a DA method's dynamical model sees
+    under S1), which fall back to `wind_state_true`/`true_params` for an
+    S0-scenario window since `_scenario_window`'s "test_s0" branch sets
+    `wind_state_corrupted = wind_state_true` and `da_params = true_params`
+    exactly -- so this one code path is correct for both scenarios uniformly.
+    Distinct from `cond_mode="true"`/`"noisy"` (training-time modes, which
+    always use the true/freshly-resampled-synthetic values regardless of
+    scenario label -- appropriate for training diversity, but NOT a fair S1
+    apples-to-apples test since they never actually consume the scenario's
+    own defined bias).
+    """
+    ws = window.get("wind_state_corrupted", window["wind_state_true"])
+    dyn = _cached_qg_dynamics(cfg)
+    wind_curl = dyn.wind_curl_field(ws)
+    forcing = _daily_mean_field(wind_curl, steps_per_day(cfg))
+    params_src = window.get("da_params", window["true_params"])
+    params = torch.tensor([float(params_src[k]) for k in PARAM_KEYS], dtype=torch.float32)
+    return forcing, params
 
 
 def _noisy_forcing_and_params(window: dict, cfg: QGConfig,
@@ -364,7 +397,7 @@ class QGNeuralDataset(Dataset):
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5,
                  forcing_norm_stats: dict | None = None):
-        if cond_mode not in ("none", "true", "noisy"):
+        if cond_mode not in ("none", "true", "noisy", "scenario"):
             hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
                     "this string -- quote it as `cond_mode: \"true\"`)"
                     if isinstance(cond_mode, bool) else "")
@@ -435,8 +468,10 @@ class QGNeuralDataset(Dataset):
         else:
             if self.cond_mode == "true":
                 forcing, params = _true_forcing_and_params(w, self.cfg)
-            else:
+            elif self.cond_mode == "noisy":
                 forcing, params = _noisy_forcing_and_params(w, self.cfg, self.noisy_max)
+            else:
+                forcing, params = _scenario_forcing_and_params(w, self.cfg)
             forcing = forcing.to(obs_pad.dtype)
             forcing = normalize(forcing, self.forcing_norm_stats)
             params = normalize(params, self.param_norm_stats)

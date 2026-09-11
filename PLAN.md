@@ -670,22 +670,120 @@ neutral-to-slightly-negative — see the L96 Q3 note above).
   a longer validation run (a 2-epoch smoke test cannot catch a divergence
   that only manifests dozens of epochs in; this failure was invisible to
   every smoke test run so far).
-- **Evaluation plan (not yet run)**: cross-scenario, mirroring the L96 SDA
-  study -- evaluate Q1 (obs-only), Q3, and Q4 all on **both** the S0 and S1
-  test windows (same base windows, `cond_mode="true"/"noisy"` synthesize
-  their own conditioning regardless of which scenario wrapper the window
-  carries), producing a degradation table parallel to the existing DA
-  S0→S1 table. L96's own finding here was that all three regimes
-  (true/corrupted-forcing/noisy-params) landed within noise of each other,
-  with only a small consistent edge for the noisy-param variant -- open
-  question whether QG (whose S1 story already differs qualitatively from
-  L96's, e.g. EnKF's clear edge, both 4DVar variants collapsing on q layer2)
-  replicates that small-effect finding or shows something QG-specific.
 - **Tests**: `tests/test_qg_neural.py` (cond_mode none/true/noisy shapes +
   determinism/diversity contracts, param-norm-stats requirement, collate
   params stacking, `build_model` YAML-wiring regression) and
   `tests/test_monai_unet_qg2d.py` (forward-pass conditioning sanity check:
   zeroing forcing/params must change the output).
+
+### Q3/Q4 full training + cross-scenario S0/S1 evaluation outcome (2026-09-11)
+
+Both trained their full 200 epochs cleanly on an A100 (`sl-mee-br-206`) after
+the forcing-normalization fix above: **Q3** 5.02h, final S0 PSI EV=0.913 /
+PV-q EV=0.205 (slightly ahead of Q1's 0.909/0.197); **Q4** 9.71h, S0
+PSI EV=0.913 / PV-q EV=0.205 (statistically indistinguishable from Q3 on
+S0 -- matches the L96 SDA study's own finding that conditioning-regime
+differences vanish on the easy/matched case).
+
+**Cross-scenario S0/S1 eval — new `cond_mode="scenario"`** (added to
+`data/qg_neural.py`/`QGNeuralDataset`, distinct from `"true"`/`"noisy"`):
+deterministic, reads whatever the window's *own* scenario wrapper
+(`QGS01Dataset._scenario_window`) designates as believed --
+`wind_state_corrupted`/`da_params` (equal to the true values exactly on an
+S0-scenario window) -- giving a genuine apples-to-apples test of the same
+model-error sensitivity DA baselines face, unlike `"true"`/`"noisy"` which
+always ignore the scenario label (fine for training diversity, useless for
+an S1 eval). New `eval_qg_neural_s0_s1.py` runs Q1 (`cond_mode="none"`,
+scenario-agnostic by construction) + Q3/Q4 (`cond_mode="scenario"`) on both
+test_s0/test_s1.
+
+**Two apples-to-apples config bugs caught before trusting the first
+result** (see `feedback_apples_to_apples_benchmarks` memory): (1) the
+initial run used `train_qg_neural.py`'s own lag=1.0d/noise=0.01 training
+distribution, not comparable in absolute terms to the DA baselines'
+lag=5.0d/noise=0.05 reference case -- `eval_qg_neural_s0_s1.py` gained
+`--lag-days`/`--noise-frac` (mirroring `eval_qg_q1_lag5_noise05.py`'s
+existing cache-reuse trick: the cached truth is keyed by the *whole*
+`QGConfig` including obs/IC fields, so naively rebuilding `QGConfig` with
+different lag/noise and calling `make_qg_s0_s1_datasets` would silently
+miss the cache and trigger an hours-long from-scratch rollout -- instead
+load the cached truth at its original key, then cheaply redraw obs/init-
+state at the new lag/noise via `QGS01Dataset._generate_obs_ic`). (2) Even
+after matching lag/noise, the S1 severity itself was still wrong --
+`_scenario_forcing_and_params`'s `da_params`/`wind_state_corrupted` used
+`QGConfig`'s **class default** `s1_param_bias=s1_amp_bias=0.15`, but the
+actual DA S1 reference campaign (`qg_da_s1_scratch.py`) uses an explicit
+**0.1/0.1** override (deliberately milder than the 0.15 default, chosen
+because 0.15 sits right at ETKF's divergence edge in isolation -- see the
+2026-09-10 QG revised-S1 section above). Added `--s1-param-bias`/
+`--s1-amp-bias` overrides to fix this.
+
+**Final result, fully matched (lag=5.0d/noise=0.05/bias=0.1, identical to
+the DA campaign)**:
+
+| scheme | S0 ψ EV | S0 q EV | S1 ψ EV | S1 q EV | Δψ | Δq |
+|---|---|---|---|---|---|---|
+| ETKF | 0.921 | 0.405 | 0.874 | 0.307 | −0.047 | −0.098 |
+| EnKF | 0.947 | 0.481 | 0.896 | 0.331 | −0.051 | −0.150 |
+| Strong-4DVar | 0.971 | −0.126 | 0.931 | −0.857 | −0.040 | −0.731 |
+| Weak-4DVar | 0.966 | −0.035 | 0.947 | −0.501 | −0.019 | −0.466 |
+| Q1 (obs-only) | 0.897 | 0.161 | 0.897 | 0.161 | 0.000 | 0.000 |
+| Q3 (oracle) | 0.905 | 0.177 | 0.891 | 0.141 | −0.014 | −0.036 |
+| Q4 (noisy-trained) | 0.903 | 0.171 | 0.901 | 0.164 | −0.002 | −0.007 |
+
+**Q4 is essentially immune to S1 model error** (Δq=−0.007, ~14x smaller
+than even ETKF's own degradation) -- the noisy-conditioning training
+design works as intended. **Q3, at the correctly-matched bias level, is
+actually *less* sensitive than ETKF/EnKF** both in absolute Δq and
+relative-to-own-baseline terms (20% vs 24%/31%) -- an earlier, wrong-bias
+(0.15) run had suggested Q3 was more fragile than DA, which doesn't hold
+once the severity genuinely matches. Both neural schemes are dramatically
+more robust than either 4DVar variant's collapse. Still an out-of-
+training-distribution eval for all three neural models (trained at
+lag=1.0d/noise=0.01, evaluated here at lag=5.0d/noise=0.05) -- same caveat
+`eval_qg_q1_lag5_noise05.py` already carried for Q1 alone. Results:
+`reports/qg/outputs/qg_neural_s0_s1_cross_scenario/results_lag5_noise0.05_bias0.1.json`.
+Not yet folded into `qg_neural_report.md` -- open follow-up.
+
+### Q5: Q4 + initial-condition input, trained at the DA reference case's own
+### lag/noise (2026-09-11, planned, not yet implemented)
+
+Motivated by the above: DA baselines get real skill from their background
+(`init_state`, rolled forward from a sampled lag) that Q1/Q3/Q4 get zero
+equivalent of -- confirmed neither `init_state` nor any IC-derived quantity
+is referenced anywhere in `data/qg_neural.py`/`models/monai_unet_qg2d.py`/
+`train_qg_neural.py`. Q5 = Q4's noisy forcing+param conditioning **plus**
+the raw IC as a 4th input, trained at `init_lag_days=5.0`/
+`obs_noise_std_frac=0.05` (the DA reference case's own values, not Q1/Q3/Q4's
+1.0/0.01 defaults) -- both because that's what makes the IC actually
+informative (a lag=1.0-old snapshot is barely decorrelated; lag=5.0 makes it
+a genuine partial-information input like DA's own background) and because it
+subsumes the "should Q1/Q3/Q4 be retrained at the DA reference case?"
+question into something more purposeful than just retraining the same
+recipe at a harder setting.
+
+- **IC representation**: the exact `init_state` `_generate_obs_ic` samples
+  (raw PV/q, always from the *true* trajectory -- like obs, never
+  scenario-corrupted, since physically it represents a recent
+  analysis/observation, not the DA model's own internal forecast). Inverted
+  to ψ via the existing per-window cached spectral inverter and normalized
+  with the **existing global `psi_norm_stats`** (no new stats file).
+- **A third conditioning class, architecturally**: unlike `forcing` (varies
+  per day) or `params` (a scalar vector), the IC is one static field for the
+  whole window, broadcast identically across all `days` -- needs a new
+  `ic_dim` (2, matching `nlayers`) on `MonaiDirectUNetQG`, alongside
+  `cond_extra_dim`/`param_dim`, with its own per-window (not per-day)
+  broadcast.
+- **Noisy-conditioning severity, revised for Q5**: `s1_param_bias=0.1`,
+  `s1_amp_bias=0.1` (kept at the actual DA-reference value, unlike Q4's
+  0.15-default-derived range) with `noisy_max=2.0` -- samples the effective
+  bias fraction uniformly over `[0, 0.2]` (`frac~U(0,2)` × 0.1), i.e. up to
+  2x the DA reference severity, not Q4's indirect `1.5×0.15=0.225` ceiling.
+  Requires new `--s1-param-bias`/`--s1-amp-bias` CLI overrides on
+  `train_qg_neural.py` itself (previously only `eval_qg_neural_s0_s1.py`
+  had them; training always silently used the 0.15 class default before
+  this) -- no behavior change for Q1/Q3/Q4 (they never set these flags).
+- New config `Q5_direct_unet_s1_noisy_ic_cond.yaml`.
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 

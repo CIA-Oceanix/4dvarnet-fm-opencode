@@ -52,6 +52,16 @@ def _window_with_wind(**kw):
     return cfg, ds["test_s0"][1]
 
 
+def _s0_s1_window_pair(**kw):
+    """S0- and S1-scenario-wrapped versions of the SAME underlying window
+    (index 1, nonzero wind -- see `_window_with_wind`), for cross-scenario
+    cond_mode="scenario" tests."""
+    cfg = _cfg(num_windows=2, **kw)
+    ds = make_qg_s0_s1_datasets(cfg, num_test_windows=2,
+                                cache_dir="/tmp/qg_neural_test_cache")
+    return cfg, ds["test_s0"][1], ds["test_s1"][1]
+
+
 def _psi_norm_stats(cfg, windows):
     """Global per-layer psi (mean, std) stats, same shape `data.normalization`
     (and `precompute_qg_norm_stats.py`) produce, over the given windows."""
@@ -434,6 +444,42 @@ def test_cond_mode_noisy_varies_across_draws_and_stays_finite():
     true_vec = torch.tensor([float(w["true_params"][k]) for k in PARAM_KEYS])
     expected_u1 = (true_vec[0] - pstats["mean"][0]) / pstats["std"][0]
     assert torch.allclose(params[:, 0], expected_u1.expand(5), atol=1e-4)
+
+
+def test_cond_mode_scenario_matches_true_on_s0_and_biased_on_s1():
+    """cond_mode="scenario" is the cross-scenario eval mode: on an S0-scenario
+    window it must match cond_mode="true" exactly (da_params/wind_state_corrupted
+    equal true_params/wind_state_true there), and on the SAME underlying
+    window's S1-scenario wrapper it must differ (biased rd/rek, corrupted
+    wind) -- deterministic, unlike cond_mode="noisy"."""
+    cfg, w_s0, w_s1 = _s0_s1_window_pair()
+    pstats = _param_norm_stats([w_s0, w_s0])
+    fstats = _forcing_norm_stats(cfg, [w_s0, w_s0])
+
+    ds_true = QGNeuralDataset([w_s0], cfg, cond_mode="true", param_norm_stats=pstats,
+                              forcing_norm_stats=fstats)
+    ds_scenario_s0 = QGNeuralDataset([w_s0], cfg, cond_mode="scenario",
+                                     param_norm_stats=pstats, forcing_norm_stats=fstats)
+    _p1, _o1, _m1, forcing_true, _q1, _r1, params_true = ds_true[0]
+    _p2, _o2, _m2, forcing_s0, _q2, _r2, params_s0 = ds_scenario_s0[0]
+    assert torch.equal(forcing_true, forcing_s0)
+    assert torch.equal(params_true, params_s0)
+
+    ds_scenario_s1 = QGNeuralDataset([w_s1], cfg, cond_mode="scenario",
+                                     param_norm_stats=pstats, forcing_norm_stats=fstats)
+    _p3, _o3, _m3, forcing_s1, _q3, _r3, params_s1 = ds_scenario_s1[0]
+    assert torch.isfinite(forcing_s1).all()
+    assert torch.isfinite(params_s1).all()
+    assert not torch.equal(params_s0, params_s1), (
+        "S1's biased da_params (rd/rek scaled by 1-s1_param_bias) must differ "
+        "from S0's true params")
+    assert not torch.equal(forcing_s0, forcing_s1), (
+        "S1's corrupted wind_state_corrupted must produce a different forcing "
+        "field than S0's true wind state")
+    # deterministic: repeated draws on the same S1 window give identical results
+    _p4, _o4, _m4, forcing_s1b, _q4, _r4, params_s1b = ds_scenario_s1[0]
+    assert torch.equal(forcing_s1, forcing_s1b)
+    assert torch.equal(params_s1, params_s1b)
 
 
 def test_cached_qg_dynamics_reused_and_matches_uncached():

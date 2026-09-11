@@ -269,10 +269,13 @@ def main():
                          "(default: derived as Q1/Q2 from --model-type, for backward "
                          "compat; Q3/Q4 forcing+param-conditioned configs need this set "
                          "explicitly since they share model_type=direct_unet with Q1).")
-    ap.add_argument("--cond-mode", choices=["none", "true", "noisy"], default=None,
+    ap.add_argument("--cond-mode", choices=["none", "true", "noisy", "scenario"], default=None,
                     help="Overrides the experiment YAML's data.cond_mode if given -- "
                          "'none' (Q1/Q2, obs-only), 'true' (Q3, oracle forcing+params), "
-                         "'noisy' (Q4, resampled-severity corrupted forcing+params).")
+                         "'noisy' (Q4, resampled-severity corrupted forcing+params), "
+                         "'scenario' (eval-only: deterministic, reads whatever the "
+                         "window's own S0/S1 scenario wrapper designates as believed -- "
+                         "see data/qg_neural.py's _scenario_forcing_and_params).")
     ap.add_argument("--param-norm-stats-path", default=None,
                     help="Overrides the experiment YAML's data.param_norm_stats_path if "
                          "given ([U1,rd,rek] mean/std produced by "
