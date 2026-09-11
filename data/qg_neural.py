@@ -584,6 +584,32 @@ def ensure_truth_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:
     return list(datasets["test_s0"])
 
 
+def ensure_truth_cache_redrawn(cache_cfg: QGConfig, eval_cfg: QGConfig, num_windows: int,
+                               cache_dir: str, scenario: str = "test_s0") -> list:
+    """Like `ensure_truth_cache`, but for when `eval_cfg`'s obs/IC protocol
+    (`obs_noise_std_frac`/`init_lag_days`/`s1_param_bias`/`s1_amp_bias`/...)
+    differs from the cached truth's own key. Loads the cached truth at
+    `cache_cfg`'s key (a cache HIT -- `cache_cfg` should share `nx`/`seed`/
+    `num_windows` with the production cache and leave every other field at
+    the `QGConfig` default), then cheaply redraws obs/init-state at
+    `eval_cfg`'s actual settings via `QGS01Dataset._generate_obs_ic` (truth
+    generation doesn't depend on the obs/IC protocol, only sampling does).
+
+    Calling `ensure_truth_cache(eval_cfg, ...)` directly would silently MISS
+    the cache (`_truth_cache_path` hashes the *whole* `QGConfig`) and trigger
+    a full from-scratch truth rollout -- caught the hard way when Q5/Q3-lag5
+    smoke tests were first launched with that naive call and had to be
+    killed after ~10 minutes of silent, expensive regeneration (see PLAN.md's
+    2026-09-12 note). Mirrors `eval_qg_neural_s0_s1.py`'s identical fix.
+    """
+    from data.qg import QGS01Dataset, _truth_cache_path
+    path = _truth_cache_path(cache_cfg, num_windows, cache_dir)
+    base = torch.load(path, map_location="cpu")[:num_windows]
+    raw = QGS01Dataset(eval_cfg, scenario, base_windows=base).windows
+    ic = QGS01Dataset._generate_obs_ic(eval_cfg, raw, list(range(len(raw))))
+    return [dict(w, **entry) for w, entry in zip(raw, ic)]
+
+
 def ensure_truth_only_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:
     """Truth-only windows (no baked-in obs) for `QGNeuralDataset(on_the_fly_obs=True)`."""
     from data.qg import ensure_truth_only_cache as _ensure

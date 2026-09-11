@@ -13,6 +13,7 @@ from data.qg_neural import (
     PARAM_KEYS,
     QGNeuralDataset,
     denorm_psi,
+    ensure_truth_cache,
     layer_split,
     psi_daily,
     psi_to_q,
@@ -523,6 +524,48 @@ def test_qg_collate_stacks_ic_when_present():
     ds_no_ic = QGNeuralDataset([w, w], cfg, norm, include_ic=False)
     batch_no_ic = qg_collate([ds_no_ic[0], ds_no_ic[1]])
     assert batch_no_ic.ic is None
+
+
+def test_ensure_truth_cache_redrawn_matches_plain_when_cfg_unchanged():
+    """Regression test for a real bug: naively calling `ensure_truth_cache`
+    with an obs/IC-protocol-overridden cfg (Q5's lag=5.0/noise=0.05) misses
+    the cache (`_truth_cache_path` hashes the whole QGConfig) and triggers a
+    full from-scratch truth rollout -- caught only after Q5/Q3-lag5 smoke
+    test jobs sat "hung" (actually silently regenerating truth) for ~10
+    minutes with no output. `ensure_truth_cache_redrawn` fixes this by
+    loading the cache at a separate, unaffected `cache_cfg` key and
+    redrawing obs/IC via `eval_cfg`. When `eval_cfg == cache_cfg` (the
+    Q1/Q3/Q4 case, no override), it must reproduce `ensure_truth_cache`'s
+    output bit-for-bit (same underlying `_generate_truth_only` +
+    `_generate_obs_ic` composition, see
+    `test_truth_only_plus_obs_ic_matches_generate_truth`)."""
+    from data.qg_neural import ensure_truth_cache_redrawn
+    cfg = _cfg(num_windows=2)
+    cache_dir = "/tmp/qg_neural_test_cache"
+    plain = ensure_truth_cache(cfg, 2, cache_dir)
+    redrawn = ensure_truth_cache_redrawn(cfg, cfg, 2, cache_dir)
+    for a, b in zip(plain, redrawn):
+        assert torch.equal(a["true_state"], b["true_state"])
+        assert torch.equal(torch.nan_to_num(a["obs"]), torch.nan_to_num(b["obs"]))
+        assert torch.equal(a["init_state"], b["init_state"])
+
+
+def test_ensure_truth_cache_redrawn_uses_cache_cfg_key_not_eval_cfg():
+    """The whole point: an eval_cfg with a *different* obs_noise_std_frac/
+    init_lag_days must NOT change which cache file gets loaded (that's the
+    bug) -- only cache_cfg's key matters, and the redrawn windows' obs
+    actually reflect eval_cfg's (different) settings."""
+    from data.qg_neural import ensure_truth_cache_redrawn
+    cache_cfg = _cfg(num_windows=2)
+    cache_dir = "/tmp/qg_neural_test_cache"
+    ensure_truth_cache(cache_cfg, 2, cache_dir)  # populate the cache at cache_cfg's key
+    eval_cfg = _cfg(num_windows=2, obs_noise_std_frac=0.5, init_lag_days=1.5)
+    windows = ensure_truth_cache_redrawn(cache_cfg, eval_cfg, 2, cache_dir)
+    assert len(windows) == 2
+    # truth is identical (same cache_cfg key); obs noise scale reflects eval_cfg
+    plain = ensure_truth_cache(cache_cfg, 2, cache_dir)
+    for a, b in zip(plain, windows):
+        assert torch.equal(a["true_state"], b["true_state"])
 
 
 def test_cached_qg_dynamics_reused_and_matches_uncached():

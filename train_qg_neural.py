@@ -65,6 +65,7 @@ from data.qg_neural import (
     QGNeuralDataset,
     denorm_psi,
     ensure_truth_cache,
+    ensure_truth_cache_redrawn,
     layer_split,
     psi_daily,
     psi_to_q,
@@ -420,7 +421,17 @@ def main():
         print(f"Results exist at {results_path}, skipping.")
         return
 
-    test_windows = ensure_truth_cache(test_cfg, args.num_test, args.cache_dir)
+    # `test_cache_cfg` matches the production cache's key exactly (plain
+    # nx/seed/num_windows, like train_cfg/val_cfg below) -- NOT `test_cfg`
+    # itself, which may carry obs/IC-protocol overrides (Q5's lag=5.0/
+    # noise=0.05/s1_param_bias=0.1) that would otherwise change
+    # `_truth_cache_path`'s hash and silently miss the cache, triggering a
+    # full from-scratch truth rollout (caught the hard way: Q5/Q3-lag5
+    # smoke tests had to be killed after ~10 minutes of exactly this before
+    # this fix -- see PLAN.md's 2026-09-12 note).
+    test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test)
+    test_windows = ensure_truth_cache_redrawn(test_cache_cfg, test_cfg, args.num_test,
+                                              args.cache_dir)
     if args.eval_only is None:
         # No obs-config overrides here: `_truth_cache_path` hashes the whole
         # QGConfig, and the pre-generated production truth was built with plain
