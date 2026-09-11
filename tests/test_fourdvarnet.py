@@ -441,6 +441,39 @@ class TestFourDVarNetSolver:
         assert len(prior_grads) > 0
         assert all(torch.isfinite(g).all() for g in prior_grads)
 
+    def test_aux_var_cost_weight_is_pure_prior_cost_no_obs_or_prior_weight(self):
+        """Regression test for a real bug: an earlier version multiplied the
+        prior term by ``self.prior_weight`` and added ``_masked_obs_cost``
+        (i.e. the full per-iteration ``var_cost`` formula) inside this outer
+        auxiliary term. That let a *trainable* ``prior_weight`` cheat the
+        loss down by driving itself to 0 -- the obs_cost half doesn't depend
+        on prior_weight, so zeroing it is a free win that has nothing to do
+        with actual prior quality. Confirmed empirically: grad+state's
+        prior_weight collapsed from ~0.97 to exactly 0.0 by epoch ~120 under
+        the old formula (job 53104). The aux term must equal exactly
+        ``aux_var_cost_weight * (prior_cost(x_final) + prior_cost(states)) /
+        numel``, with no ``obs_cost``/``prior_weight`` factor mixed in --
+        reconstructed independently here and checked for exact equality
+        (not just "changes the loss"), since the old buggy formula would
+        also have changed the loss, just to the wrong value."""
+        model = _make_model(update_input="grad+state", N_outer=3, aux_var_cost_weight=0.1)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+
+        loss = model.compute_loss(batch)
+
+        from models.fourdvarnet import _prior_cost
+        x_final = model.forward(batch)
+        mse = F.mse_loss(x_final, batch.states)
+        numel = x_final.numel()
+        expected_aux = 0.1 * (
+            _prior_cost(model.prior_unet, x_final) / numel
+            + _prior_cost(model.prior_unet, batch.states) / numel
+        )
+        expected = mse + expected_aux
+
+        assert torch.allclose(loss, expected, atol=1e-4)
+
     def test_unknown_update_input_raises_value_error(self):
         try:
             _make_model(update_input="not-a-real-mode")

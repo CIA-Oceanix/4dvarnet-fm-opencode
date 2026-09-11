@@ -638,31 +638,43 @@ class FourDVarNetSolver(nn.Module):
         functions of the same unroll.
 
         Both cases add -- only when ``prior_unet`` exists (``_PRIOR_MODES``)
-        and ``aux_var_cost_weight>0`` -- two auxiliary terms at
-        ``aux_var_cost_weight`` each, evaluated at the *final* block only:
-        ``var_cost(x_final, obs)`` and ``var_cost(states, obs)``, both using
-        the same ``prior_weight*prior_cost + obs_cost`` formula as the per-
-        iteration ``_build_update_input`` gradient (``tau=None``, matching
-        the prior operator's own no-conditioning convention -- see
-        ``_prior_ae``). Gives ``prior_weight`` (and ``prior_unet``) a direct,
+        and ``aux_var_cost_weight>0`` -- a pure prior-consistency term at
+        ``aux_var_cost_weight``, evaluated at the *final* block only:
+        ``prior_cost(x_final) + prior_cost(states)``, i.e.
+        ``||x_final - prior_unet(x_final)||^2 + ||states - prior_unet(states)||^2``
+        (``tau=None``, matching the prior operator's own no-conditioning
+        convention -- see ``_prior_ae``). Gives ``prior_unet`` a direct,
         single-hop gradient path to the loss, instead of relying solely on
         the 10-deep chained double-backward through
         ``torch.autograd.grad(..., create_graph=True)`` at every unrolled
-        iteration -- added because a trainable weight in ``var_cost`` was
-        empirically unstable (stalls, and eventually diverges) under
-        "grad+state" with only that indirect signal (see git history /
-        session notes), while a fixed weight trains fine.
+        iteration.
 
-        ``_masked_obs_cost``/``_prior_cost`` are unnormalized *sums* (not
-        means) over all ``B*T*D`` elements -- the right convention for the
-        *inner* per-iteration variational cost (deliberately observation-
-        count-independent, see ``_masked_obs_cost``'s docstring), but at
-        realistic batch/window sizes that sum is ~4-5 orders of magnitude
-        larger than the MSE term above (empirically: MSE~1.0 vs. raw
-        var_cost~1e4-1e5 at B=32,T=300,D=24). Divide by ``B*T*D`` here --
-        for this *outer* auxiliary term only -- so ``aux_var_cost_weight``
-        actually controls the intended balance against the MSE term instead
-        of being swamped by a convention mismatch.
+        Deliberately does NOT multiply by ``self.prior_weight``: an earlier
+        version did (``prior_weight * prior_cost(...) + obs_cost(...)``, the
+        full per-iteration ``var_cost`` formula), which let a *trainable*
+        ``prior_weight`` shrink this auxiliary loss simply by driving itself
+        to 0 -- the ``obs_cost`` half is computed directly on
+        ``x_final``/``states`` and isn't gated by ``prior_weight``, so
+        zeroing ``prior_weight`` costs nothing on that half while erasing the
+        entire prior-consistency term, a free win for the optimizer that has
+        nothing to do with actual prior quality. Confirmed empirically: under
+        this old formula, ``grad+state``'s ``prior_weight`` collapsed from
+        ~0.97 to exactly 0.0 by epoch ~120 (job 53104), degrading train_loss
+        after that point. This term must never reference ``self.prior_weight``
+        or ``self._prior_weight_raw`` -- that parameter's only legitimate
+        role is inside the per-iteration solver update (``_build_update_input``
+        / ``_solver_iteration``), never in this outer supervised objective.
+
+        ``_prior_cost`` is an unnormalized *sum* (not mean) over all
+        ``B*T*D`` elements -- the right convention for the *inner* per-
+        iteration variational cost (deliberately observation-count-
+        independent, see ``_masked_obs_cost``'s docstring), but at realistic
+        batch/window sizes that sum is ~4-5 orders of magnitude larger than
+        the MSE term above (empirically: MSE~1.0 vs. raw var_cost~1e4-1e5 at
+        B=32,T=300,D=24). Divide by ``B*T*D`` here -- for this *outer*
+        auxiliary term only -- so ``aux_var_cost_weight`` actually controls
+        the intended balance against the MSE term instead of being swamped
+        by a convention mismatch.
         """
         block_states = self._unrolled_blocks(batch)
         x_final = block_states[-1]
@@ -671,14 +683,10 @@ class FourDVarNetSolver(nn.Module):
         else:
             loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
-            obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
-            obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
-            numel = obs_clean.numel()
-            var_cost_pred = (self.prior_weight * _prior_cost(self.prior_unet, x_final)
-                              + _masked_obs_cost(x_final, obs_clean, obs_mask, self.R_var)) / numel
-            var_cost_true = (self.prior_weight * _prior_cost(self.prior_unet, batch.states)
-                              + _masked_obs_cost(batch.states, obs_clean, obs_mask, self.R_var)) / numel
-            loss = loss + self.aux_var_cost_weight * (var_cost_pred + var_cost_true)
+            numel = x_final.numel()
+            prior_cost_pred = _prior_cost(self.prior_unet, x_final) / numel
+            prior_cost_true = _prior_cost(self.prior_unet, batch.states) / numel
+            loss = loss + self.aux_var_cost_weight * (prior_cost_pred + prior_cost_true)
         return loss
 
     def sample(self, batch, N_outer=None):
