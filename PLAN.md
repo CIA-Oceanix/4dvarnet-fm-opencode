@@ -653,19 +653,48 @@ EnKF's own N=10 baseline here (0.279) and EnKF's N=100 headline number
 deterministic transform-matrix inversion to regularize), so this is
 specific to fixing ETKF's own weakness.
 
-**Refined conclusion (supersedes part 2's "structural, still untested" — now
-tested and confirmed)**: the previously "unexplained" EnKF>ETKF gap on S1
+**Refined conclusion**: the previously "unexplained" EnKF>ETKF gap on S1
 looks like it was largely an artifact of running ETKF with an
 **under-regularized transform-matrix inversion** (the implicit
 `etkf_ridge~1e-4` default used everywhere in the existing benchmark), not a
 fundamental method limitation, and not an ensemble-collapse/inflation
-story (that part is shared equally by both methods). **Not yet confirmed at
-full N=100** — next concrete step: re-run ETKF with `etkf_ridge=1.0` (try a
-slightly wider ridge grid too, e.g. 2.0/5.0, in case the N=10 optimum is even
-higher) at N=100 on both S0 and S1, checking psi EV and q layer2 aren't
-traded off, before considering it the new default S1 ETKF config in the
-main benchmark table (`qg_da_report.md`/PLAN.md's S1 table above).
-`N_ensemble` remains unswept (still hardcoded 80 everywhere).
+story (that part is shared equally by both methods).
+
+**N=100 confirmation (2026-09-11, same day) — CONFIRMED, gap closed**:
+before committing to the expensive N=100 run, a quick N=10 check of whether
+ridge keeps helping past 1.0 found a peak, not unbounded improvement: S1 q EV
+0.253(default)→0.332(ridge=1.0)→**0.335(ridge=2.0, best)**→0.323(ridge=5.0);
+S0 (untested before, no model error) shows the same qualitative pattern,
+0.402(default)→0.463(ridge=0.1..1.0 plateau). Picked `ridge=1.0` as one
+value that's near-optimal on both scenarios rather than tuning per-scenario.
+Ran the full N=100 confirmation via `qg_n100_ridge_confirm_scratch.py` +
+`batch/run_qg_n100_ridge_confirm.sbatch` (jobs 53159/53160 — the first
+interactive attempt at this silently OOM'd under this session's cgroup cap,
+the same symptom `run_qg_s1_full100.sbatch`'s 2026-09-10 note already
+documented; a real sbatch job fixed it, same as that prior fix):
+
+| | ETKF (default) | EnKF | **ETKF + ridge=1.0** |
+|---|---|---|---|
+| S0 psi EV | 0.921 | 0.947 | **0.957** |
+| S0 q EV | 0.405 | 0.481 | 0.476 |
+| S0 q layer2 EV | ~0.34 | ~0.40 | **0.410** |
+| S1 psi EV | 0.874 | 0.896 | **0.926** |
+| S1 q EV | 0.307 | 0.331 | **0.357** |
+| S1 q layer2 EV | — | — | 0.266 |
+
+ETKF+ridge=1.0 beats EnKF outright on **both** fields on S1, and beats it on
+psi (ties within noise on q, −0.005) on S0 — no trade-off on the unobserved
+layer either (S0 q layer2 improved over plain ETKF's ~0.34, not sacrificed).
+This confirms the N=10 finding holds at full scale: **`etkf_ridge=1.0` is a
+strictly better ETKF config than the implicit default** on this reference
+case. Data: `reports/qg/outputs/qg_repro_validation/etkf_ridge1.json` (S0,
+N=100), `reports/qg/outputs/qg_repro_validation_s1/etkf_ridge1.json` (S1,
+N=100) — kept as distinctly-tagged files, NOT overwriting the canonical
+`etkf.json` reference numbers pending a decision on promoting
+`etkf_ridge=1.0` to the default ETKF config in the main benchmark table
+(`qg_da_report.md`/PLAN.md's S0/S1 tables above) and updating
+`run_qg_baselines.py`'s/`sweep_qg_baselines.py`'s CLI default. `N_ensemble`
+remains unswept (still hardcoded 80 everywhere).
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
