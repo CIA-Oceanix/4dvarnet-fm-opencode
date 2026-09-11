@@ -545,6 +545,128 @@ Scratch drivers (not committed): `qg_da_s1_scratch.py`,
 Not yet done: folding these S1 numbers into `qg_da_report.md`/
 `qg_neural_report.md` (currently S0-only) — separate follow-up.
 
+### ETKF inflation sensitivity, part 2: finer grid + additive inflation (2026-09-11)
+
+Follow-up to the ETKF inflation sweep above, still N=10, revised S1
+combined config, `qg_da_s1_scratch.py --etkf-additive/--etkf-ridge` (new CLI
+overrides added to the scratch driver). Two questions: (a) is the 1.0→1.05
+gap a hard cliff or a graded decline, and (b) does **additive** inflation
+(`ETKF.etkf_additive`, Gaussian noise added directly to the ensemble each
+step, raw q-field units — never exercised before; q std ≈2.06e-5 at this
+scenario/resolution) behave differently from multiplicative inflation.
+
+**Multiplicative inflation, finer grid**:
+
+| inflation | q EV | psi improv |
+|---|---|---|
+| 1.00 | 0.253 | — |
+| 1.01 | 0.220 | 1.45x |
+| 1.02 | 0.112 | 1.36x |
+| 1.03 | −0.029 | 1.26x |
+| 1.04 | −0.559 | 1.15x |
+| 1.05 | −39.5 | (prior data — catastrophic) |
+
+Not a cliff — a steep but continuous monotonic decline from 1.00 to 1.04,
+crossing zero between 1.02/1.03, **then** a genuine discontinuity (2 orders
+of magnitude worse) between 1.04 and 1.05. So the divergence is real filter
+blow-up, not just "the metric happens to cross zero here."
+
+**Additive inflation** (`etkf_additive`, multiplicative inflation fixed at
+1.0, values as a q-std fraction):
+
+| etkf_additive | ~% of q std | q EV |
+|---|---|---|
+| 0 (baseline) | 0% | 0.253 |
+| 2e-7 | ~1% | 0.251 |
+| 1e-6 | ~5% | 0.224 |
+| 2e-6 | ~10% | 0.138 |
+| 5e-6 | ~24% | −0.067 |
+
+Also monotonically degrades EV, but **gracefully** — no catastrophic
+divergence at any tested magnitude (up to ~24% of the field's own std),
+unlike multiplicative inflation's blow-up past 1.04. Data:
+`reports/qg/outputs/qg_repro_validation_s1/etkf_n10_{inflation,additive}*.json`.
+
+**Refined interpretation of the open question**: neither inflation flavor
+*helps* — both are monotonically neutral-to-harmful across their entire
+tested range in this stacked-error (param+wind+da_nx=32) S1 regime, they
+just fail at very different rates. This weakens "ETKF just needs the right
+inflation" as an explanation for EnKF's edge, and points more toward a
+**structural** difference: ETKF's deterministic square-root ensemble
+transform vs. EnKF's stochastic perturbed-observations update — the former
+has no built-in randomization to counteract ensemble collapse/skew under
+strong nonlinearity, the latter does. Still untested directly. Next steps
+(not yet run): (1) `etkf_ridge` sweep (Kalman-gain regularization, also never
+exercised — targets the transform-matrix inversion specifically, unlike
+inflation which targets ensemble spread); (2) repeat the same
+inflation/additive/ridge sweeps on **EnKF itself** (never stress-tested — if
+EnKF also degrades under any of its own inflation, the story is
+ensemble-collapse-general rather than ETKF-transform-specific); (3)
+ensemble-size sweep (`N_ensemble`, hardcoded 80 everywhere so far).
+
+Also discovered running many (7) of these short GPU jobs concurrently in the
+background silently kills most of them (5/7 died mid-run, no traceback, exit
+code 0) — not a numerical issue (both stable and unstable configs died
+identically) but resource contention. Re-running strictly one-at-a-time
+fixed it. Worth remembering for any future batch of short interactive GPU
+sensitivity runs on this node.
+
+### ETKF/EnKF sensitivity, part 3: ridge sweep + EnKF cross-check — resolves the open question (2026-09-11)
+
+Consolidated 28-config sweep (`qg_da_sensitivity_sweep_scratch.py`, one
+process, cache loaded once) filling the remaining gaps from parts 1-2: S0
+inflation + additive grids (never run on S0 before), `etkf_ridge` grid on
+S1 (never exercised), and EnKF's own inflation grid on **both** S0 and S1
+(EnKF had never been hyperparameter-swept at all — every prior EnKF result
+used the fixed `inflation=1.0` default). Full report generator:
+`reports/qg/generate_da_sensitivity_report.py` →
+`reports/qg/outputs/da_sensitivity_s0_s1_report.md`.
+
+**Bug caught before wasting GPU time**: the first attempt's S0 window
+builder skipped `QGS01Dataset`'s scenario-wrapping step (`_scenario_window`,
+which populates `da_params`/`da_model`/`da_nx` — required unconditionally by
+`_build_dyn`, not just for S1's biased case), so all 10 S0 configs failed
+instantly with `KeyError: 'da_params'`. Fixed by wrapping S0 windows through
+`QGS01Dataset(cfg, "test_s0", base_windows=...)` exactly like the S1 builder
+already did, mirroring `data.qg._scenario_window`'s `"test_s0"` branch
+(unbiased `da_params`, `da_model="qg2l"`, `da_nx=cfg.nx`).
+
+**Key result 1 — inflation-driven divergence is shared, not ETKF-specific**:
+ETKF and EnKF collapse in near-lockstep under multiplicative inflation, on
+**both** S0 and S1. S0 q EV at inflation={1.00...1.05}: ETKF
+{0.402,0.402,0.296,0.147,−40.4,−123.5} vs EnKF
+{0.463,0.435,0.313,0.156,−43.0,−124.3} — virtually the same curve, same
+catastrophic threshold (between 1.03 and 1.04). S1 shows the identical
+pattern (ETKF {0.253,...,−39.5} vs EnKF {0.279,...,−39.5} at
+inflation={1.00,1.05}, both also diverging by inflation=1.1). This **rules
+out** "ETKF's deterministic square-root transform makes it uniquely fragile
+to over-inflation" as the explanation for EnKF's edge — both ensemble
+methods share this fragility equally.
+
+**Key result 2 — `etkf_ridge` is the real, actionable lever**: unlike
+either inflation flavor (both purely harmful, see part 2), increasing the
+Kalman-gain transform-matrix ridge regularization **monotonically helps**
+ETKF on S1: q EV rises 0.253 (default, ~1e-4-equivalent) → 0.258 (1e-3) →
+0.275 (1e-2) → 0.303 (1e-1) → **0.332 (ridge=1.0)** — which *exceeds* both
+EnKF's own N=10 baseline here (0.279) and EnKF's N=100 headline number
+(0.331, from the main S1 table above). EnKF has no equivalent knob (no
+deterministic transform-matrix inversion to regularize), so this is
+specific to fixing ETKF's own weakness.
+
+**Refined conclusion (supersedes part 2's "structural, still untested" — now
+tested and confirmed)**: the previously "unexplained" EnKF>ETKF gap on S1
+looks like it was largely an artifact of running ETKF with an
+**under-regularized transform-matrix inversion** (the implicit
+`etkf_ridge~1e-4` default used everywhere in the existing benchmark), not a
+fundamental method limitation, and not an ensemble-collapse/inflation
+story (that part is shared equally by both methods). **Not yet confirmed at
+full N=100** — next concrete step: re-run ETKF with `etkf_ridge=1.0` (try a
+slightly wider ridge grid too, e.g. 2.0/5.0, in case the N=10 optimum is even
+higher) at N=100 on both S0 and S1, checking psi EV and q layer2 aren't
+traded off, before considering it the new default S1 ETKF config in the
+main benchmark table (`qg_da_report.md`/PLAN.md's S1 table above).
+`N_ensemble` remains unswept (still hardcoded 80 everywhere).
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
