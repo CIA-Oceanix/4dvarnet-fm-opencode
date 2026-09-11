@@ -1,0 +1,84 @@
+# Q5: Q4's noisy forcing+param conditioning PLUS the raw initial-condition
+# (IC) snapshot as a fourth input, trained at the DA reference case's own
+# lag=5.0d/noise=0.05 (not Q1/Q3/Q4's 1.0d/0.01 defaults).
+#
+# Motivation (see PLAN.md's 2026-09-11 Q5 section): DA baselines get real
+# skill from their background (init_state rolled forward from a sampled
+# lag) that Q1/Q3/Q4 get zero equivalent of. lag=5.0 (not 1.0) is needed for
+# the IC to actually be informative rather than a barely-decorrelated
+# snapshot -- this also subsumes the earlier "should Q1/Q3/Q4 be retrained
+# at the DA reference case?" question into something more purposeful.
+#
+# IC representation: the exact window["init_state"] `_generate_obs_ic`
+# samples (raw PV/q, always the TRUE trajectory -- like obs, never
+# scenario-corrupted), inverted to psi via the per-window spectral inverter
+# and z-scored with the EXISTING global psi_norm_stats (no new stats file --
+# see data/qg_neural.py's `_ic_field`/`include_ic` docstring). A third
+# conditioning class, architecturally: one static field per WINDOW,
+# broadcast identically across all days -- unlike `forcing` (varies per
+# day) or `params` (a scalar vector) -- needs MonaiDirectUNetQG's new
+# `ic_dim` (2, matching nlayers).
+#
+# Noisy-conditioning severity revised for Q5: s1_param_bias/s1_amp_bias kept
+# at the actual DA-reference value (0.1, matching qg_da_s1_scratch.py) with
+# noisy_max=2.0 -- samples the effective bias fraction uniformly over
+# [0, 0.2] (frac~U(0,2) x 0.1), i.e. up to 2x the DA reference severity, not
+# Q4's indirect 1.5x0.15=0.225 ceiling (which used QGConfig's 0.15 class
+# default, not the DA campaign's actual 0.1 override).
+#
+# Shares model_type=direct_unet with Q1/Q3/Q4 -- pass --exp-id explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet --exp-id Q5_direct_unet_s1_noisy_ic_cond \
+#     --exp-dir experiments/Q5_direct_unet_s1_noisy_ic_cond \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# psi/param/forcing norm stats are reused unchanged from Q1/Q3/Q4's
+# precompute (computed from the true trajectory/params/wind_curl, which
+# don't depend on obs_noise_std_frac/init_lag_days at all -- only obs/IC
+# *sampling* does, not the underlying truth). No new precompute needed.
+
+experiment_id: Q5_direct_unet_s1_noisy_ic_cond
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  # [U1, rd, rek] -- beta excluded, see data/qg_neural.py's PARAM_KEYS comment.
+  param_dim: 3
+  cond_extra_dim: 1
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cond_mode: noisy
+  param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # [0, 0.2] effective bias range: s1_param_bias/s1_amp_bias=0.1 (the actual
+  # DA S1 reference severity) x noisy_max=2.0 (frac~U(0,2)).
+  noisy_max: 2.0
+  s1_param_bias: 0.1
+  s1_amp_bias: 0.1
+  # The DA reference case's own obs/IC protocol -- makes the IC genuinely
+  # informative and removes the out-of-training-distribution caveat Q1/Q3/Q4
+  # carry when evaluated at lag=5/noise=0.05 (see PLAN.md's 2026-09-11
+  # cross-scenario eval section).
+  init_lag_days: 5.0
+  obs_noise_std_frac: 0.05
+  include_ic: true

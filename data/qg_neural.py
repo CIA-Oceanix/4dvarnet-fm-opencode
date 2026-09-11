@@ -103,6 +103,21 @@ is applied via explicit stats dicts -- required whenever ``cond_mode !=
   weights to extract any signal from a ~1e-12-scale channel is a plausible
   destabilization mechanism). Spatial structure (storm location) is
   preserved by z-scoring with one global scalar, not per-grid-cell, stats.
+
+**Initial-condition conditioning (Q5, 2026-09-11):** ``QGNeuralDataset``
+can additionally condition on the raw initial-condition snapshot via
+``include_ic=True`` -- a **third, distinct conditioning class** from
+``forcing``/``params``: unlike ``forcing`` (one field *per day*) or
+``params`` (one scalar *vector*), the IC is one static spatial field for
+the *whole window*, unaffected by ``cond_mode`` (always the true
+``window["init_state"]``, like obs -- never scenario-corrupted, since
+physically it represents a recent analysis/observation, not the DA model's
+own internal forecast). Inverted to psi via the per-window spectral
+inverter (``_ic_field``) and z-scored with the same global
+``psi_norm_stats`` already used for state/obs -- no new stats file. Neither
+``init_state`` nor any IC-derived quantity was referenced anywhere in this
+module before Q5 -- Q1/Q3/Q4 have zero equivalent of the background/IC
+skill DA baselines get from rolling forward a sampled init state.
 """
 
 import random
@@ -312,6 +327,29 @@ def psi_to_q(state: torch.Tensor, rd: float, cfg: QGConfig,
     return inv.psi_to_q(state)
 
 
+def _ic_field(window: dict, cfg: QGConfig, psi_norm_stats: dict) -> torch.Tensor:
+    """Q5: the raw initial-condition snapshot (`window["init_state"]`,
+    physical PV/q, always from the *true* trajectory -- like obs, never
+    scenario-corrupted, since physically it represents a recent analysis/
+    observation, not the DA model's own internal forecast). Inverted to psi
+    and z-scored with the same global `psi_norm_stats` already used for the
+    state/obs channels (a third conditioning class, distinct from forcing/
+    params: one static field per window, not per-day/scalar -- see
+    `QGNeuralDataset`'s `include_ic` docstring)."""
+    rd = float(window["true_params"]["rd"])
+    inv = _reconstruct_inverter(cfg, rd)
+    ic_psi = inv.inner.streamfunctions(window["init_state"].reshape(1, -1))
+    if ic_psi.dim() == 4:
+        ic_psi = ic_psi.reshape(ic_psi.shape[0], -1)
+    ic_psi = ic_psi.squeeze(0)
+    split = layer_split(cfg)
+    ic_n = ic_psi.clone()
+    stats = psi_norm_stats
+    ic_n[:split] = normalize(ic_n[:split], {"mean": stats["mean"][0], "std": stats["std"][0]})
+    ic_n[split:] = normalize(ic_n[split:], {"mean": stats["mean"][1], "std": stats["std"][1]})
+    return ic_n
+
+
 @dataclass
 class WindowScale:
     """Per-window per-layer std (streamfunction psi + PV q).
@@ -355,7 +393,7 @@ class QGBatch:
     unlike `states`/`obs`, it is not normalized (see the module docstring).
     """
 
-    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None):
+    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None, ic=None):
         self.states = states
         self.obs = obs
         self.obs_mask = obs_mask
@@ -363,6 +401,7 @@ class QGBatch:
         self.states_q = states_q
         self.rd = rd
         self.params = params
+        self.ic = ic
         self.batch_size, self.T, self.dim = states.shape
 
     def to(self, device):
@@ -374,6 +413,8 @@ class QGBatch:
         self.rd = self.rd.to(device)
         if self.params is not None:
             self.params = self.params.to(device)
+        if self.ic is not None:
+            self.ic = self.ic.to(device)
         return self
 
 
@@ -396,7 +437,7 @@ class QGNeuralDataset(Dataset):
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5,
-                 forcing_norm_stats: dict | None = None):
+                 forcing_norm_stats: dict | None = None, include_ic: bool = False):
         if cond_mode not in ("none", "true", "noisy", "scenario"):
             hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
                     "this string -- quote it as `cond_mode: \"true\"`)"
@@ -414,6 +455,11 @@ class QGNeuralDataset(Dataset):
                 "the unit-variance psi/obs/param channels it's concatenated with; "
                 "leaving it unnormalized destabilized a real training run (see "
                 "module docstring), see precompute_qg_norm_stats.py --output-forcing")
+        if include_ic and psi_norm_stats is None:
+            raise ValueError(
+                "psi_norm_stats is required when include_ic=True -- the IC is "
+                "inverted to psi and z-scored with the same global psi stats "
+                "used for state/obs (Q5, see data.qg_neural._ic_field)")
         self.windows = windows
         self.cfg = cfg
         self.psi_norm_stats = psi_norm_stats
@@ -422,6 +468,7 @@ class QGNeuralDataset(Dataset):
         self.param_norm_stats = param_norm_stats
         self.noisy_max = noisy_max
         self.forcing_norm_stats = forcing_norm_stats
+        self.include_ic = include_ic
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -476,7 +523,9 @@ class QGNeuralDataset(Dataset):
             forcing = normalize(forcing, self.forcing_norm_stats)
             params = normalize(params, self.param_norm_stats)
 
-        return psi_n, obs_pad, mask_full, forcing, qs, rd, params
+        ic = _ic_field(w, self.cfg, self.psi_norm_stats) if self.include_ic else None
+
+        return psi_n, obs_pad, mask_full, forcing, qs, rd, params, ic
 
     def raw_psi(self, idx: int) -> torch.Tensor:
         return psi_daily(self.windows[idx], self.cfg)
@@ -499,7 +548,8 @@ def qg_collate(batch: list) -> QGBatch:
     states_q = torch.stack([b[4] for b in batch])
     rd = torch.stack([b[5] for b in batch]).squeeze(-1)
     params = None if batch[0][6] is None else torch.stack([b[6] for b in batch])
-    return QGBatch(states, obs, masks, forcing, states_q, rd, params=params)
+    ic = None if batch[0][7] is None else torch.stack([b[7] for b in batch])
+    return QGBatch(states, obs, masks, forcing, states_q, rd, params=params, ic=ic)
 
 
 def denorm_psi(x: torch.Tensor, cfg: QGConfig, psi_norm_stats: dict | None) -> torch.Tensor:

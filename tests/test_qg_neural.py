@@ -145,7 +145,7 @@ def test_dataset_and_collate_shapes():
     norm = _psi_norm_stats(cfg, [w])
     ds = QGNeuralDataset([w], cfg, norm)
     item = ds[0]
-    psi_n, obs_pad, mask, forcing, q_raw, rd, params = item
+    psi_n, obs_pad, mask, forcing, q_raw, rd, params, ic = item
     split = layer_split(cfg)
     days = 2
     assert psi_n.shape == (days, 2 * split)
@@ -174,7 +174,7 @@ def test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])  # stats computed on the same window(s)
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, q_raw, _rd, _params = ds[0]
+    psi_n, _obs, _mask, _f, q_raw, _rd, _params, _ic = ds[0]
     qs = q_daily(w, cfg)
     assert torch.allclose(q_raw, qs)
     # normalized against its own stats -> exactly unit variance per layer
@@ -186,7 +186,7 @@ def test_global_normalization_makes_psi_unit_variance_but_leaves_q_raw():
 def test_dataset_without_norm_stats_is_raw_identity():
     cfg, w = _window()
     ds = QGNeuralDataset([w], cfg, psi_norm_stats=None)
-    psi_n, _obs, _mask, _f, _q, _rd, _params = ds[0]
+    psi_n, _obs, _mask, _f, _q, _rd, _params, _ic = ds[0]
     assert torch.allclose(psi_n, psi_daily(w, cfg))
 
 
@@ -202,7 +202,7 @@ def test_denorm_psi_round_trip():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, _q, _rd, _params = ds[0]
+    psi_n, _obs, _mask, _f, _q, _rd, _params, _ic = ds[0]
     back = denorm_psi(psi_n, cfg, norm)
     ps = psi_daily(w, cfg)
     assert torch.allclose(back, ps, atol=1e-3 * ps.abs().max())
@@ -220,7 +220,7 @@ def test_q_from_psi_norm_matches_raw_pv():
     cfg, w = _window()
     norm = _psi_norm_stats(cfg, [w, w])
     ds = QGNeuralDataset([w], cfg, norm)
-    psi_n, _obs, _mask, _f, q_true, _rd, _params = ds[0]
+    psi_n, _obs, _mask, _f, q_true, _rd, _params, _ic = ds[0]
     q_pred = q_from_psi_norm(psi_n, float(w["true_params"]["rd"]), cfg, norm,
                              torch.device("cpu"))
     assert torch.allclose(q_pred, q_true, atol=1e-3 * q_true.abs().max())
@@ -346,8 +346,8 @@ def test_on_the_fly_obs_varies_across_draws_target_fixed():
     cfg = _cfg()
     windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
     ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True)
-    psi_a, obs_a, _mask_a, _f_a, q_a, _rd_a, _params_a = ds[0]
-    psi_b, obs_b, _mask_b, _f_b, q_b, _rd_b, _params_b = ds[0]
+    psi_a, obs_a, _mask_a, _f_a, q_a, _rd_a, _params_a, _ic_a = ds[0]
+    psi_b, obs_b, _mask_b, _f_b, q_b, _rd_b, _params_b, _ic_b = ds[0]
     assert torch.equal(psi_a, psi_b)
     assert torch.equal(q_a, q_b)
     assert not torch.equal(obs_a, obs_b)
@@ -406,7 +406,7 @@ def test_cond_mode_true_matches_true_forcing_and_params():
     fstats = _forcing_norm_stats(cfg, [w, w])
     ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats,
                         forcing_norm_stats=fstats)
-    _psi, _obs, _mask, forcing, _q, _rd, params = ds[0]
+    _psi, _obs, _mask, forcing, _q, _rd, params, _ic = ds[0]
     assert forcing.shape == (2, cfg.ny, cfg.nx)
     assert forcing.abs().sum() > 0.0
     spd = steps_per_day(cfg)
@@ -418,7 +418,7 @@ def test_cond_mode_true_matches_true_forcing_and_params():
     expected_params = (true_vec - pstats["mean"]) / pstats["std"]
     assert torch.allclose(params, expected_params, atol=1e-4)
     # deterministic: repeated draws give identical forcing/params
-    _psi2, _obs2, _mask2, forcing2, _q2, _rd2, params2 = ds[0]
+    _psi2, _obs2, _mask2, forcing2, _q2, _rd2, params2, _ic2 = ds[0]
     assert torch.equal(forcing, forcing2)
     assert torch.equal(params, params2)
 
@@ -460,14 +460,14 @@ def test_cond_mode_scenario_matches_true_on_s0_and_biased_on_s1():
                               forcing_norm_stats=fstats)
     ds_scenario_s0 = QGNeuralDataset([w_s0], cfg, cond_mode="scenario",
                                      param_norm_stats=pstats, forcing_norm_stats=fstats)
-    _p1, _o1, _m1, forcing_true, _q1, _r1, params_true = ds_true[0]
-    _p2, _o2, _m2, forcing_s0, _q2, _r2, params_s0 = ds_scenario_s0[0]
+    _p1, _o1, _m1, forcing_true, _q1, _r1, params_true, _ic1 = ds_true[0]
+    _p2, _o2, _m2, forcing_s0, _q2, _r2, params_s0, _ic2 = ds_scenario_s0[0]
     assert torch.equal(forcing_true, forcing_s0)
     assert torch.equal(params_true, params_s0)
 
     ds_scenario_s1 = QGNeuralDataset([w_s1], cfg, cond_mode="scenario",
                                      param_norm_stats=pstats, forcing_norm_stats=fstats)
-    _p3, _o3, _m3, forcing_s1, _q3, _r3, params_s1 = ds_scenario_s1[0]
+    _p3, _o3, _m3, forcing_s1, _q3, _r3, params_s1, _ic3 = ds_scenario_s1[0]
     assert torch.isfinite(forcing_s1).all()
     assert torch.isfinite(params_s1).all()
     assert not torch.equal(params_s0, params_s1), (
@@ -477,9 +477,52 @@ def test_cond_mode_scenario_matches_true_on_s0_and_biased_on_s1():
         "S1's corrupted wind_state_corrupted must produce a different forcing "
         "field than S0's true wind state")
     # deterministic: repeated draws on the same S1 window give identical results
-    _p4, _o4, _m4, forcing_s1b, _q4, _r4, params_s1b = ds_scenario_s1[0]
+    _p4, _o4, _m4, forcing_s1b, _q4, _r4, params_s1b, _ic4 = ds_scenario_s1[0]
     assert torch.equal(forcing_s1, forcing_s1b)
     assert torch.equal(params_s1, params_s1b)
+
+
+def test_include_ic_requires_psi_norm_stats():
+    cfg, w = _window()
+    try:
+        QGNeuralDataset([w], cfg, psi_norm_stats=None, include_ic=True)
+        assert False, "expected ValueError for include_ic=True with no psi_norm_stats"
+    except ValueError:
+        pass
+
+
+def test_include_ic_returns_normalized_psi_scale_ic_and_none_when_false():
+    """Q5: `ic` is the window's own init_state, inverted to psi and z-scored
+    with psi_norm_stats -- finite, plausible O(1)-ish scale (not raw q's
+    ~1e-5 scale), deterministic across repeated draws (unlike cond_mode
+    "noisy" forcing/params). `include_ic=False` (default) -> ic is None."""
+    cfg, w = _window()
+    norm = _psi_norm_stats(cfg, [w, w])
+    ds_no_ic = QGNeuralDataset([w], cfg, norm, include_ic=False)
+    item = ds_no_ic[0]
+    assert item[7] is None
+
+    ds = QGNeuralDataset([w], cfg, norm, include_ic=True)
+    item_a = ds[0]
+    ic = item_a[7]
+    split = layer_split(cfg)
+    assert ic.shape == (2 * split,)
+    assert torch.isfinite(ic).all()
+    assert ic.std() > 1e-3, f"ic std={ic.std():.3e} looks like raw q scale, not normalized psi"
+    item_b = ds[0]
+    assert torch.equal(ic, item_b[7])  # deterministic: init_state isn't resampled by include_ic
+
+
+def test_qg_collate_stacks_ic_when_present():
+    cfg, w = _window()
+    norm = _psi_norm_stats(cfg, [w, w])
+    ds = QGNeuralDataset([w, w], cfg, norm, include_ic=True)
+    batch = qg_collate([ds[0], ds[1]])
+    assert batch.ic is not None
+    assert batch.ic.shape == (2, 2 * layer_split(cfg))
+    ds_no_ic = QGNeuralDataset([w, w], cfg, norm, include_ic=False)
+    batch_no_ic = qg_collate([ds_no_ic[0], ds_no_ic[1]])
+    assert batch_no_ic.ic is None
 
 
 def test_cached_qg_dynamics_reused_and_matches_uncached():
@@ -594,7 +637,7 @@ def test_normalized_forcing_is_order_one_not_raw_scale():
         "sanity check on the fixture itself: raw wind_curl should be tiny")
     ds = QGNeuralDataset([w], cfg, cond_mode="true", param_norm_stats=pstats,
                         forcing_norm_stats=fstats)
-    _psi, _obs, _mask, forcing, _q, _rd, _params = ds[0]
+    _psi, _obs, _mask, forcing, _q, _rd, _params, _ic = ds[0]
     assert forcing.std() > 1e-3, (
         f"normalized forcing std={forcing.std():.3e} is still tiny -- "
         "normalization did not actually rescale it")

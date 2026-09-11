@@ -84,7 +84,7 @@ def build_cfg(**overrides) -> QGConfig:
 
 
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
-                cond_extra_dim: int = 0) -> torch.nn.Module:
+                cond_extra_dim: int = 0, ic_dim: int = 0) -> torch.nn.Module:
     if model_type == "direct_unet":
         # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
@@ -95,7 +95,8 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # `fdv` env.
         from models.monai_unet_qg2d import MonaiDirectUNetQG
         return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
-                                 cond_extra_dim=cond_extra_dim, hidden_channels=[64, 128, 256])
+                                 cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
+                                 hidden_channels=[64, 128, 256])
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
@@ -205,11 +206,11 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
 
 def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1,
                      cond_mode="none", param_norm_stats=None, noisy_max=1.5,
-                     forcing_norm_stats=None):
+                     forcing_norm_stats=None, include_ic=False):
     """Return per-window physical psi estimates (W, days, 2*ny*nx) + per-window rd list."""
     dataset = QGNeuralDataset(windows, cfg, norm, cond_mode=cond_mode,
                               param_norm_stats=param_norm_stats, noisy_max=noisy_max,
-                              forcing_norm_stats=forcing_norm_stats)
+                              forcing_norm_stats=forcing_norm_stats, include_ic=include_ic)
     loader = DataLoader(dataset, batch_size=8, shuffle=False, collate_fn=qg_collate)
     rds = [float(dataset.rd(i)) for i in range(len(windows))]
     model = model.to(device)
@@ -292,6 +293,23 @@ def main():
                          "Q4's per-draw corruption-severity fraction is resampled in "
                          "[0, noisy_max] each __getitem__ call (default 1.5, matching "
                          "the L96 SDA3 noisy_da_max convention).")
+    ap.add_argument("--s1-param-bias", type=float, default=None,
+                    help="Overrides the experiment YAML's data.s1_param_bias if given "
+                         "-- the rd/rek bias magnitude cond_mode='noisy' scales by its "
+                         "resampled frac (default: QGConfig's own 0.15 class default; "
+                         "the DA S1 reference campaign uses 0.1, see qg_da_s1_scratch.py "
+                         "-- Q5 uses 0.1 with noisy_max=2.0 for an effective [0,0.2] range).")
+    ap.add_argument("--s1-amp-bias", type=float, default=None,
+                    help="Overrides the experiment YAML's data.s1_amp_bias if given -- "
+                         "same as --s1-param-bias but for the wind-amplitude bias.")
+    ap.add_argument("--include-ic", action=argparse.BooleanOptionalAction, default=False,
+                    help="Overrides the experiment YAML's data.include_ic if given -- "
+                         "Q5: condition on the raw initial-condition snapshot (always "
+                         "the true window['init_state'], like obs -- never scenario-"
+                         "corrupted), inverted to psi and z-scored with the psi norm "
+                         "stats. A third conditioning class distinct from forcing/params "
+                         "(one static field per window, not per-day/scalar) -- see "
+                         "data/qg_neural.py's include_ic docstring.")
     ap.add_argument("--num-train", type=int, default=1000)
     ap.add_argument("--num-val", type=int, default=100)
     ap.add_argument("--num-test", type=int, default=100)
@@ -324,8 +342,12 @@ def main():
     # every split, so train/val's on-the-fly obs follow the same protocol.
     ap.add_argument("--obs-geometry", default="random_columns")
     ap.add_argument("--cols-per-day", type=int, default=4)
-    ap.add_argument("--obs-noise-std-frac", type=float, default=0.01)
-    ap.add_argument("--init-lag-days", type=float, default=1.0)
+    # default=None (not 0.01/1.0) so the experiment YAML's data.* values (if
+    # any) aren't silently overridden -- Q5 needs obs_noise_std_frac=0.05/
+    # init_lag_days=5.0 to actually take effect from its config alone,
+    # without requiring the launcher to also pass these on the CLI.
+    ap.add_argument("--obs-noise-std-frac", type=float, default=None)
+    ap.add_argument("--init-lag-days", type=float, default=None)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
@@ -342,6 +364,10 @@ def main():
     # `model.param_dim`/`model.cond_extra_dim`/`data.cond_mode` -- CLI flags
     # below only override it when explicitly given.
     exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    obs_noise_std_frac = (args.obs_noise_std_frac if args.obs_noise_std_frac is not None
+                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.01)))
+    init_lag_days = (args.init_lag_days if args.init_lag_days is not None
+                     else float(exp_cfg.data.get("init_lag_days", 1.0)))
     q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
                      else float(exp_cfg.training.q_loss_weight))
     do_normalize = (args.normalize if args.normalize is not None
@@ -351,6 +377,8 @@ def main():
     norm = load_norm_stats(norm_stats_path) if do_normalize else None
     param_dim = int(exp_cfg.model.get("param_dim", 0))
     cond_extra_dim = int(exp_cfg.model.get("cond_extra_dim", 0))
+    include_ic = bool(args.include_ic or exp_cfg.data.get("include_ic", False))
+    ic_dim = 2 if include_ic else 0
     cond_mode = args.cond_mode or exp_cfg.data.get("cond_mode", "none")
     noisy_max = (args.noisy_max if args.noisy_max is not None
                 else float(exp_cfg.data.get("noisy_max", 1.5)))
@@ -368,6 +396,10 @@ def main():
                          "the forcing field unnormalized collapsed a real training run, "
                          "see data/qg_neural.py's module docstring)")
     forcing_norm = load_norm_stats(forcing_norm_stats_path) if cond_mode != "none" else None
+    s1_param_bias = (args.s1_param_bias if args.s1_param_bias is not None
+                     else exp_cfg.data.get("s1_param_bias", None))
+    s1_amp_bias = (args.s1_amp_bias if args.s1_amp_bias is not None
+                  else exp_cfg.data.get("s1_amp_bias", None))
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -379,8 +411,9 @@ def main():
     test_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
                         obs_geometry=args.obs_geometry,
                         cols_per_day=args.cols_per_day,
-                        obs_noise_std_frac=args.obs_noise_std_frac,
-                        init_lag_days=args.init_lag_days)
+                        obs_noise_std_frac=obs_noise_std_frac,
+                        init_lag_days=init_lag_days,
+                        s1_param_bias=s1_param_bias, s1_amp_bias=s1_amp_bias)
     state_dim = test_cfg.state_dim
 
     if os.path.exists(results_path) and args.eval_only is None:
@@ -403,10 +436,12 @@ def main():
 
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
-                                   noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
+                                   noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                   include_ic=include_ic)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
-                                 noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
+                                 noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                 include_ic=include_ic)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                   collate_fn=qg_collate, num_workers=args.num_workers,
                                   persistent_workers=args.num_workers > 0)
@@ -425,7 +460,7 @@ def main():
         print("normalization disabled (--no-normalize)")
 
     model = build_model(model_type, test_cfg, param_dim=param_dim,
-                       cond_extra_dim=cond_extra_dim).to(device)
+                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim).to(device)
 
     total_train = 0.0
     if args.eval_only is None:
@@ -453,7 +488,8 @@ def main():
     est_psi, est_rd = estimate_windows(model, test_windows, test_cfg, model_type,
                                        device, norm=norm, n_members=args.n_members,
                                        cond_mode=cond_mode, param_norm_stats=param_norm,
-                                       noisy_max=noisy_max, forcing_norm_stats=forcing_norm)
+                                       noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                       include_ic=include_ic)
 
     truth_psi = np.stack([psi_daily(w, test_cfg).numpy() for w in test_windows])
     truth_q = np.stack([q_daily(w, test_cfg).numpy() for w in test_windows])
@@ -490,7 +526,10 @@ def main():
                    "cond_mode": cond_mode, "param_dim": param_dim,
                    "cond_extra_dim": cond_extra_dim, "noisy_max": noisy_max,
                    "param_norm_stats_path": param_norm_stats_path,
-                   "forcing_norm_stats_path": forcing_norm_stats_path},
+                   "forcing_norm_stats_path": forcing_norm_stats_path,
+                   "s1_param_bias": test_cfg.s1_param_bias,
+                   "s1_amp_bias": test_cfg.s1_amp_bias,
+                   "include_ic": include_ic, "ic_dim": ic_dim},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),

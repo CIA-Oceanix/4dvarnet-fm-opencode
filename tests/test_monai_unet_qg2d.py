@@ -10,7 +10,7 @@ class _FakeBatch:
     pass
 
 
-def _batch(B, T, ny, nx, cond_extra_dim=0, param_dim=0):
+def _batch(B, T, ny, nx, cond_extra_dim=0, param_dim=0, ic_dim=0):
     D = 2 * ny * nx
     b = _FakeBatch()
     b.obs = torch.randn(B, T, D)
@@ -19,6 +19,9 @@ def _batch(B, T, ny, nx, cond_extra_dim=0, param_dim=0):
     # cond_extra_dim=0 since forward() never reads it in that case.
     b.forcing = torch.zeros(B, T, ny, nx)
     b.params = torch.zeros(B, param_dim)
+    # ic (Q5) is one static (B, ic_dim*ny*nx) field per window -- zeros when
+    # ic_dim=0 since forward() never reads it in that case.
+    b.ic = torch.zeros(B, ic_dim * ny * nx)
     return b
 
 
@@ -51,6 +54,36 @@ def test_forward_with_forcing_and_params_conditioning():
     b_zero.obs = b.obs
     b_zero.forcing = torch.zeros_like(b.forcing)
     b_zero.params = torch.zeros_like(b.params)
+    out_zero = model(b_zero)
+    assert not torch.allclose(out, out_zero)
+
+
+def test_forward_with_ic_conditioning():
+    """Q5: the forward pass actually uses `batch.ic` when ic_dim > 0 (zeroing
+    it must change the output), and the SAME static IC field is broadcast
+    identically across all T days (unlike forcing, which varies per day)."""
+    ny = nx = 8
+    days = 3
+    model = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, ic_dim=2, hidden_channels=[8, 16])
+    final = model.unet.backbone.out[2].conv
+    torch.nn.init.normal_(final.weight, std=0.05)
+    torch.nn.init.normal_(final.bias, std=0.05)
+    model.eval()
+
+    b = _FakeBatch()
+    b.obs = torch.randn(1, days, 2 * ny * nx)
+    b.forcing = torch.zeros(1, days, ny, nx)
+    b.params = torch.zeros(1, 0)
+    b.ic = torch.randn(1, 2 * ny * nx)
+    out = model(b)
+    assert out.shape == (1, days, 2 * ny * nx)
+    assert torch.isfinite(out).all()
+
+    b_zero = _FakeBatch()
+    b_zero.obs = b.obs
+    b_zero.forcing = b.forcing
+    b_zero.params = b.params
+    b_zero.ic = torch.zeros_like(b.ic)
     out_zero = model(b_zero)
     assert not torch.allclose(out, out_zero)
 
