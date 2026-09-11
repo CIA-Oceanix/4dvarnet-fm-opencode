@@ -39,6 +39,10 @@ echo "     detached at iteration 5, training loss = mean of MSE at iteration"
 echo "     4 and iteration 9 (deep supervision + smaller backward graph)."
 echo "     val_loss is UNCHANGED -- always the final-iteration answer only,"
 echo "     never the block average (see FourDVarNetSolver.compute_loss)."
+echo "  RETRAIN under the normalization fix: subgrad+state's g_obs/g_prior"
+echo "  are no longer run through _normalize_channels (same root cause/fix"
+echo "  as the equal-capacity job's retrain -- see that sbatch script)."
+echo "  +fresh=true: the old (now-stale) checkpoint is archived, not resumed."
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
 echo "============================================"
 echo
@@ -47,7 +51,8 @@ python train.py \
   --config-name experiment/${EXPERIMENT} \
   hydra.run.dir=. \
   hydra.output_subdir=null \
-  ++data.test_cache=${TEST_CACHE}
+  ++data.test_cache=${TEST_CACHE} \
+  +fresh=true
 
 echo ""
 echo " Done: ${EXPERIMENT} at $(date)"

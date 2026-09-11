@@ -292,6 +292,15 @@ class FourDVarNetConfig:
     # only) -- fully backward-compatible with every existing config/checkpoint.
     tbptt_n_blocks: int = 1
     tbptt_block_size: Optional[int] = None
+    # None (default) = falls back to clip_range, today's behavior. Bounds
+    # ONLY the grad-only/grad+state autograd gradient (after
+    # _normalize_channels' RMS division, via a smooth tanh soft-clip, not a
+    # hard clamp) -- independent of clip_range, which still only bounds the
+    # raw state branch via a hard clamp every iteration. Set narrower than
+    # clip_range to make the soft-clip nonlinearity actually engage near its
+    # real operating range (the grad term is RMS-normalized to ~1) without
+    # also tightening the unrelated state-branch clamp.
+    grad_clip_range: Optional[float] = None
 
 
 @dataclass
@@ -309,6 +318,7 @@ class FourDVarNetCFMConfig:
     obs_weight: float = 1.0
     min_obs_weight: float = 1e-3
     trainable_obs_weight: bool = True
+    grad_clip_range: Optional[float] = None
 
 
 @dataclass
