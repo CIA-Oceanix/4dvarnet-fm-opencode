@@ -421,15 +421,24 @@ def main():
         print(f"Results exist at {results_path}, skipping.")
         return
 
-    # `test_cache_cfg` matches the production cache's key exactly (plain
-    # nx/seed/num_windows, like train_cfg/val_cfg below) -- NOT `test_cfg`
-    # itself, which may carry obs/IC-protocol overrides (Q5's lag=5.0/
-    # noise=0.05/s1_param_bias=0.1) that would otherwise change
-    # `_truth_cache_path`'s hash and silently miss the cache, triggering a
-    # full from-scratch truth rollout (caught the hard way: Q5/Q3-lag5
-    # smoke tests had to be killed after ~10 minutes of exactly this before
-    # this fix -- see PLAN.md's 2026-09-12 note).
-    test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test)
+    # `test_cache_cfg` matches the production TEST cache's key exactly.
+    # Unlike train_cfg/val_cfg below (whose cache was built with plain
+    # QGConfig defaults, irrelevant since on_the_fly_obs overwrites them
+    # regardless), the test cache was specifically corrected
+    # (`fix_qg_test_obs_ic.py`) to have the real S0 reference-case obs/IC
+    # protocol baked in -- obs_geometry="random_columns"/cols_per_day=4/
+    # obs_noise_std_frac=0.01/init_lag_days=1.0, NOT QGConfig's raw class
+    # defaults ("grid"/3/0.05/0.5) and NOT `test_cfg`'s own (possibly Q5-
+    # overridden) values. Using either of those instead of the actual
+    # baked-in key silently misses the cache and triggers a full
+    # from-scratch truth rollout -- caught the hard way twice: first with
+    # `test_cfg` directly (obvious once diagnosed), then again with a
+    # nx/seed/num_windows-only `test_cache_cfg` that still didn't match
+    # because QGConfig's plain defaults aren't the S0 reference values
+    # either (see PLAN.md's 2026-09-12 note for both).
+    test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
+                              obs_geometry="random_columns", cols_per_day=4,
+                              obs_noise_std_frac=0.01, init_lag_days=1.0)
     test_windows = ensure_truth_cache_redrawn(test_cache_cfg, test_cfg, args.num_test,
                                               args.cache_dir)
     if args.eval_only is None:
