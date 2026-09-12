@@ -190,11 +190,12 @@ class QGNeuralLightning(pl.LightningModule):
         return loss
 
 
-def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
+def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float,
+                     gradient_clip_val: float = 10.0):
     return OmegaConf.create({
         "training": {
-            "stage1": {"epochs": epochs, "lr": lr, "gradient_clip_val": 10.0},
-            "stage2": {"epochs": 0, "lr": lr, "gradient_clip_val": 10.0},
+            "stage1": {"epochs": epochs, "lr": lr, "gradient_clip_val": gradient_clip_val},
+            "stage2": {"epochs": 0, "lr": lr, "gradient_clip_val": gradient_clip_val},
             "accelerator": "auto",
             "loss": {"use_gradient": False, "gradient_weight": 0.0},
         },
@@ -263,6 +264,19 @@ def main():
                     help="Overrides the experiment YAML's data.normalize if given.")
     ap.add_argument("--cosine-scheduler", action=argparse.BooleanOptionalAction, default=True,
                     help="Cosine-anneal the LR over training (default: on).")
+    ap.add_argument("--gradient-clip-val", type=float, default=10.0,
+                    help="Global gradient-norm clip applied by PyTorch Lightning's "
+                         "Trainer (default 10.0, unchanged from the original). Note: "
+                         "QGNeuralLightning's own gradient_clip_val attribute is dead "
+                         "code (never read) -- this Trainer-level value is the only "
+                         "one that actually does anything.")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="If given, calls pl.seed_everything(seed) before building the "
+                         "model/dataloaders, for reproducible model init + dataloader "
+                         "shuffling. Default None: no explicit seeding (the project's "
+                         "prior behavior for every run so far -- Q1/Q3/Q4/Q5 all ran "
+                         "with whatever randomness torch/numpy picked up at process "
+                         "start, undocumented and unreproducible).")
     ap.add_argument("--norm-stats-path", default=None,
                     help="Overrides the experiment YAML's data.norm_stats_path if given "
                          "(psi mean/std produced by precompute_qg_norm_stats.py).")
@@ -352,6 +366,8 @@ def main():
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
+    if args.seed is not None:
+        pl.seed_everything(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_type = args.model_type
@@ -484,10 +500,11 @@ def main():
 
     total_train = 0.0
     if args.eval_only is None:
-        tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr)
+        tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr,
+                               gradient_clip_val=args.gradient_clip_val)
         lit = QGNeuralLightning(model, model_type, norm, test_cfg,
                                 q_loss_weight=q_loss_weight, lr=args.lr,
-                                gradient_clip_val=10.0,
+                                gradient_clip_val=args.gradient_clip_val,
                                 use_cosine_scheduler=args.cosine_scheduler,
                                 max_epochs=epochs)
         trainer = create_trainer(tcfg, 1)
@@ -549,7 +566,8 @@ def main():
                    "forcing_norm_stats_path": forcing_norm_stats_path,
                    "s1_param_bias": test_cfg.s1_param_bias,
                    "s1_amp_bias": test_cfg.s1_amp_bias,
-                   "include_ic": include_ic, "ic_dim": ic_dim},
+                   "include_ic": include_ic, "ic_dim": ic_dim,
+                   "gradient_clip_val": args.gradient_clip_val, "seed": args.seed},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),
