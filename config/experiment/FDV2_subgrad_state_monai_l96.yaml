@@ -1,0 +1,61 @@
+# @package _global_
+# Monai-backbone variant of FDV2_subgrad_state_l96.yaml (update_input=
+# subgrad+state -- a cheap two-residual proxy gradient, obs residual +
+# prior-autoencoder residual, ported from ronan_devs' GradSolver_withStep;
+# never calls torch.autograd.grad/create_graph, so architecturally immune to
+# the double-backward instability that grad+state needed a whole stability
+# recipe for -- see models/fourdvarnet.py::_build_update_input docstring).
+#
+# subgrad+state was previously trained only with the plain UNet1D backbone
+# (job 52358, 2026-09-07) and only reached 37/400 epochs (training cleanly)
+# before an unrelated shared-conda-env torch corruption killed it alongside
+# job 52305 (grad+state); never resumed, never ported to monai, never
+# benchmarked. This config is otherwise an EXACT copy of
+# FDV2_grad_state_monai_l96.yaml (the config job 52926 is running, the
+# post-NaN-fix grad+state monai retry) with only update_input swapped, for a
+# clean apples-to-apples comparison against that job once it finishes. Also
+# benefits from two fixes that postdate the original subgrad attempt: the
+# _normalize_channels ceiling-clamp fix (2026-09-10) and the prior_weight
+# reparametrization (2026-09-07, already present when subgrad was first
+# tried, but worth noting since both apply here identically to grad+state).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: true
+    aux_var_cost_weight: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+    obs_weight_lr_scale: 0.5
+    prior_unet_lr_scale: 0.5
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

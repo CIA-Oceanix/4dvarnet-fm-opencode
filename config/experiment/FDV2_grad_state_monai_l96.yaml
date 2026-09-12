@@ -1,4 +1,24 @@
 # @package _global_
+# RETRAIN under two fixes vs the original job 52926 recipe:
+# 1. _normalize_channels' post-normalization bound on the grad term is now a
+#    smooth tanh-based soft-clip (clip_range*tanh(t/clip_range)), not a hard
+#    torch.clamp -- a saturated value now keeps a small gradient pulling it
+#    back in, instead of the exactly-zero gradient a hard clamp gives there.
+#    Normalization ITSELF is kept (not removed, unlike subgrad+state's own
+#    residual channels) per prior published results (Fablet et al., JAMES)
+#    on its importance for this class of gradient-conditioned solver.
+# 2. grad_clip_range=5.0 (separate from clip_range=50.0, which still only
+#    bounds the raw state branch -- unchanged, still a hard clamp, out of
+#    scope here): with a hard clamp, 50 was a rarely-triggered safety
+#    ceiling (see test_clip_range_inactive_in_distribution); with a smooth
+#    tanh soft-clip, you want the nonlinearity to actually engage close to
+#    the real operating range (grad is RMS-normalized to ~1 by construction)
+#    rather than being so wide it's indistinguishable from the identity
+#    everywhere in practice. Kept as a separate field specifically so this
+#    doesn't also tighten the (untouched) state-branch clamp, which would
+#    start clipping legitimate state excursions (|x| up to ~10 in-distribution,
+#    per FourDVarNetSolver's own docstring -- well inside clip_range=50 but
+#    not inside 5).
 defaults:
   - /lorenz96_default
   - _self_
@@ -16,6 +36,7 @@ model:
     R_var: 0.5
     prior_weight: 1.0
     clip_range: 50.0
+    grad_clip_range: 5.0
     trainable_prior_weight: true
     aux_var_cost_weight: 0.1
     unet_backbone: monai

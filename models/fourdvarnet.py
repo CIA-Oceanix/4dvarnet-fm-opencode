@@ -27,7 +27,8 @@ def _validate_unet_backbone(unet_backbone):
 
 
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
-                          dropout, output_dim, monai_norm_num_groups=32):
+                          dropout, output_dim, monai_norm_num_groups=32,
+                          monai_num_res_blocks=2):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -49,6 +50,16 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
     ignored for ``unet_backbone="monai"``: MONAI's ``DiffusionModelUNet``
     always carries its own internal time embedding, sized by its own
     ``channels``, not by ``time_emb_dim``.
+
+    ``monai_num_res_blocks`` (default 2, ``MonaiUNet1D``'s own default,
+    unchanged): together with ``hidden_channels`` this selects a capacity
+    tier from the ladder in ``project_l96_monai_unet_complexity_tiers``
+    memory -- ``hidden_channels=[64,128,256], monai_num_res_blocks=2`` is
+    "M" (5,889,048 params, today's default for every FDV1/FDV2 config);
+    ``hidden_channels=[32,64,128], monai_num_res_blocks=1`` is "S"
+    (1,055,544 params); the same width with ``monai_num_res_blocks=2`` is
+    "S+" (1,482,264 params) instead. Ignored for ``unet_backbone="unet1d"``
+    (that backbone has no such knob).
     """
     _validate_unet_backbone(unet_backbone)
     if unet_backbone == "unet1d":
@@ -73,6 +84,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
         output_dim=output_dim,
         dropout=dropout,
         norm_num_groups=monai_norm_num_groups,
+        num_res_blocks=monai_num_res_blocks,
     )
 
 # Recognized update_input tokens (mirrors the config-string taxonomy explored on
@@ -167,6 +179,21 @@ def _prior_cost(prior_unet, state, tau=None):
     return F.mse_loss(state, _prior_ae(prior_unet, state, tau), reduction="sum")
 
 
+def _soft_clip(t, clip_range):
+    """``clip_range * tanh(t / clip_range)`` -- a smooth, everywhere-
+    differentiable alternative to ``torch.clamp(t, -clip_range, clip_range)``.
+    Identity-ish for ``|t| << clip_range`` (``tanh(u) ~= u`` near 0), asymptotes
+    smoothly to ``+/-clip_range`` for ``|t| >> clip_range``, but -- unlike a
+    hard clamp, whose gradient is exactly zero the instant a value saturates
+    -- keeps a small but nonzero gradient everywhere, so an element that
+    strays past the bound still gets some training signal pulling it back
+    in, instead of going permanently dead. Used only for the ``grad`` term's
+    post-normalization bound (``_normalize_channels``); the per-iteration
+    state-branch clamps in ``FourDVarNetSolver``/``FourDVarNetPredictStateCFM``
+    still use a hard ``torch.clamp`` -- not in scope here."""
+    return clip_range * torch.tanh(t / clip_range)
+
+
 def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
     """RMS normalization by a single global (whole-tensor) scalar -- matches
     ocean4dvarnet's ``ConvLstmGradModel.forward`` exactly: ``self._grad_norm
@@ -181,11 +208,14 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
     (both prior/obs residuals shrinking as the model converges), and dividing
     by a near-zero norm inflates ``t / norm`` unboundedly -- this fed a
     ``grad+state`` MonaiUNet1D run's ``create_graph=True`` double-backward
-    into a NaN (job 52672, 2026-09-10). The state branch ``x`` was already
-    clamped to ``[-clip_range, clip_range]`` every iteration
-    (``FourDVarNetSolver``/``FourDVarNetPredictStateCFM``'s own
-    ``clip_range=50.0``); this clamps the normalized channel the same way,
-    for the same reason.
+    into a NaN (job 52672, 2026-09-10). Bounded via ``_soft_clip`` (a smooth
+    ``tanh``-based soft-clip, not a hard ``torch.clamp``) so an element that
+    strays past ``clip_range`` still carries a small gradient back toward the
+    bound, instead of the exactly-zero gradient a hard clamp gives there --
+    this normalization is deliberately kept (not removed, unlike
+    "subgrad+state"'s own residual channels) per prior published results
+    (Fablet et al., JAMES) on its importance for this class of gradient-
+    conditioned solver.
 
     ``cache``/``key`` (both optional) reproduce the *caching* granularity
     ocean4dvarnet also uses: the norm is computed once, on the first call for
@@ -222,12 +252,12 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
     norm = (t ** 2).mean().sqrt().clamp_min(1e-8).detach()
     if cache is not None:
         norm = cache.setdefault(key, norm)
-    return torch.clamp(t / norm, -clip_range, clip_range)
+    return _soft_clip(t / norm, clip_range)
 
 
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
-                         grad_norm_cache=None):
+                         grad_norm_cache=None, clip_range=50.0):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -260,6 +290,26 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     forward-mode tensor ops only) while remaining fully backpropagable
     through ``prior_unet``'s parameters via ordinary autograd.
 
+    Deliberately NOT run through ``_normalize_channels`` (unlike
+    "grad-only"/"grad+state"'s real autograd gradient below, which does need
+    it -- an unbounded var_cost gradient can grow arbitrarily large).
+    ``obs - x`` and ``x - Phi(x)`` are differences of two already-comparable-
+    scale quantities (``obs``/``x`` both live in the same normalized state
+    space), so they need no extra rescaling -- and this specific channel is
+    architecturally masked to exactly zero outside observation times
+    (``obs_mask``), unlike the dense ``grad`` tensor: a *global* whole-tensor
+    RMS norm computed over that mostly-zero tensor is diluted by the
+    observation density (``sqrt(1/obs_density)`` too small, e.g. 10x for
+    ``obs_interval=100``), which then inflates the sparse nonzero entries by
+    that same factor at every observed timestep -- confirmed empirically as
+    the root cause of a severe fast-Y reconstruction collapse (variance
+    ratio ~0.6 vs ~0.9+ for every other scheme) across every "subgrad+state"
+    MonaiUNet1D run trained under the old normalized version, independent of
+    which capacity/tbptt config was used. Matches ronan_devs' own
+    ``GradSolver_withStep``, which never normalizes ``gobs``/``gprior``
+    either -- only the real-autograd ``grad`` branch's combined tensor goes
+    through its ``ConvLstmGradModel``'s internal norm.
+
     Simplification vs. the ronan_devs port: that implementation adds an extra
     ``lr_grad``-weighted raw-gradient term to the *outer* state update
     whenever the Python substring check ``'grad' in input_grad_update`` is
@@ -276,22 +326,23 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     if update_input == "obs+state":
         return torch.cat([x, obs_clean], dim=-1)
     if update_input == "subgrad+state":
-        g_obs = _normalize_channels((obs_clean - x) * obs_mask, cache=grad_norm_cache, key="g_obs")
-        g_prior = _normalize_channels(x - _prior_ae(prior_unet, x, tau), cache=grad_norm_cache, key="g_prior")
+        g_obs = (obs_clean - x) * obs_mask
+        g_prior = x - _prior_ae(prior_unet, x, tau)
         return torch.cat([g_obs, g_prior, x], dim=-1)
     # grad-only / grad+state
     with torch.enable_grad():
         var_cost = prior_weight * _prior_cost(prior_unet, x, tau) \
             + obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
         grad = _normalize_channels(torch.autograd.grad(var_cost, x, create_graph=True)[0],
-                                    cache=grad_norm_cache, key="grad")
+                                    cache=grad_norm_cache, key="grad", clip_range=clip_range)
     if update_input == "grad-only":
         return grad
     return torch.cat([grad, x], dim=-1)
 
 
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
-                       prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache):
+                       prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
+                       clip_range=50.0):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -321,7 +372,7 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
                                prior_unet=prior_unet, R_var=R_var,
                                obs_weight=obs_weight, prior_weight=prior_weight,
-                               grad_norm_cache=grad_norm_cache).transpose(1, 2)
+                               grad_norm_cache=grad_norm_cache, clip_range=clip_range).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -380,7 +431,10 @@ class FourDVarNetSolver(nn.Module):
     ``models/lorenz96_dynamics.py``, ``evaluation/baselines.py``, and
     ``FourDVarNetPredictStateCFM`` itself) closes this gap; inactive for
     ``"obs+state"``/``"obs-only"`` in practice (in-distribution state range
-    ``|x|<10``, well inside the default ``clip_range=50.0``).
+    ``|x|<10``, well inside the default ``clip_range=50.0``). This is a hard
+    ``torch.clamp``, unrelated to (and unaffected by) ``grad_clip_range``
+    below, which bounds only the "grad-only"/"grad+state" gradient term via
+    a smooth ``tanh`` soft-clip -- see ``_soft_clip``/``_normalize_channels``.
     """
 
     def __init__(self, state_dim=24, hidden_channels=None, time_emb_dim=64,
@@ -390,7 +444,13 @@ class FourDVarNetSolver(nn.Module):
                  aux_var_cost_weight=0.0,
                  prior_tau_conditioning=False,
                  unet_backbone="unet1d",
-                 monai_norm_num_groups=32):
+                 monai_norm_num_groups=32,
+                 monai_num_res_blocks=2,
+                 prior_hidden_channels=None,
+                 tbptt_n_blocks=1,
+                 tbptt_block_size=None,
+                 grad_clip_range=None,
+                 init_state_var=0.0):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -401,14 +461,48 @@ class FourDVarNetSolver(nn.Module):
                 "no such MonaiUNet1D checkpoint exists, so this combination is "
                 "not supported (see _build_backbone_unet)."
             )
+        if tbptt_block_size is None:
+            if tbptt_n_blocks != 1:
+                raise ValueError(
+                    "tbptt_block_size must be set explicitly whenever "
+                    "tbptt_n_blocks != 1 -- both must be given together in "
+                    "the config, no derivation from N_outer alone."
+                )
+            tbptt_block_size = N_outer
+        if tbptt_n_blocks * tbptt_block_size != N_outer:
+            raise ValueError(
+                f"tbptt_n_blocks ({tbptt_n_blocks}) * tbptt_block_size "
+                f"({tbptt_block_size}) must equal N_outer ({N_outer})."
+            )
         self.update_input = update_input
         self.state_dim = state_dim
         self.N_outer = N_outer
         self.R_var = R_var
         self.clip_range = clip_range
+        # grad_clip_range (None default -> falls back to clip_range, today's
+        # behavior): bounds ONLY the grad-only/grad+state autograd gradient
+        # after _normalize_channels' RMS division -- deliberately independent
+        # of clip_range, which bounds the raw state branch every iteration
+        # (a hard clamp, unrelated mechanism, unaffected by this). Kept
+        # separate so tightening the grad-term bound (e.g. to better engage
+        # _soft_clip's nonlinearity near its actual operating range) doesn't
+        # also start clipping legitimate state excursions.
+        self.grad_clip_range = grad_clip_range if grad_clip_range is not None else clip_range
         self.aux_var_cost_weight = aux_var_cost_weight
         self.prior_tau_conditioning = prior_tau_conditioning
         self.unet_backbone = unet_backbone
+        self.tbptt_n_blocks = tbptt_n_blocks
+        self.tbptt_block_size = tbptt_block_size
+        # x_0 = randn * sqrt(init_state_var) instead of the default all-zeros
+        # start (init_state_var=0.0, backward-compatible). VARIANCE, not std
+        # -- e.g. init_state_var=0.1 means x_0 ~ N(0, 0.1), std ~ 0.316 in
+        # this normalized state space. Sampled fresh every forward() call
+        # (train and eval alike), independent of update_input -- this is a
+        # property of the unroll's starting point, ported from nowhere in
+        # particular, added specifically to test whether a nonzero-variance
+        # random init changes FDV1's ("obs+state") own healthy fast-Y
+        # reconstruction at all, as a sanity/robustness check.
+        self.init_state_var = init_state_var
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -423,9 +517,25 @@ class FourDVarNetSolver(nn.Module):
             dropout=dropout,
             output_dim=state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
+            monai_num_res_blocks=monai_num_res_blocks,
         )
         self.prior_unet = None
-        if update_input in _PRIOR_MODES:
+        if update_input in _PRIOR_MODES or aux_var_cost_weight > 0:
+            # Also built for update_input NOT in _PRIOR_MODES (e.g.
+            # "obs+state") whenever aux_var_cost_weight>0: this lets a plain
+            # FDV1 ("obs+state") config train with the same
+            # prior_cost(x_final)+prior_cost(states) auxiliary loss term
+            # FDV2 uses (see compute_loss), with _build_update_input's
+            # tensor construction ("obs+state" still gets cat([x, obs_clean])
+            # only -- prior_unet is never referenced there for this mode)
+            # completely untouched. Added specifically to ablate the
+            # auxiliary loss term's effect on fast-Y reconstruction quality
+            # independently of the update-input construction, after
+            # measuring that the aux term's actual weight in the total loss
+            # (0.2-9.5% across the three FDV2 configs) didn't correlate with
+            # collapse severity -- i.e. to test whether the loss term alone,
+            # applied to FDV1's own healthy architecture, degrades it.
+            #
             # prior_tau_conditioning=False (the default): time_emb_dim=0, no
             # iteration/tau conditioning at all for the prior operator
             # (architecturally absent for unet1d, not just unfed -- for
@@ -444,14 +554,23 @@ class FourDVarNetSolver(nn.Module):
             # real time_proj weights (shape-mismatch skip in load_model),
             # evaluating a model that behaves differently from how it was
             # actually trained. New configs should leave this False.
+            #
+            # prior_hidden_channels (None by default): the prior_unet shares
+            # the main solver's hidden_channels unless a narrower tier is
+            # given explicitly here -- see ronan_devs' own convention
+            # (glo12-sla-4th-unrolling-ossev1.yaml gives the prior UNet half
+            # the solver's model_channels), which this codebase did not
+            # previously reproduce (both networks were always equal capacity).
             self.prior_unet = _build_backbone_unet(
                 unet_backbone,
                 state_dim=state_dim,
-                hidden_channels=hidden_channels,
+                hidden_channels=(prior_hidden_channels if prior_hidden_channels is not None
+                                  else hidden_channels),
                 time_emb_dim=(time_emb_dim if prior_tau_conditioning else 0),
                 dropout=dropout,
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
+                monai_num_res_blocks=monai_num_res_blocks,
             )
 
     @property
@@ -474,16 +593,42 @@ class FourDVarNetSolver(nn.Module):
             return self._prior_weight_fixed
         return self._prior_weight_raw ** 2
 
-    def forward(self, batch, N_outer=None):
+    def _unrolled_blocks(self, batch, N_outer=None):
+        """Runs the ``N``-iteration unroll and returns the state at the end
+        of every truncated-BPTT block (``self.tbptt_n_blocks`` elements, the
+        last being the usual final estimate). ``forward()`` returns just the
+        last one (unchanged external contract); ``compute_loss()`` averages
+        an MSE term over all of them.
+
+        Block-truncated BPTT only applies when running at the configured
+        ``self.N_outer`` (``N_outer=None``) with ``self.tbptt_n_blocks>1`` --
+        an explicit ``N_outer`` override (e.g. eval-time ``--n-outer``) always
+        runs as one continuous block, since ``self.tbptt_block_size`` need
+        not divide an arbitrary override. Between blocks, ``x`` is
+        ``.detach()``-ed (severing the backward graph there -- standard
+        truncated-BPTT for this weight-tied unroll, ported from the
+        ``detach()``-at-a-stage-boundary + averaged multi-stage loss pattern
+        in ``4dvarnet-global-mapping``'s ``ronan_devs`` branch,
+        ``Lit4dVarNetTwoSolvers.base_step`` -- adapted here to one weight-tied
+        solver called repeatedly rather than two distinct solver instances).
+        This changes nothing about the forward *values* (detach is a no-op on
+        values, only on the graph), so ``tbptt_n_blocks=1`` (the default)
+        reproduces the pre-existing single-block behavior exactly.
+        """
         N = self.N_outer if N_outer is None else N_outer
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
         obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
         B, T, D = obs_clean.shape
-        x = torch.zeros(B, T, D, device=obs_clean.device)  # x_0 = 0
+        if self.init_state_var > 0:
+            x = torch.randn(B, T, D, device=obs_clean.device) * (self.init_state_var ** 0.5)
+        else:
+            x = torch.zeros(B, T, D, device=obs_clean.device)  # x_0 = 0 (default)
         if self.update_input in _AUTOGRAD_MODES:
             x = x.detach().requires_grad_(True)
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
+        block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
+        block_states = []
         for k in range(N):
             tau_k = torch.full((B,), k / denom, device=x.device)
             # prior_tau_k=None (default): the prior operator gets no
@@ -495,52 +640,99 @@ class FourDVarNetSolver(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
-                grad_norm_cache, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
-        return x
+            if (k + 1) % block_size == 0:
+                block_states.append(x)
+                if k + 1 < N:
+                    x = x.detach()
+                    if self.update_input in _AUTOGRAD_MODES:
+                        x = x.requires_grad_(True)
+        if not block_states:
+            # N=0 (no iterations at all, e.g. a degenerate-N_outer test):
+            # the loop never runs and never hits a block boundary -- the
+            # sole "final" state is just the untouched x_0.
+            block_states.append(x)
+        return block_states
+
+    def forward(self, batch, N_outer=None):
+        return self._unrolled_blocks(batch, N_outer=N_outer)[-1]
 
     def compute_loss(self, batch):
-        """``F.mse_loss(x_final, states)`` (weight 1.0), plus -- only when
-        ``prior_unet`` exists (``_PRIOR_MODES``) and ``aux_var_cost_weight>0``
-        -- two auxiliary terms at ``aux_var_cost_weight`` each:
-        ``var_cost(x_final, obs)`` and ``var_cost(states, obs)``, both using
-        the same ``prior_weight*prior_cost + obs_cost`` formula as the per-
-        iteration ``_build_update_input`` gradient (``tau=None``, matching
-        the prior operator's own no-conditioning convention -- see
-        ``_prior_ae``). Gives ``prior_weight`` (and ``prior_unet``) a direct,
+        """**Training** (``self.training``, i.e. ``LitModel``'s
+        ``training_step``): mean of ``F.mse_loss(block_state, states)`` over
+        every truncated-BPTT block's end-of-block state (weight 1.0 total,
+        evenly split) -- the deep-supervision signal that makes the mid-unroll
+        blocks' weights get a gradient even though their own forward path is
+        detached from later blocks. With the default ``tbptt_n_blocks=1``
+        this is exactly ``F.mse_loss(x_final, states)``, unchanged.
+
+        **Validation/eval** (``not self.training``, i.e. ``validation_step``
+        and any other eval-mode call): ``F.mse_loss(x_final, states)`` only
+        -- the actual final-iteration answer's quality, deliberately NOT
+        averaged with the mid-unroll blocks' (necessarily worse,
+        still-refining) intermediate estimates. This keeps ``val_loss`` (and
+        therefore ``stage1_best.ckpt`` checkpoint selection) measuring what
+        the model is actually deployed to produce, regardless of
+        ``tbptt_n_blocks`` -- the training-time deep-supervision objective
+        and the eval-time model-selection metric are deliberately different
+        functions of the same unroll.
+
+        Both cases add -- only when ``prior_unet`` exists (built whenever
+        ``update_input in _PRIOR_MODES`` OR ``aux_var_cost_weight>0``, so
+        even ``"obs+state"`` gets one if the latter is set -- see
+        ``__init__``) and ``aux_var_cost_weight>0`` -- a pure prior-consistency term at
+        ``aux_var_cost_weight``, evaluated at the *final* block only:
+        ``prior_cost(x_final) + prior_cost(states)``, i.e.
+        ``||x_final - prior_unet(x_final)||^2 + ||states - prior_unet(states)||^2``
+        (``tau=None``, matching the prior operator's own no-conditioning
+        convention -- see ``_prior_ae``). Gives ``prior_unet`` a direct,
         single-hop gradient path to the loss, instead of relying solely on
         the 10-deep chained double-backward through
         ``torch.autograd.grad(..., create_graph=True)`` at every unrolled
-        iteration -- added because a trainable weight in ``var_cost`` was
-        empirically unstable (stalls, and eventually diverges) under
-        "grad+state" with only that indirect signal (see git history /
-        session notes), while a fixed weight trains fine.
+        iteration.
 
-        ``_masked_obs_cost``/``_prior_cost`` are unnormalized *sums* (not
-        means) over all ``B*T*D`` elements -- the right convention for the
-        *inner* per-iteration variational cost (deliberately observation-
-        count-independent, see ``_masked_obs_cost``'s docstring), but at
-        realistic batch/window sizes that sum is ~4-5 orders of magnitude
-        larger than the MSE term above (empirically: MSE~1.0 vs. raw
-        var_cost~1e4-1e5 at B=32,T=300,D=24). Divide by ``B*T*D`` here --
-        for this *outer* auxiliary term only -- so ``aux_var_cost_weight``
-        actually controls the intended balance against the MSE term instead
-        of being swamped by a convention mismatch.
+        Deliberately does NOT multiply by ``self.prior_weight``: an earlier
+        version did (``prior_weight * prior_cost(...) + obs_cost(...)``, the
+        full per-iteration ``var_cost`` formula), which let a *trainable*
+        ``prior_weight`` shrink this auxiliary loss simply by driving itself
+        to 0 -- the ``obs_cost`` half is computed directly on
+        ``x_final``/``states`` and isn't gated by ``prior_weight``, so
+        zeroing ``prior_weight`` costs nothing on that half while erasing the
+        entire prior-consistency term, a free win for the optimizer that has
+        nothing to do with actual prior quality. Confirmed empirically: under
+        this old formula, ``grad+state``'s ``prior_weight`` collapsed from
+        ~0.97 to exactly 0.0 by epoch ~120 (job 53104), degrading train_loss
+        after that point. This term must never reference ``self.prior_weight``
+        or ``self._prior_weight_raw`` -- that parameter's only legitimate
+        role is inside the per-iteration solver update (``_build_update_input``
+        / ``_solver_iteration``), never in this outer supervised objective.
+
+        ``_prior_cost`` is an unnormalized *sum* (not mean) over all
+        ``B*T*D`` elements -- the right convention for the *inner* per-
+        iteration variational cost (deliberately observation-count-
+        independent, see ``_masked_obs_cost``'s docstring), but at realistic
+        batch/window sizes that sum is ~4-5 orders of magnitude larger than
+        the MSE term above (empirically: MSE~1.0 vs. raw var_cost~1e4-1e5 at
+        B=32,T=300,D=24). Divide by ``B*T*D`` here -- for this *outer*
+        auxiliary term only -- so ``aux_var_cost_weight`` actually controls
+        the intended balance against the MSE term instead of being swamped
+        by a convention mismatch.
         """
-        x_final = self.forward(batch)
-        loss = F.mse_loss(x_final, batch.states)
+        block_states = self._unrolled_blocks(batch)
+        x_final = block_states[-1]
+        if self.training:
+            loss = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        else:
+            loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
-            obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
-            obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
-            numel = obs_clean.numel()
-            var_cost_pred = (self.prior_weight * _prior_cost(self.prior_unet, x_final)
-                              + _masked_obs_cost(x_final, obs_clean, obs_mask, self.R_var)) / numel
-            var_cost_true = (self.prior_weight * _prior_cost(self.prior_unet, batch.states)
-                              + _masked_obs_cost(batch.states, obs_clean, obs_mask, self.R_var)) / numel
-            loss = loss + self.aux_var_cost_weight * (var_cost_pred + var_cost_true)
+            numel = x_final.numel()
+            prior_cost_pred = _prior_cost(self.prior_unet, x_final) / numel
+            prior_cost_true = _prior_cost(self.prior_unet, batch.states) / numel
+            loss = loss + self.aux_var_cost_weight * (prior_cost_pred + prior_cost_true)
         return loss
 
     def sample(self, batch, N_outer=None):
@@ -594,7 +786,8 @@ class FourDVarNetPredictStateCFM(nn.Module):
                  N_outer=10, K_inner=5, sigma_prior=0.5, dropout=0.1,
                  train_tau_0_only=False, update_input="obs+state",
                  clip_range=50.0, R_var=0.5, obs_weight=1.0,
-                 min_obs_weight=1e-3, trainable_obs_weight=True):
+                 min_obs_weight=1e-3, trainable_obs_weight=True,
+                 grad_clip_range=None):
         super().__init__()
         _validate_update_input(update_input)
         self.update_input = update_input
@@ -604,6 +797,10 @@ class FourDVarNetPredictStateCFM(nn.Module):
         self.sigma_prior = sigma_prior
         self.train_tau_0_only = train_tau_0_only
         self.clip_range = clip_range
+        # See FourDVarNetSolver's identical field for the rationale: bounds
+        # only the grad-only/grad+state autograd gradient, independent of
+        # clip_range's state-branch hard clamp below.
+        self.grad_clip_range = grad_clip_range if grad_clip_range is not None else clip_range
         self.R_var = R_var
         self.min_obs_weight = min_obs_weight
         self._obs_weight_raw = None
@@ -657,7 +854,7 @@ class FourDVarNetPredictStateCFM(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, tau_k, self.prior_unet, self.R_var, 1.0, self.obs_weight,
-                grad_norm_cache, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / self.K_inner) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:

@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -8,6 +9,7 @@ from models.fourdvarnet import (
     FourDVarNetSolver,
     _build_update_input,
     _normalize_channels,
+    _soft_clip,
 )
 
 _GRAD_MODES = ("grad-only", "grad+state", "subgrad+state")
@@ -146,9 +148,19 @@ class TestFourDVarNetSolver:
         assert out.abs().max().item() <= 50.0 + 1e-4
 
     def test_clip_range_inactive_in_distribution(self):
-        """The clamp must not perturb ordinary, in-distribution behavior."""
-        model_clipped = _make_model(update_input="grad+state", dropout=0.0, clip_range=50.0)
-        model_unclipped = _make_model(update_input="grad+state", dropout=0.0, clip_range=1e6)
+        """The state-branch hard clamp must not perturb ordinary,
+        in-distribution behavior -- exactly, since torch.clamp is the
+        identity wherever it doesn't bind. grad_clip_range's tanh soft-clip
+        is a *smooth* rescaling, not a hard cutoff -- it's never exactly the
+        identity (tanh(u) ~= u only approximately for small u), so
+        grad_clip_range is pinned equal and huge (1e9) on both sides here to
+        isolate the state-branch clamp's own on/off invariance; the soft-
+        clip's own near-identity behavior for a generous clip_range is
+        checked separately (test_soft_clip_near_identity_for_large_clip_range)."""
+        model_clipped = _make_model(update_input="grad+state", dropout=0.0,
+                                     clip_range=50.0, grad_clip_range=1e9)
+        model_unclipped = _make_model(update_input="grad+state", dropout=0.0,
+                                       clip_range=1e6, grad_clip_range=1e9)
         model_unclipped.unet.load_state_dict(model_clipped.unet.state_dict())
         model_unclipped.prior_unet.load_state_dict(model_clipped.prior_unet.state_dict())
         model_clipped.eval()
@@ -220,9 +232,15 @@ class TestFourDVarNetSolver:
         unnormalized gradient/residual channel whose raw magnitude can grow
         arbitrarily large. Normalization is a single global (whole-tensor)
         RMS scalar (matching ocean4dvarnet's ConvLstmGradModel exactly:
-        sqrt(mean(t**2)) == 1), not a per-sample norm. Force a large-
-        magnitude adversarial state/obs and confirm this holds regardless of
-        scale."""
+        sqrt(mean(t**2)) ~= 1), not a per-sample norm. Force a large-
+        magnitude adversarial state/obs and confirm this holds (approximately
+        -- not exactly, since the post-normalization bound is now a smooth
+        tanh soft-clip, not a hard clamp: it's never the exact identity, only
+        very close to it when the RMS-1 tensor sits well inside
+        grad_clip_range=50, hence the atol looser than a hard clamp would
+        need) regardless of scale. "subgrad+state" is NOT normalized (see
+        the test below) -- only the real-autograd grad-only/grad+state
+        channel is."""
         B, T, D = 2, 10, 3
         prior_unet_model = _make_model(update_input="grad-only").prior_unet
         tau = torch.rand(B)
@@ -230,15 +248,46 @@ class TestFourDVarNetSolver:
         for scale in (1.0, 1000.0):
             x = (torch.randn(B, T, D) * scale).requires_grad_(True)
             obs_clean = torch.randn(B, T, D) * scale
-            for mode, grad_blocks in (("grad-only", [(0, D)]), ("grad+state", [(0, D)]),
-                                      ("subgrad+state", [(0, D), (D, 2 * D)])):
+            for mode, grad_blocks in (("grad-only", [(0, D)]), ("grad+state", [(0, D)])):
                 out = _build_update_input(mode, x, obs_clean, obs_mask, tau,
-                                           prior_unet=prior_unet_model, R_var=0.5, obs_weight=1.0)
+                                           prior_unet=prior_unet_model, R_var=0.5, obs_weight=1.0,
+                                           clip_range=50.0)
                 for lo, hi in grad_blocks:
                     rms = (out[..., lo:hi] ** 2).mean().sqrt()
                     assert torch.isfinite(rms).all()
-                    assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4), \
+                    assert torch.allclose(rms, torch.ones_like(rms), atol=2e-3), \
                         f"{mode} @ scale={scale} block[{lo}:{hi}]: rms={rms}"
+
+    def test_build_update_input_subgrad_channels_are_not_normalized(self):
+        """subgrad+state's g_obs/g_prior are raw differences of two already-
+        comparable-scale quantities (obs/state both live in the same
+        normalized state space) -- deliberately NOT run through
+        _normalize_channels, unlike grad-only/grad+state's real autograd
+        gradient above (matches ronan_devs' own GradSolver_withStep, which
+        never normalizes gobs/gprior either). Root-caused a severe fast-Y
+        reconstruction collapse in every subgrad+state MonaiUNet1D run
+        trained under the old normalized version: g_obs is masked to exactly
+        zero outside observation times, so a *global* whole-tensor RMS norm
+        over that mostly-zero tensor was diluted by the observation density
+        and then inflated the sparse nonzero entries by that same factor.
+        Confirmed here via the contrapositive of the test above: raw values
+        scale linearly with the input, they don't stay pinned to RMS=1."""
+        B, T, D = 2, 10, 3
+        prior_unet_model = _make_model(update_input="subgrad+state").prior_unet
+        tau = torch.rand(B)
+        obs_mask = torch.ones(B, T, 1)
+        x_small = torch.randn(B, T, D).requires_grad_(True)
+        obs_small = torch.randn(B, T, D)
+        out_small = _build_update_input("subgrad+state", x_small, obs_small, obs_mask, tau,
+                                         prior_unet=prior_unet_model)
+        x_large, obs_large = x_small.detach() * 1000.0, obs_small * 1000.0
+        x_large.requires_grad_(True)
+        out_large = _build_update_input("subgrad+state", x_large, obs_large, obs_mask, tau,
+                                         prior_unet=prior_unet_model)
+        g_obs_small, g_obs_large = out_small[..., :D], out_large[..., :D]
+        assert torch.allclose(g_obs_large, g_obs_small * 1000.0, atol=1e-2), \
+            "g_obs must scale linearly with the raw input, not stay pinned to RMS=1"
+        assert torch.allclose(g_obs_small, (obs_small - x_small.detach()) * obs_mask, atol=1e-5)
 
     def test_normalize_channels_cache_reuses_first_norm(self):
         """Matches ocean4dvarnet's ConvLstmGradModel exactly: the norm is
@@ -246,17 +295,22 @@ class TestFourDVarNetSolver:
         later calls with the same cache/key, even if the input's own
         magnitude has since changed -- NOT recomputed fresh every time. The
         norm itself is a single global scalar (sqrt(mean(t**2)) over the
-        whole tensor), not a per-sample vector."""
+        whole tensor), not a per-sample vector. RMS-after-normalization is
+        only approximately 1 (not exactly, per the looser atol below): the
+        post-normalization bound is a smooth tanh soft-clip now, not a hard
+        clamp, so it's never the exact identity even when comfortably inside
+        clip_range."""
         cache = {}
         t1 = torch.randn(2, 10, 3) * 5.0
         out1 = _normalize_channels(t1, cache=cache, key="grad")
         assert cache["grad"].dim() == 0, "norm must be a global scalar, not per-sample"
-        assert torch.allclose((out1 ** 2).mean().sqrt(), torch.tensor(1.0), atol=1e-4)
+        assert torch.allclose((out1 ** 2).mean().sqrt(), torch.tensor(1.0), atol=2e-3)
 
         t2 = torch.randn(2, 10, 3) * 5.0  # a different tensor, same cache/key
         out2 = _normalize_channels(t2, cache=cache, key="grad")
-        # out2 must use the CACHED (t1's) norm, not recompute its own.
-        expected = t2 / cache["grad"]
+        # out2 must use the CACHED (t1's) norm, not recompute its own -- then
+        # go through the same soft-clip _normalize_channels itself applies.
+        expected = 50.0 * torch.tanh((t2 / cache["grad"]) / 50.0)
         assert torch.allclose(out2, expected, atol=1e-4)
         assert not torch.allclose((out2 ** 2).mean().sqrt(), torch.tensor(1.0), atol=1e-2)
 
@@ -368,13 +422,51 @@ class TestFourDVarNetSolver:
         assert torch.isfinite(loss)
         assert not torch.allclose(loss, plain_mse, atol=1e-5)
 
-    def test_aux_var_cost_weight_skipped_without_prior_unet(self):
-        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.1)
+    def test_aux_var_cost_weight_skipped_when_zero(self):
+        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.0)
+        assert model.prior_unet is None
         model.eval()
         batch = _MockBatch(B=2, T=20, D=3, seed=0)
         loss = model.compute_loss(batch)
         expected = torch.nn.functional.mse_loss(model.forward(batch), batch.states)
         assert torch.allclose(loss, expected, atol=1e-5)
+
+    def test_obs_state_builds_prior_unet_when_aux_weight_positive(self):
+        """update_input="obs+state" is not in _PRIOR_MODES, but a positive
+        aux_var_cost_weight still builds a prior_unet -- this is what lets
+        an otherwise-plain FDV1 config train with FDV2's prior-consistency
+        auxiliary loss term for an ablation (does the loss term alone, with
+        "obs+state"'s own update-input construction completely untouched,
+        degrade fast-Y reconstruction the way FDV2's gradient-conditioned
+        modes do?)."""
+        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.1)
+        assert model.prior_unet is not None
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+
+        loss = model.compute_loss(batch)
+
+        from models.fourdvarnet import _prior_cost
+        x_final = model.forward(batch)
+        mse = torch.nn.functional.mse_loss(x_final, batch.states)
+        numel = x_final.numel()
+        expected_aux = 0.1 * (
+            _prior_cost(model.prior_unet, x_final) / numel
+            + _prior_cost(model.prior_unet, batch.states) / numel
+        )
+        assert torch.allclose(loss, mse + expected_aux, atol=1e-4)
+
+    def test_obs_state_update_input_unaffected_by_aux_weight(self):
+        """The prior_unet built for the ablation above must never leak into
+        _build_update_input's "obs+state" tensor -- it stays cat([x,
+        obs_clean]) regardless of aux_var_cost_weight."""
+        from models.fourdvarnet import _build_update_input
+        batch = _MockBatch(B=2, T=20, D=3, seed=1)
+        obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
+        obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+        x = torch.zeros_like(obs_clean)
+        inp = _build_update_input("obs+state", x, obs_clean, obs_mask, tau=None)
+        assert torch.equal(inp, torch.cat([x, obs_clean], dim=-1))
 
     def test_aux_var_cost_weight_gradients_flow_to_prior_weight_and_prior(self):
         model = _make_model(update_input="grad+state", N_outer=3, aux_var_cost_weight=0.1)
@@ -386,6 +478,39 @@ class TestFourDVarNetSolver:
         prior_grads = [p.grad for p in model.prior_unet.parameters() if p.grad is not None]
         assert len(prior_grads) > 0
         assert all(torch.isfinite(g).all() for g in prior_grads)
+
+    def test_aux_var_cost_weight_is_pure_prior_cost_no_obs_or_prior_weight(self):
+        """Regression test for a real bug: an earlier version multiplied the
+        prior term by ``self.prior_weight`` and added ``_masked_obs_cost``
+        (i.e. the full per-iteration ``var_cost`` formula) inside this outer
+        auxiliary term. That let a *trainable* ``prior_weight`` cheat the
+        loss down by driving itself to 0 -- the obs_cost half doesn't depend
+        on prior_weight, so zeroing it is a free win that has nothing to do
+        with actual prior quality. Confirmed empirically: grad+state's
+        prior_weight collapsed from ~0.97 to exactly 0.0 by epoch ~120 under
+        the old formula (job 53104). The aux term must equal exactly
+        ``aux_var_cost_weight * (prior_cost(x_final) + prior_cost(states)) /
+        numel``, with no ``obs_cost``/``prior_weight`` factor mixed in --
+        reconstructed independently here and checked for exact equality
+        (not just "changes the loss"), since the old buggy formula would
+        also have changed the loss, just to the wrong value."""
+        model = _make_model(update_input="grad+state", N_outer=3, aux_var_cost_weight=0.1)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+
+        loss = model.compute_loss(batch)
+
+        from models.fourdvarnet import _prior_cost
+        x_final = model.forward(batch)
+        mse = F.mse_loss(x_final, batch.states)
+        numel = x_final.numel()
+        expected_aux = 0.1 * (
+            _prior_cost(model.prior_unet, x_final) / numel
+            + _prior_cost(model.prior_unet, batch.states) / numel
+        )
+        expected = mse + expected_aux
+
+        assert torch.allclose(loss, expected, atol=1e-4)
 
     def test_unknown_update_input_raises_value_error(self):
         try:
@@ -449,6 +574,142 @@ class TestFourDVarNetSolver:
             f"N_outer=5 fit loss ({loss_5}) should not be much worse than "
             f"N_outer=1 ({loss_1}) after equal optimizer steps"
         )
+
+
+class TestSoftClip:
+    """``_soft_clip`` -- the tanh-based replacement for the grad term's
+    post-normalization torch.clamp."""
+
+    def test_identity_at_zero(self):
+        t = torch.zeros(5)
+        assert torch.allclose(_soft_clip(t, 50.0), t)
+
+    def test_near_identity_for_small_input(self):
+        """|t| << clip_range: tanh(u) ~= u, so _soft_clip should barely
+        perturb a small input."""
+        t = torch.tensor([0.1, -0.3, 1.0, -2.0])
+        out = _soft_clip(t, 50.0)
+        assert torch.allclose(out, t, atol=1e-2)
+
+    def test_converges_to_identity_as_clip_range_grows(self):
+        """clip_range*tanh(t/clip_range) -> t as clip_range -> inf. Confirms
+        the deviation from identity shrinks monotonically, not just that it's
+        small at one arbitrary clip_range."""
+        t = torch.tensor([5.0, -8.0, 20.0])
+        errs = [(t - _soft_clip(t, cr)).abs().max().item() for cr in (10.0, 100.0, 1e4, 1e8)]
+        assert errs == sorted(errs, reverse=True), f"errors should shrink monotonically: {errs}"
+        assert errs[-1] < 1e-4
+
+    def test_asymptotes_to_clip_range_for_large_input(self):
+        t = torch.tensor([1e6, -1e6])
+        out = _soft_clip(t, 5.0)
+        assert torch.allclose(out, torch.tensor([5.0, -5.0]), atol=1e-3)
+
+    def test_never_exceeds_clip_range(self):
+        # Deliberately not an absurd outlier: at extreme |t|/clip_range
+        # (e.g. 1000/5=200), tanh saturates to exactly 1.0 in float32, so
+        # out.abs().max() lands AT clip_range, not strictly under it --
+        # still a correct bound (never exceeds), just not strict. Moderate
+        # outliers (up to ~30/5=6) stay strictly under, which is the
+        # meaningful case this guards.
+        t = torch.randn(1000) * 30.0
+        out = _soft_clip(t, 5.0)
+        assert out.abs().max().item() <= 5.0
+
+    def test_gradient_nonzero_beyond_clip_range(self):
+        """The actual motivating property vs. a hard torch.clamp: an element
+        moderately past clip_range must still carry SOME gradient back
+        toward the bound, unlike torch.clamp's exactly-zero gradient there.
+        Uses t=20 with clip_range=5 (4x past the bound, not an absurd
+        outlier) -- at extreme enough |t|/clip_range, tanh's float32 gradient
+        underflows to exactly 0 too (same degenerate limit as a hard clamp),
+        so this only holds within tanh's numerically-representable range."""
+        t = torch.tensor([20.0], requires_grad=True)
+        out = _soft_clip(t, 5.0)
+        out.backward()
+        assert t.grad is not None
+        assert t.grad.abs().item() > 0, "gradient must not be exactly zero past the clip bound"
+
+        t_clamped = torch.tensor([20.0], requires_grad=True)
+        torch.clamp(t_clamped, -5.0, 5.0).sum().backward()
+        assert t_clamped.grad.abs().item() == 0.0, "sanity check: hard clamp's own gradient IS exactly zero here"
+
+
+class TestGradClipRange:
+    """``grad_clip_range`` (None default -> falls back to clip_range) bounds
+    only the grad-only/grad+state autograd gradient, independent of
+    clip_range's own (hard-clamped, untouched) state-branch bound."""
+
+    def test_default_falls_back_to_clip_range(self):
+        model = _make_model(update_input="grad+state", clip_range=7.0)
+        assert model.grad_clip_range == 7.0
+
+    def test_explicit_value_is_independent_of_clip_range(self):
+        model = _make_model(update_input="grad+state", clip_range=50.0, grad_clip_range=5.0)
+        assert model.clip_range == 50.0
+        assert model.grad_clip_range == 5.0
+
+    def test_only_grad_term_is_affected(self):
+        """A tighter grad_clip_range must change grad-only's output (its
+        whole return value IS the grad term) but not obs+state's (which
+        never touches the grad path at all)."""
+        torch.manual_seed(0)
+        model_wide = _make_model(update_input="grad-only", dropout=0.0, grad_clip_range=1e6)
+        model_narrow = _make_model(update_input="grad-only", dropout=0.0, grad_clip_range=0.01)
+        model_narrow.unet.load_state_dict(model_wide.unet.state_dict())
+        model_narrow.prior_unet.load_state_dict(model_wide.prior_unet.state_dict())
+        model_wide.eval()
+        model_narrow.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=1)
+        with torch.no_grad():
+            out_wide = model_wide(batch)
+            out_narrow = model_narrow(batch)
+        assert not torch.allclose(out_wide, out_narrow)
+
+
+class TestInitStateVar:
+    """``init_state_var`` (0.0 default -> x_0 all-zeros, today's behavior).
+
+    >0 means x_0 ~ N(0, init_state_var) (a VARIANCE, not a std), sampled
+    fresh every forward() call, independent of update_input."""
+
+    def test_default_is_zero_init(self):
+        model = _make_model(N_outer=0)
+        assert model.init_state_var == 0.0
+        batch = _MockBatch(B=2, T=10, D=3)
+        out = model(batch)
+        assert torch.equal(out, torch.zeros_like(out))
+
+    def test_positive_var_samples_nonzero_random_init(self):
+        torch.manual_seed(0)
+        model = _make_model(N_outer=0, init_state_var=0.1)
+        batch = _MockBatch(B=64, T=50, D=3)
+        out = model(batch)
+        assert not torch.allclose(out, torch.zeros_like(out))
+        empirical_var = out.var().item()
+        assert abs(empirical_var - 0.1) < 0.02
+
+    def test_resampled_every_forward_call(self):
+        torch.manual_seed(0)
+        model = _make_model(N_outer=0, init_state_var=0.1)
+        batch = _MockBatch(B=8, T=20, D=3)
+        out1 = model(batch)
+        out2 = model(batch)
+        assert not torch.equal(out1, out2)
+
+    def test_zero_var_still_matches_zero_init_with_n_outer_positive(self):
+        """init_state_var=0.0 (default) must reproduce the exact pre-existing
+        zero-init unroll -- not just at N_outer=0."""
+        torch.manual_seed(0)
+        model_a = _make_model(N_outer=3, init_state_var=0.0)
+        torch.manual_seed(0)
+        model_b = _make_model(N_outer=3)
+        model_b.load_state_dict(model_a.state_dict())
+        model_a.eval()
+        model_b.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        with torch.no_grad():
+            assert torch.equal(model_a(batch), model_b(batch))
 
 
 def _make_cfm_model(**kwargs):
@@ -728,3 +989,138 @@ class TestGradientCheckpointing:
             for name, p in model.named_parameters():
                 assert p.grad is not None, f"[{mode}] no gradient reached {name}"
                 assert torch.isfinite(p.grad).all(), f"[{mode}] non-finite gradient at {name}"
+
+
+class TestPriorHiddenChannels:
+    """``prior_hidden_channels`` (None by default -- prior_unet shares
+    hidden_channels with the main solver unet)."""
+
+    def test_default_shares_hidden_channels(self):
+        model = _make_model(update_input="subgrad+state", hidden_channels=[8, 16])
+        n_unet = sum(p.numel() for p in model.unet.parameters())
+        n_prior = sum(p.numel() for p in model.prior_unet.parameters())
+        # Not required to be exactly equal (different in_channel counts from
+        # _UPDATE_INPUT_CHANNEL_MULTIPLIER), but same hidden_channels tier
+        # means the same order of magnitude -- a narrower prior (tested
+        # below) is what actually differs materially.
+        assert n_prior > 0 and n_unet > 0
+
+    def test_narrower_prior_has_fewer_params(self):
+        model_equal = _make_model(update_input="subgrad+state", hidden_channels=[16, 32])
+        model_narrow = _make_model(update_input="subgrad+state", hidden_channels=[16, 32],
+                                    prior_hidden_channels=[8, 16])
+        n_prior_equal = sum(p.numel() for p in model_equal.prior_unet.parameters())
+        n_prior_narrow = sum(p.numel() for p in model_narrow.prior_unet.parameters())
+        assert n_prior_narrow < n_prior_equal
+        # The main solver unet is untouched by prior_hidden_channels.
+        n_unet_equal = sum(p.numel() for p in model_equal.unet.parameters())
+        n_unet_narrow = sum(p.numel() for p in model_narrow.unet.parameters())
+        assert n_unet_equal == n_unet_narrow
+
+    def test_only_affects_prior_modes(self):
+        # obs+state has no prior_unet at all -- prior_hidden_channels is
+        # simply unused, not an error.
+        model = _make_model(update_input="obs+state", prior_hidden_channels=[4])
+        assert model.prior_unet is None
+
+
+class TestTruncatedBPTT:
+    """``tbptt_n_blocks``/``tbptt_block_size`` -- splitting the N_outer
+    unroll into detached blocks with a deep-supervision training loss,
+    final-answer-only validation loss."""
+
+    def test_default_is_single_block(self):
+        model = _make_model(N_outer=4)
+        assert model.tbptt_n_blocks == 1
+        assert model.tbptt_block_size == 4
+
+    def test_block_size_required_when_n_blocks_not_one(self):
+        with pytest.raises(ValueError):
+            _make_model(N_outer=4, tbptt_n_blocks=2)
+
+    def test_mismatched_product_raises(self):
+        with pytest.raises(ValueError):
+            _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=3)
+
+    def test_matching_product_accepted(self):
+        model = _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=2)
+        assert model.tbptt_n_blocks == 2
+        assert model.tbptt_block_size == 2
+
+    def test_unrolled_blocks_returns_one_per_block(self):
+        model = _make_model(N_outer=4, tbptt_n_blocks=2, tbptt_block_size=2,
+                             update_input="subgrad+state")
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+        block_states = model._unrolled_blocks(batch)
+        assert len(block_states) == 2
+        for s in block_states:
+            assert s.shape == (2, 20, 3)
+
+    def test_single_block_equivalent_to_no_tbptt(self):
+        model = _make_model(N_outer=4, update_input="subgrad+state")
+        model.eval()  # dropout off -- this checks the block-count/plumbing,
+        # not stochastic determinism (already covered by test_deterministic_eval)
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+        block_states = model._unrolled_blocks(batch)
+        assert len(block_states) == 1
+        assert torch.equal(block_states[0], model(batch))
+
+    def test_forward_value_unaffected_by_block_split(self):
+        """Detach changes only the backward graph, not the forward values --
+        a blocked and an unblocked model with identical weights must produce
+        the exact same final state."""
+        torch.manual_seed(0)
+        model_full = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0)
+        model_blocked = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                                     tbptt_n_blocks=2, tbptt_block_size=2)
+        model_blocked.load_state_dict(model_full.state_dict())
+        model_full.eval()
+        model_blocked.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=1)
+        out_full = model_full(batch)
+        out_blocked = model_blocked(batch)
+        assert torch.allclose(out_full, out_blocked, atol=1e-6)
+
+    def test_training_loss_averages_across_blocks(self):
+        model = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.train()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        torch.manual_seed(3)
+        loss = model.compute_loss(batch)
+        torch.manual_seed(3)
+        block_states = model._unrolled_blocks(batch)
+        expected = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        assert torch.allclose(loss, expected, atol=1e-6)
+
+    def test_eval_loss_uses_final_block_only(self):
+        """The specific behavior requested: val_loss must reflect only the
+        final answer, never a block average, regardless of tbptt_n_blocks."""
+        model = _make_model(N_outer=4, update_input="subgrad+state", dropout=0.0,
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=4)
+        loss_eval = model.compute_loss(batch)
+        block_states = model._unrolled_blocks(batch)
+        x_final = block_states[-1]
+        expected_final_only = F.mse_loss(x_final, batch.states)
+        block_average = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
+        assert torch.allclose(loss_eval, expected_final_only, atol=1e-6)
+        # Sanity: the block average genuinely differs from the final-only
+        # loss for this batch/model (otherwise the two branches would be
+        # indistinguishable and this test wouldn't prove anything).
+        assert not torch.allclose(loss_eval, block_average, atol=1e-6)
+
+    def test_gradient_reaches_shared_weights_from_both_blocks(self):
+        """Weight-tying means block 1's own forward pass still needs a
+        gradient signal -- detach severs the *activation* path from block 2
+        into block 1, not the shared parameters' training signal."""
+        model = _make_model(N_outer=4, update_input="subgrad+state",
+                             tbptt_n_blocks=2, tbptt_block_size=2)
+        model.train()
+        batch = _MockBatch(B=2, T=20, D=3, seed=5)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        for name, p in model.named_parameters():
+            assert p.grad is not None, f"no gradient reached {name}"
+            assert torch.isfinite(p.grad).all(), f"non-finite gradient at {name}"

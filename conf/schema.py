@@ -276,6 +276,43 @@ class FourDVarNetConfig:
     prior_tau_conditioning: bool = False
     unet_backbone: str = "unet1d"
     monai_norm_num_groups: int = 32
+    # 2 (default, MonaiUNet1D's own default) = "M" tier with
+    # hidden_channels=[64,128,256] (5,889,048 params, today's default for
+    # every FDV1/FDV2 config). 1 with hidden_channels=[32,64,128] = "S" tier
+    # (1,055,544 params). Ignored for unet_backbone="unet1d". See
+    # project_l96_monai_unet_complexity_tiers memory / _build_backbone_unet's
+    # docstring for the full tier ladder.
+    monai_num_res_blocks: int = 2
+    # None (default) = prior_unet shares hidden_channels with the main solver
+    # unet, i.e. today's behavior. Set to a narrower tier (e.g. [32,64,128],
+    # the S+ tier) to give the solver more relative capacity than the prior,
+    # matching CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch
+    # convention (glo12-sla-4th-unrolling-ossev1.yaml: solver model_channels=64
+    # vs prior model_channels=32).
+    prior_hidden_channels: Optional[List[int]] = None
+    # Truncated-BPTT over the N_outer unroll: split it into tbptt_n_blocks
+    # contiguous blocks of tbptt_block_size iterations each (must multiply to
+    # N_outer), detach the state between blocks, and average the training
+    # loss computed at the end of every block. Default (n_blocks=1,
+    # block_size=None -> derived as N_outer) is a single block, i.e. today's
+    # behavior (one continuous backward graph, loss from the final iteration
+    # only) -- fully backward-compatible with every existing config/checkpoint.
+    tbptt_n_blocks: int = 1
+    tbptt_block_size: Optional[int] = None
+    # None (default) = falls back to clip_range, today's behavior. Bounds
+    # ONLY the grad-only/grad+state autograd gradient (after
+    # _normalize_channels' RMS division, via a smooth tanh soft-clip, not a
+    # hard clamp) -- independent of clip_range, which still only bounds the
+    # raw state branch via a hard clamp every iteration. Set narrower than
+    # clip_range to make the soft-clip nonlinearity actually engage near its
+    # real operating range (the grad term is RMS-normalized to ~1) without
+    # also tightening the unrelated state-branch clamp.
+    grad_clip_range: Optional[float] = None
+    # 0.0 (default) = x_0 starts at all-zeros, today's behavior. >0 means x_0
+    # ~ N(0, init_state_var) instead (a VARIANCE, not a std -- e.g. 0.1 means
+    # std ~ 0.316 in this normalized state space), sampled fresh every
+    # forward() call, independent of update_input.
+    init_state_var: float = 0.0
 
 
 @dataclass
@@ -293,6 +330,7 @@ class FourDVarNetCFMConfig:
     obs_weight: float = 1.0
     min_obs_weight: float = 1e-3
     trainable_obs_weight: bool = True
+    grad_clip_range: Optional[float] = None
 
 
 @dataclass

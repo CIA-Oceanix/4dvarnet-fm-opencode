@@ -1,0 +1,51 @@
+# @package _global_
+# Same as FDV1_obsstate_monai_l96_initvar01_Stier.yaml (S-tier MonaiUNet1D:
+# hidden_channels=[32,64,128], monai_num_res_blocks=1, 1,055,544 params;
+# init_state_var=0.1 random initial condition -- confirmed by full eval to
+# reproduce FDV1's healthy fast-Y reconstruction, variance ratio 0.975/0.976
+# vs FDV1 baseline's 0.926, correlation 0.951/0.952 vs 0.948) but adds the
+# prior-consistency auxiliary loss term at aux_var_cost_weight=0.01 -- the
+# same weight used in FDV1_obsstate_monai_l96_initvar01_auxpriorcost01.yaml
+# (job 53289, M-tier), which plateaued at val_loss ~0.39 by epoch 323 vs.
+# ~0.20-0.29 for every aux-loss-free FDV1 variant tested. This run tests
+# whether the same aux-loss degradation shows up on the S tier too, or is
+# specific to M-tier's larger prior_unet/solver-unet combination.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
