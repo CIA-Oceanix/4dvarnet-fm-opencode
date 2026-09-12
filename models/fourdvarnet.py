@@ -495,7 +495,22 @@ class FourDVarNetSolver(nn.Module):
             monai_norm_num_groups=monai_norm_num_groups,
         )
         self.prior_unet = None
-        if update_input in _PRIOR_MODES:
+        if update_input in _PRIOR_MODES or aux_var_cost_weight > 0:
+            # Also built for update_input NOT in _PRIOR_MODES (e.g.
+            # "obs+state") whenever aux_var_cost_weight>0: this lets a plain
+            # FDV1 ("obs+state") config train with the same
+            # prior_cost(x_final)+prior_cost(states) auxiliary loss term
+            # FDV2 uses (see compute_loss), with _build_update_input's
+            # tensor construction ("obs+state" still gets cat([x, obs_clean])
+            # only -- prior_unet is never referenced there for this mode)
+            # completely untouched. Added specifically to ablate the
+            # auxiliary loss term's effect on fast-Y reconstruction quality
+            # independently of the update-input construction, after
+            # measuring that the aux term's actual weight in the total loss
+            # (0.2-9.5% across the three FDV2 configs) didn't correlate with
+            # collapse severity -- i.e. to test whether the loss term alone,
+            # applied to FDV1's own healthy architecture, degrades it.
+            #
             # prior_tau_conditioning=False (the default): time_emb_dim=0, no
             # iteration/tau conditioning at all for the prior operator
             # (architecturally absent for unet1d, not just unfed -- for
@@ -637,8 +652,10 @@ class FourDVarNetSolver(nn.Module):
         and the eval-time model-selection metric are deliberately different
         functions of the same unroll.
 
-        Both cases add -- only when ``prior_unet`` exists (``_PRIOR_MODES``)
-        and ``aux_var_cost_weight>0`` -- a pure prior-consistency term at
+        Both cases add -- only when ``prior_unet`` exists (built whenever
+        ``update_input in _PRIOR_MODES`` OR ``aux_var_cost_weight>0``, so
+        even ``"obs+state"`` gets one if the latter is set -- see
+        ``__init__``) and ``aux_var_cost_weight>0`` -- a pure prior-consistency term at
         ``aux_var_cost_weight``, evaluated at the *final* block only:
         ``prior_cost(x_final) + prior_cost(states)``, i.e.
         ``||x_final - prior_unet(x_final)||^2 + ||states - prior_unet(states)||^2``

@@ -422,13 +422,51 @@ class TestFourDVarNetSolver:
         assert torch.isfinite(loss)
         assert not torch.allclose(loss, plain_mse, atol=1e-5)
 
-    def test_aux_var_cost_weight_skipped_without_prior_unet(self):
-        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.1)
+    def test_aux_var_cost_weight_skipped_when_zero(self):
+        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.0)
+        assert model.prior_unet is None
         model.eval()
         batch = _MockBatch(B=2, T=20, D=3, seed=0)
         loss = model.compute_loss(batch)
         expected = torch.nn.functional.mse_loss(model.forward(batch), batch.states)
         assert torch.allclose(loss, expected, atol=1e-5)
+
+    def test_obs_state_builds_prior_unet_when_aux_weight_positive(self):
+        """update_input="obs+state" is not in _PRIOR_MODES, but a positive
+        aux_var_cost_weight still builds a prior_unet -- this is what lets
+        an otherwise-plain FDV1 config train with FDV2's prior-consistency
+        auxiliary loss term for an ablation (does the loss term alone, with
+        "obs+state"'s own update-input construction completely untouched,
+        degrade fast-Y reconstruction the way FDV2's gradient-conditioned
+        modes do?)."""
+        model = _make_model(update_input="obs+state", N_outer=3, aux_var_cost_weight=0.1)
+        assert model.prior_unet is not None
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+
+        loss = model.compute_loss(batch)
+
+        from models.fourdvarnet import _prior_cost
+        x_final = model.forward(batch)
+        mse = torch.nn.functional.mse_loss(x_final, batch.states)
+        numel = x_final.numel()
+        expected_aux = 0.1 * (
+            _prior_cost(model.prior_unet, x_final) / numel
+            + _prior_cost(model.prior_unet, batch.states) / numel
+        )
+        assert torch.allclose(loss, mse + expected_aux, atol=1e-4)
+
+    def test_obs_state_update_input_unaffected_by_aux_weight(self):
+        """The prior_unet built for the ablation above must never leak into
+        _build_update_input's "obs+state" tensor -- it stays cat([x,
+        obs_clean]) regardless of aux_var_cost_weight."""
+        from models.fourdvarnet import _build_update_input
+        batch = _MockBatch(B=2, T=20, D=3, seed=1)
+        obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
+        obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+        x = torch.zeros_like(obs_clean)
+        inp = _build_update_input("obs+state", x, obs_clean, obs_mask, tau=None)
+        assert torch.equal(inp, torch.cat([x, obs_clean], dim=-1))
 
     def test_aux_var_cost_weight_gradients_flow_to_prior_weight_and_prior(self):
         model = _make_model(update_input="grad+state", N_outer=3, aux_var_cost_weight=0.1)

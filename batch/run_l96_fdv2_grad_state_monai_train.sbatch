@@ -28,24 +28,28 @@ TEST_CACHE="/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96
 
 EXPERIMENT="FDV2_grad_state_monai_l96"
 echo "============================================"
-echo " L96 FDV2(monai) grad+state: tanh soft-clip on the grad term, grad_clip_range=5.0 | $(date)"
+echo " L96 FDV2(monai) grad+state: tanh soft-clip + corrected aux prior loss | $(date)"
 echo "  Experiment: ${EXPERIMENT}"
-echo "  RETRAIN vs the original job 52926 recipe (RMSE 0.804, fast-Y variance"
-echo "  ratio ~0.61 -- measured directly on that checkpoint, along with"
-echo "  prior_weight having collapsed to ~0.0 during training). Two changes:"
-echo "  1. _normalize_channels' post-normalization bound on the combined"
-echo "     autograd grad tensor is now a smooth tanh soft-clip"
-echo "     (clip_range*tanh(t/clip_range)), not a hard torch.clamp -- a"
-echo "     saturated element keeps a small gradient pulling it back in,"
-echo "     instead of the exactly-zero gradient a hard clamp gives there."
-echo "     Normalization ITSELF is kept (not removed, unlike subgrad+state's"
-echo "     own residual channels) per prior published results (Fablet et"
-echo "     al., JAMES) on its importance for this class of solver."
-echo "  2. grad_clip_range=5.0 (separate field from clip_range=50.0, which"
-echo "     still only bounds the raw state branch via an unchanged hard"
-echo "     clamp): with a hard clamp, 50 was a rarely-triggered safety"
-echo "     ceiling; with a smooth soft-clip, the nonlinearity should engage"
-echo "     near the term's real operating range (RMS-normalized to ~1)."
+echo "  THIRD retrain of this config. History:"
+echo "  1. job 52926 (original recipe): RMSE 0.804, fast-Y variance ratio"
+echo "     ~0.61, prior_weight collapsed to ~0.0 during training."
+echo "  2. job 53104 (soft-clip fix only): _normalize_channels' post-norm"
+echo "     bound on the grad term became a smooth tanh soft-clip"
+echo "     (clip_range*tanh(t/clip_range), grad_clip_range=5.0) instead of a"
+echo "     hard torch.clamp. Did NOT fix the collapse: prior_weight again"
+echo "     collapsed 0.97->0.0 by epoch ~120, train_loss degrading past that"
+echo "     point (1.23->1.54). Killed once the root cause below was found."
+echo "  3. THIS run: FourDVarNetSolver.compute_loss's auxiliary prior term"
+echo "     was prior_weight*prior_cost(z)+obs_cost(z) for z in {x_final,"
+echo "     states} -- the full per-iteration var_cost formula, outer-loop-"
+echo "     side. A trainable prior_weight could shrink this term to 0 for"
+echo "     free (the obs_cost half doesn't depend on it), with no actual"
+echo "     improvement in prior quality required -- exactly what job 53104"
+echo "     did. Fixed to a pure prior_cost(x_final)+prior_cost(states) term,"
+echo "     no prior_weight multiplier, no obs_cost. prior_weight keeps its"
+echo "     only legitimate role inside the per-iteration solver update."
+echo "  +fresh=true: job 53104's killed, now-stale checkpoint is archived,"
+echo "  not resumed."
 echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail -1)"
 echo "============================================"
 echo
@@ -54,7 +58,8 @@ python train.py \
   --config-name experiment/${EXPERIMENT} \
   hydra.run.dir=. \
   hydra.output_subdir=null \
-  ++data.test_cache=${TEST_CACHE}
+  ++data.test_cache=${TEST_CACHE} \
+  +fresh=true
 
 echo ""
 echo " Done: ${EXPERIMENT} at $(date)"
