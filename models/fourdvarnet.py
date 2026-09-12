@@ -436,7 +436,8 @@ class FourDVarNetSolver(nn.Module):
                  prior_hidden_channels=None,
                  tbptt_n_blocks=1,
                  tbptt_block_size=None,
-                 grad_clip_range=None):
+                 grad_clip_range=None,
+                 init_state_var=0.0):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -479,6 +480,16 @@ class FourDVarNetSolver(nn.Module):
         self.unet_backbone = unet_backbone
         self.tbptt_n_blocks = tbptt_n_blocks
         self.tbptt_block_size = tbptt_block_size
+        # x_0 = randn * sqrt(init_state_var) instead of the default all-zeros
+        # start (init_state_var=0.0, backward-compatible). VARIANCE, not std
+        # -- e.g. init_state_var=0.1 means x_0 ~ N(0, 0.1), std ~ 0.316 in
+        # this normalized state space. Sampled fresh every forward() call
+        # (train and eval alike), independent of update_input -- this is a
+        # property of the unroll's starting point, ported from nowhere in
+        # particular, added specifically to test whether a nonzero-variance
+        # random init changes FDV1's ("obs+state") own healthy fast-Y
+        # reconstruction at all, as a sanity/robustness check.
+        self.init_state_var = init_state_var
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -593,7 +604,10 @@ class FourDVarNetSolver(nn.Module):
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
         obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
         B, T, D = obs_clean.shape
-        x = torch.zeros(B, T, D, device=obs_clean.device)  # x_0 = 0
+        if self.init_state_var > 0:
+            x = torch.randn(B, T, D, device=obs_clean.device) * (self.init_state_var ** 0.5)
+        else:
+            x = torch.zeros(B, T, D, device=obs_clean.device)  # x_0 = 0 (default)
         if self.update_input in _AUTOGRAD_MODES:
             x = x.detach().requires_grad_(True)
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve

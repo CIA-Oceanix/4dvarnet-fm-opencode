@@ -667,6 +667,51 @@ class TestGradClipRange:
         assert not torch.allclose(out_wide, out_narrow)
 
 
+class TestInitStateVar:
+    """``init_state_var`` (0.0 default -> x_0 all-zeros, today's behavior).
+
+    >0 means x_0 ~ N(0, init_state_var) (a VARIANCE, not a std), sampled
+    fresh every forward() call, independent of update_input."""
+
+    def test_default_is_zero_init(self):
+        model = _make_model(N_outer=0)
+        assert model.init_state_var == 0.0
+        batch = _MockBatch(B=2, T=10, D=3)
+        out = model(batch)
+        assert torch.equal(out, torch.zeros_like(out))
+
+    def test_positive_var_samples_nonzero_random_init(self):
+        torch.manual_seed(0)
+        model = _make_model(N_outer=0, init_state_var=0.1)
+        batch = _MockBatch(B=64, T=50, D=3)
+        out = model(batch)
+        assert not torch.allclose(out, torch.zeros_like(out))
+        empirical_var = out.var().item()
+        assert abs(empirical_var - 0.1) < 0.02
+
+    def test_resampled_every_forward_call(self):
+        torch.manual_seed(0)
+        model = _make_model(N_outer=0, init_state_var=0.1)
+        batch = _MockBatch(B=8, T=20, D=3)
+        out1 = model(batch)
+        out2 = model(batch)
+        assert not torch.equal(out1, out2)
+
+    def test_zero_var_still_matches_zero_init_with_n_outer_positive(self):
+        """init_state_var=0.0 (default) must reproduce the exact pre-existing
+        zero-init unroll -- not just at N_outer=0."""
+        torch.manual_seed(0)
+        model_a = _make_model(N_outer=3, init_state_var=0.0)
+        torch.manual_seed(0)
+        model_b = _make_model(N_outer=3)
+        model_b.load_state_dict(model_a.state_dict())
+        model_a.eval()
+        model_b.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        with torch.no_grad():
+            assert torch.equal(model_a(batch), model_b(batch))
+
+
 def _make_cfm_model(**kwargs):
     defaults = dict(state_dim=3, hidden_channels=[4, 8], N_outer=3, K_inner=2)
     defaults.update(kwargs)

@@ -301,6 +301,11 @@ class FourDVarNetConfig:
     # real operating range (the grad term is RMS-normalized to ~1) without
     # also tightening the unrelated state-branch clamp.
     grad_clip_range: Optional[float] = None
+    # 0.0 (default) = x_0 starts at all-zeros, today's behavior. >0 means x_0
+    # ~ N(0, init_state_var) instead (a VARIANCE, not a std -- e.g. 0.1 means
+    # std ~ 0.316 in this normalized state space), sampled fresh every
+    # forward() call, independent of update_input.
+    init_state_var: float = 0.0
 
 
 @dataclass

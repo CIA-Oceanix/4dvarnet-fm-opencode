@@ -352,6 +352,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             tbptt_n_blocks=fdv.get("tbptt_n_blocks", 1),
             tbptt_block_size=fdv.get("tbptt_block_size", None),
             grad_clip_range=fdv.get("grad_clip_range", None),
+            init_state_var=fdv.get("init_state_var", 0.0),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
