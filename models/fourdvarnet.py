@@ -27,7 +27,8 @@ def _validate_unet_backbone(unet_backbone):
 
 
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
-                          dropout, output_dim, monai_norm_num_groups=32):
+                          dropout, output_dim, monai_norm_num_groups=32,
+                          monai_num_res_blocks=2):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -49,6 +50,16 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
     ignored for ``unet_backbone="monai"``: MONAI's ``DiffusionModelUNet``
     always carries its own internal time embedding, sized by its own
     ``channels``, not by ``time_emb_dim``.
+
+    ``monai_num_res_blocks`` (default 2, ``MonaiUNet1D``'s own default,
+    unchanged): together with ``hidden_channels`` this selects a capacity
+    tier from the ladder in ``project_l96_monai_unet_complexity_tiers``
+    memory -- ``hidden_channels=[64,128,256], monai_num_res_blocks=2`` is
+    "M" (5,889,048 params, today's default for every FDV1/FDV2 config);
+    ``hidden_channels=[32,64,128], monai_num_res_blocks=1`` is "S"
+    (1,055,544 params); the same width with ``monai_num_res_blocks=2`` is
+    "S+" (1,482,264 params) instead. Ignored for ``unet_backbone="unet1d"``
+    (that backbone has no such knob).
     """
     _validate_unet_backbone(unet_backbone)
     if unet_backbone == "unet1d":
@@ -73,6 +84,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
         output_dim=output_dim,
         dropout=dropout,
         norm_num_groups=monai_norm_num_groups,
+        num_res_blocks=monai_num_res_blocks,
     )
 
 # Recognized update_input tokens (mirrors the config-string taxonomy explored on
@@ -433,6 +445,7 @@ class FourDVarNetSolver(nn.Module):
                  prior_tau_conditioning=False,
                  unet_backbone="unet1d",
                  monai_norm_num_groups=32,
+                 monai_num_res_blocks=2,
                  prior_hidden_channels=None,
                  tbptt_n_blocks=1,
                  tbptt_block_size=None,
@@ -504,6 +517,7 @@ class FourDVarNetSolver(nn.Module):
             dropout=dropout,
             output_dim=state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
+            monai_num_res_blocks=monai_num_res_blocks,
         )
         self.prior_unet = None
         if update_input in _PRIOR_MODES or aux_var_cost_weight > 0:
@@ -556,6 +570,7 @@ class FourDVarNetSolver(nn.Module):
                 dropout=dropout,
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
+                monai_num_res_blocks=monai_num_res_blocks,
             )
 
     @property

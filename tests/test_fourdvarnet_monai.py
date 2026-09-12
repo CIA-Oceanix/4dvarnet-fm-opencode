@@ -54,6 +54,44 @@ class TestUnetBackboneDispatch:
         assert isinstance(model.prior_unet, MonaiUNet1D)
 
 
+class TestMonaiNumResBlocks:
+    """monai_num_res_blocks (default 2, MonaiUNet1D's own default) selects a
+    capacity tier together with hidden_channels -- see
+    project_l96_monai_unet_complexity_tiers memory. Param counts below are
+    only exact at the real L96 state_dim=24 / monai_norm_num_groups=32 (the
+    tier ladder's own reference config) -- not _make_monai_model's tiny
+    smoke-test defaults (state_dim=3)."""
+
+    def test_default_matches_m_tier_param_count(self):
+        model = _make_monai_model(
+            update_input="obs+state", state_dim=24, hidden_channels=[64, 128, 256],
+            monai_norm_num_groups=32,
+        )
+        n = sum(p.numel() for p in model.unet.parameters())
+        assert n == 5_889_048
+
+    def test_num_res_blocks_1_matches_s_tier_param_count(self):
+        model = _make_monai_model(
+            update_input="obs+state", state_dim=24, hidden_channels=[32, 64, 128],
+            monai_norm_num_groups=32, monai_num_res_blocks=1,
+        )
+        n = sum(p.numel() for p in model.unet.parameters())
+        assert n == 1_055_544
+
+    def test_applies_to_prior_unet_too(self):
+        """prior_unet's own param count at this tier (1,053,240) differs
+        slightly from the main solver unet's S-tier count (1,055,544) above
+        -- prior_unet takes state-only input (24ch, no obs concatenation)
+        vs. the main unet's obs+state input (48ch), a real difference in
+        in_channels, not a bug."""
+        model = _make_monai_model(
+            update_input="grad+state", state_dim=24, hidden_channels=[32, 64, 128],
+            monai_norm_num_groups=32, monai_num_res_blocks=1,
+        )
+        n = sum(p.numel() for p in model.prior_unet.parameters())
+        assert n == 1_053_240
+
+
 class TestMonaiBackboneForwardFDV1:
     """update_input='obs+state' -- the FDV1 configuration, only self.unet swapped."""
 

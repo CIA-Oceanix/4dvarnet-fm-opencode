@@ -348,6 +348,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
             unet_backbone=fdv.get("unet_backbone", "unet1d"),
             monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
+            monai_num_res_blocks=fdv.get("monai_num_res_blocks", 2),
             prior_hidden_channels=fdv.get("prior_hidden_channels", None),
             tbptt_n_blocks=fdv.get("tbptt_n_blocks", 1),
             tbptt_block_size=fdv.get("tbptt_block_size", None),

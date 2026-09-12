@@ -276,6 +276,13 @@ class FourDVarNetConfig:
     prior_tau_conditioning: bool = False
     unet_backbone: str = "unet1d"
     monai_norm_num_groups: int = 32
+    # 2 (default, MonaiUNet1D's own default) = "M" tier with
+    # hidden_channels=[64,128,256] (5,889,048 params, today's default for
+    # every FDV1/FDV2 config). 1 with hidden_channels=[32,64,128] = "S" tier
+    # (1,055,544 params). Ignored for unet_backbone="unet1d". See
+    # project_l96_monai_unet_complexity_tiers memory / _build_backbone_unet's
+    # docstring for the full tier ladder.
+    monai_num_res_blocks: int = 2
     # None (default) = prior_unet shares hidden_channels with the main solver
     # unet, i.e. today's behavior. Set to a narrower tier (e.g. [32,64,128],
     # the S+ tier) to give the solver more relative capacity than the prior,
