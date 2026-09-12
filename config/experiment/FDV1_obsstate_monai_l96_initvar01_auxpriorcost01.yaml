@@ -1,0 +1,55 @@
+# @package _global_
+# Combined ablation: FDV1's own architecture (update_input=obs+state) with
+# BOTH (1) a random, non-zero-variance initial condition (init_state_var=0.1,
+# same as FDV1_obsstate_monai_l96_initvar01, confirmed NOT to hurt FDV1's own
+# convergence -- job 53288 tracked/beat plain FDV1's own pace) and (2) the
+# prior-consistency auxiliary loss term (aux_var_cost_weight), but at 1/10th
+# the weight used in FDV1_obsstate_monai_l96_auxpriorcost.yaml (0.1 -> 0.01).
+#
+# That earlier aux_var_cost_weight=0.1 run (job 53287, killed once this was
+# clear) plateaued at val_loss ~1.22-1.32 by epoch 104-122, vs plain FDV1's
+# own ~0.86-0.95 at the same epochs -- a real, substantial degradation
+# directly attributable to the aux loss term (not the update-input
+# construction, which is untouched in both FDV1 ablations). This run tests
+# whether a 10x lighter aux weight still degrades FDV1, or whether the
+# effect is severe enough at 0.1 specifically that a lighter touch avoids it
+# -- combined with the random init already shown to be harmless, isolating
+# just the aux-weight-magnitude question.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
