@@ -1092,6 +1092,53 @@ covariance-tuning gap the way ETKF's transform-regularization gap was.
 Data: `reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (N=5, 7
 files). Scratch driver (not committed): `qg_4dvar_sensitivity_sweep_scratch.py`.
 
+### Q1-obsdensity: obs-density-augmented training (2026-09-13,
+### `feature/qg-q1-obsdensity-augmented-training`)
+
+Same obs-only DirectUNet as Q1, but the TRAIN split resamples
+`cols_per_day` uniformly on every draw instead of a single fixed value
+(`data/qg_neural.py`'s new `QGNeuralDataset(cols_per_day_range=(lo, hi))`),
+mirroring L96's obs-density-augmented training (`data/obs_density.py`) --
+one checkpoint should generalize across observing-network densities
+instead of only the one it happened to train at. Val/test are left
+unaugmented (fixed `cols_per_day=4`, the S0 reference case's own value) so
+eval numbers stay comparable to Q1/Q3/Q4/Q5's own S0 results. New
+`--cols-per-day-min`/`--cols-per-day-max` CLI flags on `train_qg_neural.py`
+(YAML-fallback pattern, wired into the train dataset only). Config:
+`config/experiment/Q1_direct_unet_s0_obsdensity_aug.yaml`.
+
+**Real bug found before wasting GPU time**: the originally-requested range
+was `[4, 24]`. A 2-epoch smoke test (job 53434) hung indefinitely -- not
+slow, an actual infinite loop, confirmed via SLURM's own low-memory kill
+notification on an earlier local (non-SLURM) attempt at the same range,
+then reproduced cleanly on a dedicated GPU node. Root cause:
+`_generate_random_column_observations` (`data/qg.py`) assigns each of
+`cols_per_day` distinct columns to its own distinct *intra-day* time slot
+via a collision-avoidance loop (`while t in taken: ...`); at the production
+config's `dt=7200s`, `steps_per_day=round(86400/dt)=12`, so any sampled
+value above 12 can never find a free slot once all 12 fill up -- the loop
+spins forever. Values in `[13, 24]` are exactly half of the requested
+range, so roughly half of all training draws would hang.
+
+**Fixed with defense in depth**: (1) a hard `ValueError` in
+`_generate_random_column_observations` itself if `cols_per_day >
+steps_per_day`, so this can never hang again regardless of caller; (2) the
+same check at `QGNeuralDataset.__init__` time (fails fast at dataset
+construction, before any training even starts) when `cols_per_day_range`'s
+max exceeds `steps_per_day(cfg)`. (3) The config's range was capped at
+`[4, 12]` -- 12 is the widest this config can physically support at
+dt=7200s (an observed column at every single intra-day step). Confirmed
+fixed via a re-run of the same 2-epoch smoke test at `[4, 12]`: completed
+cleanly in ~217s/epoch (in line with Q1's own historical per-epoch cost --
+the obs-density resampling itself adds no meaningful overhead), full
+`results.json` written. 3 new regression tests (2 reproducing the exact
+hang condition as a fast `pytest.raises(ValueError)` instead) --
+`tests/test_qg_neural.py`/`tests/test_qg_random_columns.py`.
+
+Full 200-epoch training launched (job 53444),
+`experiments/Q1_direct_unet_s0_obsdensity_aug/`. Not yet evaluated against
+the DA baselines or Q1/Q3/Q4/Q5 -- open follow-up once training completes.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

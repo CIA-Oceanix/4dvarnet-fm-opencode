@@ -56,6 +56,17 @@ def test_random_columns_distinct_within_day():
         assert len(set(cols)) == len(cols)
 
 
+def test_cols_per_day_above_steps_per_day_raises_instead_of_hanging():
+    """Regression test for a real bug: cols_per_day > steps_per_day (12 at
+    the default dt=7200s) hung a real GPU job -- each of the `cols_per_day`
+    distinct columns needs its own distinct intra-day time slot, so asking
+    for more columns than there are slots makes the collision-avoidance loop
+    spin forever instead of raising. Must fail fast with a clear ValueError."""
+    cfg = _cfg(cols_per_day=13)  # steps_per_day=12 at the default dt=7200.0
+    with pytest.raises(ValueError, match="steps_per_day"):
+        make_qg_s0_s1_datasets(cfg)
+
+
 def test_random_columns_near_full_coverage():
     cfg = _cfg(window_days=30.0)
     ds = make_qg_s0_s1_datasets(cfg)

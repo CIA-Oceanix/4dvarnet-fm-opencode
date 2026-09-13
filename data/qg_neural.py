@@ -432,12 +432,49 @@ class QGNeuralDataset(Dataset):
     redraws the obs/init-state fresh on every `__getitem__` call (see module
     docstring) -- use for train/val to increase obs diversity across epochs.
     Keep the default `False` (fixed, reproducible obs) for test/eval.
+
+    `cols_per_day_range=(lo, hi)` additionally resamples `cfg.cols_per_day`
+    itself uniformly in `[lo, hi]` (inclusive) on every draw (requires
+    `on_the_fly_obs=True`) -- obs-density-augmented training, so a single
+    checkpoint generalizes across observing-network densities instead of
+    only the one fixed value it happened to train at. Mirrors L96's
+    obs-density-augmented training (`data/obs_density.py`), adapted to QG's
+    per-window (not per-timestep) `cols_per_day` granularity: the same
+    resampled count applies to every day within one window-draw, only the
+    count itself varies draw-to-draw. Leave `None` (default) for the
+    original fixed-density behavior; keep `None` for val/test so evaluation
+    stays at one stable reference density.
     """
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5,
-                 forcing_norm_stats: dict | None = None, include_ic: bool = False):
+                 forcing_norm_stats: dict | None = None, include_ic: bool = False,
+                 cols_per_day_range: tuple[int, int] | None = None):
+        if cols_per_day_range is not None and not on_the_fly_obs:
+            raise ValueError(
+                "cols_per_day_range requires on_the_fly_obs=True -- otherwise "
+                "each window's obs is drawn once (at whatever cols_per_day the "
+                "truth cache/cfg carries) and never redrawn, so the range would "
+                "have no effect")
+        if cols_per_day_range is not None:
+            lo, hi = cols_per_day_range
+            if not (1 <= lo <= hi):
+                raise ValueError(
+                    f"cols_per_day_range must satisfy 1 <= min <= max, got "
+                    f"{cols_per_day_range!r}")
+            max_cols = steps_per_day(cfg)
+            if cfg.obs_geometry == "random_columns" and hi > max_cols:
+                raise ValueError(
+                    f"cols_per_day_range max ({hi}) exceeds cfg.dt's "
+                    f"steps_per_day ({max_cols}) -- "
+                    "_generate_random_column_observations assigns each of "
+                    "cols_per_day distinct columns to its own distinct "
+                    "intra-day time slot, so a value above steps_per_day "
+                    "can never be satisfied and its collision-avoidance loop "
+                    "spins forever (confirmed: hung a real GPU job, see "
+                    "PLAN.md's 2026-09-13 Q1-obsdensity note). Lower the "
+                    "range max to at most steps_per_day, or use a smaller dt.")
         if cond_mode not in ("none", "true", "noisy", "scenario"):
             hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
                     "this string -- quote it as `cond_mode: \"true\"`)"
@@ -469,6 +506,7 @@ class QGNeuralDataset(Dataset):
         self.noisy_max = noisy_max
         self.forcing_norm_stats = forcing_norm_stats
         self.include_ic = include_ic
+        self.cols_per_day_range = cols_per_day_range
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -482,7 +520,15 @@ class QGNeuralDataset(Dataset):
         # the resulting seed stays a valid (< 2**32) RNG seed. Batch-of-1 call
         # (master's `_generate_obs_ic` takes lists of windows/indices).
         draw = random.randrange(1, 1_000_000)
-        ic = QGS01Dataset._generate_obs_ic(self.cfg, [w], [draw])[0]
+        cfg = self.cfg
+        if self.cols_per_day_range is not None:
+            lo, hi = self.cols_per_day_range
+            # Same per-draw-cfg-override pattern as `_noisy_forcing_and_params`'s
+            # `_dc_replace` call below -- a fresh `cols_per_day` this draw only,
+            # the shared `self.cfg` (and any other dataset instance using it,
+            # e.g. a fixed-density val/test split) is untouched.
+            cfg = _dc_replace(cfg, cols_per_day=random.randint(lo, hi))
+        ic = QGS01Dataset._generate_obs_ic(cfg, [w], [draw])[0]
         w = dict(w)
         w.update(ic)
         return w

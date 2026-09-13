@@ -46,6 +46,15 @@ Both share `model_type=direct_unet` with Q1, so `--exp-id` picks the config:
         --exp-dir experiments/Q3_direct_unet_s0_oracle_cond --cache-dir ...
     python train_qg_neural.py --model-type direct_unet --exp-id Q4_direct_unet_s1_noisy_cond \
         --exp-dir experiments/Q4_direct_unet_s1_noisy_cond --cache-dir ...
+
+Q1-obsdensity (obs-density-augmented Q1) -- same obs-only architecture as
+Q1, but `--cols-per-day-min`/`--cols-per-day-max` resample `cols_per_day`
+per training draw instead of a single fixed value (train split only; val/
+test stay at the fixed `--cols-per-day` reference density), so one
+checkpoint generalizes across observing-network densities. Mirrors L96's
+obs-density-augmented training; see `data/qg_neural.py`'s
+`cols_per_day_range` docstring and
+`config/experiment/Q1_direct_unet_s0_obsdensity_aug.yaml`.
 """
 import argparse
 import json
@@ -334,6 +343,18 @@ def main():
                     help="Use one fixed obs/init-state draw for train/val "
                          "(legacy behavior) instead of regenerating them on "
                          "the fly from the cached truth each epoch.")
+    ap.add_argument("--cols-per-day-min", type=int, default=None,
+                    help="Obs-density-augmented training: TRAIN split only "
+                         "resamples cols_per_day ~ Uniform{min,...,max} on every "
+                         "draw (requires on-the-fly obs, i.e. NOT --fixed-split-obs) "
+                         "instead of a single fixed value, so the checkpoint "
+                         "generalizes across observing-network densities. Val/test "
+                         "stay at the fixed --cols-per-day reference value. Falls "
+                         "back to the experiment YAML's data.cols_per_day_min if not "
+                         "given; default None (no augmentation, original behavior).")
+    ap.add_argument("--cols-per-day-max", type=int, default=None,
+                    help="See --cols-per-day-min. Both must be given (CLI or YAML) "
+                         "to enable augmentation.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--num-workers", type=int, default=4,
@@ -421,6 +442,15 @@ def main():
                      else exp_cfg.data.get("s1_param_bias", None))
     s1_amp_bias = (args.s1_amp_bias if args.s1_amp_bias is not None
                   else exp_cfg.data.get("s1_amp_bias", None))
+    cols_per_day_min = (args.cols_per_day_min if args.cols_per_day_min is not None
+                       else exp_cfg.data.get("cols_per_day_min", None))
+    cols_per_day_max = (args.cols_per_day_max if args.cols_per_day_max is not None
+                       else exp_cfg.data.get("cols_per_day_max", None))
+    if (cols_per_day_min is None) != (cols_per_day_max is None):
+        raise ValueError("--cols-per-day-min/--cols-per-day-max must both be given "
+                         "(or both omitted) to enable obs-density-augmented training")
+    cols_per_day_range = ((int(cols_per_day_min), int(cols_per_day_max))
+                         if cols_per_day_min is not None else None)
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -477,7 +507,8 @@ def main():
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
-                                   include_ic=include_ic)
+                                   include_ic=include_ic,
+                                   cols_per_day_range=cols_per_day_range)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
@@ -571,7 +602,9 @@ def main():
                    "s1_param_bias": test_cfg.s1_param_bias,
                    "s1_amp_bias": test_cfg.s1_amp_bias,
                    "include_ic": include_ic, "ic_dim": ic_dim,
-                   "gradient_clip_val": gradient_clip_val, "seed": args.seed},
+                   "gradient_clip_val": gradient_clip_val, "seed": args.seed,
+                   "cols_per_day_min": cols_per_day_min,
+                   "cols_per_day_max": cols_per_day_max},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),

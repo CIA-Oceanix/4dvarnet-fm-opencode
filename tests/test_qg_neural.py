@@ -15,6 +15,7 @@ from data.qg_neural import (
     denorm_psi,
     ensure_truth_cache,
     layer_split,
+    num_days,
     psi_daily,
     psi_to_q,
     q_daily,
@@ -354,6 +355,53 @@ def test_on_the_fly_obs_varies_across_draws_target_fixed():
     assert not torch.equal(obs_a, obs_b)
 
 
+def test_cols_per_day_range_requires_on_the_fly_obs():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=False, cols_per_day_range=(1, 4))
+
+
+def test_cols_per_day_range_invalid_bounds_raises():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=True, cols_per_day_range=(4, 1))
+
+
+def test_cols_per_day_range_max_above_steps_per_day_raises():
+    """Regression test for a real bug: cols_per_day_range=(4, 24) hung a real
+    GPU job (job 53434) at dt=7200s (steps_per_day=12) -- 24 > 12 means the
+    per-day collision-avoidance loop in
+    `_generate_random_column_observations` can never find a free intra-day
+    slot once all 12 are taken and spins forever. Must be caught at
+    QGNeuralDataset construction time, not discovered by a hung job."""
+    cfg = _cfg()  # dt=7200.0 default -> steps_per_day=12
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError, match="steps_per_day"):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=True, cols_per_day_range=(4, 24))
+
+
+def test_cols_per_day_range_samples_within_bounds_and_varies():
+    """Obs-density-augmented training: every draw resamples cols_per_day
+    uniformly in [lo, hi] -- each day within one draw gets exactly that many
+    observed columns (`_generate_random_column_observations` always produces
+    the same per-day count for a given cfg), but the count itself varies
+    draw-to-draw."""
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, cols_per_day_range=(1, 4))
+    n_days = num_days(cfg)
+    counts = []
+    for _ in range(20):
+        w = ds._resolved_window(0)
+        n_obs = int(w["obs_mask"].sum())
+        assert n_obs % n_days == 0, "every day should get the same observed-column count"
+        counts.append(n_obs // n_days)
+    assert all(1 <= c <= 4 for c in counts)
+    assert len(set(counts)) > 1, "cols_per_day should vary across draws"
+
+
 def test_fixed_obs_dataset_is_deterministic_across_draws():
     """Default `on_the_fly_obs=False` keeps returning the same baked-in obs
     on repeated `__getitem__` calls (test/eval reproducibility, unchanged)."""
@@ -664,6 +712,20 @@ def test_q3_q4_yaml_configs_parse_cond_mode_as_string():
         assert int(cfg.model.cond_extra_dim) == 1
         assert cfg.data.param_norm_stats_path
         assert cfg.data.forcing_norm_stats_path
+
+
+def test_q1_obsdensity_aug_yaml_config():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(
+        base, "config", "experiment", "Q1_direct_unet_s0_obsdensity_aug.yaml"))
+    assert int(cfg.model.param_dim) == 0
+    assert int(cfg.model.cond_extra_dim) == 0
+    assert int(cfg.data.cols_per_day_min) == 4
+    assert int(cfg.data.cols_per_day_max) == 12
+    assert bool(cfg.data.on_the_fly_split_obs)
 
 
 def test_normalized_forcing_is_order_one_not_raw_scale():

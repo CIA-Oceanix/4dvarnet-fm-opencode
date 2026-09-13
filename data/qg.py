@@ -214,6 +214,15 @@ def _generate_random_column_observations(
     f = _upper_field(dynamics, state, field)
     sigma = cfg.obs_noise_std_frac * float(f.std())
     steps_per_day = max(1, round(86400.0 / cfg.dt))
+    if C > steps_per_day:
+        raise ValueError(
+            f"cols_per_day ({C}) exceeds steps_per_day ({steps_per_day}, from "
+            f"cfg.dt={cfg.dt}) -- each of the C distinct columns needs its own "
+            "distinct intra-day time slot, so C > steps_per_day can never be "
+            "satisfied and the collision-avoidance loop below would spin "
+            "forever (confirmed: hung a real GPU job under obs-density-"
+            "augmented training, see PLAN.md's 2026-09-13 note). Lower "
+            "cols_per_day or use a smaller dt.")
     rng = torch.Generator().manual_seed(seed)
     obs = torch.full((T, ny), float("nan"))
     obs_mask = torch.zeros(T, dtype=torch.bool)
