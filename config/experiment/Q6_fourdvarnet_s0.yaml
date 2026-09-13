@@ -1,0 +1,90 @@
+# Q6: FourDVarNetSolver (FDV1) neural baseline on QG S0 -- same obs-only
+# role as Q1 (no forcing/param/IC conditioning: FourDVarNetSolver has no
+# such hooks at all, unlike DirectUNet), but an unrolled variational solver
+# instead of a single-pass CNN. Hyperparameters mirror L96's current
+# winning "S"-tier config (`FDV1_obsstate_monai_l96_initvar01_Stier_
+# auxpriorcost01.yaml`, on the `feature/l96-fdv2-stier-sweep` branch --
+# 1,055,544 params, `aux_var_cost_weight=0.01` beats both the 0.1 variant
+# and the plain no-aux-term baseline there) -- adapted to QG's state_dim
+# (8192 at nx=64, vs. L96's 24) and its own production 1000/100/100 cache/
+# split-seed convention.
+#
+# unet_backbone=monai here uses `models.monai_unet_adapter.MonaiUNet1D`
+# (a *flattened* 1D adapter treating the whole state_dim vector as a
+# single sequence axis, L96's own convention) -- NOT `MonaiDirectUNetQG`'s
+# genuine 2D circular-padded grid convolution. This is architecturally
+# weaker than Q1 for QG's actual 2D spatial structure (no periodic
+# boundary handling, no 2D locality prior); a QG-native 2D backbone for
+# FourDVarNetSolver would be a separate, larger follow-up. Q6 answers "does
+# the unrolled-solver *scheme* help on QG" holding this known backbone
+# limitation constant, not "what's the best possible FDV1 architecture for
+# QG".
+#
+# Real bug fixed as a prerequisite (2026-09-13): FourDVarNetSolver's obs
+# cost only supported a per-*timestep* mask (uniform across the whole
+# state vector), fine for L96 (fixed observable-channel subset, obs_j)
+# but wrong for QG (`cols_per_day` sparse columns vary both per day *and*
+# per cell within an observed day) -- feeding it QG's old day-level
+# any-obs mask would have silently treated every unobserved cell's
+# zero-fill as a real obs=0 measurement. Fixed: `QGBatch.obs_mask` is now a
+# genuine per-cell mask (unused by direct_unet/vanilla_cfm, which never
+# read it), and `models/fourdvarnet.py`'s `_unrolled_blocks` only
+# `.unsqueeze(-1)`s a 2D (B,T) mask, using an already-3D (B,T,D) mask as-is
+# -- backward-compatible with L96's own (B,T) convention. See PLAN.md's
+# 2026-09-13 Q6 section.
+#
+# Shares no model_type with Q1/Q3/Q4/Q5/Q1-obsdensity (all direct_unet) --
+# pass --exp-id explicitly anyway, for consistency with those configs:
+#
+#   python train_qg_neural.py \
+#     --model-type fourdvarnet --exp-id Q6_fourdvarnet_s0 \
+#     --exp-dir experiments/Q6_fourdvarnet_s0 \
+#     --nx 64 --epochs 400 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# experiments/qg_psi_norm_stats.pt must exist first
+# (batch/run_qg_param_stats.sbatch) -- reused unchanged from Q1.
+
+experiment_id: Q6_fourdvarnet_s0
+entry_point: train_qg_neural.py
+system: qg
+model_type: fourdvarnet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  param_dim: 0
+  cond_extra_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+training:
+  epochs: 400
+  lr: 0.001
+  batch_size: 2
+  gradient_clip_val: 10.0
+  # Same derivation as Q1 (1/Var(q_raw) over the 1000-window train split,
+  # nx=64, train-seed=42) -- unrelated to the model architecture, so
+  # Q1's own precomputed value applies unchanged.
+  q_loss_weight: 2.5415e9
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt

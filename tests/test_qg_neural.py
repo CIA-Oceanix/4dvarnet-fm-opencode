@@ -152,7 +152,7 @@ def test_dataset_and_collate_shapes():
     days = 2
     assert psi_n.shape == (days, 2 * split)
     assert obs_pad.shape == (days, 2 * split)
-    assert mask.shape == (days,)
+    assert mask.shape == (days, 2 * split)  # per-cell, matches obs_pad exactly
     assert forcing.shape == (days, cfg.ny, cfg.nx)
     assert torch.equal(forcing, torch.zeros_like(forcing))
     assert q_raw.shape == (days, 2 * split)
@@ -163,6 +163,7 @@ def test_dataset_and_collate_shapes():
     assert obs_pad[:, split:].abs().sum() == 0.0
     batch = qg_collate([item, ds[0]])
     assert batch.states.shape == (2, days, 2 * split)
+    assert batch.obs_mask.shape == (2, days, 2 * split)
     assert batch.states_q.shape == (2, days, 2 * split)
     assert batch.rd.shape == (2,)
     assert batch.forcing.shape == (2, days, cfg.ny, cfg.nx)
@@ -252,6 +253,36 @@ def test_lightning_vanilla_cfm_forward_backward_with_qloss():
     _test_lightning_forward_backward("vanilla_cfm")
 
 
+def test_lightning_fourdvarnet_forward_backward_with_qloss():
+    _test_lightning_forward_backward("fourdvarnet")
+
+
+def test_lightning_fourdvarnet_with_aux_var_cost_weight():
+    """aux_var_cost_weight>0 (Q6's actual config value, 0.01) builds a
+    prior_unet and adds its consistency term to loss_psi -- must not raise
+    and must still produce finite gradients."""
+    from models.fourdvarnet import FourDVarNetSolver
+    from train_qg_neural import QGNeuralLightning
+    cfg = _cfg()
+    batch = _synth_batch(split=layer_split(cfg), rd=cfg.rd)
+    norm = {"mean": torch.zeros(2), "std": torch.ones(2)}
+    model = FourDVarNetSolver(state_dim=cfg.state_dim, hidden_channels=[8, 16, 32],
+                             time_emb_dim=16, N_outer=2, dropout=0.1,
+                             update_input="obs+state", unet_backbone="unet1d",
+                             aux_var_cost_weight=0.01)
+    assert model.prior_unet is not None
+    lit = QGNeuralLightning(model, "fourdvarnet", norm, cfg, q_loss_weight=0.1,
+                            use_cosine_scheduler=False)
+    opt = lit.configure_optimizers()
+    loss, _lp, _lq = lit._total_loss(batch)
+    assert torch.isfinite(loss)
+    opt.zero_grad()
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert len(grads) > 0
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
 def _synth_batch(split=64, days=30, rd=15000.0, b=2):
     """Deterministic QGBatch with realistic shapes (no window generation),
     whose normalized targets have O(1) per-layer scale like the real dataset."""
@@ -263,7 +294,7 @@ def _synth_batch(split=64, days=30, rd=15000.0, b=2):
     states = torch.randn(b, days, D)
     states_q = torch.randn(b, days, D) * 1e-6
     obs = torch.randn(b, days, D) * 0.5
-    mask = torch.ones(b, days, dtype=torch.bool)
+    mask = torch.ones(b, days, D, dtype=torch.bool)  # per-cell, matches real QGBatch.obs_mask
     forcing = torch.zeros(b, days, nyx, nyx)
     rd_t = torch.full((b,), rd, dtype=torch.float32)
     return QGBatch(states, obs, mask, forcing, states_q, rd_t)
@@ -277,6 +308,14 @@ def _test_lightning_forward_backward(model_type):
     if model_type == "direct_unet":
         model = DirectUNet(state_dim=cfg.state_dim, param_dim=0, cond_extra_dim=0,
                            hidden_channels=[8, 16, 32])
+    elif model_type == "fourdvarnet":
+        from models.fourdvarnet import FourDVarNetSolver
+        # unet_backbone="unet1d" (not "monai"): keeps this test independent
+        # of the optional monai dependency -- Q6's actual config uses
+        # "monai", covered separately (gated) elsewhere.
+        model = FourDVarNetSolver(state_dim=cfg.state_dim, hidden_channels=[8, 16, 32],
+                                  time_emb_dim=16, N_outer=2, dropout=0.1,
+                                  update_input="obs+state", unet_backbone="unet1d")
     else:
         model = VanillaCFM(state_dim=cfg.state_dim, param_dim=0, cond_extra_dim=0,
                            hidden_channels=[8, 16, 32], time_emb_dim=16, N_outer=10,
@@ -290,6 +329,44 @@ def _test_lightning_forward_backward(model_type):
     opt = lit.configure_optimizers()
     loss, _lp, _lq = lit._total_loss(batch)
     assert torch.isfinite(loss)
+    opt.zero_grad()
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert len(grads) > 0
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+def test_lightning_fourdvarnet_monai_backbone_pads_nondivisible_days():
+    """Regression test for a real bug (found twice): unet_backbone="monai"
+    (MonaiUNet1D, DiffusionModelUNet) treats the T (days) axis as its own
+    downsampled "spatial" dim, requiring T divisible by
+    2**(len(hidden_channels)-1) (4 for a 3-level backbone) -- QG's 30-day
+    windows aren't. Crashed job 53462 in the main solve (fixed by
+    _pad_batch_for_monai1d), then crashed job 53467 in the separate
+    prior_unet consistency term (fixed by _padded_prior_cost) -- so this
+    test uses Q6's actual aux_var_cost_weight=0.01 (which builds a
+    prior_unet even for update_input="obs+state") to exercise both padding
+    paths, not just the main solve. days=30 (via _synth_batch's default)
+    with a 3-level hidden_channels here reproduces the exact failing
+    shape."""
+    pytest.importorskip("monai")
+    from models.fourdvarnet import FourDVarNetSolver
+    from train_qg_neural import QGNeuralLightning
+    cfg = _cfg()
+    batch = _synth_batch(split=layer_split(cfg), rd=cfg.rd, days=30)
+    norm = {"mean": torch.zeros(2), "std": torch.ones(2)}
+    model = FourDVarNetSolver(state_dim=cfg.state_dim, hidden_channels=[8, 16, 32],
+                             time_emb_dim=16, N_outer=2, dropout=0.1,
+                             update_input="obs+state", unet_backbone="monai",
+                             monai_num_res_blocks=1, monai_norm_num_groups=8,
+                             aux_var_cost_weight=0.01)
+    assert model.prior_unet is not None
+    lit = QGNeuralLightning(model, "fourdvarnet", norm, cfg, q_loss_weight=0.1,
+                            use_cosine_scheduler=False)
+    opt = lit.configure_optimizers()
+    loss, loss_psi, _lq = lit._total_loss(batch)
+    assert torch.isfinite(loss)
+    assert torch.isfinite(loss_psi)
     opt.zero_grad()
     loss.backward()
     grads = [p.grad for p in model.parameters() if p.grad is not None]
@@ -400,6 +477,28 @@ def test_cols_per_day_range_samples_within_bounds_and_varies():
         counts.append(n_obs // n_days)
     assert all(1 <= c <= 4 for c in counts)
     assert len(set(counts)) > 1, "cols_per_day should vary across draws"
+
+
+def test_obs_mask_is_per_cell_not_per_day():
+    """Regression test for a real correctness bug: obs_mask used to be a
+    collapsed per-day boolean (True if *any* cell that day was observed),
+    which would make FourDVarNetSolver's variational obs cost treat every
+    unobserved cell's zero-fill on an "observed" day as a real obs=0
+    measurement. obs_mask must now match obs_pad's own shape exactly, be
+    True only at genuinely-observed cells, and be all-False on layer2
+    (never observed)."""
+    cfg, w = _window()
+    ds = QGNeuralDataset([w], cfg)
+    _psi, obs_pad, obs_mask, _forcing, _q, _rd, _params, _ic = ds[0]
+    split = layer_split(cfg)
+    assert obs_mask.shape == obs_pad.shape
+    assert obs_mask.dtype == torch.bool
+    assert not obs_mask[:, split:].any(), "layer2 is never observed"
+    # Every masked-True cell must correspond to a nonzero/real obs_pad entry
+    # (not the zero-fill used for unobserved cells) -- and vice versa,
+    # since obs_pad is only ever exactly 0.0 at unobserved cells (a real
+    # zero-valued observation is float noise, essentially never exactly 0).
+    assert torch.equal(obs_mask[:, :split], obs_pad[:, :split] != 0.0)
 
 
 def test_fixed_obs_dataset_is_deterministic_across_draws():
@@ -726,6 +825,43 @@ def test_q1_obsdensity_aug_yaml_config():
     assert int(cfg.data.cols_per_day_min) == 4
     assert int(cfg.data.cols_per_day_max) == 12
     assert bool(cfg.data.on_the_fly_split_obs)
+
+
+def test_model_type_choices_include_every_build_model_branch():
+    """Regression test for a real bug: --model-type's argparse `choices`
+    list didn't get "fourdvarnet" added when that branch was added to
+    build_model() -- caught only at job-launch time (job 53460/53461),
+    "invalid choice" -- not by any test, since no test invoked the CLI
+    parser itself. Keeps the two lists in sync mechanically instead of by
+    memory."""
+    import ast
+    import os
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(base, "train_qg_neural.py")) as f:
+        tree = ast.parse(f.read())
+    build_model_types = set()
+    model_type_choices = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "build_model":
+            for n in ast.walk(node):
+                if (isinstance(n, ast.Compare) and isinstance(n.left, ast.Name)
+                        and n.left.id == "model_type"
+                        and isinstance(n.ops[0], ast.Eq)
+                        and isinstance(n.comparators[0], ast.Constant)):
+                    build_model_types.add(n.comparators[0].value)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--model-type"):
+            for kw in node.keywords:
+                if kw.arg == "choices" and isinstance(kw.value, ast.List):
+                    model_type_choices = {
+                        elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant)}
+    assert build_model_types, "couldn't find any model_type == '...' branch in build_model()"
+    assert model_type_choices, "couldn't find --model-type's choices list"
+    assert build_model_types == model_type_choices, (
+        f"build_model() supports {build_model_types} but --model-type's "
+        f"choices only allows {model_type_choices} -- keep these in sync")
 
 
 def test_normalized_forcing_is_order_one_not_raw_scale():

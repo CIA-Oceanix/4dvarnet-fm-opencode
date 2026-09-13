@@ -60,6 +60,7 @@ import argparse
 import json
 import os
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytorch_lightning as pl
@@ -94,7 +95,8 @@ def build_cfg(**overrides) -> QGConfig:
 
 
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
-                cond_extra_dim: int = 0, ic_dim: int = 0) -> torch.nn.Module:
+                cond_extra_dim: int = 0, ic_dim: int = 0,
+                fdv_kwargs: dict | None = None) -> torch.nn.Module:
     if model_type == "direct_unet":
         # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
@@ -113,7 +115,80 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
                           hidden_channels=[64, 128, 256], time_emb_dim=64,
                           N_outer=10, sigma_prior=0.5, dropout=0.1,
                           train_tau_0_only=True)
+    if model_type == "fourdvarnet":
+        # No conditioning hooks at all (no param_dim/cond_extra_dim/ic_dim --
+        # models.fourdvarnet.FourDVarNetSolver has none, unlike DirectUNet/
+        # VanillaCFM): a QG fourdvarnet scheme is necessarily obs-only,
+        # matching Q1 not Q3/Q4/Q5. `fdv_kwargs` mirrors L96's `cfg.model.fdv`
+        # block (train.py's own "fourdvarnet" dispatch) -- read from the
+        # experiment YAML's `model.fdv.*` in main(), not from CLI flags (too
+        # many knobs to justify individual CLI args, same reasoning as
+        # param_dim/cond_extra_dim already being YAML-only).
+        from models.fourdvarnet import FourDVarNetSolver
+        return FourDVarNetSolver(state_dim=cfg.state_dim, **(fdv_kwargs or {}))
     raise ValueError(f"unknown model_type {model_type!r}")
+
+
+# `unet_backbone="monai"` (MonaiUNet1D, DiffusionModelUNet) treats the T
+# (days) axis as its own downsampled "spatial" dimension, requiring T
+# divisible by 2**(len(hidden_channels)-1) (4 for the 3-level S-tier
+# [32,64,128] config) -- QG's 30-day windows aren't (confirmed: crashed a
+# real GPU job twice, "Sizes of tensors must match... Expected size 16 but
+# got size 15", jobs 53462/53467 -- the main solve, then separately the
+# prior_unet consistency term, both being fed unpadded T=30 tensors). 8
+# covers up to a 4-level backbone (the S-tier config only needs 4). A
+# convolutional U-Net's receptive field means the last real day or two's
+# estimate can pick up a small edge effect from the adjacent zero-padding --
+# an accepted, minor v1 limitation, not a correctness bug (same
+# padding-boundary tradeoff any CNN makes).
+_MONAI1D_PAD_TO = 8
+
+
+def _pad_time_axis(x: torch.Tensor, pad_to: int = _MONAI1D_PAD_TO) -> tuple:
+    """Pads a (B, T, ...) tensor's T axis (dim=1) up to the next multiple of
+    `pad_to` with zeros (`new_zeros` preserves dtype, so a bool mask pads
+    with False). Returns `(x, 0)` unchanged when already aligned."""
+    T = x.shape[1]
+    pad_T = -(-T // pad_to) * pad_to
+    n_pad = pad_T - T
+    if n_pad == 0:
+        return x, 0
+    pad_shape = (x.shape[0], n_pad) + tuple(x.shape[2:])
+    return torch.cat([x, x.new_zeros(pad_shape)], dim=1), n_pad
+
+
+def _pad_batch_for_monai1d(batch, T: int):
+    """Pads `batch.obs`/`batch.obs_mask` (see `_pad_time_axis`) into a
+    lightweight shim object exposing only what `FourDVarNetSolver.forward`/
+    `.sample` read (zero obs / all-False obs_mask on the padded region
+    contributes nothing to any obs-cost term, and "obs+state" -- Q6's own
+    config -- doesn't reference obs_mask at all). Returns
+    `(shim_or_batch, n_pad)` -- `n_pad=0` (batch returned unchanged) when
+    already aligned. Caller must crop the model's output back to `[:T]`
+    whenever `n_pad>0`."""
+    padded_obs, n_pad = _pad_time_axis(batch.obs)
+    if n_pad == 0:
+        return batch, 0
+    padded_mask, _ = _pad_time_axis(batch.obs_mask)
+    return SimpleNamespace(obs=padded_obs, obs_mask=padded_mask), n_pad
+
+
+def _padded_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
+    """`models.fourdvarnet._prior_cost`, but pads `state`'s T axis before
+    feeding `prior_unet` (needed whenever `unet_backbone="monai"`, same
+    constraint as `_pad_batch_for_monai1d`) and crops the *reconstruction*
+    back to the real T before computing the sum-of-squares -- so the
+    fabricated zero-padded region never contaminates the loss value itself
+    (unlike a plain crop-the-input approach would, since `_prior_cost` is a
+    scalar sum over all positions, not a per-position tensor you could crop
+    after the fact)."""
+    from models.fourdvarnet import _prior_ae
+    T = state.shape[1]
+    padded, n_pad = _pad_time_axis(state)
+    recon = _prior_ae(prior_unet, padded)
+    if n_pad:
+        recon = recon[:, :T]
+    return F.mse_loss(state, recon, reduction="sum")
 
 
 def epochs_for(model_type: str) -> int:
@@ -163,6 +238,27 @@ class QGNeuralLightning(pl.LightningModule):
             v = self.model(x0, batch, tau)
             loss_psi = F.mse_loss(v, batch.states - x0)
             est = x0 + v
+            return est, loss_psi
+        if self.model_type == "fourdvarnet":
+            # Calls forward() directly (matching direct_unet's convention)
+            # rather than the model's own compute_loss() -- QG's psi loss
+            # needs to feed into _q_loss()'s auxiliary PV-q term below, which
+            # compute_loss() knows nothing about. With the default
+            # tbptt_n_blocks=1 (unchanged by any QG config so far) this is
+            # exactly equivalent to compute_loss()'s own main MSE term (see
+            # FourDVarNetSolver.compute_loss's docstring) -- only its
+            # optional prior-consistency term needs replicating by hand here.
+            T = batch.states.shape[1]
+            shim, n_pad = _pad_batch_for_monai1d(batch, T)
+            est = self.model(shim)
+            if n_pad:
+                est = est[:, :T]
+            loss_psi = F.mse_loss(est, batch.states)
+            if self.model.prior_unet is not None and self.model.aux_var_cost_weight > 0:
+                numel = est.numel()
+                loss_psi = loss_psi + self.model.aux_var_cost_weight * (
+                    _padded_prior_cost(self.model.prior_unet, est) / numel
+                    + _padded_prior_cost(self.model.prior_unet, batch.states) / numel)
             return est, loss_psi
         raise ValueError(f"unsupported model_type {self.model_type!r}")
 
@@ -232,6 +328,15 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
             batch = batch.to(device)
             if model_type == "direct_unet":
                 pred = model(batch)
+            elif model_type == "fourdvarnet":
+                T = batch.states.shape[1]
+                shim, n_pad = _pad_batch_for_monai1d(batch, T)
+                pred = model.sample(shim, N_outer=10)
+                if n_members > 1:
+                    members = [model.sample(shim, N_outer=10) for _ in range(n_members)]
+                    pred = torch.stack(members).mean(dim=0)
+                if n_pad:
+                    pred = pred[:, :T]
             else:
                 pred = model.sample(batch, N_outer=10)
                 if n_members > 1:
@@ -262,7 +367,8 @@ def layer_summary(rmse_dim, ev_dim, cfg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-type", choices=["direct_unet", "vanilla_cfm"], default="direct_unet")
+    ap.add_argument("--model-type", choices=["direct_unet", "vanilla_cfm", "fourdvarnet"],
+                    default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -419,6 +525,11 @@ def main():
     norm = load_norm_stats(norm_stats_path) if do_normalize else None
     param_dim = int(exp_cfg.model.get("param_dim", 0))
     cond_extra_dim = int(exp_cfg.model.get("cond_extra_dim", 0))
+    # model.fdv.* mirrors L96's train.py "fourdvarnet" dispatch (cfg.model.fdv)
+    # -- OmegaConf DictConfig -> plain dict, since FourDVarNetSolver.__init__
+    # takes plain Python kwargs, not OmegaConf nodes.
+    fdv_kwargs = (OmegaConf.to_container(exp_cfg.model.fdv, resolve=True)
+                 if model_type == "fourdvarnet" else None)
     include_ic = bool(args.include_ic or exp_cfg.data.get("include_ic", False))
     ic_dim = 2 if include_ic else 0
     cond_mode = args.cond_mode or exp_cfg.data.get("cond_mode", "none")
@@ -531,7 +642,8 @@ def main():
         print("normalization disabled (--no-normalize)")
 
     model = build_model(model_type, test_cfg, param_dim=param_dim,
-                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim).to(device)
+                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
+                       fdv_kwargs=fdv_kwargs).to(device)
 
     total_train = 0.0
     if args.eval_only is None:

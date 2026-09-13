@@ -391,6 +391,13 @@ class QGBatch:
 
     `states_q` (the PV/q auxiliary target) is in **raw physical units** --
     unlike `states`/`obs`, it is not normalized (see the module docstring).
+
+    `obs_mask` is a genuine per-cell mask, shaped exactly like `obs`/`states`
+    (`(B, days, 2*ny*nx)`) -- unused by direct_unet/vanilla_cfm (`obs`'s own
+    zero/nonzero pattern already carries this implicitly for those); read by
+    `model_type="fourdvarnet"` (`models.fourdvarnet.FourDVarNetSolver`),
+    whose variational obs cost otherwise cannot distinguish a real obs=0
+    from an unobserved cell's zero-fill.
     """
 
     def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None, ic=None):
@@ -552,7 +559,16 @@ class QGNeuralDataset(Dataset):
 
         obs_pad = torch.zeros(days, 2 * split)
         obs_pad[:, :split] = torch.nan_to_num(obs_d, nan=0.0)
-        mask_full = mask_d.any(dim=-1)
+        # Per-cell mask, matching obs_pad's own shape exactly (not a
+        # collapsed per-day "any obs" boolean) -- layer2 is never observed,
+        # so its half stays all-False. Unused by direct_unet/vanilla_cfm
+        # (obs_pad's own zero/nonzero pattern already carries this
+        # information implicitly for those); required by fourdvarnet's
+        # variational obs cost, which otherwise has no way to distinguish a
+        # real obs=0 from an unobserved cell's zero-fill -- see
+        # models.fourdvarnet._masked_obs_cost.
+        obs_mask = torch.zeros(days, 2 * split, dtype=torch.bool)
+        obs_mask[:, :split] = mask_d
         rd = torch.tensor([float(w["true_params"]["rd"])], dtype=torch.float32)
 
         if self.cond_mode == "none":
@@ -571,7 +587,7 @@ class QGNeuralDataset(Dataset):
 
         ic = _ic_field(w, self.cfg, self.psi_norm_stats) if self.include_ic else None
 
-        return psi_n, obs_pad, mask_full, forcing, qs, rd, params, ic
+        return psi_n, obs_pad, obs_mask, forcing, qs, rd, params, ic
 
     def raw_psi(self, idx: int) -> torch.Tensor:
         return psi_daily(self.windows[idx], self.cfg)

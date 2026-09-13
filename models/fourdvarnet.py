@@ -617,7 +617,19 @@ class FourDVarNetSolver(nn.Module):
         """
         N = self.N_outer if N_outer is None else N_outer
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
-        obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+        # `batch.obs_mask` is either (B, T) -- one mask value per timestep,
+        # broadcast across the whole D-dim state (L96's convention: which
+        # channels are observable is fixed over time, so only the *time*
+        # axis needs masking) -- or already (B, T, D) -- a genuine per-cell
+        # mask (QG's convention: which grid cells are observed varies both
+        # per day *and* per cell within an observed day, e.g.
+        # `cols_per_day` sparse columns; collapsing to a per-timestep-only
+        # mask would silently treat every unobserved cell's zero-fill as a
+        # real obs=0 measurement). Only unsqueeze the 2D case -- the 3D case
+        # is used as-is.
+        obs_mask = batch.obs_mask.to(obs_clean.dtype)
+        if obs_mask.dim() == obs_clean.dim() - 1:
+            obs_mask = obs_mask.unsqueeze(-1)
         B, T, D = obs_clean.shape
         if self.init_state_var > 0:
             x = torch.randn(B, T, D, device=obs_clean.device) * (self.init_state_var ** 0.5)

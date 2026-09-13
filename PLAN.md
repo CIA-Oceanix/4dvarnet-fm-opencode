@@ -1139,6 +1139,75 @@ Full 200-epoch training launched (job 53444),
 `experiments/Q1_direct_unet_s0_obsdensity_aug/`. Not yet evaluated against
 the DA baselines or Q1/Q3/Q4/Q5 -- open follow-up once training completes.
 
+### Q6: FourDVarNetSolver (FDV1) on QG S0 (2026-09-13/14,
+### `feature/qg-q6-fourdvarnet`)
+
+New `model_type="fourdvarnet"` for `train_qg_neural.py` -- QG's first
+unrolled-variational-solver scheme (vs. Q1/Q3/Q4/Q5's single-pass
+DirectUNet or Q2's CFM), same obs-only role as Q1 (no forcing/param/IC
+conditioning at all: `FourDVarNetSolver` has no such hooks, unlike
+DirectUNet). Hyperparameters mirror L96's current winning "S"-tier config
+(`FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01.yaml`,
+`aux_var_cost_weight=0.01`) adapted to QG's `state_dim=8192` (vs. L96's
+24). Config: `config/experiment/Q6_fourdvarnet_s0.yaml`.
+
+**Real correctness bug found and fixed as a prerequisite**: `FourDVarNetSolver`'s
+obs cost only supported a per-*timestep* mask (`(B,T)`, uniform across the
+whole state vector) -- correct for L96 (fixed observable-channel subset)
+but wrong for QG (`cols_per_day` sparse columns vary both per day *and*
+per cell within an observed day). Feeding it QG's old day-level any-obs
+mask would have silently treated every unobserved cell's zero-fill as a
+real obs=0 measurement. Fixed: `QGBatch.obs_mask` is now a genuine
+per-cell mask (shape matches `obs`/`states` exactly) -- unused by
+direct_unet/vanilla_cfm, which never read it; `models/fourdvarnet.py`'s
+`_unrolled_blocks` only `.unsqueeze(-1)`s a 2D `(B,T)` mask now, using an
+already-3D `(B,T,D)` mask as-is -- backward-compatible with L96's own
+convention (verified: L96's full `test_fourdvarnet.py` suite, 85 tests,
+still passes unchanged). **Caveat discovered while testing the fix**: Q6's
+own config uses `update_input="obs+state"` (matching L96's proven choice),
+which never references `obs_mask` at all in its computation (confirmed by
+a dedicated test) -- so this correctness fix has no effect on Q6's actual
+training, only on any future QG config using a grad-conditioned
+`update_input` (`grad-only`/`grad+state`/`subgrad+state`). This also
+surfaces a more fundamental open question for "obs+state" on QG
+specifically: unlike L96's fixed observable-channel subset (which the
+network can learn as a static pattern), QG's `on_the_fly_obs` redraws
+*which* grid columns are observed on every single draw, so the network
+has no explicit per-iteration signal for which cells are real
+observations vs. zero-fill -- not addressed here (would need a larger,
+riskier change to `_build_update_input`'s channel-concat convention),
+flagged as an open caveat on Q6's results.
+
+**Two more real bugs found via smoke testing** (both fixed before the
+first successful smoke test, jobs 53460→53462→53467→53470):
+1. `--model-type`'s argparse `choices` list was never updated to include
+   `"fourdvarnet"` when the `build_model()` branch was added -- caught
+   only at job-launch time ("invalid choice"), not by any test. Added
+   `test_model_type_choices_include_every_build_model_branch`, which
+   parses `train_qg_neural.py`'s own AST to keep the two lists in sync
+   mechanically instead of by memory.
+2. `unet_backbone="monai"` (`MonaiUNet1D`/`DiffusionModelUNet`) treats the
+   T (days) axis as its own downsampled "spatial" dimension, requiring T
+   divisible by `2**(len(hidden_channels)-1)` (4 for the 3-level S-tier
+   config) -- QG's 30-day windows aren't. Crashed twice: first in the main
+   unrolled solve (job 53462, fixed by `_pad_batch_for_monai1d`), then
+   separately in the `aux_var_cost_weight` prior-consistency term (job
+   53467, which also builds a `prior_unet` under `unet_backbone="monai"`
+   -- fixed by `_padded_prior_cost`, which pads-then-crops the *reconstruction*
+   before computing the loss, so the fabricated padded region never
+   contaminates the loss value itself). Both pad the T axis to the next
+   multiple of 8 with zero obs/all-False mask; a convolutional U-Net's
+   receptive field means the last real day or two's estimate can pick up
+   a small edge effect from the adjacent padding -- an accepted, minor v1
+   limitation.
+
+Confirmed fixed via a clean 2-epoch smoke test (job 53470, `train_time_seconds`
+≈445s ≈222s/epoch, in line with Q1's own per-epoch cost -- the unrolled
+solver adds no meaningful overhead at this N_outer=10/S-tier size). Full
+400-epoch training launched (job 53473),
+`experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
+training completes.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
