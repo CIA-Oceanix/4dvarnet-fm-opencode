@@ -696,6 +696,89 @@ N=100) — kept as distinctly-tagged files, NOT overwriting the canonical
 `run_qg_baselines.py`'s/`sweep_qg_baselines.py`'s CLI default. `N_ensemble`
 remains unswept (still hardcoded 80 everywhere).
 
+### `etkf_ridge=1.0` promoted to the default ETKF config (2026-09-12)
+
+Following the N=100 confirmation above, `etkf_ridge=1.0` is now the actual
+default, not just a documented-but-unused finding:
+
+- `evaluation/run_qg_baselines.py`'s `run()` default changed `etkf_ridge=0.0`
+  → `1.0`; its CLI gained `--etkf-ridge`/`--etkf-additive` flags (previously
+  only reachable by calling `run()` programmatically, e.g. from scratch
+  drivers). `evaluation/sweep_qg_baselines.py`'s `--etkf-ridge-list` fallback
+  changed `[0.0]` → `[1.0]`.
+- **Deliberately NOT touched**: `evaluation/baselines.py`'s shared `ETKF`
+  class constructor default (`etkf_ridge: float = 0.0`) — that class is
+  used by both L96 and QG (per
+  [[project_qg_da_baselines_plan_2026-09-05]]'s "merged with the L96/joint/
+  ES work" note), and the sensitivity study was QG-specific; changing the
+  shared class default would have silently changed L96 ETKF behavior too,
+  unvalidated. The QG-specific driver-level default is the right place for
+  this.
+- Canonical committed N=100 JSONs updated: `reports/qg/outputs/
+  qg_repro_validation{,_s1}/etkf.json` now hold the `ridge=1.0` results
+  (previously in `etkf_ridge1.json`, which is kept as-is, now identical to
+  `etkf.json`); the old ~1e-4-floor results are archived as
+  `etkf_ridge_default.json` in both directories for provenance, not deleted.
+- `reports/qg/generate_qg_da_report.py` significantly extended: now covers
+  **both** S0 and S1 (closing the "Not yet done: folding these S1 numbers
+  into `qg_da_report.md`" note above), adds a condensed "Hyperparameter
+  sensitivity analysis" section (inflation/ridge/4DVar findings, linking to
+  the dedicated `da_sensitivity_s0_s1_report.md` for full sweep tables), and
+  a closing "Synthesis: best configuration per method (S0 vs S1)" table.
+  `reports/qg/generate_qg_neural_report.py`'s ETKF description/summary-table
+  row updated to match (was still citing the old 0.921/0.405 numbers).
+
+### 4DVar (Strong/Weak) hyperparameter sensitivity — negative result (2026-09-12)
+
+Same motivation as the ETKF work above: both 4DVar variants collapse on PV
+q layer2 under S1 (Strong -0.857, Weak -0.501 at N=100, vs ETKF/EnKF
+staying positive) — checked whether a covariance-weighting sweep could fix
+or explain it the way `etkf_ridge` did for ETKF, before concluding it's a
+fundamental limitation.
+
+Swept Strong-4DVar's `b_var_scale` (background-covariance whitening scale)
+and Weak-4DVar's `q_var_scale` (per-step model-error weight) on S1, N=5
+(4DVar is ~15-20x more expensive per window than ETKF/EnKF — a single
+strong4dvar window took 364s in a timing probe, vs ETKF's ~20-47s; N=5 was
+chosen as a cost/noise tradeoff, one order of magnitude below the ETKF
+sweeps' N=10). Each window already gets its own `QG4DVar`/LBFGS instance
+inside `run()`'s loop (no risk of the "batching independent LBFGS problems"
+pitfall from the original 2026-09-05 QG DA baselines plan).
+
+**Result: neither lever helps, unlike ETKF's ridge**:
+
+| Strong-4DVar | b_var_scale | q EV | psi EV |
+|---|---|---|---|
+| | 0.3 | -1.06 | 0.706 |
+| | 1.0 (default) | -1.07 | 0.706 |
+| | 3.0 | -1.11 | 0.698 |
+
+| Weak-4DVar | q_var_scale | q EV | psi EV |
+|---|---|---|---|
+| | **0.1 (default)** | **-0.91** | 0.687 |
+| | 0.3 | -0.99 | 0.606 |
+| | 1.0 | -1.09 | 0.545 |
+| | 3.0 | -1.11 | 0.544 |
+
+`b_var_scale` is essentially flat across an order of magnitude (mild
+decline, not a peak like ridge showed). `q_var_scale` is monotonically
+*worse* the higher it's pushed above the existing default 0.1 — giving the
+per-step model-error controls more freedom to correct actively hurts
+rather than helping, the opposite of the initial hypothesis (that S1's
+real model error would need *more* absorption capacity). Both methods'
+existing defaults were already at or near the best point in the explored
+direction; **no config change made** (unlike ETKF). Caveats: N=5 is noisy
+(absolute EVs differ from the N=100 canonical numbers, though the ranking
+direction is consistent), and only q_var_scale values *above* 0.1 were
+tested — a small chance a lower value (0.01-0.03) does better still, not
+checked given the cost. Consistent interpretation: the 4DVar q-layer2
+collapse looks like a structural limitation (a single optimized trajectory
+has no ensemble spread to exploit on the unobserved layer), not a fixable
+covariance-tuning gap the way ETKF's transform-regularization gap was.
+
+Data: `reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (N=5, 7
+files). Scratch driver (not committed): `qg_4dvar_sensitivity_sweep_scratch.py`.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

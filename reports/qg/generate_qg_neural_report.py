@@ -38,10 +38,12 @@ SCHEMES = [
     {
         "name": "ETKF",
         "type": "Ensemble DA (deterministic square-root)",
-        "config": "N=80, inflation=1.0, loc_radius=6.0",
+        "config": "N=80, inflation=1.0, loc_radius=6.0, etkf_ridge=1.0",
         "desc": "Ensemble Transform Kalman Filter -- deterministic ensemble-square-root "
                 "analysis update, sequentially cycled over the assimilation window. "
-                "No stochastic observation perturbation.",
+                "No stochastic observation perturbation. `etkf_ridge=1.0` (Kalman-gain "
+                "transform-matrix regularization) is the default as of 2026-09-12 -- "
+                "see `qg_da_report.md`'s sensitivity-analysis section.",
     },
     {
         "name": "EnKF",

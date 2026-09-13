@@ -695,7 +695,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         loc_radius=None, scenarios=("test_s0", "test_s1"),
         out_path=None, init="lagged", geometry="random_columns",
         obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
-        etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25,
+        etkf_ridge=1.0, etkf_additive=0.0, band_half=0.25,
         save_traj=None, obs_var_r_scale=1.0,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
@@ -1010,6 +1010,18 @@ def main():
     ap.add_argument("--ensemble", type=int, default=60)
     ap.add_argument("--inflation", type=float, default=1.05)
     ap.add_argument("--loc-radius", type=float, default=None)
+    ap.add_argument("--etkf-ridge", type=float, default=1.0,
+                     help="ETKF Kalman-gain transform-matrix ridge regularization "
+                          "multiplier. Default 1.0 (as of the 2026-09-11 QG DA "
+                          "sensitivity study: monotonically improves ETKF's PV-q "
+                          "EV vs. the implicit ~1e-4 floor at etkf_ridge<=0, "
+                          "closing the previously-unexplained EnKF>ETKF gap on "
+                          "the revised S1 case -- see PLAN.md and "
+                          "reports/qg/outputs/da_sensitivity_s0_s1_report.md).")
+    ap.add_argument("--etkf-additive", type=float, default=0.0,
+                     help="ETKF additive-inflation noise std (raw q-field units). "
+                          "Default 0.0 (found only harmful, never helpful, in the "
+                          "same sensitivity study).")
     ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default=None)
@@ -1079,6 +1091,7 @@ def main():
             init=args.init, geometry=args.geometry, obs_var=args.obs_var,
             init_lag_days=args.init_lag_days, band_half=args.band_half,
             obs_var_r_scale=args.obs_var_r_scale,
+            etkf_ridge=args.etkf_ridge, etkf_additive=args.etkf_additive,
             da_window_steps=args.da_window_steps, optimizer=args.fourdvar_optimizer,
             fourdvar_max_iter=args.fourdvar_max_iter,
             fourdvar_opt_steps=args.fourdvar_opt_steps,
