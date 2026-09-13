@@ -1,0 +1,68 @@
+# @package _global_
+# FDV2's new "gradsplit+state" update_input: the real-autograd counterpart
+# to subgrad+state. Same two-residual-plus-state input shape (g_obs, g_prior,
+# x), but g_obs/g_prior are each a TRUE torch.autograd.grad of their own cost
+# term (obs_weight*obs_cost(x,obs) / prior_weight*prior_cost(x)) taken
+# SEPARATELY -- unlike grad-only/grad+state's single combined gradient of
+# the summed var_cost, and unlike subgrad+state's cheap hand-written proxy
+# residuals (obs-x, x-Phi(x)).
+#
+# g_prior is normalized/soft-clipped exactly like grad-only/grad+state's
+# combined gradient (a real gradient of the dense, unbounded prior_cost
+# term). g_obs is deliberately NOT normalized, even though it's a genuine
+# gradient here -- obs_cost's gradient w.r.t. x is architecturally masked to
+# exactly zero outside observation times, identically to subgrad+state's
+# own g_obs proxy, so it inherits that mode's normalization-dilution
+# vulnerability (2026-09-11 fix) regardless of being a true gradient rather
+# than a hand-written proxy.
+#
+# S-tier MonaiUNet1D (hidden_channels=[32,64,128], monai_num_res_blocks=1,
+# 1,055,544 main-solver params) + init_state_var=0.1 (random initial
+# condition) + aux_var_cost_weight=0.01 (corrected pure prior_cost aux
+# loss) -- the same combination that let grad+state's prior_weight stay
+# stable (no collapse) and subgrad+state match/beat FDV1's own best run at
+# this tier. Tests whether keeping the obs/prior gradients as two SEPARATE
+# real-gradient channels (rather than one combined "grad" channel, or two
+# cheap proxy channels) gives the network an easier signal to learn from.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: gradsplit+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: true
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

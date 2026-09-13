@@ -12,8 +12,9 @@ from models.fourdvarnet import (
     _soft_clip,
 )
 
-_GRAD_MODES = ("grad-only", "grad+state", "subgrad+state")
-_ALL_UPDATE_INPUT_MODES = ("obs+state", "obs-only", "grad-only", "grad+state", "subgrad+state")
+_GRAD_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state")
+_ALL_UPDATE_INPUT_MODES = ("obs+state", "obs-only", "grad-only", "grad+state",
+                           "subgrad+state", "gradsplit+state")
 
 
 def _bypass_checkpoint(fn, *args, **kwargs):
@@ -219,6 +220,7 @@ class TestFourDVarNetSolver:
         expected = {
             "obs-only": D, "obs+state": 2 * D,
             "grad-only": D, "grad+state": 2 * D, "subgrad+state": 3 * D,
+            "gradsplit+state": 3 * D,
         }
         for mode, expected_channels in expected.items():
             out = _build_update_input(mode, x, obs_clean, obs_mask, tau,
@@ -288,6 +290,60 @@ class TestFourDVarNetSolver:
         assert torch.allclose(g_obs_large, g_obs_small * 1000.0, atol=1e-2), \
             "g_obs must scale linearly with the raw input, not stay pinned to RMS=1"
         assert torch.allclose(g_obs_small, (obs_small - x_small.detach()) * obs_mask, atol=1e-5)
+
+    def test_build_update_input_gradsplit_prior_channel_is_normalized(self):
+        """gradsplit+state's g_prior is a real torch.autograd.grad of
+        prior_cost alone -- dense (nonzero everywhere), same reason
+        grad-only/grad+state's combined gradient needs normalization. Same
+        RMS~1 (soft-clipped) check as
+        test_build_update_input_grad_channels_are_normalized above, just on
+        gradsplit+state's g_prior block instead."""
+        B, T, D = 2, 10, 3
+        prior_unet_model = _make_model(update_input="gradsplit+state").prior_unet
+        tau = torch.rand(B)
+        obs_mask = torch.ones(B, T, 1)
+        for scale in (1.0, 1000.0):
+            x = (torch.randn(B, T, D) * scale).requires_grad_(True)
+            obs_clean = torch.randn(B, T, D) * scale
+            out = _build_update_input("gradsplit+state", x, obs_clean, obs_mask, tau,
+                                       prior_unet=prior_unet_model, R_var=0.5, obs_weight=1.0,
+                                       clip_range=50.0)
+            g_prior = out[..., D:2 * D]
+            rms = (g_prior ** 2).mean().sqrt()
+            assert torch.isfinite(rms).all()
+            assert torch.allclose(rms, torch.ones_like(rms), atol=2e-3), \
+                f"gradsplit+state g_prior @ scale={scale}: rms={rms}"
+
+    def test_build_update_input_gradsplit_obs_channel_is_not_normalized(self):
+        """gradsplit+state's g_obs IS a real torch.autograd.grad (of obs_cost
+        alone, not a proxy like subgrad+state's), but it is architecturally
+        just as sparse as subgrad+state's own g_obs proxy -- masked to
+        exactly zero outside observation times -- so it inherits the same
+        normalization-dilution vulnerability and is deliberately NOT run
+        through _normalize_channels either. Confirmed two ways: (1) it
+        scales linearly with the input (doesn't stay pinned to RMS=1, the
+        contrapositive check used for subgrad+state), and (2) it matches the
+        exact closed form of obs_cost's gradient,
+        ``2*obs_weight*mask*(x-obs)/R_var`` (masked_obs_cost is a *sum*, not
+        mean, of ``((x-obs)*mask)**2/R_var``)."""
+        B, T, D = 2, 10, 3
+        prior_unet_model = _make_model(update_input="gradsplit+state").prior_unet
+        tau = torch.rand(B)
+        obs_mask = torch.ones(B, T, 1)
+        R_var = 0.5
+        x_small = torch.randn(B, T, D).requires_grad_(True)
+        obs_small = torch.randn(B, T, D)
+        out_small = _build_update_input("gradsplit+state", x_small, obs_small, obs_mask, tau,
+                                         prior_unet=prior_unet_model, R_var=R_var, obs_weight=1.0)
+        x_large, obs_large = x_small.detach() * 1000.0, obs_small * 1000.0
+        x_large.requires_grad_(True)
+        out_large = _build_update_input("gradsplit+state", x_large, obs_large, obs_mask, tau,
+                                         prior_unet=prior_unet_model, R_var=R_var, obs_weight=1.0)
+        g_obs_small, g_obs_large = out_small[..., :D], out_large[..., :D]
+        assert torch.allclose(g_obs_large, g_obs_small * 1000.0, atol=1e-2), \
+            "g_obs must scale linearly with the raw input, not stay pinned to RMS=1"
+        expected_small = 2.0 * (x_small.detach() - obs_small) * obs_mask / R_var
+        assert torch.allclose(g_obs_small, expected_small, atol=1e-4)
 
     def test_normalize_channels_cache_reuses_first_norm(self):
         """Matches ocean4dvarnet's ConvLstmGradModel exactly: the norm is
@@ -981,7 +1037,7 @@ class TestGradientCheckpointing:
         parameter (including prior_unet's) with a finite gradient -- checked
         via the same ``compute_loss`` path actual training uses, not just a
         toy scalar."""
-        for mode in ("grad-only", "grad+state"):
+        for mode in ("grad-only", "grad+state", "gradsplit+state"):
             model = _make_model(update_input=mode, N_outer=4)
             batch = _MockBatch(B=2, T=20, D=3)
             loss = model.compute_loss(batch)

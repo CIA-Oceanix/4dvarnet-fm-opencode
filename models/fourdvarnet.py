@@ -91,18 +91,24 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch, contrib/4dvarnet_latent/
 # models.py::GradSolver_withStep). "obs+state"/"obs-only" are gradient-free
 # (the per-iteration UNet is fed the raw state/obs, no cost function at all).
-# "grad-only"/"grad+state"/"subgrad+state" ("FDV2") are gradient-conditioned:
-# a variational cost prior_cost(state) + obs_weight*obs_cost(state, obs) is
-# built each iteration, and either its real autograd gradient ("grad-only"/
-# "grad+state", ported from ocean4dvarnet's GradSolver -- see _build_update_input)
-# or a cheap two-residual proxy that never calls autograd ("subgrad+state",
-# ported from ronan_devs' GradSolver_withStep) is fed to the update UNet.
-_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state", "subgrad+state")
+# "grad-only"/"grad+state"/"subgrad+state"/"gradsplit+state" ("FDV2") are
+# gradient-conditioned: a variational cost prior_cost(state) +
+# obs_weight*obs_cost(state, obs) is built each iteration, and one of three
+# things is fed to the update UNet: its real autograd gradient as ONE
+# combined tensor ("grad-only"/"grad+state", ported from ocean4dvarnet's
+# GradSolver -- see _build_update_input); a cheap two-residual proxy that
+# never calls autograd ("subgrad+state", ported from ronan_devs'
+# GradSolver_withStep); or the two terms' real autograd gradients kept
+# SEPARATE ("gradsplit+state" -- same two-channel input shape as
+# "subgrad+state", but each channel is a true gradient via its own
+# torch.autograd.grad call instead of a cheap proxy).
+_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
+                              "subgrad+state", "gradsplit+state")
 
 # Modes needing a real torch.autograd.grad call each iteration.
-_AUTOGRAD_MODES = ("grad-only", "grad+state")
+_AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
 # Modes needing the trainable prior operator (prior_unet).
-_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state")
+_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
 # per mode -- drives in_state_dim at construction time.
 _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
@@ -111,6 +117,7 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
+    "gradsplit+state": 3,
 }
 
 
@@ -315,11 +322,32 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     whenever the Python substring check ``'grad' in input_grad_update`` is
     true -- which (read literally) also matches ``"subgrad+state"`` (since
     ``"subgrad"`` contains ``"grad"``), a likely-unintentional legacy quirk.
-    This port keeps the three gradient-conditioned modes fully separate (no
+    This port keeps the four gradient-conditioned modes fully separate (no
     such cross-talk) and does not add any extra outer-loop term at all --
     only what feeds the main UNet changes per mode; the existing
     ``x - (1/N)*gmod`` update rule (shared with "obs+state"/"obs-only") is
     unchanged.
+
+    "gradsplit+state" is the real-autograd counterpart to "subgrad+state":
+    same two-residual-plus-state input shape, but ``g_obs``/``g_prior`` are
+    each a true ``torch.autograd.grad`` of their own cost term
+    (``obs_weight*obs_cost(x, obs)`` / ``prior_weight*prior_cost(x)``) taken
+    SEPARATELY, instead of "grad-only"/"grad+state"'s single combined
+    gradient of the summed ``var_cost``, and instead of "subgrad+state"'s
+    cheap proxy residuals. ``g_prior`` is normalized/soft-clipped exactly
+    like "grad-only"/"grad+state"'s combined ``grad`` tensor -- it is a real
+    gradient of an unbounded cost term (``prior_cost``, dense: nonzero
+    everywhere), the same reason that tensor needs it. ``g_obs`` is
+    deliberately NOT normalized, even though it IS a real gradient here (not
+    a proxy) -- ``obs_cost``'s gradient w.r.t. ``x`` is
+    ``2*mask*(x-obs)/R_var``, architecturally masked to exactly zero outside
+    observation times exactly like "subgrad+state"'s own ``g_obs`` proxy, so
+    it inherits that mode's normalization-dilution vulnerability (see the
+    2026-09-11 fix) identically -- being a true gradient rather than a proxy
+    doesn't change its sparsity, and the same global whole-tensor RMS norm
+    would dilute/inflate it exactly the same way. Whether a channel needs
+    normalization is decided by its sparsity/boundedness, not by whether it
+    came from ``torch.autograd.grad`` or a hand-written proxy formula.
     """
     if update_input == "obs-only":
         return obs_clean
@@ -328,6 +356,15 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
         g_prior = x - _prior_ae(prior_unet, x, tau)
+        return torch.cat([g_obs, g_prior, x], dim=-1)
+    if update_input == "gradsplit+state":
+        with torch.enable_grad():
+            prior_cost_val = prior_weight * _prior_cost(prior_unet, x, tau)
+            g_prior = torch.autograd.grad(prior_cost_val, x, create_graph=True)[0]
+            obs_cost_val = obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
+            g_obs = torch.autograd.grad(obs_cost_val, x, create_graph=True)[0]
+        g_prior = _normalize_channels(g_prior, cache=grad_norm_cache, key="g_prior_gradsplit",
+                                       clip_range=clip_range)
         return torch.cat([g_obs, g_prior, x], dim=-1)
     # grad-only / grad+state
     with torch.enable_grad():
@@ -396,6 +433,10 @@ class FourDVarNetSolver(nn.Module):
       with state. See ``_build_update_input``.
     - ``"subgrad+state"``: a cheap two-residual proxy gradient (obs residual +
       prior-autoencoder residual), concatenated with state, no autograd call.
+    - ``"gradsplit+state"``: like "subgrad+state"'s two-residual-plus-state
+      shape, but each residual is a real, SEPARATE autograd gradient
+      (``torch.autograd.grad`` of ``obs_cost``/``prior_cost`` individually,
+      not the combined ``var_cost`` "grad-only"/"grad+state" differentiate).
 
     ``unet_backbone`` ("unet1d" default, or "monai") selects the nn.Module
     class backing ``self.unet``/``self.prior_unet`` -- ``models.unet.UNet1D``
