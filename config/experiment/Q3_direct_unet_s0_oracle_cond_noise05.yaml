@@ -44,6 +44,15 @@
 # psi/param/forcing norm stats reused unchanged from the original Q1/Q3/Q4
 # precompute (see Q5's config comment for why: they don't depend on
 # obs_noise_std_frac/init_lag_days at all).
+#
+# gradient_clip_val: 1.0 (2026-09-13, was the default 10.0): the two
+# ablations above (gradclip1 vs seed123) confirmed the collapse recurs
+# regardless of random seed at the default clip, but never recurs at
+# clip=1.0 (job 53285 ran cleanly all 200 epochs, S0 psi EV=0.911, q
+# EV=0.189) -- see CHANGELOG.d/2026-09-12-qg-q3-noise05-collapse-ablations.md
+# and PLAN.md's ablation-outcome note. Adopted as this config's standing
+# value, not just a one-off CLI override, so the YAML is now the single
+# source of truth for this run's clip value.
 
 experiment_id: Q3_direct_unet_s0_oracle_cond_noise05
 entry_point: train_qg_neural.py
@@ -63,6 +72,7 @@ training:
   lr: 0.001
   batch_size: 2
   q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
 data:
   num_train_windows: 1000
   num_val_windows: 100

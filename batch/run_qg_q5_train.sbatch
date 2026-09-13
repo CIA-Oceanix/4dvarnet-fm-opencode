@@ -17,6 +17,14 @@ set -e
 # cache / MONAI 2D circular arch / cosine-LR default as Q1 -- only the
 # conditioning + obs/IC protocol differ.
 #
+# This script's original run (job 53274, default gradient_clip_val=10.0)
+# completed cleanly (S0 psi EV=0.935/q EV=0.372) -- Q5 never collapsed.
+# The YAML now sets training.gradient_clip_val: 1.0 anyway (2026-09-13),
+# for consistency with Q3-noise0.05 where clip=1.0 fixed a real collapse
+# at the same obs_noise_std_frac=0.05 -- confirmed no downside for Q5
+# (gradclip1 rerun: psi EV=0.934/q EV=0.385, also 200 epochs clean; see
+# experiments/Q5_direct_unet_s1_noisy_ic_cond_gradclip1/).
+#
 # --exp-id is required: Q1/Q3/Q4/Q5 all share model_type=direct_unet.
 #
 # experiments/qg_psi_norm_stats.pt, qg_param_norm_stats.pt, and

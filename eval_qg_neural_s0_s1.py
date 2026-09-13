@@ -71,12 +71,28 @@ SCHEMES = {
         "ckpt": "experiments/Q4_direct_unet_s1_noisy_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
     },
+    # Q3-noise0.05/Q5 below use the "_gradclip1" checkpoints (trained with
+    # --gradient-clip-val 1.0), now the config's standing default -- see
+    # CHANGELOG.d/2026-09-12-qg-q3-noise05-collapse-ablations.md. Q3-noise0.05's
+    # default-clip run collapsed and was never usable; Q5 trained cleanly at
+    # both clip values (numbers within noise of each other) so the gradclip1
+    # checkpoint is kept as the canonical one for consistency.
+    "Q3-noise0.05": {
+        "ckpt": "experiments/Q3_direct_unet_s0_oracle_cond_noise05_gradclip1/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+    },
+    "Q5": {
+        "ckpt": "experiments/Q5_direct_unet_s1_noisy_ic_cond_gradclip1/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "include_ic": True, "ic_dim": 2,
+    },
 }
 
 
 def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Module:
     model = build_model("direct_unet", cfg, param_dim=spec["param_dim"],
-                        cond_extra_dim=spec["cond_extra_dim"])
+                        cond_extra_dim=spec["cond_extra_dim"],
+                        ic_dim=spec.get("ic_dim", 0))
     loaded = torch.load(spec["ckpt"], map_location="cpu")
     # Accepts both a bare state_dict (train_qg_neural.py's final stage1_best.pt)
     # and a full Lightning checkpoint (keys prefixed "model." for the
@@ -87,11 +103,12 @@ def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Mod
     return model.to(device).eval()
 
 
-def _eval_one(model, windows, cfg, device, norm, param_norm, forcing_norm, cond_mode):
+def _eval_one(model, windows, cfg, device, norm, param_norm, forcing_norm, cond_mode,
+             include_ic=False):
     est_psi, est_rd = estimate_windows(
         model, windows, cfg, "direct_unet", device, norm=norm,
         cond_mode=cond_mode, param_norm_stats=param_norm, noisy_max=1.5,
-        forcing_norm_stats=forcing_norm)
+        forcing_norm_stats=forcing_norm, include_ic=include_ic)
     truth_psi = np.stack([psi_daily(w, cfg).numpy() for w in windows])
     truth_q = np.stack([q_daily(w, cfg).numpy() for w in windows])
     est_q = np.stack([
@@ -187,7 +204,7 @@ def main():
         for label, scenario in [("S0", "test_s0"), ("S1", "test_s1")]:
             windows = ds[scenario]
             summ = _eval_one(model, windows, eval_cfg, device, norm, param_norm, forcing_norm,
-                             spec["cond_mode"])
+                             spec["cond_mode"], include_ic=spec.get("include_ic", False))
             results[name][label] = summ
             print(f"  {name} {label}: PSI EV={summ['psi']['pooled_ev']:.4f}  "
                   f"PV-q EV={summ['q']['pooled_ev']:.4f}", flush=True)

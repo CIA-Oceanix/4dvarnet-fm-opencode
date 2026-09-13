@@ -39,6 +39,14 @@
 # precompute (computed from the true trajectory/params/wind_curl, which
 # don't depend on obs_noise_std_frac/init_lag_days at all -- only obs/IC
 # *sampling* does, not the underlying truth). No new precompute needed.
+#
+# gradient_clip_val: 1.0 (2026-09-13, was the default 10.0): Q5 never
+# collapsed at either clip value (original run at 10.0: S0 psi EV=0.935/q
+# EV=0.372; gradclip1 rerun at 1.0: psi EV=0.934/q EV=0.385, both 200
+# epochs clean) -- adopted 1.0 anyway for consistency with
+# Q3_direct_unet_s0_oracle_cond_noise05.yaml (same obs_noise_std_frac=0.05,
+# where clip=1.0 fixed a real collapse) since it carries no downside here.
+# See CHANGELOG.d/2026-09-12-qg-q3-noise05-collapse-ablations.md.
 
 experiment_id: Q5_direct_unet_s1_noisy_ic_cond
 entry_point: train_qg_neural.py
@@ -59,6 +67,7 @@ training:
   lr: 0.001
   batch_size: 2
   q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
 data:
   num_train_windows: 1000
   num_val_windows: 100

@@ -14,9 +14,18 @@ set -e
 # Q3_direct_unet_s0_oracle_cond.yaml, retrained at obs_noise_std_frac=0.05
 # (the DA reference case's own value) -- see
 # config/experiment/Q3_direct_unet_s0_oracle_cond_noise05.yaml for the full
-# collapse history/naming rationale. This base script reruns the ORIGINAL
-# (collapsed) settings unchanged -- see run_qg_q3_noise05_gradclip1_train.sbatch
-# and run_qg_q3_noise05_seed_train.sbatch for the two diagnostic ablations.
+# collapse history/naming rationale.
+#
+# RESOLVED (2026-09-13): the run this script originally launched (job
+# 53275) collapsed at epoch ~19-20 under the then-default
+# gradient_clip_val=10.0. Two ablations (run_qg_q3_noise05_gradclip1_train.sbatch,
+# run_qg_q3_noise05_seed_train.sbatch) confirmed the fix is tighter
+# gradient clipping, not random seed -- the YAML now sets
+# training.gradient_clip_val: 1.0 as its standing default, so running this
+# script unchanged today reproduces the validated clean run (already
+# available at experiments/Q3_direct_unet_s0_oracle_cond_noise05_gradclip1/,
+# S0 psi EV=0.911/q EV=0.189, 200 epochs, no collapse) -- no need to rerun
+# unless the checkpoint is needed under this script's original --exp-dir.
 #
 # --exp-id is required: Q1/Q3/Q4/Q5 all share model_type=direct_unet.
 #

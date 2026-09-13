@@ -785,6 +785,78 @@ recipe at a harder setting.
   this) -- no behavior change for Q1/Q3/Q4 (they never set these flags).
 - New config `Q5_direct_unet_s1_noisy_ic_cond.yaml`.
 
+### Q5 full training + Q3-noise0.05 collapse/gradient-clip ablations (2026-09-12/13)
+
+**Q5 trained cleanly, 200 epochs, A100**: 9.08h, S0 psi EV=0.935 / q EV=0.372
+-- meaningfully ahead of Q1/Q3/Q4 (psi~0.90-0.91 / q~0.16-0.21) on both
+metrics, and epoch-matched loss curves (checked at epoch 25 across runs)
+confirm this is real faster/lower convergence, not an artifact of different
+training lengths -- consistent with the design intent: the raw IC gives a
+much more direct trajectory signal than forcing/param conditioning alone.
+
+**Also retrained Q3 at the same updated obs config as Q5** (`noise=0.05`,
+named **Q3-noise0.05**, not "Q3-lag5" -- `init_lag_days` has zero effect on
+Q3, it never reads `include_ic`; see
+`config/experiment/Q3_direct_unet_s0_oracle_cond_noise05.yaml`'s full
+naming-history comment). This run **collapsed at epoch ~19-20** -- same
+frozen-constant-loss signature as the epoch-28 forcing-normalization
+collapse above, but confirmed a *different* root cause (that fix is
+unchanged/active). The only functionally relevant change vs. the original
+(clean) Q3 is `obs_noise_std_frac` 0.01→0.05.
+
+**Two ablations launched to disambiguate** ("was it bad luck, or the noise
+level"): (1) same config, `--gradient-clip-val 1.0` instead of the default
+10.0; (2) same config, `--seed 123` (default clip) -- the project had no
+seeding infrastructure before this (`pl.seed_everything()` newly added to
+`train_qg_neural.py`), so every prior run used whatever untracked randomness
+the process started with.
+
+**Result: gradient clipping, not seed, is the fix.** `seed123` collapsed too
+-- just later (epoch 22-24), then stayed frozen at the exact same dead
+value through epoch 66+ (confirmed permanent, not transient). `gradclip1`
+ran cleanly through all 200 epochs, clearing both collapse windows: final
+S0 psi EV=0.911 / q EV=0.189, 4.74h. Working hypothesis (documented in the
+config): the 5x higher obs noise occasionally produces an outlier
+daily-aggregated obs value (sparse `random_columns` sampling) whose
+gradient the looser default clip doesn't fully contain.
+
+Re-ran Q5 at `--gradient-clip-val 1.0` too, for consistency (Q5 shares
+`obs_noise_std_frac=0.05` with Q3-noise0.05) even though Q5 never collapsed
+at the default clip -- confirmed no downside: psi EV=0.934 / q EV=0.385
+(both within noise of the original 0.935/0.372, q EV if anything slightly
+better), 12.13h. **Adopted `gradient_clip_val: 1.0` as the standing default**
+in both `Q3_direct_unet_s0_oracle_cond_noise05.yaml` and
+`Q5_direct_unet_s1_noisy_ic_cond.yaml` (`train_qg_neural.py`'s
+`--gradient-clip-val` now defaults to `None` and falls back to the
+experiment YAML's `training.gradient_clip_val`, then 10.0 -- same
+YAML-fallback pattern already used for `obs_noise_std_frac`/`init_lag_days`,
+so the config alone is the source of truth, no CLI flag required at launch
+time). The validated checkpoints live at
+`experiments/Q3_direct_unet_s0_oracle_cond_noise05_gradclip1/` and
+`experiments/Q5_direct_unet_s1_noisy_ic_cond_gradclip1/`.
+
+**Q5 added to the DA-matched cross-scenario eval** (`eval_qg_neural_s0_s1.py`,
+using the gradclip1 checkpoints for both Q3-noise0.05 and Q5; full config
+match: lag=5.0d/noise=0.05/`s1_param_bias=s1_amp_bias=0.1`, identical to the
+DA campaign and to the Q1/Q3/Q4 table above):
+
+| scheme | S0 ψ EV | S0 q EV |
+|---|---|---|
+| Q1 (obs-only) | 0.897 | 0.161 |
+| Q3 (oracle) | 0.905 | 0.177 |
+| Q4 (noisy-trained) | 0.903 | 0.171 |
+| **Q5 (noisy + IC)** | **0.936** | **0.376** |
+
+vs. the DA baselines' S0 reference (`qg_da_report.md`): EnKF 0.947/**0.481**,
+ETKF 0.921/*0.405*, Strong-4DVar **0.971**/-0.126, Weak-4DVar *0.966*/-0.035.
+**Q5 substantially closes the PV-q gap** left by Q1/Q3/Q4 (0.376 vs their
+~0.16-0.18) -- within reach of ETKF (0.405) and clearly ahead of both
+4DVar variants, though still behind ETKF/EnKF; on ψ, Q5 (0.936) beats
+Q1/Q3/Q4 (~0.90) but still trails all 4 DA methods (0.92-0.97). S1 numbers
+for Q5 (with the `"scenario"` cond_mode + true IC, mirroring Q3/Q4's S1
+eval) not yet pulled into this table -- open follow-up, same as folding all
+of this into `qg_neural_report.md`.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

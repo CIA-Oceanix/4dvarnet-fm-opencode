@@ -264,9 +264,11 @@ def main():
                     help="Overrides the experiment YAML's data.normalize if given.")
     ap.add_argument("--cosine-scheduler", action=argparse.BooleanOptionalAction, default=True,
                     help="Cosine-anneal the LR over training (default: on).")
-    ap.add_argument("--gradient-clip-val", type=float, default=10.0,
+    ap.add_argument("--gradient-clip-val", type=float, default=None,
                     help="Global gradient-norm clip applied by PyTorch Lightning's "
-                         "Trainer (default 10.0, unchanged from the original). Note: "
+                         "Trainer. default=None (not 10.0) so the experiment YAML's "
+                         "training.gradient_clip_val (if any) isn't silently overridden "
+                         "-- falls back to 10.0 if neither is given. Note: "
                          "QGNeuralLightning's own gradient_clip_val attribute is dead "
                          "code (never read) -- this Trainer-level value is the only "
                          "one that actually does anything.")
@@ -385,6 +387,8 @@ def main():
                           else float(exp_cfg.data.get("obs_noise_std_frac", 0.01)))
     init_lag_days = (args.init_lag_days if args.init_lag_days is not None
                      else float(exp_cfg.data.get("init_lag_days", 1.0)))
+    gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
+                        else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
     q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
                      else float(exp_cfg.training.q_loss_weight))
     do_normalize = (args.normalize if args.normalize is not None
@@ -501,10 +505,10 @@ def main():
     total_train = 0.0
     if args.eval_only is None:
         tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr,
-                               gradient_clip_val=args.gradient_clip_val)
+                               gradient_clip_val=gradient_clip_val)
         lit = QGNeuralLightning(model, model_type, norm, test_cfg,
                                 q_loss_weight=q_loss_weight, lr=args.lr,
-                                gradient_clip_val=args.gradient_clip_val,
+                                gradient_clip_val=gradient_clip_val,
                                 use_cosine_scheduler=args.cosine_scheduler,
                                 max_epochs=epochs)
         trainer = create_trainer(tcfg, 1)
@@ -567,7 +571,7 @@ def main():
                    "s1_param_bias": test_cfg.s1_param_bias,
                    "s1_amp_bias": test_cfg.s1_amp_bias,
                    "include_ic": include_ic, "ic_dim": ic_dim,
-                   "gradient_clip_val": args.gradient_clip_val, "seed": args.seed},
+                   "gradient_clip_val": gradient_clip_val, "seed": args.seed},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),
