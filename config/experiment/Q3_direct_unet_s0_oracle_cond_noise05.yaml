@@ -1,0 +1,90 @@
+# Q3-noise0.05: same oracle (true forcing/params) conditioning as
+# Q3_direct_unet_s0_oracle_cond.yaml, but trained at obs_noise_std_frac=0.05
+# (the DA reference case's own value) instead of Q1/Q3/Q4's 0.01 default.
+#
+# NAMED "noise0.05", NOT "lag5": init_lag_days is set to 5.0 here too (to
+# stay paired with Q5's obs/IC protocol), but it has ZERO effect on this
+# config -- Q3 never reads window["init_state"] at all (no include_ic).
+# The only functionally relevant change vs. the original Q3 is the obs
+# noise level. (An earlier version of this file was mis-named
+# "..._lag5.yaml"/experiment_id "..._lag5", implying the lag mattered here
+# -- it doesn't; renamed 2026-09-12 after this was pointed out.)
+#
+# This run (job 53275, "Q3-lag5" as originally named) collapsed at epoch
+# ~19-20 -- loss froze at an exact constant for multiple consecutive
+# epochs, the same signature as the earlier forcing-normalization
+# collapse, but NOT the same root cause (that fix is unchanged/still
+# active here). The only variable that changed vs. the original Q3 (which
+# trained cleanly for 200 epochs) is obs_noise_std_frac: 0.01->0.05 --
+# working hypothesis: occasional larger/outlier daily-aggregated obs
+# values (5x more raw noise, sparse random_columns sampling) produce a
+# rare large gradient that gradient_clip_val=10.0 doesn't fully contain.
+# Notably, Q5 (same obs noise=0.05, but cond_mode="noisy" + IC input)
+# did NOT collapse at the same epoch -- open question whether that's
+# because noisy/stochastic conditioning + IC provide some stabilization,
+# or whether the Q3 collapse was closer to a rare/stochastic event not
+# strictly tied to the noise level. Two ablations launched to
+# disambiguate (see PLAN.md's 2026-09-12 note):
+#   1. Same config, --gradient-clip-val 1.0 (tighter clip) -- does this
+#      alone prevent the collapse?
+#   2. Same config, --seed <explicit value> (a different random
+#      initialization/dataloader draw than whatever untracked randomness
+#      produced the collapse) -- does it fail again, or was epoch ~19-20
+#      collapse specific to that particular random draw ("bad luck")?
+#
+# Shares model_type=direct_unet with Q1/Q3/Q4/Q5 -- pass --exp-id explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet --exp-id Q3_direct_unet_s0_oracle_cond_noise05 \
+#     --exp-dir experiments/Q3_direct_unet_s0_oracle_cond_noise05 \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# psi/param/forcing norm stats reused unchanged from the original Q1/Q3/Q4
+# precompute (see Q5's config comment for why: they don't depend on
+# obs_noise_std_frac/init_lag_days at all).
+#
+# gradient_clip_val: 1.0 (2026-09-13, was the default 10.0): the two
+# ablations above (gradclip1 vs seed123) confirmed the collapse recurs
+# regardless of random seed at the default clip, but never recurs at
+# clip=1.0 (job 53285 ran cleanly all 200 epochs, S0 psi EV=0.911, q
+# EV=0.189) -- see CHANGELOG.d/2026-09-12-qg-q3-noise05-collapse-ablations.md
+# and PLAN.md's ablation-outcome note. Adopted as this config's standing
+# value, not just a one-off CLI override, so the YAML is now the single
+# source of truth for this run's clip value.
+
+experiment_id: Q3_direct_unet_s0_oracle_cond_noise05
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  param_dim: 3
+  cond_extra_dim: 1
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cond_mode: "true"  # quoted: bare `true` parses as a YAML boolean, not this string
+  param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # init_lag_days has NO effect on Q3 (no include_ic) -- kept at 5.0 only
+  # to stay paired with Q5's obs/IC protocol for documentation purposes.
+  init_lag_days: 5.0
+  obs_noise_std_frac: 0.05

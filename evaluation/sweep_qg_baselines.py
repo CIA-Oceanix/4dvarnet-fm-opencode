@@ -63,7 +63,10 @@ def main():
     ap.add_argument("--tag", default="sweep")
     ap.add_argument("--disp-frac", type=float, default=1.0)
     ap.add_argument("--disp-frac-list", default=None)
-    ap.add_argument("--etkf-ridge-list", default=None)
+    ap.add_argument("--etkf-ridge-list", default=None,
+                     help="Comma-separated etkf_ridge values to sweep. Default "
+                          "(unset) is [1.0], the promoted default as of the "
+                          "2026-09-11 QG DA sensitivity study -- see PLAN.md.")
     ap.add_argument("--etkf-additive-list", default=None)
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--save-traj", action="store_true")
@@ -86,7 +89,7 @@ def main():
     disps = ([float(x) for x in args.disp_frac_list.split(",")]
              if args.disp_frac_list else [args.disp_frac])
     ridges = ([float(x) for x in args.etkf_ridge_list.split(",")]
-              if args.etkf_ridge_list else [0.0])
+              if args.etkf_ridge_list else [1.0])
     addit = ([float(x) for x in args.etkf_additive_list.split(",")]
              if args.etkf_additive_list else [0.0])
     colss = ([int(x) for x in args.cols_per_day_list.split(",")]

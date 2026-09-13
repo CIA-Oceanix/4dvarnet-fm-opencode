@@ -51,19 +51,122 @@ instead of one fixed draw, increasing training diversity without re-paying the
 truth rollout cost. The state/PV targets (``psi_daily``/``q_daily``) come from
 ``true_state`` and are unaffected. The ``test`` split keeps the original fixed,
 reproducible obs (``on_the_fly_obs=False``, the default) for stable evaluation.
+
+**Forcing + params conditioning (Q3/Q4, 2026-09-10):** ``QGNeuralDataset``
+can additionally condition the estimator on the wind-forcing field and the
+physical params (``rd``/``rek``/``U1`` -- **not** ``beta``, see
+``PARAM_KEYS``'s comment: it's an exact constant across the train split,
+so z-scoring it divides by zero), controlled by ``cond_mode``:
+
+* ``"none"`` (default, Q1/Q2 behavior) -- ``forcing`` is an all-zero
+  ``(days, ny, nx)`` field, ``params`` is ``None``.
+* ``"true"`` (Q3, oracle) -- ``forcing`` is the window's real ``wind_curl``
+  spatial field (from the *true* trajectory), daily-mean binned; ``params``
+  is the window's exact ``true_params`` vector ``[U1, rd, rek]``. Both
+  are deterministic per window (no resampling).
+* ``"noisy"`` (Q4) -- mirrors the L96 SDA3 CFM study's per-step resampled
+  corruption (see PLAN.md's 2026-09-10 QG Q3/Q4 section) rather than one
+  fixed S1 bias: every ``__getitem__`` draws a fresh random severity
+  fraction in ``[0, noisy_max]`` of the full S1 corruption (``s1_amp_bias``/
+  ``s1_loc_sigma_frac``/``s1_sigma_eta_frac`` for the wind, ``s1_param_bias``
+  for ``rd``/``rek``), so training sees a distribution of corruption
+  severity rather than a single fixed operating point.
+* ``"scenario"`` (cross-scenario S0/S1 **eval only**, not used for training)
+  -- deterministic, no resampling: reads whatever the window's own S0/S1
+  scenario wrapper (``QGS01Dataset._scenario_window``) designates as
+  believed (``wind_state_corrupted``/``da_params``, which equal
+  ``wind_state_true``/``true_params`` exactly for an S0-scenario window) --
+  the same biased forcing/params a DA method's dynamical model sees under
+  S1, unlike ``"true"``/``"noisy"`` which always ignore the scenario label.
+
+``forcing``/``params`` are always returned in **physical units** from the
+dataset; z-score normalization (mirroring the psi/obs normalization above)
+is applied via explicit stats dicts -- required whenever ``cond_mode !=
+"none"``:
+
+* ``param_norm_stats`` (``{"mean", "std"}`` over ``[U1, rd, rek]``,
+  produced by ``precompute_qg_norm_stats.py``'s ``--output-params``) --
+  the 3 physical params span ~9 orders of magnitude raw.
+* ``forcing_norm_stats`` (a single global scalar ``{"mean", "std"}`` over
+  the pooled ``wind_curl`` field, produced by ``precompute_qg_norm_stats.py``'s
+  ``--output-forcing``). **Added 2026-09-10 after a real training failure**:
+  the forcing field was originally left unnormalized on the (unverified)
+  assumption its per-grid-cell scale was "already comparable" to the
+  z-scored obs/psi channels -- it is not: raw ``wind_curl`` is
+  ``O(1e-13)-O(1e-12)`` (`wind_amp` ranges 0-3e-11 over a Witch-of-Agnesi
+  profile peaking at ~1), roughly 12-13 orders of magnitude smaller than
+  the unit-variance psi/obs/param channels it is concatenated with. A full
+  200-epoch Q3 training run collapsed at epoch 28 (loss frozen thereafter
+  at exactly the "predict-the-zero-mean" baseline, ``loss_psi≈1 +
+  q_loss_weight·loss_q≈1``, i.e. the model died) -- the forcing channel's
+  negligible raw scale is the leading suspect (a conv layer needing large
+  weights to extract any signal from a ~1e-12-scale channel is a plausible
+  destabilization mechanism). Spatial structure (storm location) is
+  preserved by z-scoring with one global scalar, not per-grid-cell, stats.
+
+**Initial-condition conditioning (Q5, 2026-09-11):** ``QGNeuralDataset``
+can additionally condition on the raw initial-condition snapshot via
+``include_ic=True`` -- a **third, distinct conditioning class** from
+``forcing``/``params``: unlike ``forcing`` (one field *per day*) or
+``params`` (one scalar *vector*), the IC is one static spatial field for
+the *whole window*, unaffected by ``cond_mode`` (always the true
+``window["init_state"]``, like obs -- never scenario-corrupted, since
+physically it represents a recent analysis/observation, not the DA model's
+own internal forecast). Inverted to psi via the per-window spectral
+inverter (``_ic_field``) and z-scored with the same global
+``psi_norm_stats`` already used for state/obs -- no new stats file. Neither
+``init_state`` nor any IC-derived quantity was referenced anywhere in this
+module before Q5 -- Q1/Q3/Q4 have zero equivalent of the background/IC
+skill DA baselines get from rolling forward a sampled init state.
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dc_replace
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from data.normalization import denormalize, normalize
-from data.qg import QGConfig, QGS01Dataset, expand_obs_to_grid
+from data.qg import (
+    QGConfig,
+    QGS01Dataset,
+    _make_corrupted_wind_state,
+    _make_qg_dynamics,
+    expand_obs_to_grid,
+)
 
 _INVERTER_CACHE: dict = {}
+_DYN_CACHE: dict = {}
+
+PARAM_KEYS = ("U1", "rd", "rek")
+
+
+def _cached_qg_dynamics(cfg: QGConfig):
+    """Per-cfg cached `QGDynamics`, mirroring `_reconstruct_inverter`'s cache
+    pattern. `_make_qg_dynamics(cfg)` rebuilds the full spectral PV-inversion
+    machinery (wavenumber grids, filters) from scratch, none of which
+    `wind_curl_field` actually needs (only the (x,y) grid + wind_sigma/L/W)
+    -- but the real fix is not recomputing it at all: this was being called
+    once per training draw (~1000/epoch at batch_size=2), a measured ~2x
+    epoch-time bottleneck in Q4 that a training run caught (see PLAN.md's
+    2026-09-10 QG Q3/Q4 section). Deterministic given `cfg`, so caching by
+    the exact fields `_make_qg_dynamics` reads is safe (no result change).
+    """
+    key = (cfg.nx, cfg.L, cfg.dt, cfg.beta, cfg.rd, cfg.delta, cfg.U1, cfg.U2,
+           cfg.rek, cfg.filterfac, cfg.wind_amp, cfg.wind_tau_days, cfg.wind_sigma,
+           cfg.wind_cx, cfg.wind_cy, cfg.wind_drift_tau_days, cfg.wind_drift_sigma,
+           cfg.wind_seed)
+    if key not in _DYN_CACHE:
+        _DYN_CACHE[key] = _make_qg_dynamics(cfg)
+    return _DYN_CACHE[key]
+# `beta` is deliberately excluded: `QGS01Dataset._generate_truth_only` never
+# jitters it (only U1/rd/rek get a per-window `u,r,k` random draw, see
+# data/qg.py), so it is an exact constant across the whole train split --
+# z-score normalizing a zero-variance channel divides by std=0 (confirmed by
+# a training smoke test: param_dim=4 with beta included produced NaN loss
+# within the first epoch). A constant channel also carries zero information
+# for the network to condition on regardless of normalization.
 
 
 def steps_per_day(cfg: QGConfig) -> int:
@@ -85,6 +188,76 @@ def _daily_mean_bin(x: torch.Tensor, spd: int) -> torch.Tensor:
         raise ValueError(f"T={T} not divisible by steps_per_day={spd}")
     x = x.reshape(*lead, T // spd, spd, D)
     return x.mean(dim=-2)
+
+
+def _daily_mean_field(field: torch.Tensor, spd: int) -> torch.Tensor:
+    """Daily-mean bin a spatial (T, ny, nx) field to (days, ny, nx)."""
+    T, ny, nx = field.shape
+    if T % spd != 0:
+        raise ValueError(f"T={T} not divisible by steps_per_day={spd}")
+    return field.reshape(T // spd, spd, ny, nx).mean(dim=1)
+
+
+def _true_params_vector(window: dict) -> torch.Tensor:
+    tp = window["true_params"]
+    return torch.tensor([float(tp[k]) for k in PARAM_KEYS], dtype=torch.float32)
+
+
+def _true_forcing_and_params(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
+    """Q3 (oracle): the real true wind_curl field + exact true params, no jitter."""
+    forcing = _daily_mean_field(window["wind_curl"], steps_per_day(cfg))
+    return forcing, _true_params_vector(window)
+
+
+def _scenario_forcing_and_params(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cross-scenario eval (Q3/Q4 evaluated on S0 vs S1 test windows,
+    see PLAN.md's 2026-09-10 QG Q3/Q4 evaluation-plan section): deterministic,
+    no resampling -- reads whatever the window's *own* scenario wrapper
+    (`data.qg.QGS01Dataset._scenario_window`) designates as the "believed"
+    model: `wind_state_corrupted`/`da_params` for an S1-scenario window (the
+    exact same biased forcing/params a DA method's dynamical model sees
+    under S1), which fall back to `wind_state_true`/`true_params` for an
+    S0-scenario window since `_scenario_window`'s "test_s0" branch sets
+    `wind_state_corrupted = wind_state_true` and `da_params = true_params`
+    exactly -- so this one code path is correct for both scenarios uniformly.
+    Distinct from `cond_mode="true"`/`"noisy"` (training-time modes, which
+    always use the true/freshly-resampled-synthetic values regardless of
+    scenario label -- appropriate for training diversity, but NOT a fair S1
+    apples-to-apples test since they never actually consume the scenario's
+    own defined bias).
+    """
+    ws = window.get("wind_state_corrupted", window["wind_state_true"])
+    dyn = _cached_qg_dynamics(cfg)
+    wind_curl = dyn.wind_curl_field(ws)
+    forcing = _daily_mean_field(wind_curl, steps_per_day(cfg))
+    params_src = window.get("da_params", window["true_params"])
+    params = torch.tensor([float(params_src[k]) for k in PARAM_KEYS], dtype=torch.float32)
+    return forcing, params
+
+
+def _noisy_forcing_and_params(window: dict, cfg: QGConfig,
+                              noisy_max: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Q4: resample a fresh random severity fraction of the full S1
+    corruption (wind + rd/rek bias) every call, mirroring the L96 SDA3 CFM
+    study's per-step resampled noisy-params conditioning (see module
+    docstring) instead of one fixed S1 operating point.
+    """
+    draw = random.randrange(1, 1_000_000)
+    rng = np.random.RandomState(draw)
+    frac = float(rng.uniform(0.0, noisy_max))
+    scaled_cfg = _dc_replace(cfg, s1_amp_bias=cfg.s1_amp_bias * frac,
+                             s1_loc_sigma_frac=cfg.s1_loc_sigma_frac * frac,
+                             s1_sigma_eta_frac=cfg.s1_sigma_eta_frac * frac)
+    ws_corrupt = _make_corrupted_wind_state(scaled_cfg, window["wind_state_true"], draw)
+    dyn = _cached_qg_dynamics(cfg)
+    wind_curl_corrupt = dyn.wind_curl_field(ws_corrupt)
+    forcing = _daily_mean_field(wind_curl_corrupt, steps_per_day(cfg))
+    tp = window["true_params"]
+    b = cfg.s1_param_bias * frac
+    params = torch.tensor(
+        [float(tp["U1"]), float(tp["rd"]) * (1.0 - b), float(tp["rek"]) * (1.0 - b)],
+        dtype=torch.float32)
+    return forcing, params
 
 
 def _daily_obs_psi(window: dict, cfg: QGConfig) -> tuple[torch.Tensor, torch.Tensor]:
@@ -154,6 +327,29 @@ def psi_to_q(state: torch.Tensor, rd: float, cfg: QGConfig,
     return inv.psi_to_q(state)
 
 
+def _ic_field(window: dict, cfg: QGConfig, psi_norm_stats: dict) -> torch.Tensor:
+    """Q5: the raw initial-condition snapshot (`window["init_state"]`,
+    physical PV/q, always from the *true* trajectory -- like obs, never
+    scenario-corrupted, since physically it represents a recent analysis/
+    observation, not the DA model's own internal forecast). Inverted to psi
+    and z-scored with the same global `psi_norm_stats` already used for the
+    state/obs channels (a third conditioning class, distinct from forcing/
+    params: one static field per window, not per-day/scalar -- see
+    `QGNeuralDataset`'s `include_ic` docstring)."""
+    rd = float(window["true_params"]["rd"])
+    inv = _reconstruct_inverter(cfg, rd)
+    ic_psi = inv.inner.streamfunctions(window["init_state"].reshape(1, -1))
+    if ic_psi.dim() == 4:
+        ic_psi = ic_psi.reshape(ic_psi.shape[0], -1)
+    ic_psi = ic_psi.squeeze(0)
+    split = layer_split(cfg)
+    ic_n = ic_psi.clone()
+    stats = psi_norm_stats
+    ic_n[:split] = normalize(ic_n[:split], {"mean": stats["mean"][0], "std": stats["std"][0]})
+    ic_n[split:] = normalize(ic_n[split:], {"mean": stats["mean"][1], "std": stats["std"][1]})
+    return ic_n
+
+
 @dataclass
 class WindowScale:
     """Per-window per-layer std (streamfunction psi + PV q).
@@ -197,7 +393,7 @@ class QGBatch:
     unlike `states`/`obs`, it is not normalized (see the module docstring).
     """
 
-    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None):
+    def __init__(self, states, obs, obs_mask, forcing, states_q, rd, params=None, ic=None):
         self.states = states
         self.obs = obs
         self.obs_mask = obs_mask
@@ -205,6 +401,7 @@ class QGBatch:
         self.states_q = states_q
         self.rd = rd
         self.params = params
+        self.ic = ic
         self.batch_size, self.T, self.dim = states.shape
 
     def to(self, device):
@@ -216,6 +413,8 @@ class QGBatch:
         self.rd = self.rd.to(device)
         if self.params is not None:
             self.params = self.params.to(device)
+        if self.ic is not None:
+            self.ic = self.ic.to(device)
         return self
 
 
@@ -236,11 +435,40 @@ class QGNeuralDataset(Dataset):
     """
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
-                 on_the_fly_obs: bool = False):
+                 on_the_fly_obs: bool = False, cond_mode: str = "none",
+                 param_norm_stats: dict | None = None, noisy_max: float = 1.5,
+                 forcing_norm_stats: dict | None = None, include_ic: bool = False):
+        if cond_mode not in ("none", "true", "noisy", "scenario"):
+            hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
+                    "this string -- quote it as `cond_mode: \"true\"`)"
+                    if isinstance(cond_mode, bool) else "")
+            raise ValueError(f"unknown cond_mode {cond_mode!r}{hint}")
+        if cond_mode != "none" and param_norm_stats is None:
+            raise ValueError(
+                "param_norm_stats is required when cond_mode != 'none' -- the "
+                "3 physical params span ~9 orders of magnitude raw, see "
+                "precompute_qg_norm_stats.py --output-params")
+        if cond_mode != "none" and forcing_norm_stats is None:
+            raise ValueError(
+                "forcing_norm_stats is required when cond_mode != 'none' -- raw "
+                "wind_curl is ~1e-13-1e-12, ~12 orders of magnitude smaller than "
+                "the unit-variance psi/obs/param channels it's concatenated with; "
+                "leaving it unnormalized destabilized a real training run (see "
+                "module docstring), see precompute_qg_norm_stats.py --output-forcing")
+        if include_ic and psi_norm_stats is None:
+            raise ValueError(
+                "psi_norm_stats is required when include_ic=True -- the IC is "
+                "inverted to psi and z-scored with the same global psi stats "
+                "used for state/obs (Q5, see data.qg_neural._ic_field)")
         self.windows = windows
         self.cfg = cfg
         self.psi_norm_stats = psi_norm_stats
         self.on_the_fly_obs = on_the_fly_obs
+        self.cond_mode = cond_mode
+        self.param_norm_stats = param_norm_stats
+        self.noisy_max = noisy_max
+        self.forcing_norm_stats = forcing_norm_stats
+        self.include_ic = include_ic
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -279,9 +507,25 @@ class QGNeuralDataset(Dataset):
         obs_pad = torch.zeros(days, 2 * split)
         obs_pad[:, :split] = torch.nan_to_num(obs_d, nan=0.0)
         mask_full = mask_d.any(dim=-1)
-        forcing = torch.zeros(days, dtype=obs_pad.dtype)
         rd = torch.tensor([float(w["true_params"]["rd"])], dtype=torch.float32)
-        return psi_n, obs_pad, mask_full, forcing, qs, rd
+
+        if self.cond_mode == "none":
+            forcing = torch.zeros(days, self.cfg.ny, self.cfg.nx, dtype=obs_pad.dtype)
+            params = None
+        else:
+            if self.cond_mode == "true":
+                forcing, params = _true_forcing_and_params(w, self.cfg)
+            elif self.cond_mode == "noisy":
+                forcing, params = _noisy_forcing_and_params(w, self.cfg, self.noisy_max)
+            else:
+                forcing, params = _scenario_forcing_and_params(w, self.cfg)
+            forcing = forcing.to(obs_pad.dtype)
+            forcing = normalize(forcing, self.forcing_norm_stats)
+            params = normalize(params, self.param_norm_stats)
+
+        ic = _ic_field(w, self.cfg, self.psi_norm_stats) if self.include_ic else None
+
+        return psi_n, obs_pad, mask_full, forcing, qs, rd, params, ic
 
     def raw_psi(self, idx: int) -> torch.Tensor:
         return psi_daily(self.windows[idx], self.cfg)
@@ -303,7 +547,9 @@ def qg_collate(batch: list) -> QGBatch:
     forcing = torch.stack([b[3] for b in batch])
     states_q = torch.stack([b[4] for b in batch])
     rd = torch.stack([b[5] for b in batch]).squeeze(-1)
-    return QGBatch(states, obs, masks, forcing, states_q, rd)
+    params = None if batch[0][6] is None else torch.stack([b[6] for b in batch])
+    ic = None if batch[0][7] is None else torch.stack([b[7] for b in batch])
+    return QGBatch(states, obs, masks, forcing, states_q, rd, params=params, ic=ic)
 
 
 def denorm_psi(x: torch.Tensor, cfg: QGConfig, psi_norm_stats: dict | None) -> torch.Tensor:
@@ -336,6 +582,32 @@ def ensure_truth_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:
     from data.qg import make_qg_s0_s1_datasets
     datasets = make_qg_s0_s1_datasets(cfg, num_test_windows=num_windows, cache_dir=cache_dir)
     return list(datasets["test_s0"])
+
+
+def ensure_truth_cache_redrawn(cache_cfg: QGConfig, eval_cfg: QGConfig, num_windows: int,
+                               cache_dir: str, scenario: str = "test_s0") -> list:
+    """Like `ensure_truth_cache`, but for when `eval_cfg`'s obs/IC protocol
+    (`obs_noise_std_frac`/`init_lag_days`/`s1_param_bias`/`s1_amp_bias`/...)
+    differs from the cached truth's own key. Loads the cached truth at
+    `cache_cfg`'s key (a cache HIT -- `cache_cfg` should share `nx`/`seed`/
+    `num_windows` with the production cache and leave every other field at
+    the `QGConfig` default), then cheaply redraws obs/init-state at
+    `eval_cfg`'s actual settings via `QGS01Dataset._generate_obs_ic` (truth
+    generation doesn't depend on the obs/IC protocol, only sampling does).
+
+    Calling `ensure_truth_cache(eval_cfg, ...)` directly would silently MISS
+    the cache (`_truth_cache_path` hashes the *whole* `QGConfig`) and trigger
+    a full from-scratch truth rollout -- caught the hard way when Q5/Q3-lag5
+    smoke tests were first launched with that naive call and had to be
+    killed after ~10 minutes of silent, expensive regeneration (see PLAN.md's
+    2026-09-12 note). Mirrors `eval_qg_neural_s0_s1.py`'s identical fix.
+    """
+    from data.qg import QGS01Dataset, _truth_cache_path
+    path = _truth_cache_path(cache_cfg, num_windows, cache_dir)
+    base = torch.load(path, map_location="cpu")[:num_windows]
+    raw = QGS01Dataset(eval_cfg, scenario, base_windows=base).windows
+    ic = QGS01Dataset._generate_obs_ic(eval_cfg, raw, list(range(len(raw))))
+    return [dict(w, **entry) for w, entry in zip(raw, ic)]
 
 
 def ensure_truth_only_cache(cfg: QGConfig, num_windows: int, cache_dir: str) -> list:

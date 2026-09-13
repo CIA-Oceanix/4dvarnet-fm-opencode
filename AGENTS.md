@@ -80,6 +80,8 @@ Stop for user input only on a genuine external blocker:
 
 - Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
 - Add a CHANGELOG.d/ fragment (see format below) for every merged change.
+- Don't reformat or restyle unrelated code in the same change — keep diffs scoped to
+  the requested task, even when touching a file that could use a broader cleanup.
 
 ## Changelog Format
 
@@ -127,6 +129,11 @@ Always run tests after making changes.
 - `reports/` — Report generation scripts
 - `batch/` — SLURM batch scripts for HPC
 - `tests/` — Unit and integration tests
+- Top-level entry points: `train.py` (Hydra-driven training), `run_experiment.py` /
+  `run_experiments.py` (single/batch experiment runners), and per-case-study
+  `eval_*.py` / `evaluate_all*.py` scripts (e.g. `eval_baselines.py`,
+  `evaluate_all_l96.py`, `train_qg_neural.py`) — these multiply per topic branch,
+  so this list isn't exhaustive; `ls *.py` in the relevant worktree is authoritative.
 
 ## Key Conventions
 
