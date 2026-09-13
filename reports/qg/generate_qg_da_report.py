@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Generate the QG S0 DA-baselines report.
+"""Generate the QG DA-baselines report (S0 reference case + S1 revised
+model-error case).
 
 JSON-only generator (no QG/neural code imports). Reads the four DA baselines
 (ETKF/EnKF/Strong-4DVar/Weak-4DVar) from ``reports/qg/outputs/
-qg_repro_validation/`` and renders a comparison table (RMSE, CRPS, EV,
-free-forecast EV) on the S0 scenario, plus pointers to the reconstruction
-figures (see ``generate_qg_reconstruction_figs.py``).
+qg_repro_validation/`` (S0) and ``reports/qg/outputs/qg_repro_validation_s1/``
+(S1), renders a comparison table (RMSE, CRPS, EV, free-forecast EV) for each
+scenario, a condensed hyperparameter-sensitivity section, and a closing
+synthesis table (best known config per method, S0 vs S1), plus pointers to
+the reconstruction figures (see ``generate_qg_reconstruction_figs.py``).
 
 Reference case (2026-09-08): lag=5.0d, noise_frac=0.05, N=100 test windows --
 supersedes the earlier lag=1.0d/noise=0.01 case, which was found to be
 unrealistically favorable (the background/free forecast alone already
 explained most of the DA skill; see PLAN.md's "DA reference-case realism"
-section for the full sensitivity analysis).
+section for the full sensitivity analysis). S1 (2026-09-10) adds param bias +
+corrupted wind + da_nx=32 structural mismatch on top of S0's setup.
+
+ETKF default changed 2026-09-12: `etkf_ridge=1.0` (was the implicit ~1e-4
+floor at `etkf_ridge<=0`) -- see the "Hyperparameter sensitivity analysis"
+section below and `reports/qg/outputs/da_sensitivity_s0_s1_report.md` for
+the full sweep this is based on.
 
 Does NOT cover the Q1/Q2 neural estimators -- see ``generate_qg_neural_report.py``
 for the case-study overview report (scheme descriptions + a combined DA/neural
@@ -33,6 +42,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 METHODS = [("EnKF", "enkf"), ("ETKF", "etkf"),
            ("Weak-4DVar", "weak4dvar"), ("Strong-4DVar", "strong4dvar")]
+
+# Best known config per method, from the 2026-09-11/12 sensitivity study.
+# All four are the CURRENT shipped defaults (etkf_ridge=1.0 was promoted
+# specifically because the sweep found it best -- nothing else changed).
+BEST_CONFIG = {
+    "EnKF": "N=80, inflation=1.0, loc_radius=6.0 (default, unchanged -- own "
+            "inflation sweep found no improvement over this)",
+    "ETKF": "N=80, inflation=1.0, loc_radius=6.0, **etkf_ridge=1.0** "
+            "(default since 2026-09-12; was the implicit ~1e-4 floor)",
+    "Strong-4DVar": "b_var_scale=1.0 (default, unchanged -- sweep over "
+                    "0.3-3.0 found no improvement, roughly flat)",
+    "Weak-4DVar": "b_var_scale=1.0, q_var_scale=0.1 (default, unchanged -- "
+                  "sweep over 0.1-3.0 found 0.1 already best, higher values "
+                  "monotonically worse)",
+}
 
 
 def load_json(path: Path) -> dict:
@@ -72,26 +96,26 @@ def mark(s: str, kind: str | None) -> str:
     return s
 
 
-def load_da_baselines(root: Path) -> list[dict]:
+def load_da_baselines(root: Path, scen_dir: str, scen_key: str) -> list[dict]:
     out = []
     for label, fname in METHODS:
-        p = root / "qg_repro_validation" / f"{fname}.json"
+        p = root / scen_dir / f"{fname}.json"
         if not p.exists():
             out.append({"label": label, "data": None})
             continue
         d = load_json(p)
-        s0 = d.get("scenarios", {}).get("test_s0", {})
-        q = s0.get("metrics_per_field", {}).get("q", {})
-        psy = s0.get("metrics_per_field", {}).get("psi", {})
+        s = d.get("scenarios", {}).get(scen_key, {})
+        q = s.get("metrics_per_field", {}).get("q", {})
+        psy = s.get("metrics_per_field", {}).get("psi", {})
         out.append({
             "label": label,
             "data": {
-                "rmse": s0.get("rmse_mean"),
-                "free_rmse": s0.get("forecast_rmse_mean"),
-                "improv": s0.get("forecast_improvement"),
-                "crps": s0.get("crps_mean"),
-                "crps_normalized": s0.get("crps_normalized"),
-                "crps_is_deterministic": s0.get("crps_is_deterministic"),
+                "rmse": s.get("rmse_mean"),
+                "free_rmse": s.get("forecast_rmse_mean"),
+                "improv": s.get("forecast_improvement"),
+                "crps": s.get("crps_mean"),
+                "crps_normalized": s.get("crps_normalized"),
+                "crps_is_deterministic": s.get("crps_is_deterministic"),
                 "q_ev": q.get("full", {}).get("ev"),
                 "q_ev_free": q.get("full", {}).get("ev_free"),
                 "q1_ev": q.get("layer1", {}).get("ev"),
@@ -104,36 +128,14 @@ def load_da_baselines(root: Path) -> list[dict]:
                 "psi2_ev": psy.get("layer2", {}).get("ev"),
                 "lag_days": d.get("init_lag_days"),
                 "noise_frac": d.get("obs_noise_std_frac"),
-                "num_windows": len(s0.get("rmse_list", [])) or None,
+                "num_windows": len(s.get("rmse_list", [])) or None,
             },
         })
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--json-root", default=str(ROOT / "reports/qg/outputs"))
-    ap.add_argument("--out", default=str(ROOT / "reports/qg/outputs/qg_da_report.md"))
-    args = ap.parse_args()
-
-    out_root = Path(args.json_root)
-    da = load_da_baselines(out_root)
-
-    lines = []
-    add = lines.append
-    add("# QG DA Baselines (S0 reference case)")
-    add("")
-    add("Reference case (2026-09-08): **lag=5.0d, noise_frac=0.05, N=100 test "
-        "windows**. Supersedes the earlier lag=1.0d/noise=0.01 case, which was "
-        "found to be unrealistically favorable -- at that setting the "
-        "background (free forecast, no assimilation) alone already reached "
-        "psi full EV≈0.98, so DA's high score there was mostly inherited from "
-        "the background rather than earned from the observational update. "
-        "See `PLAN.md`'s \"DA reference-case realism\" section for the full "
-        "lag/noise sensitivity analysis behind this choice.")
-    add("")
-
-    add("## DA baselines (S0, PV-q and ψ)")
+def render_baseline_table(add, da: list[dict], scen_label: str) -> None:
+    add(f"## DA baselines ({scen_label}, PV-q and ψ)")
     add("")
     add("CRPS is computed per-window on the q-state: ensemble methods "
         "(ETKF/EnKF) score their real per-member spread; deterministic "
@@ -193,13 +195,12 @@ def main() -> None:
     if q2_collapse:
         add(f"> **Caveat:** {', '.join(q2_collapse)} collapse on PV q layer2 "
             "(the unobserved lower layer) at this reference case -- their "
-            "PV EV is negative there despite psi EV being the best of all "
-            "4 methods. This is consistent with PV being a Laplacian-like "
-            "operator on psi (q ≈ ∇²ψ): small high-wavenumber errors in an "
-            "otherwise excellent psi analysis get amplified when inverted "
-            "to PV, especially in the layer with no direct observations. "
-            "EnKF is the only method strongly positive on **both** psi and "
-            "PV q at this setting.")
+            "PV EV is negative there despite psi EV being competitive or "
+            "the best of all 4 methods. This is consistent with PV being a "
+            "Laplacian-like operator on psi (q ≈ ∇²ψ): small "
+            "high-wavenumber errors in an otherwise excellent psi analysis "
+            "get amplified when inverted to PV, especially in the layer "
+            "with no direct observations.")
         add("")
 
     if have_data:
@@ -211,6 +212,142 @@ def main() -> None:
             "are stale, regenerate them).")
         add("")
 
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json-root", default=str(ROOT / "reports/qg/outputs"))
+    ap.add_argument("--out", default=str(ROOT / "reports/qg/outputs/qg_da_report.md"))
+    args = ap.parse_args()
+
+    out_root = Path(args.json_root)
+    da_s0 = load_da_baselines(out_root, "qg_repro_validation", "test_s0")
+    da_s1 = load_da_baselines(out_root, "qg_repro_validation_s1", "test_s1")
+
+    lines = []
+    add = lines.append
+    add("# QG DA Baselines (S0 reference case + S1 model-error case)")
+    add("")
+    add("Reference case (2026-09-08): **lag=5.0d, noise_frac=0.05, N=100 test "
+        "windows** (S0). Supersedes the earlier lag=1.0d/noise=0.01 case, "
+        "which was found to be unrealistically favorable -- at that setting "
+        "the background (free forecast, no assimilation) alone already "
+        "reached psi full EV≈0.98, so DA's high score there was mostly "
+        "inherited from the background rather than earned from the "
+        "observational update. See `PLAN.md`'s \"DA reference-case realism\" "
+        "section for the full lag/noise sensitivity analysis behind this "
+        "choice.")
+    add("")
+    add("**S1** (revised 2026-09-10): shares S0's initial-uncertainty setup "
+        "exactly (lag=5.0d, noise_frac=0.05) and adds three independent "
+        "model-error sources on top -- param bias (`rd`/`rek` scaled by "
+        "`1-0.1`), corrupted wind (amplitude bias + storm-location jitter), "
+        "and structural resolution mismatch (`da_nx=32`, half the truth "
+        "grid). Obs are always drawn from the true, unbiased, full-res "
+        "trajectory -- only the DA method's own model sees the corruption.")
+    add("")
+    add("**ETKF default changed 2026-09-12**: `etkf_ridge=1.0` (was the "
+        "implicit ~1e-4 floor at `etkf_ridge<=0`) -- see the \"Hyperparameter "
+        "sensitivity analysis\" section below. All ETKF numbers in this "
+        "report use the new default.")
+    add("")
+
+    render_baseline_table(add, da_s0, "S0")
+    render_baseline_table(add, da_s1, "S1")
+
+    # ---- Hyperparameter sensitivity analysis ----
+    add("## Hyperparameter sensitivity analysis")
+    add("")
+    add("Condensed summary of the 2026-09-11/12 sensitivity study -- full "
+        "sweep tables (finer inflation grids, additive inflation, the full "
+        "ridge grid, EnKF's own inflation sensitivity) are in the dedicated "
+        "`reports/qg/outputs/da_sensitivity_s0_s1_report.md` "
+        "(`reports/qg/generate_da_sensitivity_report.py`); `PLAN.md` has the "
+        "full narrative trail.")
+    add("")
+    add("**Motivation**: EnKF consistently beat ETKF on S1 with no known "
+        "cause (N=100: ETKF q EV 0.307 vs EnKF 0.331, at ETKF's *old* "
+        "default). The natural first hypothesis -- ETKF is under/"
+        "over-inflated -- turned out not to explain it.")
+    add("")
+    add("**ETKF/EnKF inflation (multiplicative)**: both methods collapse in "
+        "near-lockstep under any inflation above 1.0 -- e.g. S0 q EV at "
+        "inflation={1.00,...,1.05}: ETKF {0.402,0.402,0.296,0.147,-40.4,"
+        "-123.5} vs EnKF {0.463,0.435,0.313,0.156,-43.0,-124.3} (N=10), "
+        "virtually the same curve, same catastrophic threshold. This rules "
+        "out \"ETKF's deterministic transform is uniquely fragile to "
+        "over-inflation\" as an explanation -- both ensemble methods share "
+        "the fragility equally, so it cannot explain the EnKF>ETKF gap. "
+        "**Additive inflation** (never exercised before this study) also "
+        "only ever hurts, though gracefully (no catastrophic divergence).")
+    add("")
+    add("**`etkf_ridge` (Kalman-gain transform-matrix regularization) is the "
+        "real lever** -- a mechanism EnKF has no equivalent of. "
+        "Monotonically helps up to a peak (S1 peaks around ridge=2.0, S0 "
+        "plateaus 0.1-1.0), then mildly declines. `ridge=1.0` was picked as "
+        "near-optimal on both scenarios. **Confirmed at full N=100** (not "
+        "just the N=10 sweep):")
+    add("")
+    add("| | ETKF (old default) | EnKF | **ETKF + ridge=1.0 (new default)** |")
+    add("|---|---|---|---|")
+    add("| S0 psi EV | 0.921 | 0.947 | **0.957** |")
+    add("| S0 q EV | 0.405 | **0.481** | 0.476 |")
+    add("| S1 psi EV | 0.874 | 0.896 | **0.926** |")
+    add("| S1 q EV | 0.307 | 0.331 | **0.357** |")
+    add("")
+    add("ETKF+ridge=1.0 beats EnKF outright on **both** fields on S1, and "
+        "ties/beats it on S0 -- no trade-off on the unobserved PV layer "
+        "either. This is why `etkf_ridge=1.0` was promoted to the default "
+        "(2026-09-12): the previously \"unexplained\" EnKF>ETKF gap was "
+        "largely an artifact of ETKF running with an under-regularized "
+        "transform-matrix inversion, not a fundamental method limitation.")
+    add("")
+    add("**4DVar (Strong/Weak) covariance-weighting sweep -- negative "
+        "result**: motivated by the same logic (both 4DVar variants "
+        "collapse on PV q layer2 under S1: Strong -0.857, Weak -0.501 vs "
+        "ETKF/EnKF staying positive), swept Strong-4DVar's `b_var_scale` "
+        "(background-covariance whitening scale) and Weak-4DVar's "
+        "`q_var_scale` (per-step model-error weight) on S1, N=5 (4DVar is "
+        "~15-20x more expensive per window than ETKF/EnKF). Unlike ETKF's "
+        "ridge, **neither lever helps**: `b_var_scale` is essentially flat "
+        "across 0.3-3.0 (q EV -1.06/-1.07/-1.11); `q_var_scale` is "
+        "monotonically *worse* the higher it's pushed above the existing "
+        "default 0.1 (q EV -0.91/-0.99/-1.09/-1.11 at 0.1/0.3/1.0/3.0) -- "
+        "giving the model-error controls more freedom actively hurts rather "
+        "than helping. Both methods' existing defaults (`b_var_scale=1.0`, "
+        "`q_var_scale=0.1`) were already at or near the best point found. "
+        "This is consistent with the 4DVar q-layer2 collapse being a more "
+        "structural limitation (a single optimized trajectory has no "
+        "ensemble spread to exploit on the unobserved layer) rather than a "
+        "fixable covariance-tuning gap, unlike ETKF's case.")
+    add("")
+
+    # ---- Synthesis ----
+    add("## Synthesis: best configuration per method (S0 vs S1)")
+    add("")
+    add("Following the sensitivity study above, every method's *best known* "
+        "config is now also its *shipped default* -- ETKF's default was the "
+        "one that changed (`etkf_ridge=1.0`); EnKF, Strong-4DVar, and "
+        "Weak-4DVar were already at their best tested configuration.")
+    add("")
+    add("| method | best config | S0 ψ EV | S0 PV EV | S1 ψ EV | S1 PV EV |")
+    add("|---|---|---|---|---|---|")
+    by_label_s0 = {row["label"]: row["data"] for row in da_s0}
+    by_label_s1 = {row["label"]: row["data"] for row in da_s1}
+    for label, _ in METHODS:
+        d0 = by_label_s0.get(label)
+        d1 = by_label_s1.get(label)
+        cfg = BEST_CONFIG.get(label, "--")
+        add(f"| {label} | {cfg} | {fmt(d0['psi_ev']) if d0 else '--'} | "
+            f"{fmt(d0['q_ev']) if d0 else '--'} | "
+            f"{fmt(d1['psi_ev']) if d1 else '--'} | "
+            f"{fmt(d1['q_ev']) if d1 else '--'} |")
+    add("")
+    add("(PV-q and ψ full-field EV, N=100 both scenarios. Not "
+        "rank-marked here -- see the per-scenario tables above for "
+        "bold/italic ranking; this table's purpose is the config-per-method "
+        "mapping, not re-ranking.)")
+    add("")
+
     add("## Reconstruction examples")
     add("")
     add("3 example test windows (best/median/worst by ETKF's per-window "
@@ -218,7 +355,7 @@ def main() -> None:
         "analysis for streamfunction (ψ, both layers) and PV (q, both "
         "layers), plus an animated DA cycle (raw obs | wind-stress curl "
         "forcing | truth | EnKF analysis, PV q1) over the 30-day window. "
-        "Generated by `generate_qg_reconstruction_figs.py`.")
+        "Generated by `generate_qg_reconstruction_figs.py`. S0 only.")
     add("")
     fig_dir = out_root / "figs"
     report_dir = Path(args.out).resolve().parent
