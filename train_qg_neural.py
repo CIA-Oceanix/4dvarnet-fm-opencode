@@ -38,6 +38,14 @@ Usage:
         --cache-dir /path/to/qg_windows_1000_100_100/cache
     python train_qg_neural.py --model-type vanilla_cfm   --exp-dir experiments/Q2_vanilla_cfm_s0
     python train_qg_neural.py --model-type direct_unet --q-loss-weight 0.0 --eval-only <ckpt>
+
+Q3 (oracle forcing+params) / Q4 (noisy forcing+params) -- see PLAN.md's
+2026-09-10 QG Q3/Q4 section and `data/qg_neural.py`'s cond_mode docstring.
+Both share `model_type=direct_unet` with Q1, so `--exp-id` picks the config:
+    python train_qg_neural.py --model-type direct_unet --exp-id Q3_direct_unet_s0_oracle_cond \
+        --exp-dir experiments/Q3_direct_unet_s0_oracle_cond --cache-dir ...
+    python train_qg_neural.py --model-type direct_unet --exp-id Q4_direct_unet_s1_noisy_cond \
+        --exp-dir experiments/Q4_direct_unet_s1_noisy_cond --cache-dir ...
 """
 import argparse
 import json
@@ -57,6 +65,7 @@ from data.qg_neural import (
     QGNeuralDataset,
     denorm_psi,
     ensure_truth_cache,
+    ensure_truth_cache_redrawn,
     layer_split,
     psi_daily,
     psi_to_q,
@@ -75,7 +84,8 @@ def build_cfg(**overrides) -> QGConfig:
     return QGConfig(**{k: v for k, v in overrides.items() if v is not None})
 
 
-def build_model(model_type: str, cfg: QGConfig) -> torch.nn.Module:
+def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
+                cond_extra_dim: int = 0, ic_dim: int = 0) -> torch.nn.Module:
     if model_type == "direct_unet":
         # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
@@ -85,10 +95,12 @@ def build_model(model_type: str, cfg: QGConfig) -> torch.nn.Module:
         # models.monai_unet_qg2d's docstring), not this project's default
         # `fdv` env.
         from models.monai_unet_qg2d import MonaiDirectUNetQG
-        return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=0,
-                                 cond_extra_dim=0, hidden_channels=[64, 128, 256])
+        return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
+                                 cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
+                                 hidden_channels=[64, 128, 256])
     if model_type == "vanilla_cfm":
-        return VanillaCFM(state_dim=cfg.state_dim, param_dim=0, cond_extra_dim=0,
+        return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
+                          cond_extra_dim=cond_extra_dim,
                           hidden_channels=[64, 128, 256], time_emb_dim=64,
                           N_outer=10, sigma_prior=0.5, dropout=0.1,
                           train_tau_0_only=True)
@@ -178,11 +190,12 @@ class QGNeuralLightning(pl.LightningModule):
         return loss
 
 
-def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
+def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float,
+                     gradient_clip_val: float = 10.0):
     return OmegaConf.create({
         "training": {
-            "stage1": {"epochs": epochs, "lr": lr, "gradient_clip_val": 10.0},
-            "stage2": {"epochs": 0, "lr": lr, "gradient_clip_val": 10.0},
+            "stage1": {"epochs": epochs, "lr": lr, "gradient_clip_val": gradient_clip_val},
+            "stage2": {"epochs": 0, "lr": lr, "gradient_clip_val": gradient_clip_val},
             "accelerator": "auto",
             "loss": {"use_gradient": False, "gradient_weight": 0.0},
         },
@@ -193,9 +206,13 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float):
     })
 
 
-def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1):
+def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1,
+                     cond_mode="none", param_norm_stats=None, noisy_max=1.5,
+                     forcing_norm_stats=None, include_ic=False):
     """Return per-window physical psi estimates (W, days, 2*ny*nx) + per-window rd list."""
-    dataset = QGNeuralDataset(windows, cfg, norm)
+    dataset = QGNeuralDataset(windows, cfg, norm, cond_mode=cond_mode,
+                              param_norm_stats=param_norm_stats, noisy_max=noisy_max,
+                              forcing_norm_stats=forcing_norm_stats, include_ic=include_ic)
     loader = DataLoader(dataset, batch_size=8, shuffle=False, collate_fn=qg_collate)
     rds = [float(dataset.rd(i)) for i in range(len(windows))]
     model = model.to(device)
@@ -247,9 +264,69 @@ def main():
                     help="Overrides the experiment YAML's data.normalize if given.")
     ap.add_argument("--cosine-scheduler", action=argparse.BooleanOptionalAction, default=True,
                     help="Cosine-anneal the LR over training (default: on).")
+    ap.add_argument("--gradient-clip-val", type=float, default=None,
+                    help="Global gradient-norm clip applied by PyTorch Lightning's "
+                         "Trainer. default=None (not 10.0) so the experiment YAML's "
+                         "training.gradient_clip_val (if any) isn't silently overridden "
+                         "-- falls back to 10.0 if neither is given. Note: "
+                         "QGNeuralLightning's own gradient_clip_val attribute is dead "
+                         "code (never read) -- this Trainer-level value is the only "
+                         "one that actually does anything.")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="If given, calls pl.seed_everything(seed) before building the "
+                         "model/dataloaders, for reproducible model init + dataloader "
+                         "shuffling. Default None: no explicit seeding (the project's "
+                         "prior behavior for every run so far -- Q1/Q3/Q4/Q5 all ran "
+                         "with whatever randomness torch/numpy picked up at process "
+                         "start, undocumented and unreproducible).")
     ap.add_argument("--norm-stats-path", default=None,
                     help="Overrides the experiment YAML's data.norm_stats_path if given "
                          "(psi mean/std produced by precompute_qg_norm_stats.py).")
+    ap.add_argument("--exp-id", default=None,
+                    help="Experiment config name under config/experiment/<id>.yaml "
+                         "(default: derived as Q1/Q2 from --model-type, for backward "
+                         "compat; Q3/Q4 forcing+param-conditioned configs need this set "
+                         "explicitly since they share model_type=direct_unet with Q1).")
+    ap.add_argument("--cond-mode", choices=["none", "true", "noisy", "scenario"], default=None,
+                    help="Overrides the experiment YAML's data.cond_mode if given -- "
+                         "'none' (Q1/Q2, obs-only), 'true' (Q3, oracle forcing+params), "
+                         "'noisy' (Q4, resampled-severity corrupted forcing+params), "
+                         "'scenario' (eval-only: deterministic, reads whatever the "
+                         "window's own S0/S1 scenario wrapper designates as believed -- "
+                         "see data/qg_neural.py's _scenario_forcing_and_params).")
+    ap.add_argument("--param-norm-stats-path", default=None,
+                    help="Overrides the experiment YAML's data.param_norm_stats_path if "
+                         "given ([U1,rd,rek] mean/std produced by "
+                         "precompute_qg_norm_stats.py --output-params). Required "
+                         "whenever cond_mode != 'none'.")
+    ap.add_argument("--forcing-norm-stats-path", default=None,
+                    help="Overrides the experiment YAML's data.forcing_norm_stats_path "
+                         "if given (global scalar wind_curl mean/std produced by "
+                         "precompute_qg_norm_stats.py --output-forcing). Required "
+                         "whenever cond_mode != 'none' -- see data/qg_neural.py's "
+                         "module docstring for why (a training run collapsed without it).")
+    ap.add_argument("--noisy-max", type=float, default=None,
+                    help="Overrides the experiment YAML's data.noisy_max if given -- "
+                         "Q4's per-draw corruption-severity fraction is resampled in "
+                         "[0, noisy_max] each __getitem__ call (default 1.5, matching "
+                         "the L96 SDA3 noisy_da_max convention).")
+    ap.add_argument("--s1-param-bias", type=float, default=None,
+                    help="Overrides the experiment YAML's data.s1_param_bias if given "
+                         "-- the rd/rek bias magnitude cond_mode='noisy' scales by its "
+                         "resampled frac (default: QGConfig's own 0.15 class default; "
+                         "the DA S1 reference campaign uses 0.1, see qg_da_s1_scratch.py "
+                         "-- Q5 uses 0.1 with noisy_max=2.0 for an effective [0,0.2] range).")
+    ap.add_argument("--s1-amp-bias", type=float, default=None,
+                    help="Overrides the experiment YAML's data.s1_amp_bias if given -- "
+                         "same as --s1-param-bias but for the wind-amplitude bias.")
+    ap.add_argument("--include-ic", action=argparse.BooleanOptionalAction, default=False,
+                    help="Overrides the experiment YAML's data.include_ic if given -- "
+                         "Q5: condition on the raw initial-condition snapshot (always "
+                         "the true window['init_state'], like obs -- never scenario-"
+                         "corrupted), inverted to psi and z-scored with the psi norm "
+                         "stats. A third conditioning class distinct from forcing/params "
+                         "(one static field per window, not per-day/scalar) -- see "
+                         "data/qg_neural.py's include_ic docstring.")
     ap.add_argument("--num-train", type=int, default=1000)
     ap.add_argument("--num-val", type=int, default=100)
     ap.add_argument("--num-test", type=int, default=100)
@@ -259,6 +336,13 @@ def main():
                          "the fly from the cached truth each epoch.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
+    ap.add_argument("--num-workers", type=int, default=4,
+                    help="DataLoader worker processes for train/val (default 4). "
+                         "num_workers=1 serializes each __getitem__'s CPU work "
+                         "(obs/forcing prep) with GPU training -- a measured ~2x "
+                         "epoch-time bottleneck for Q4's noisy-forcing conditioning "
+                         "(see PLAN.md's 2026-09-10 QG Q3/Q4 section). Match sbatch's "
+                         "--cpus-per-task to this + a couple cores for the main process.")
     ap.add_argument("--nx", type=int, default=None)
     ap.add_argument("--n-members", type=int, default=1)
     # Split seeds match the production 1000/100/100 truth-generation convention
@@ -275,23 +359,36 @@ def main():
     # every split, so train/val's on-the-fly obs follow the same protocol.
     ap.add_argument("--obs-geometry", default="random_columns")
     ap.add_argument("--cols-per-day", type=int, default=4)
-    ap.add_argument("--obs-noise-std-frac", type=float, default=0.01)
-    ap.add_argument("--init-lag-days", type=float, default=1.0)
+    # default=None (not 0.01/1.0) so the experiment YAML's data.* values (if
+    # any) aren't silently overridden -- Q5 needs obs_noise_std_frac=0.05/
+    # init_lag_days=5.0 to actually take effect from its config alone,
+    # without requiring the launcher to also pass these on the CLI.
+    ap.add_argument("--obs-noise-std-frac", type=float, default=None)
+    ap.add_argument("--init-lag-days", type=float, default=None)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
+    if args.seed is not None:
+        pl.seed_everything(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_type = args.model_type
     epochs = args.epochs if args.epochs is not None else epochs_for(model_type)
-    config_name = f"Q{1 if model_type == 'direct_unet' else 2}_{model_type}_s0"
+    config_name = args.exp_id or f"Q{1 if model_type == 'direct_unet' else 2}_{model_type}_s0"
     exp_dir = args.exp_dir or os.path.join(EXP_DIR, config_name)
     os.makedirs(exp_dir, exist_ok=True)
 
-    # `config/experiment/Q{1,2}_..._s0.yaml` is the source of truth for
-    # `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path` --
-    # CLI flags below only override it when explicitly given.
+    # `config/experiment/Q{1,2,3,4}_..._s0.yaml` is the source of truth for
+    # `training.q_loss_weight`/`data.normalize`/`data.norm_stats_path`/
+    # `model.param_dim`/`model.cond_extra_dim`/`data.cond_mode` -- CLI flags
+    # below only override it when explicitly given.
     exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    obs_noise_std_frac = (args.obs_noise_std_frac if args.obs_noise_std_frac is not None
+                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.01)))
+    init_lag_days = (args.init_lag_days if args.init_lag_days is not None
+                     else float(exp_cfg.data.get("init_lag_days", 1.0)))
+    gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
+                        else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
     q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
                      else float(exp_cfg.training.q_loss_weight))
     do_normalize = (args.normalize if args.normalize is not None
@@ -299,6 +396,31 @@ def main():
     norm_stats_path = (args.norm_stats_path or
                        exp_cfg.data.get("norm_stats_path", "experiments/qg_psi_norm_stats.pt"))
     norm = load_norm_stats(norm_stats_path) if do_normalize else None
+    param_dim = int(exp_cfg.model.get("param_dim", 0))
+    cond_extra_dim = int(exp_cfg.model.get("cond_extra_dim", 0))
+    include_ic = bool(args.include_ic or exp_cfg.data.get("include_ic", False))
+    ic_dim = 2 if include_ic else 0
+    cond_mode = args.cond_mode or exp_cfg.data.get("cond_mode", "none")
+    noisy_max = (args.noisy_max if args.noisy_max is not None
+                else float(exp_cfg.data.get("noisy_max", 1.5)))
+    param_norm_stats_path = (args.param_norm_stats_path or
+                             exp_cfg.data.get("param_norm_stats_path", None))
+    if cond_mode != "none" and not param_norm_stats_path:
+        raise ValueError(f"cond_mode={cond_mode!r} requires data.param_norm_stats_path "
+                         "(see precompute_qg_norm_stats.py --output-params)")
+    param_norm = load_norm_stats(param_norm_stats_path) if cond_mode != "none" else None
+    forcing_norm_stats_path = (args.forcing_norm_stats_path or
+                               exp_cfg.data.get("forcing_norm_stats_path", None))
+    if cond_mode != "none" and not forcing_norm_stats_path:
+        raise ValueError(f"cond_mode={cond_mode!r} requires data.forcing_norm_stats_path "
+                         "(see precompute_qg_norm_stats.py --output-forcing -- leaving "
+                         "the forcing field unnormalized collapsed a real training run, "
+                         "see data/qg_neural.py's module docstring)")
+    forcing_norm = load_norm_stats(forcing_norm_stats_path) if cond_mode != "none" else None
+    s1_param_bias = (args.s1_param_bias if args.s1_param_bias is not None
+                     else exp_cfg.data.get("s1_param_bias", None))
+    s1_amp_bias = (args.s1_amp_bias if args.s1_amp_bias is not None
+                  else exp_cfg.data.get("s1_amp_bias", None))
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -310,15 +432,35 @@ def main():
     test_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
                         obs_geometry=args.obs_geometry,
                         cols_per_day=args.cols_per_day,
-                        obs_noise_std_frac=args.obs_noise_std_frac,
-                        init_lag_days=args.init_lag_days)
+                        obs_noise_std_frac=obs_noise_std_frac,
+                        init_lag_days=init_lag_days,
+                        s1_param_bias=s1_param_bias, s1_amp_bias=s1_amp_bias)
     state_dim = test_cfg.state_dim
 
     if os.path.exists(results_path) and args.eval_only is None:
         print(f"Results exist at {results_path}, skipping.")
         return
 
-    test_windows = ensure_truth_cache(test_cfg, args.num_test, args.cache_dir)
+    # `test_cache_cfg` matches the production TEST cache's key exactly.
+    # Unlike train_cfg/val_cfg below (whose cache was built with plain
+    # QGConfig defaults, irrelevant since on_the_fly_obs overwrites them
+    # regardless), the test cache was specifically corrected
+    # (`fix_qg_test_obs_ic.py`) to have the real S0 reference-case obs/IC
+    # protocol baked in -- obs_geometry="random_columns"/cols_per_day=4/
+    # obs_noise_std_frac=0.01/init_lag_days=1.0, NOT QGConfig's raw class
+    # defaults ("grid"/3/0.05/0.5) and NOT `test_cfg`'s own (possibly Q5-
+    # overridden) values. Using either of those instead of the actual
+    # baked-in key silently misses the cache and triggers a full
+    # from-scratch truth rollout -- caught the hard way twice: first with
+    # `test_cfg` directly (obvious once diagnosed), then again with a
+    # nx/seed/num_windows-only `test_cache_cfg` that still didn't match
+    # because QGConfig's plain defaults aren't the S0 reference values
+    # either (see PLAN.md's 2026-09-12 note for both).
+    test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
+                              obs_geometry="random_columns", cols_per_day=4,
+                              obs_noise_std_frac=0.01, init_lag_days=1.0)
+    test_windows = ensure_truth_cache_redrawn(test_cache_cfg, test_cfg, args.num_test,
+                                              args.cache_dir)
     if args.eval_only is None:
         # No obs-config overrides here: `_truth_cache_path` hashes the whole
         # QGConfig, and the pre-generated production truth was built with plain
@@ -332,12 +474,20 @@ def main():
         train_windows = ensure_truth_cache(train_cfg, args.num_train, args.cache_dir)
         val_windows = ensure_truth_cache(val_cfg, args.num_val, args.cache_dir)
 
-        train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
-        val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly)
+        train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
+                                   cond_mode=cond_mode, param_norm_stats=param_norm,
+                                   noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                   include_ic=include_ic)
+        val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
+                                 cond_mode=cond_mode, param_norm_stats=param_norm,
+                                 noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                 include_ic=include_ic)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                                  collate_fn=qg_collate, num_workers=1)
+                                  collate_fn=qg_collate, num_workers=args.num_workers,
+                                  persistent_workers=args.num_workers > 0)
         val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                                collate_fn=qg_collate, num_workers=1)
+                                collate_fn=qg_collate, num_workers=args.num_workers,
+                                persistent_workers=args.num_workers > 0)
 
     print(f"Device: {device}  model={model_type}  epochs={epochs}  state_dim={state_dim}"
           f"  q_loss_weight={q_loss_weight:.4e}")
@@ -349,14 +499,16 @@ def main():
     else:
         print("normalization disabled (--no-normalize)")
 
-    model = build_model(model_type, test_cfg).to(device)
+    model = build_model(model_type, test_cfg, param_dim=param_dim,
+                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim).to(device)
 
     total_train = 0.0
     if args.eval_only is None:
-        tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr)
+        tcfg = make_trainer_cfg(model_type, exp_dir, epochs, args.lr,
+                               gradient_clip_val=gradient_clip_val)
         lit = QGNeuralLightning(model, model_type, norm, test_cfg,
                                 q_loss_weight=q_loss_weight, lr=args.lr,
-                                gradient_clip_val=10.0,
+                                gradient_clip_val=gradient_clip_val,
                                 use_cosine_scheduler=args.cosine_scheduler,
                                 max_epochs=epochs)
         trainer = create_trainer(tcfg, 1)
@@ -375,7 +527,10 @@ def main():
 
     model.eval()
     est_psi, est_rd = estimate_windows(model, test_windows, test_cfg, model_type,
-                                       device, norm=norm, n_members=args.n_members)
+                                       device, norm=norm, n_members=args.n_members,
+                                       cond_mode=cond_mode, param_norm_stats=param_norm,
+                                       noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                       include_ic=include_ic)
 
     truth_psi = np.stack([psi_daily(w, test_cfg).numpy() for w in test_windows])
     truth_q = np.stack([q_daily(w, test_cfg).numpy() for w in test_windows])
@@ -408,7 +563,15 @@ def main():
                    "obs_noise_std_frac": test_cfg.obs_noise_std_frac,
                    "init_lag_days": test_cfg.init_lag_days,
                    "n_members": args.n_members, "q_loss_weight": q_loss_weight,
-                   "normalize": do_normalize, "norm_stats_path": norm_stats_path},
+                   "normalize": do_normalize, "norm_stats_path": norm_stats_path,
+                   "cond_mode": cond_mode, "param_dim": param_dim,
+                   "cond_extra_dim": cond_extra_dim, "noisy_max": noisy_max,
+                   "param_norm_stats_path": param_norm_stats_path,
+                   "forcing_norm_stats_path": forcing_norm_stats_path,
+                   "s1_param_bias": test_cfg.s1_param_bias,
+                   "s1_amp_bias": test_cfg.s1_amp_bias,
+                   "include_ic": include_ic, "ic_dim": ic_dim,
+                   "gradient_clip_val": gradient_clip_val, "seed": args.seed},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),

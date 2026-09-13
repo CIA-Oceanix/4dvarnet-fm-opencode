@@ -102,14 +102,16 @@ class MonaiDirectUNetQG(nn.Module):
     `models.direct_unet.DirectUNet`.
 
     Same `forward(batch) -> (B, T, D)` contract (`batch.obs`/`batch.forcing`/
-    `batch.params`, `D = nlayers*ny*nx` layer-major); each of the `T` days is
-    folded into the batch dim for the 2D backbone (matches the existing
-    per-day QG training loss -- no explicit temporal coupling term).
+    `batch.params`/`batch.ic`, `D = nlayers*ny*nx` layer-major); each of the
+    `T` days is folded into the batch dim for the 2D backbone (matches the
+    existing per-day QG training loss -- no explicit temporal coupling
+    term). `ic_dim` (Q5) is broadcast identically across all `T` days
+    (one static field per window), unlike `forcing` (varies per day).
     """
 
     def __init__(self, ny: int, nx: int, nlayers: int = 2,
                  hidden_channels: list[int] | None = None,
-                 param_dim: int = 0, cond_extra_dim: int = 0,
+                 param_dim: int = 0, cond_extra_dim: int = 0, ic_dim: int = 0,
                  num_res_blocks: int = 2, norm_num_groups: int = 8):
         super().__init__()
         self.ny = ny
@@ -118,6 +120,7 @@ class MonaiDirectUNetQG(nn.Module):
         self.state_dim = nlayers * ny * nx
         self.param_dim = param_dim
         self.cond_extra_dim = cond_extra_dim
+        self.ic_dim = ic_dim
         # Zeroed "state" input placeholder + obs conditioning, matching
         # MonaiDirectUNet/DirectUNet's convention (a CFM-architecture
         # artifact carried over for direct deterministic regression -- the
@@ -126,7 +129,7 @@ class MonaiDirectUNetQG(nn.Module):
             in_channels=nlayers, out_channels=nlayers,
             hidden_channels=hidden_channels, num_res_blocks=num_res_blocks,
             norm_num_groups=norm_num_groups, use_obs=True,
-            obs_channels=nlayers + cond_extra_dim + param_dim)
+            obs_channels=nlayers + cond_extra_dim + param_dim + ic_dim)
 
     def forward(self, batch) -> torch.Tensor:
         obs = batch.obs
@@ -135,13 +138,28 @@ class MonaiDirectUNetQG(nn.Module):
         obs_grid = obs_clean.reshape(B * T, self.nlayers, self.ny, self.nx)
         cond = [obs_grid]
         if self.cond_extra_dim > 0:
-            forcing = batch.forcing.reshape(B * T, 1, 1, 1).expand(
-                B * T, self.cond_extra_dim, self.ny, self.nx)
+            # `batch.forcing` is a genuine (B, T, ny, nx) spatial field (the
+            # wind-curl forcing map, see data.qg_neural's Q3/Q4 conditioning
+            # docstring) -- reshape into cond_extra_dim (=1) channel(s), no
+            # spatial broadcast: unlike a scalar param, the forcing map's
+            # spatial structure (storm location) is exactly the physically
+            # meaningful signal.
+            forcing = batch.forcing.reshape(B * T, self.cond_extra_dim, self.ny, self.nx)
             cond.append(forcing)
         if self.param_dim > 0:
             params_t = batch.params.unsqueeze(1).expand(B, T, -1).reshape(
                 B * T, self.param_dim, 1, 1).expand(-1, -1, self.ny, self.nx)
             cond.append(params_t)
+        if self.ic_dim > 0:
+            # `batch.ic` (Q5) is one static (B, ic_dim*ny*nx) spatial field
+            # per WINDOW (the initial-condition snapshot, see
+            # data.qg_neural._ic_field) -- unlike `forcing` (varies per
+            # day), it's broadcast identically across all T days, not
+            # reshaped per-day.
+            ic_grid = batch.ic.reshape(B, self.ic_dim, self.ny, self.nx)
+            ic_t = ic_grid.unsqueeze(1).expand(B, T, -1, -1, -1).reshape(
+                B * T, self.ic_dim, self.ny, self.nx)
+            cond.append(ic_t)
         cond = torch.cat(cond, dim=1) if len(cond) > 1 else cond[0]
         x = torch.zeros(B * T, self.nlayers, self.ny, self.nx, device=obs.device)
         tau = torch.zeros(B * T, device=obs.device)

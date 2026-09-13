@@ -1,0 +1,68 @@
+# Q4: DirectUNet on QG S0, conditioned on NOISY (corrupted) wind-forcing +
+# params, alongside observations.
+#
+# Mirrors the L96 SDA3 CFM study's noisy-params conditioning (per-step
+# resampled fraction of the full S1-style corruption, NOT a single fixed
+# bias -- see PLAN.md's 2026-09-10 QG Q3/Q4 section and
+# `data/qg_neural.py`'s cond_mode="noisy" docstring): every training draw
+# resamples a fresh severity fraction in [0, noisy_max] of the wind
+# corruption (s1_amp_bias/s1_loc_sigma_frac/s1_sigma_eta_frac) and the
+# rd/rek param bias (s1_param_bias), so the model sees a distribution of
+# corruption severity rather than one fixed operating point. Answers:
+# does conditioning on a plausibly-wrong forcing/params (as a real
+# deployment would have) help, hurt, or do nothing -- paired with Q3's
+# oracle variant and evaluated cross-scenario (S0 + S1 test sets) per the
+# planned ablation.
+#
+# Shares model_type=direct_unet with Q1/Q3 -- pass --exp-id explicitly:
+#
+#   python precompute_qg_norm_stats.py --cache-dir reports/qg_cache \
+#     --output experiments/qg_psi_norm_stats.pt \
+#     --output-params experiments/qg_param_norm_stats.pt   # once, before training
+#   python train_qg_neural.py \
+#     --model-type direct_unet --exp-id Q4_direct_unet_s1_noisy_cond \
+#     --exp-dir experiments/Q4_direct_unet_s1_noisy_cond \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# Same split/seed/obs-protocol/normalization/cosine-LR conventions as Q1
+# (see Q1_direct_unet_s0.yaml for the full rationale) -- this config only
+# adds the noisy forcing+param conditioning on top.
+
+experiment_id: Q4_direct_unet_s1_noisy_cond
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  # [U1, rd, rek] -- beta excluded, see data/qg_neural.py's PARAM_KEYS comment.
+  param_dim: 3
+  cond_extra_dim: 1
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cond_mode: noisy
+  param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  # Required: raw wind_curl is ~1e-13-1e-12, unnormalized it collapsed a
+  # real 200-epoch training run at epoch 28 (see data/qg_neural.py's
+  # module docstring). Global scalar mean/std, not per-grid-cell.
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # Per-draw corruption-severity fraction resampled in [0, noisy_max]
+  # (matches the L96 SDA3 noisy_da_max convention).
+  noisy_max: 1.5

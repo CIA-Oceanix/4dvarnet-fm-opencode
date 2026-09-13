@@ -545,6 +545,319 @@ Scratch drivers (not committed): `qg_da_s1_scratch.py`,
 Not yet done: folding these S1 numbers into `qg_da_report.md`/
 `qg_neural_report.md` (currently S0-only) — separate follow-up.
 
+### QG neural schemes beyond Q1: Q3 (oracle) / Q4 (noisy) forcing+param
+### conditioning (2026-09-10, `feature/qg-q3q4-forcing-param-cond`)
+
+New DirectUNet variants that additionally condition on the wind-forcing
+field and physical params (`U1, rd, rek`), alongside observations --
+answers whether exogenous conditioning helps a QG estimator, mirroring the
+L96 SDA CFM forcing/param-conditioning study (`models/sda.py`'s
+`ConditionalPriorCFM`, `SDA2_cond_nominal_l96.yaml`/`SDA2_cond_mixed_l96.yaml`/
+`SDA3_cond_noisy_l96.yaml`) rather than L96's earlier, weaker `L6_vanilla_
+cfm_s0s1_forcing_cond.yaml` (obs+corrupted-forcing on a 1D UNet, found
+neutral-to-slightly-negative — see the L96 Q3 note above).
+
+- **Bug fixed as a prerequisite**: `train_qg_neural.py`'s `build_model()`
+  hardcoded `param_dim=0, cond_extra_dim=0` directly in the
+  `MonaiDirectUNetQG`/`VanillaCFM` constructor calls, silently ignoring
+  `config/experiment/Q{1,2}_..._s0.yaml`'s `model.param_dim`/
+  `model.cond_extra_dim` keys entirely (dead YAML fields since those
+  configs were introduced). No behavior change for Q1/Q2 (their YAMLs
+  already say 0/0) but blocked any new conditioned scheme until fixed.
+  `build_model()` now takes explicit `param_dim`/`cond_extra_dim` args,
+  read from the experiment YAML in `main()`.
+- **Forcing representation**: the real spatial `wind_curl` field
+  (`(T, ny, nx)`, from the true or corrupted trajectory), daily-mean binned
+  to `(days, ny, nx)`, NOT a scalar broadcast to a spatially-uniform
+  channel -- the storm's location is exactly the physically meaningful
+  part of the forcing, and `MonaiDirectUNetQG` already treats a channel as
+  a spatial field, so broadcasting a scalar would have thrown that away.
+  `QGBatch.forcing`'s shape changed project-wide from `(B, days)` to
+  `(B, days, ny, nx)` (Q1/Q2 unaffected: their `cond_extra_dim=0` means the
+  model never reads it regardless of shape).
+- **Params**: `[U1, rd, rek]` (`U2` and `beta` excluded -- `U2` is always 0
+  and `beta` is never jittered by `QGS01Dataset._generate_truth_only`
+  (only `U1`/`rd`/`rek` get a per-window random draw), so both are exact
+  constants across the train split; z-scoring a zero-variance channel
+  divides by std=0 -- **caught by a training smoke test** (job 53016)
+  producing NaN loss within the first epoch when `beta` was originally
+  included, before this fix -- see `data/qg_neural.py`'s `PARAM_KEYS`
+  comment) broadcast as constant spatial channels (matches
+  `MonaiDirectUNetQG`'s existing, previously-dead broadcast code), z-scored
+  via a new `precompute_qg_norm_stats.py --output-params` companion stats
+  file (`experiments/qg_param_norm_stats.pt`) -- required whenever
+  `cond_mode != "none"` since the 3 params span ~9 orders of magnitude raw
+  (`rd≈1.5e4` vs `rek≈5.8e-7`); a raw constant-channel broadcast would
+  make one or two params numerically dominate or vanish next to the
+  z-scored psi/obs channels.
+- **Two variants, controlled by `data.qg_neural.QGNeuralDataset`'s new
+  `cond_mode`**:
+  - **Q3 (`cond_mode="true"`, oracle)** — the window's exact true
+    `wind_curl` field + exact `true_params`, no jitter, deterministic per
+    window. Config: `config/experiment/Q3_direct_unet_s0_oracle_cond.yaml`.
+  - **Q4 (`cond_mode="noisy"`)** — mirrors the L96 SDA3 CFM study's
+    per-step **resampled** corruption severity (not one fixed S1 bias):
+    every training draw samples a fresh random fraction in
+    `[0, noisy_max]` (default 1.5, matching L96's `noisy_da_max`) of the
+    full S1-style wind corruption (`s1_amp_bias`/`s1_loc_sigma_frac`/
+    `s1_sigma_eta_frac`, via `data.qg._make_corrupted_wind_state` at scaled
+    severity) and the `rd`/`rek` param bias (`s1_param_bias`), reusing the
+    existing S1 corruption machinery directly rather than a separate S1
+    dataset/scenario wrapper (the corruption is synthesized straight from
+    `wind_state_true`/`true_params`, so it works on the same base S0-scenario
+    windows Q1/Q2/Q3 already use — no new train/val window-loading path
+    needed). Config: `config/experiment/Q4_direct_unet_s1_noisy_cond.yaml`.
+- **Both configs share Q1's model_type=`direct_unet`** (MONAI circular 2D
+  U-Net), so `train_qg_neural.py` gained a new `--exp-id` flag to pick the
+  YAML explicitly (Q1/Q2's auto-derived `Q{1,2}_{model_type}_s0` naming
+  can't disambiguate Q1 vs Q3 vs Q4, all `direct_unet`) -- same split
+  seeds/obs protocol/psi normalization/cosine-LR default as Q1 (see Q1's
+  own config comments), only the forcing+param conditioning differs.
+- **Training smoke tests + perf fix (2026-09-10)**: 2-epoch smoke tests on
+  an A40 (matching Q1's own recorded ~225s/epoch) validated both configs
+  train cleanly end-to-end: Q3 ~220s/epoch (essentially free -- its
+  conditioning just daily-bins the already-computed true `wind_curl`), Q4
+  ~504-533s/epoch (~2.4x slower). Root-caused: Q4's `cond_mode="noisy"`
+  path called `data.qg._make_qg_dynamics(cfg)` -- which rebuilds the *full*
+  spectral PV-inversion machinery (wavenumber grids, filters) from scratch,
+  none of which `wind_curl_field` actually needs -- on **every training
+  draw** (~1000/epoch at batch_size=2), serialized with GPU training since
+  `train_qg_neural.py` hardcoded `num_workers=1` (the exact bottleneck
+  PyTorch Lightning's own "may be a bottleneck" warning flagged in the
+  logs). Fixed at the source with two changes, not a GPU-side rewrite of
+  the curl computation itself (moving that math to GPU wouldn't have
+  addressed either the redundant object rebuild or the lack of CPU/GPU
+  overlap, and doing GPU work inside forked DataLoader workers is awkward
+  regardless): (1) `data/qg_neural.py`'s `_cached_qg_dynamics(cfg)` caches
+  the `QGDynamics` object per-cfg (deterministic given `cfg`, so no result
+  change -- confirmed bitwise-identical `wind_curl_field` output vs. an
+  uncached rebuild); (2) `train_qg_neural.py` gained `--num-workers`
+  (default 4, was hardcoded 1) + `persistent_workers=True` so multiple
+  draws' CPU-bound prep happens in parallel across worker processes while
+  the GPU trains on the previous batch, instead of serially blocking it --
+  `batch/run_qg_q{3,4}_train.sbatch` bumped to `--cpus-per-task=6` to back
+  this. First full-run launch was also switched from A40 to an idle A100
+  node (`sl-mee-br-206`) for additional speed: Q3 (GPU-bound) got a real
+  ~2.7x speedup there (~82s/epoch steady-state); Q4 (CPU-bound before this
+  fix) only got ~1.28x, confirming the diagnosis that Q4's bottleneck
+  wasn't GPU throughput. Both jobs were restarted with the worker/caching
+  fix applied before any significant training progress was lost.
+- **Training collapse + forcing-normalization fix (2026-09-10)**: the
+  relaunched full 200-epoch Q3 run (A100, with the perf fix) collapsed at
+  epoch 28 -- train/val loss froze at an exact constant (train_loss≈2.0,
+  val_loss≈1.732) for 13+ consecutive epochs after declining healthily
+  through epoch 27, confirmed via the raw PyTorch Lightning CSV logger (not
+  a tqdm-rendering artifact). The frozen value is diagnostic: it exactly
+  matches the loss a model gets from predicting the (normalized) zero mean
+  for both targets -- `loss_psi≈1` (MSE of 0 vs. a unit-variance z-scored
+  target) `+ q_loss_weight·loss_q≈1` (same zero-prediction baseline, scaled
+  by the derived `q_loss_weight=1/Var(q)`) `≈2.0` -- i.e. **the network
+  died** (collapsed to a constant output) after some destabilizing event.
+  Root cause: the forcing field was left unnormalized on an *unverified*
+  design assumption ("its own per-grid-cell scale is already comparable to
+  the z-scored channels it's concatenated with") -- empirically checked
+  after the collapse and found false by ~12-13 orders of magnitude: raw
+  `wind_curl` is `O(1e-13)-O(1e-12)` (`wind_amp` ranges 0-3e-11 over a
+  Witch-of-Agnesi profile peaking at ~1), vs. the unit-variance psi/obs/
+  z-scored-param channels it's concatenated with. **Fixed**: forcing is now
+  z-scored too, with a single **global scalar** mean/std (not per-grid-cell,
+  to preserve the spatially-meaningful storm-location pattern, just rescale
+  its overall magnitude) computed by `precompute_qg_norm_stats.py`'s new
+  `--output-forcing` -> `experiments/qg_forcing_norm_stats.pt`, required
+  (like `param_norm_stats`) whenever `cond_mode != "none"`. Both jobs were
+  stopped before completing (Q4 hadn't reached a comparable epoch count
+  yet, at ~epoch 21, so it's unknown whether it would have hit the same
+  failure, but the same latent bug applied to it too) -- relaunch pending
+  a longer validation run (a 2-epoch smoke test cannot catch a divergence
+  that only manifests dozens of epochs in; this failure was invisible to
+  every smoke test run so far).
+- **Tests**: `tests/test_qg_neural.py` (cond_mode none/true/noisy shapes +
+  determinism/diversity contracts, param-norm-stats requirement, collate
+  params stacking, `build_model` YAML-wiring regression) and
+  `tests/test_monai_unet_qg2d.py` (forward-pass conditioning sanity check:
+  zeroing forcing/params must change the output).
+
+### Q3/Q4 full training + cross-scenario S0/S1 evaluation outcome (2026-09-11)
+
+Both trained their full 200 epochs cleanly on an A100 (`sl-mee-br-206`) after
+the forcing-normalization fix above: **Q3** 5.02h, final S0 PSI EV=0.913 /
+PV-q EV=0.205 (slightly ahead of Q1's 0.909/0.197); **Q4** 9.71h, S0
+PSI EV=0.913 / PV-q EV=0.205 (statistically indistinguishable from Q3 on
+S0 -- matches the L96 SDA study's own finding that conditioning-regime
+differences vanish on the easy/matched case).
+
+**Cross-scenario S0/S1 eval — new `cond_mode="scenario"`** (added to
+`data/qg_neural.py`/`QGNeuralDataset`, distinct from `"true"`/`"noisy"`):
+deterministic, reads whatever the window's *own* scenario wrapper
+(`QGS01Dataset._scenario_window`) designates as believed --
+`wind_state_corrupted`/`da_params` (equal to the true values exactly on an
+S0-scenario window) -- giving a genuine apples-to-apples test of the same
+model-error sensitivity DA baselines face, unlike `"true"`/`"noisy"` which
+always ignore the scenario label (fine for training diversity, useless for
+an S1 eval). New `eval_qg_neural_s0_s1.py` runs Q1 (`cond_mode="none"`,
+scenario-agnostic by construction) + Q3/Q4 (`cond_mode="scenario"`) on both
+test_s0/test_s1.
+
+**Two apples-to-apples config bugs caught before trusting the first
+result** (see `feedback_apples_to_apples_benchmarks` memory): (1) the
+initial run used `train_qg_neural.py`'s own lag=1.0d/noise=0.01 training
+distribution, not comparable in absolute terms to the DA baselines'
+lag=5.0d/noise=0.05 reference case -- `eval_qg_neural_s0_s1.py` gained
+`--lag-days`/`--noise-frac` (mirroring `eval_qg_q1_lag5_noise05.py`'s
+existing cache-reuse trick: the cached truth is keyed by the *whole*
+`QGConfig` including obs/IC fields, so naively rebuilding `QGConfig` with
+different lag/noise and calling `make_qg_s0_s1_datasets` would silently
+miss the cache and trigger an hours-long from-scratch rollout -- instead
+load the cached truth at its original key, then cheaply redraw obs/init-
+state at the new lag/noise via `QGS01Dataset._generate_obs_ic`). (2) Even
+after matching lag/noise, the S1 severity itself was still wrong --
+`_scenario_forcing_and_params`'s `da_params`/`wind_state_corrupted` used
+`QGConfig`'s **class default** `s1_param_bias=s1_amp_bias=0.15`, but the
+actual DA S1 reference campaign (`qg_da_s1_scratch.py`) uses an explicit
+**0.1/0.1** override (deliberately milder than the 0.15 default, chosen
+because 0.15 sits right at ETKF's divergence edge in isolation -- see the
+2026-09-10 QG revised-S1 section above). Added `--s1-param-bias`/
+`--s1-amp-bias` overrides to fix this.
+
+**Final result, fully matched (lag=5.0d/noise=0.05/bias=0.1, identical to
+the DA campaign)**:
+
+| scheme | S0 ψ EV | S0 q EV | S1 ψ EV | S1 q EV | Δψ | Δq |
+|---|---|---|---|---|---|---|
+| ETKF | 0.921 | 0.405 | 0.874 | 0.307 | −0.047 | −0.098 |
+| EnKF | 0.947 | 0.481 | 0.896 | 0.331 | −0.051 | −0.150 |
+| Strong-4DVar | 0.971 | −0.126 | 0.931 | −0.857 | −0.040 | −0.731 |
+| Weak-4DVar | 0.966 | −0.035 | 0.947 | −0.501 | −0.019 | −0.466 |
+| Q1 (obs-only) | 0.897 | 0.161 | 0.897 | 0.161 | 0.000 | 0.000 |
+| Q3 (oracle) | 0.905 | 0.177 | 0.891 | 0.141 | −0.014 | −0.036 |
+| Q4 (noisy-trained) | 0.903 | 0.171 | 0.901 | 0.164 | −0.002 | −0.007 |
+
+**Q4 is essentially immune to S1 model error** (Δq=−0.007, ~14x smaller
+than even ETKF's own degradation) -- the noisy-conditioning training
+design works as intended. **Q3, at the correctly-matched bias level, is
+actually *less* sensitive than ETKF/EnKF** both in absolute Δq and
+relative-to-own-baseline terms (20% vs 24%/31%) -- an earlier, wrong-bias
+(0.15) run had suggested Q3 was more fragile than DA, which doesn't hold
+once the severity genuinely matches. Both neural schemes are dramatically
+more robust than either 4DVar variant's collapse. Still an out-of-
+training-distribution eval for all three neural models (trained at
+lag=1.0d/noise=0.01, evaluated here at lag=5.0d/noise=0.05) -- same caveat
+`eval_qg_q1_lag5_noise05.py` already carried for Q1 alone. Results:
+`reports/qg/outputs/qg_neural_s0_s1_cross_scenario/results_lag5_noise0.05_bias0.1.json`.
+Not yet folded into `qg_neural_report.md` -- open follow-up.
+
+### Q5: Q4 + initial-condition input, trained at the DA reference case's own
+### lag/noise (2026-09-11, planned, not yet implemented)
+
+Motivated by the above: DA baselines get real skill from their background
+(`init_state`, rolled forward from a sampled lag) that Q1/Q3/Q4 get zero
+equivalent of -- confirmed neither `init_state` nor any IC-derived quantity
+is referenced anywhere in `data/qg_neural.py`/`models/monai_unet_qg2d.py`/
+`train_qg_neural.py`. Q5 = Q4's noisy forcing+param conditioning **plus**
+the raw IC as a 4th input, trained at `init_lag_days=5.0`/
+`obs_noise_std_frac=0.05` (the DA reference case's own values, not Q1/Q3/Q4's
+1.0/0.01 defaults) -- both because that's what makes the IC actually
+informative (a lag=1.0-old snapshot is barely decorrelated; lag=5.0 makes it
+a genuine partial-information input like DA's own background) and because it
+subsumes the "should Q1/Q3/Q4 be retrained at the DA reference case?"
+question into something more purposeful than just retraining the same
+recipe at a harder setting.
+
+- **IC representation**: the exact `init_state` `_generate_obs_ic` samples
+  (raw PV/q, always from the *true* trajectory -- like obs, never
+  scenario-corrupted, since physically it represents a recent
+  analysis/observation, not the DA model's own internal forecast). Inverted
+  to ψ via the existing per-window cached spectral inverter and normalized
+  with the **existing global `psi_norm_stats`** (no new stats file).
+- **A third conditioning class, architecturally**: unlike `forcing` (varies
+  per day) or `params` (a scalar vector), the IC is one static field for the
+  whole window, broadcast identically across all `days` -- needs a new
+  `ic_dim` (2, matching `nlayers`) on `MonaiDirectUNetQG`, alongside
+  `cond_extra_dim`/`param_dim`, with its own per-window (not per-day)
+  broadcast.
+- **Noisy-conditioning severity, revised for Q5**: `s1_param_bias=0.1`,
+  `s1_amp_bias=0.1` (kept at the actual DA-reference value, unlike Q4's
+  0.15-default-derived range) with `noisy_max=2.0` -- samples the effective
+  bias fraction uniformly over `[0, 0.2]` (`frac~U(0,2)` × 0.1), i.e. up to
+  2x the DA reference severity, not Q4's indirect `1.5×0.15=0.225` ceiling.
+  Requires new `--s1-param-bias`/`--s1-amp-bias` CLI overrides on
+  `train_qg_neural.py` itself (previously only `eval_qg_neural_s0_s1.py`
+  had them; training always silently used the 0.15 class default before
+  this) -- no behavior change for Q1/Q3/Q4 (they never set these flags).
+- New config `Q5_direct_unet_s1_noisy_ic_cond.yaml`.
+
+### Q5 full training + Q3-noise0.05 collapse/gradient-clip ablations (2026-09-12/13)
+
+**Q5 trained cleanly, 200 epochs, A100**: 9.08h, S0 psi EV=0.935 / q EV=0.372
+-- meaningfully ahead of Q1/Q3/Q4 (psi~0.90-0.91 / q~0.16-0.21) on both
+metrics, and epoch-matched loss curves (checked at epoch 25 across runs)
+confirm this is real faster/lower convergence, not an artifact of different
+training lengths -- consistent with the design intent: the raw IC gives a
+much more direct trajectory signal than forcing/param conditioning alone.
+
+**Also retrained Q3 at the same updated obs config as Q5** (`noise=0.05`,
+named **Q3-noise0.05**, not "Q3-lag5" -- `init_lag_days` has zero effect on
+Q3, it never reads `include_ic`; see
+`config/experiment/Q3_direct_unet_s0_oracle_cond_noise05.yaml`'s full
+naming-history comment). This run **collapsed at epoch ~19-20** -- same
+frozen-constant-loss signature as the epoch-28 forcing-normalization
+collapse above, but confirmed a *different* root cause (that fix is
+unchanged/active). The only functionally relevant change vs. the original
+(clean) Q3 is `obs_noise_std_frac` 0.01→0.05.
+
+**Two ablations launched to disambiguate** ("was it bad luck, or the noise
+level"): (1) same config, `--gradient-clip-val 1.0` instead of the default
+10.0; (2) same config, `--seed 123` (default clip) -- the project had no
+seeding infrastructure before this (`pl.seed_everything()` newly added to
+`train_qg_neural.py`), so every prior run used whatever untracked randomness
+the process started with.
+
+**Result: gradient clipping, not seed, is the fix.** `seed123` collapsed too
+-- just later (epoch 22-24), then stayed frozen at the exact same dead
+value through epoch 66+ (confirmed permanent, not transient). `gradclip1`
+ran cleanly through all 200 epochs, clearing both collapse windows: final
+S0 psi EV=0.911 / q EV=0.189, 4.74h. Working hypothesis (documented in the
+config): the 5x higher obs noise occasionally produces an outlier
+daily-aggregated obs value (sparse `random_columns` sampling) whose
+gradient the looser default clip doesn't fully contain.
+
+Re-ran Q5 at `--gradient-clip-val 1.0` too, for consistency (Q5 shares
+`obs_noise_std_frac=0.05` with Q3-noise0.05) even though Q5 never collapsed
+at the default clip -- confirmed no downside: psi EV=0.934 / q EV=0.385
+(both within noise of the original 0.935/0.372, q EV if anything slightly
+better), 12.13h. **Adopted `gradient_clip_val: 1.0` as the standing default**
+in both `Q3_direct_unet_s0_oracle_cond_noise05.yaml` and
+`Q5_direct_unet_s1_noisy_ic_cond.yaml` (`train_qg_neural.py`'s
+`--gradient-clip-val` now defaults to `None` and falls back to the
+experiment YAML's `training.gradient_clip_val`, then 10.0 -- same
+YAML-fallback pattern already used for `obs_noise_std_frac`/`init_lag_days`,
+so the config alone is the source of truth, no CLI flag required at launch
+time). The validated checkpoints live at
+`experiments/Q3_direct_unet_s0_oracle_cond_noise05_gradclip1/` and
+`experiments/Q5_direct_unet_s1_noisy_ic_cond_gradclip1/`.
+
+**Q5 added to the DA-matched cross-scenario eval** (`eval_qg_neural_s0_s1.py`,
+using the gradclip1 checkpoints for both Q3-noise0.05 and Q5; full config
+match: lag=5.0d/noise=0.05/`s1_param_bias=s1_amp_bias=0.1`, identical to the
+DA campaign and to the Q1/Q3/Q4 table above):
+
+| scheme | S0 ψ EV | S0 q EV |
+|---|---|---|
+| Q1 (obs-only) | 0.897 | 0.161 |
+| Q3 (oracle) | 0.905 | 0.177 |
+| Q4 (noisy-trained) | 0.903 | 0.171 |
+| **Q5 (noisy + IC)** | **0.936** | **0.376** |
+
+vs. the DA baselines' S0 reference (`qg_da_report.md`): EnKF 0.947/**0.481**,
+ETKF 0.921/*0.405*, Strong-4DVar **0.971**/-0.126, Weak-4DVar *0.966*/-0.035.
+**Q5 substantially closes the PV-q gap** left by Q1/Q3/Q4 (0.376 vs their
+~0.16-0.18) -- within reach of ETKF (0.405) and clearly ahead of both
+4DVar variants, though still behind ETKF/EnKF; on ψ, Q5 (0.936) beats
+Q1/Q3/Q4 (~0.90) but still trails all 4 DA methods (0.92-0.97). S1 numbers
+for Q5 (with the `"scenario"` cond_mode + true IC, mirroring Q3/Q4's S1
+eval) not yet pulled into this table -- open follow-up, same as folding all
+of this into `qg_neural_report.md`.
+
 ### ETKF inflation sensitivity, part 2: finer grid + additive inflation (2026-09-11)
 
 Follow-up to the ETKF inflation sweep above, still N=10, revised S1
