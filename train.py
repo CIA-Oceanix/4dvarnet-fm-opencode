@@ -348,6 +348,12 @@ def model_factory(cfg: DictConfig, device: torch.device):
             prior_tau_conditioning=fdv.get("prior_tau_conditioning", False),
             unet_backbone=fdv.get("unet_backbone", "unet1d"),
             monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
+            monai_num_res_blocks=fdv.get("monai_num_res_blocks", 2),
+            prior_hidden_channels=fdv.get("prior_hidden_channels", None),
+            tbptt_n_blocks=fdv.get("tbptt_n_blocks", 1),
+            tbptt_block_size=fdv.get("tbptt_block_size", None),
+            grad_clip_range=fdv.get("grad_clip_range", None),
+            init_state_var=fdv.get("init_state_var", 0.0),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
@@ -367,6 +373,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             obs_weight=fc.get("obs_weight", 1.0),
             min_obs_weight=fc.get("min_obs_weight", 1e-3),
             trainable_obs_weight=fc.get("trainable_obs_weight", True),
+            grad_clip_range=fc.get("grad_clip_range", None),
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")

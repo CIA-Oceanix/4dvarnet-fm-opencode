@@ -1,0 +1,57 @@
+# @package _global_
+# Ablation: FDV1's own architecture (update_input=obs+state, everything else
+# identical to FDV1_unrolled_monai_unet_l96) plus FDV2's prior-consistency
+# auxiliary loss term (aux_var_cost_weight=0.1). update_input="obs+state" is
+# not in FourDVarNetSolver's _PRIOR_MODES, so a prior_unet is normally never
+# built for it -- but aux_var_cost_weight>0 now builds one anyway (see
+# FourDVarNetSolver.__init__), purely to supply this loss term. The
+# _build_update_input tensor fed to the main solver UNet each iteration is
+# completely untouched: still cat([x, obs_clean]), exactly as in plain FDV1.
+#
+# Purpose: isolate whether the auxiliary prior_cost(x_final)+prior_cost(states)
+# loss term itself degrades fast-Y reconstruction, independent of FDV2's
+# gradient-conditioned update-input construction (grad+state/subgrad+state).
+# Measured directly on the three post-fix FDV2 retrains: the aux term's
+# actual share of the total loss ranged 0.2%-9.5% across configs and did NOT
+# correlate with collapse severity (both subgrad variants ~0.5 fast-Y
+# variance ratio with a near-zero aux share; grad+state's larger aux share
+# didn't make it any more collapsed than the subgrad variants) -- weak
+# evidence against the aux loss term being the root cause, but not yet
+# tested on FDV1's own healthy architecture directly. This config does that.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    aux_var_cost_weight: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
