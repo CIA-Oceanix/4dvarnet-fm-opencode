@@ -6,7 +6,7 @@ Two-layer quasi-geostrophic (QG) Phillips-channel case study -- the four DA base
 
 | scheme | type | key config | description |
 |---|---|---|---|
-| ETKF | Ensemble DA (deterministic square-root) | N=80, inflation=1.0, loc_radius=6.0 | Ensemble Transform Kalman Filter -- deterministic ensemble-square-root analysis update, sequentially cycled over the assimilation window. No stochastic observation perturbation. |
+| ETKF | Ensemble DA (deterministic square-root) | N=80, inflation=1.0, loc_radius=6.0, etkf_ridge=1.0 | Ensemble Transform Kalman Filter -- deterministic ensemble-square-root analysis update, sequentially cycled over the assimilation window. No stochastic observation perturbation. `etkf_ridge=1.0` (Kalman-gain transform-matrix regularization) is the default as of 2026-09-12 -- see `qg_da_report.md`'s sensitivity-analysis section. |
 | EnKF | Ensemble DA (stochastic, perturbed-obs) | N=80, inflation=1.0, loc_radius=6.0 | Perturbed-observation Ensemble Kalman Filter -- each ensemble member assimilates an independently perturbed observation. Same hyperparameters as ETKF for a controlled comparison. |
 | Strong-4DVar | Variational DA (deterministic, perfect-model) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0 | 4D-Var assuming the DA dynamical model is exact over the assimilation window (strong constraint) -- optimizes only the initial condition. |
 | Weak-4DVar | Variational DA (deterministic, weak-constraint) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0, q_var_scale=0.1 | 4D-Var with an added per-step model-error control term (weak constraint) -- can partially compensate for a biased/mismatched dynamical model, at the cost of a larger control space. |
@@ -21,7 +21,7 @@ Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q (both 
 | scheme | ψ EV | PV-q EV | CRPS (norm.) |
 |---|---|---|---|
 | EnKF | 0.9474 | **0.4812** | **0.2802** |
-| ETKF | 0.9212 | *0.4050* | *0.3200* |
+| ETKF | 0.9570 | *0.4760* | *0.2891* |
 | Weak-4DVar | *0.9660* | -0.0345 | 0.4524* |
 | Strong-4DVar | **0.9714** | -0.1257 | 0.4538* |
 | Q1 (DirectUNet) † | 0.8971 | 0.1605 | -- |
