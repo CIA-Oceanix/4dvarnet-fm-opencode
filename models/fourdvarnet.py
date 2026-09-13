@@ -264,7 +264,7 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
 
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
-                         grad_norm_cache=None, clip_range=50.0):
+                         grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -348,6 +348,16 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     would dilute/inflate it exactly the same way. Whether a channel needs
     normalization is decided by its sparsity/boundedness, not by whether it
     came from ``torch.autograd.grad`` or a hand-written proxy formula.
+
+    ``gradsplit_prior_scale`` (default 1.0, no-op): multiplies ``g_prior``
+    AFTER normalization/soft-clipping, for "gradsplit+state" only. Added as
+    a diagnostic knob -- forcing it near 0 (e.g. 1e-4) makes the fed tensor
+    ``cat([g_obs, ~0, x])``, functionally close to "obs+state"'s own
+    ``cat([x, obs_clean])`` (``g_obs`` is proportional to ``x-obs`` at
+    observed times, the same information "obs+state" gets directly), to
+    check whether a persistent training plateau traces back to the
+    ``g_prior`` channel's contribution specifically, by comparing against
+    a config where it's been silenced almost entirely.
     """
     if update_input == "obs-only":
         return obs_clean
@@ -363,8 +373,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
             g_prior = torch.autograd.grad(prior_cost_val, x, create_graph=True)[0]
             obs_cost_val = obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
             g_obs = torch.autograd.grad(obs_cost_val, x, create_graph=True)[0]
-        g_prior = _normalize_channels(g_prior, cache=grad_norm_cache, key="g_prior_gradsplit",
-                                       clip_range=clip_range)
+        g_prior = gradsplit_prior_scale * _normalize_channels(
+            g_prior, cache=grad_norm_cache, key="g_prior_gradsplit", clip_range=clip_range)
         return torch.cat([g_obs, g_prior, x], dim=-1)
     # grad-only / grad+state
     with torch.enable_grad():
@@ -379,7 +389,7 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
 
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
-                       clip_range=50.0):
+                       clip_range=50.0, gradsplit_prior_scale=1.0):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -409,7 +419,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
                                prior_unet=prior_unet, R_var=R_var,
                                obs_weight=obs_weight, prior_weight=prior_weight,
-                               grad_norm_cache=grad_norm_cache, clip_range=clip_range).transpose(1, 2)
+                               grad_norm_cache=grad_norm_cache, clip_range=clip_range,
+                               gradsplit_prior_scale=gradsplit_prior_scale).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -491,7 +502,8 @@ class FourDVarNetSolver(nn.Module):
                  tbptt_n_blocks=1,
                  tbptt_block_size=None,
                  grad_clip_range=None,
-                 init_state_var=0.0):
+                 init_state_var=0.0,
+                 gradsplit_prior_scale=1.0):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -544,6 +556,13 @@ class FourDVarNetSolver(nn.Module):
         # random init changes FDV1's ("obs+state") own healthy fast-Y
         # reconstruction at all, as a sanity/robustness check.
         self.init_state_var = init_state_var
+        # Diagnostic knob, "gradsplit+state" only (see _build_update_input):
+        # multiplies g_prior AFTER normalization/soft-clipping. Default 1.0
+        # is a no-op; forcing it near 0 (e.g. 1e-4) makes the fed tensor
+        # cat([g_obs, ~0, x]), functionally close to "obs+state"'s own
+        # cat([x, obs_clean]) -- used to check whether a persistent training
+        # plateau traces back to g_prior's contribution specifically.
+        self.gradsplit_prior_scale = gradsplit_prior_scale
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -681,7 +700,8 @@ class FourDVarNetSolver(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
-                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
+                use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:

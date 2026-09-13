@@ -313,6 +313,13 @@ class FourDVarNetConfig:
     # std ~ 0.316 in this normalized state space), sampled fresh every
     # forward() call, independent of update_input.
     init_state_var: float = 0.0
+    # 1.0 (default, no-op): multiplies gradsplit+state's g_prior channel
+    # AFTER normalization/soft-clipping. Diagnostic knob -- forcing it near 0
+    # (e.g. 1e-4) makes the fed tensor functionally close to obs+state's own
+    # cat([x, obs_clean]), to test whether a training plateau traces back to
+    # g_prior's contribution specifically. No effect on any other
+    # update_input mode.
+    gradsplit_prior_scale: float = 1.0
 
 
 @dataclass

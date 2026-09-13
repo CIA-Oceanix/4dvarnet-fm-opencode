@@ -291,6 +291,37 @@ class TestFourDVarNetSolver:
             "g_obs must scale linearly with the raw input, not stay pinned to RMS=1"
         assert torch.allclose(g_obs_small, (obs_small - x_small.detach()) * obs_mask, atol=1e-5)
 
+    def test_build_update_input_gradsplit_prior_scale_multiplies_after_normalization(self):
+        """gradsplit_prior_scale (default 1.0, no-op) multiplies g_prior
+        AFTER normalization/soft-clipping -- a diagnostic knob added to test
+        whether forcing g_prior near 0 (functionally close to obs+state's
+        own cat([x, obs_clean])) changes a persistent training plateau.
+        g_obs and x must be completely unaffected."""
+        B, T, D = 2, 10, 3
+        prior_unet_model = _make_model(update_input="gradsplit+state", dropout=0.0).prior_unet
+        prior_unet_model.eval()
+        tau = torch.rand(B)
+        obs_mask = torch.ones(B, T, 1)
+        x = torch.randn(B, T, D).requires_grad_(True)
+        obs_clean = torch.randn(B, T, D)
+
+        out_default = _build_update_input("gradsplit+state", x, obs_clean, obs_mask, tau,
+                                           prior_unet=prior_unet_model, R_var=0.5, obs_weight=1.0,
+                                           clip_range=50.0, gradsplit_prior_scale=1.0)
+        out_scaled = _build_update_input("gradsplit+state", x, obs_clean, obs_mask, tau,
+                                          prior_unet=prior_unet_model, R_var=0.5, obs_weight=1.0,
+                                          clip_range=50.0, gradsplit_prior_scale=1e-4)
+
+        g_obs_default, g_prior_default, x_default = (
+            out_default[..., :D], out_default[..., D:2 * D], out_default[..., 2 * D:])
+        g_obs_scaled, g_prior_scaled, x_scaled = (
+            out_scaled[..., :D], out_scaled[..., D:2 * D], out_scaled[..., 2 * D:])
+
+        assert torch.allclose(g_obs_default, g_obs_scaled)
+        assert torch.allclose(x_default, x_scaled)
+        assert torch.allclose(g_prior_scaled, g_prior_default * 1e-4, atol=1e-8)
+        assert not torch.allclose(g_prior_default, g_prior_scaled)
+
     def test_build_update_input_gradsplit_prior_channel_is_normalized(self):
         """gradsplit+state's g_prior is a real torch.autograd.grad of
         prior_cost alone -- dense (nonzero everywhere), same reason
@@ -355,7 +386,13 @@ class TestFourDVarNetSolver:
         only approximately 1 (not exactly, per the looser atol below): the
         post-normalization bound is a smooth tanh soft-clip now, not a hard
         clamp, so it's never the exact identity even when comfortably inside
-        clip_range."""
+        clip_range. Seeded explicitly: the final assertion is a statistical
+        "t2's own natural RMS differs enough from t1's cached norm" check,
+        not a deterministic identity -- leaving it to whatever global RNG
+        state happens to precede this test (no seed) let an unrelated
+        change earlier in the file's test order flip it to a false failure
+        (t2 happened to land within atol=1e-2 of RMS 1.0 purely by chance)."""
+        torch.manual_seed(0)
         cache = {}
         t1 = torch.randn(2, 10, 3) * 5.0
         out1 = _normalize_channels(t1, cache=cache, key="grad")
