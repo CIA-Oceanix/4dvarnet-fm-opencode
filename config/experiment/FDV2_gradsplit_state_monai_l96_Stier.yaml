@@ -24,6 +24,21 @@
 # this tier. Tests whether keeping the obs/prior gradients as two SEPARATE
 # real-gradient channels (rather than one combined "grad" channel, or two
 # cheap proxy channels) gives the network an easier signal to learn from.
+#
+# trainable_prior_weight=false (fixed prior_weight=1.0): verified directly
+# (numeric check, three prior_weight values 0.01/1.0/100.0 all produced an
+# IDENTICAL g_prior) that prior_weight has essentially ZERO effect on this
+# mode's actual forward output. Unlike grad+state (where prior_weight scales
+# prior_cost's gradient BEFORE it's summed with obs_cost's gradient into one
+# combined tensor -- genuinely changing the mixed direction, which
+# normalization of the sum does not undo), gradsplit+state normalizes
+# g_prior on its own, immediately after computing
+# prior_weight*grad(prior_cost, x) -- and RMS-normalizing a positive-scalar-
+# multiplied tensor by its own RMS exactly cancels that scalar. The first
+# (trainable) run of this config showed prior_weight drifting upward
+# (0.97->~1.1-1.16 by epoch 17) with no corresponding change in behavior --
+# consistent with it coasting on a vestigial gradient signal rather than a
+# meaningful one. Fixed here to remove that noise from training.
 defaults:
   - /lorenz96_default
   - _self_
@@ -42,7 +57,7 @@ model:
     prior_weight: 1.0
     clip_range: 50.0
     grad_clip_range: 5.0
-    trainable_prior_weight: true
+    trainable_prior_weight: false
     init_state_var: 0.1
     aux_var_cost_weight: 0.01
     unet_backbone: monai
