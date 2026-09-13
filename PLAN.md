@@ -1092,6 +1092,104 @@ covariance-tuning gap the way ETKF's transform-regularization gap was.
 Data: `reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (N=5, 7
 files). Scratch driver (not committed): `qg_4dvar_sensitivity_sweep_scratch.py`.
 
+### ETKF obs-configuration sensitivity: cols_per_day=8/16 + new psi2 (lower-layer) point obs + new col_points_per_day mode (2026-09-13/14)
+
+New obs-density experiment series: `cols_per_day=8/16` (vs. the reference
+4/day) plus a genuinely new capability -- observing the *lower* layer
+(psi2), never directly observed before this -- at 10 random points/day
+alongside the existing psi1 columns. Motivated by the same q-layer2/unobserved-
+deep-layer weakness the ETKF-ridge and 4DVar sensitivity work above kept
+running into: does giving the DA method *any* direct information about the
+deep layer help, versus just adding more of the same (biased, upper-layer-
+only) observation?
+
+**Two new capabilities implemented** (both opt-in, zero behavior change at
+their default-disabled value):
+
+- **`psi2_points_per_day`** (`QGConfig`): independent lower-layer (psi2)
+  random-point obs, `P`/day, drawn like the existing column sampler (own
+  randomly-sampled intra-day step, no two points of the same day collide)
+  but generalized to an arbitrary layer and to single points instead of
+  full columns (`data.qg._layer_field`/`_generate_random_point_observations`).
+- **`col_points_per_day`** (`QGConfig`): upper-layer (psi1) obs as `K`
+  random `(t, x)` column-point draws across the **whole day**, allowing
+  **multiple columns at the same timestep** -- overrides `cols_per_day`
+  when set. Motivated by discovering `cols_per_day=16` is infeasible: at
+  the reference `dt=7200s`, `steps_per_day=12`, and the existing
+  `cols_per_day` sampler enforces one column per step with **no** two
+  columns of the same day sharing a step -- so more than `steps_per_day`
+  columns/day can never be scheduled. This is a **pre-existing bug**
+  (nobody had tried `cols_per_day > steps_per_day` before): the
+  collision-avoidance loop just spins forever instead of failing cleanly --
+  confirmed via an isolated 15s-timeout call that hung (exit 124). Added a
+  clear `ValueError` guard to both the column and (analogous) point
+  samplers instead of leaving the silent hang, and added
+  `col_points_per_day` as the actual fix for wanting a higher density
+  (removes the per-step ceiling entirely, no code changes needed elsewhere
+  since the assimilation side already treats "list of columns per time" as
+  its native contract, never actually restricted to length 1).
+
+**Machinery reused, not rebuilt**: both new streams route through the
+combined-observation machinery built for this exact purpose during the
+`etkf_ridge` sensitivity work (`_psi_h_combined`, `_combined_index_at`,
+`_build_qg_col_point_loc_matrices`, and `ETKF._per_time`'s `idx.numel()`-
+based per-time-varying observation width) -- that machinery was already
+general enough to handle multiple columns per step and an optional extra
+point per step; only the *generation* functions and a `_make_obs_system`
+routing check were new. `evaluation/baselines.py`'s shared `ETKF` class
+itself needed no further changes.
+
+**N=10 results, ETKF (etkf_ridge=1.0 default), S0 (reference) + S1
+(revised model-error case)**:
+
+| config | S0 q full | S0 q layer2 | S0 psi full | S1 q full | S1 q layer2 | S1 psi full |
+|---|---|---|---|---|---|---|
+| baseline (cols=4) | 0.467 | 0.399 | 0.907 | 0.328 | 0.231 | 0.829 |
+| cols=8 | 0.531 | 0.433 | 0.922 | 0.326 | 0.191 | 0.732 |
+| col_points=16 | 0.524 | 0.403 | 0.895 | **0.103** | **-0.100** | **-1.189** |
+| **psi1(4)+psi2(10)** | **0.502** | **0.447** | **0.924** | **0.389** | **0.316** | **0.878** |
+
+**Key finding, directly confirms the original motivation**: on S1 (real
+model error), simply observing *more* of the same (biased) upper layer is
+not just unhelpful but actively **destabilizing** -- cols=8 already
+degrades psi (0.829→0.732) despite double the column density, and
+col_points=16 **collapses catastrophically** (psi=-1.19, worse than
+climatology; q layer2 goes negative). This is graded (baseline→cols8→
+col_points16 monotonically worse on S1), not a fluke at one setting,
+consistent with more-frequent updates from an increasingly model-
+inconsistent obs stream reinforcing rather than correcting the S1 bias.
+**Adding independent psi2 observations, by contrast, is the best or
+tied-best config on both S0 and S1** -- and by a wide margin on S1
+specifically, the only config that doesn't degrade relative to baseline.
+Genuinely new information about the previously-unobserved deep layer helps
+where more of the same upper-layer information hurts.
+
+Caveats: N=10 (screening scale, same convention as the ETKF/4DVar
+sensitivity work above); the col_points=16 collapse is dramatic enough to
+warrant an N=100 confirmation before treating it as definitive (though the
+graded cols8→col_points16 trend on S1 makes a pure-noise explanation
+unlikely); the psi1(4)+psi2(10) config's N=100 confirmation is the natural
+next step given how clean this result is.
+
+Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 8 files).
+New tests: `tests/test_qg_psi2_points.py` (15), `tests/test_qg_col_points.py`
+(10) -- both new obs streams, the combined H-function/localization
+machinery, the `cols_per_day` hang guard, and end-to-end ETKF smoke runs.
+Scratch driver (not committed): `qg_obs_density_sweep_scratch.py`. sbatch:
+`batch/run_qg_obs_density_sweep.sbatch` (interactive runs in this session
+repeatedly died silently around large `torch.load` calls -- same
+established fix as the ETKF-ridge N=100 confirmation and the 4DVar
+sensitivity work: real sbatch job instead).
+
+**Tooling gotcha**: adding a new `QGConfig` field (even at a neutral
+default) changes `_truth_cache_path`'s hash (it hashes the *entire*
+`asdict(cfg)`), silently invalidating every existing hash-keyed truth
+cache, including the production 1000/100/100 cache used throughout this
+whole session's history. Scratch scripts written *after* a `QGConfig`
+field addition must reference the pre-existing cache file by its
+already-known name directly rather than recomputing the (now different)
+hash. Worth keeping in mind for any future `QGConfig` field addition.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

@@ -60,6 +60,8 @@ class QGConfig:
     da_nx: int | None = None
     init_lag_days: float = 0.5
     init_seed: int = 7001
+    psi2_points_per_day: int = 0
+    col_points_per_day: int = 0
 
     @property
     def ny(self) -> int:
@@ -157,13 +159,20 @@ def make_qg_datasets(cfg: QGConfig) -> dict[str, QGDataset]:
 _S1_WIND_LEVELS = (0.0, 3e-12, 1e-11, 2e-11, 3e-11)
 
 
-def _upper_field(dynamics, state: torch.Tensor, field: str) -> torch.Tensor:
-    """Return the upper-layer field (T, ny, nx) of `state` (T, 2*ny*nx)."""
+def _layer_field(dynamics, state: torch.Tensor, field: str,
+                 layer: int = 0) -> torch.Tensor:
+    """Return layer `layer` (0=upper, 1=lower) field (T, ny, nx) of `state`
+    (T, 2*ny*nx)."""
     if field == "q":
         grid = dynamics._grid(state)
-        return grid[..., 0, :, :]
+        return grid[..., layer, :, :]
     psi = dynamics.streamfunctions(state)
-    return psi[..., 0, :, :]
+    return psi[..., layer, :, :]
+
+
+def _upper_field(dynamics, state: torch.Tensor, field: str) -> torch.Tensor:
+    """Return the upper-layer field (T, ny, nx) of `state` (T, 2*ny*nx)."""
+    return _layer_field(dynamics, state, field, layer=0)
 
 
 def _generate_alongtrack_observations(
@@ -214,6 +223,15 @@ def _generate_random_column_observations(
     f = _upper_field(dynamics, state, field)
     sigma = cfg.obs_noise_std_frac * float(f.std())
     steps_per_day = max(1, round(86400.0 / cfg.dt))
+    if C > steps_per_day:
+        raise ValueError(
+            f"cols_per_day={C} exceeds steps_per_day={steps_per_day} "
+            f"(dt={cfg.dt}s): this sampler observes at most one column per "
+            "step with no collisions, so more than steps_per_day columns/day "
+            "can never be scheduled (the collision-avoidance loop below "
+            "would spin forever searching for a free step that doesn't "
+            "exist). Use col_points_per_day instead (allows multiple "
+            "columns per step, no ceiling) if you need a higher density.")
     rng = torch.Generator().manual_seed(seed)
     obs = torch.full((T, ny), float("nan"))
     obs_mask = torch.zeros(T, dtype=torch.bool)
@@ -233,6 +251,106 @@ def _generate_random_column_observations(
             noise = torch.randn(ny, generator=rng) * sigma
             obs[t] = f[t, :, x_col] + noise
     return obs, obs_mask, obs_cols
+
+
+def _generate_random_point_observations(
+    dynamics, state: torch.Tensor, field: str, layer: int, cfg: QGConfig,
+    points_per_day: int, seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Random single-point obs on a given layer: `points_per_day` independent
+    (x, y) locations per day, each at its own randomly-sampled intra-day time
+    step -- the same no-two-share-a-step-within-a-day policy as
+    `_generate_random_column_observations`, generalized from full meridional
+    columns to single points and from the upper layer to an arbitrary
+    `layer` (e.g. layer=1 for a lower-layer streamfunction point network).
+
+    Returns (obs (T,), obs_mask (T,), obs_points (T, 2)): obs_points[t] is
+    the (x, y) index pair observed at step t, (-1, -1) when no obs.
+    """
+    T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
+    P = max(1, int(points_per_day))
+    f = _layer_field(dynamics, state, field, layer)
+    sigma = cfg.obs_noise_std_frac * float(f.std())
+    steps_per_day = max(1, round(86400.0 / cfg.dt))
+    if P > steps_per_day:
+        raise ValueError(
+            f"points_per_day={P} exceeds steps_per_day={steps_per_day} "
+            f"(dt={cfg.dt}s): this sampler observes at most one point per "
+            "step with no collisions, so more than steps_per_day points/day "
+            "can never be scheduled without spinning forever.")
+    rng = torch.Generator().manual_seed(seed)
+    obs = torch.full((T,), float("nan"))
+    obs_mask = torch.zeros(T, dtype=torch.bool)
+    obs_points = torch.full((T, 2), -1, dtype=torch.long)
+    r = torch.rand(T // steps_per_day, P, generator=rng)
+    for day in range(T // steps_per_day):
+        xs = torch.randint(0, nx, (P,), generator=rng)
+        ys = torch.randint(0, ny, (P,), generator=rng)
+        base = day * steps_per_day
+        taken = set()
+        for p in range(P):
+            t = base + int(r[day, p] * steps_per_day)
+            while t in taken:
+                t = base + (t - base + 1) % steps_per_day
+            taken.add(t)
+            obs_mask[t] = True
+            obs_points[t, 0] = int(xs[p])
+            obs_points[t, 1] = int(ys[p])
+            noise = torch.randn((), generator=rng) * sigma
+            obs[t] = f[t, int(ys[p]), int(xs[p])] + noise
+    return obs, obs_mask, obs_points
+
+
+def _generate_random_column_point_observations(
+    dynamics, state: torch.Tensor, field: str, cfg: QGConfig,
+    points_per_day: int, seed: int,
+):
+    """Upper-layer (psi1) obs, generalized beyond
+    `_generate_random_column_observations`'s ceiling: `points_per_day`
+    independent (t, x) column-events per day, **t drawn uniformly across
+    the whole day** (not restricted to `points_per_day` distinct steps, and
+    no collision-avoidance) -- so multiple columns MAY be observed at the
+    same timestep. Lets `points_per_day` exceed `steps_per_day` (12 at the
+    reference dt=7200s), which the collision-avoiding column sampler cannot
+    do (its "no two columns share a step" policy hangs forever once
+    `cols_per_day > steps_per_day`, since it keeps searching for a free
+    step that no longer exists).
+
+    Returns (obs_groups, mask, col_groups): both `obs_groups`/`col_groups`
+    are Python lists of length `cfg.num_steps` (`None`, or a 1-D tensor /
+    list of x-indices respectively, at steps with >=1 event) -- this is the
+    same "list of per-time column groups" contract `_psi_h`/`_event_columns`
+    already expect (never actually restricted to a single column per step),
+    just generated without the single-column-per-step constraint.
+    """
+    T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
+    K = max(1, int(points_per_day))
+    f = _upper_field(dynamics, state, field)
+    sigma = cfg.obs_noise_std_frac * float(f.std())
+    steps_per_day = max(1, round(86400.0 / cfg.dt))
+    rng = torch.Generator().manual_seed(seed)
+    mask = torch.zeros(T, dtype=torch.bool)
+    col_groups: list = [None] * T
+    obs_groups: list = [None] * T
+    n_days = T // steps_per_day
+    ts = torch.randint(0, steps_per_day, (n_days, K), generator=rng)
+    xs = torch.randint(0, nx, (n_days, K), generator=rng)
+    for day in range(n_days):
+        base = day * steps_per_day
+        for k in range(K):
+            t = base + int(ts[day, k])
+            x = int(xs[day, k])
+            mask[t] = True
+            if col_groups[t] is None:
+                col_groups[t] = []
+                obs_groups[t] = []
+            col_groups[t].append(x)
+            noise = torch.randn(ny, generator=rng) * sigma
+            obs_groups[t].append(f[t, :, x] + noise)
+    for t in range(T):
+        if obs_groups[t] is not None:
+            obs_groups[t] = torch.cat(obs_groups[t])
+    return obs_groups, mask, col_groups
 
 
 def expand_obs_to_grid(window: dict, cfg: QGConfig) -> torch.Tensor:
@@ -457,7 +575,17 @@ class QGS01Dataset:
             a = full_lead[lead - kk - 1]
             b = full_lead[lead - kk]
             init_state = (1.0 - alpha) * a + alpha * b
-            if cfg.obs_geometry == "random_columns":
+            if cfg.col_points_per_day > 0:
+                # New opt-in mode, mutually exclusive with (takes priority
+                # over) the `cols_per_day` scheme below: `col_points_per_day`
+                # random (t, x) draws across the whole day (multiple columns
+                # per step allowed), rather than `cols_per_day` distinct
+                # single-column steps (capped at steps_per_day/day).
+                obs, obs_mask, obs_cols = _generate_random_column_point_observations(
+                    dyn, traj, cfg.obs_field, cfg,
+                    cfg.col_points_per_day, cfg.seed + 4000 + i * 101,
+                )
+            elif cfg.obs_geometry == "random_columns":
                 obs, obs_mask, obs_cols = _generate_random_column_observations(
                     dyn, traj, cfg.obs_field, cfg, cfg.seed + 4000 + i * 101,
                 )
@@ -474,6 +602,14 @@ class QGS01Dataset:
                 entry["track_x_index"] = track_idx
             else:
                 entry["obs_columns"] = obs_cols
+            if cfg.psi2_points_per_day > 0:
+                obs2, obs2_mask, obs2_points = _generate_random_point_observations(
+                    dyn, traj, cfg.obs_field, 1, cfg,
+                    cfg.psi2_points_per_day, cfg.seed + 5000 + i * 131,
+                )
+                entry["obs2"] = obs2
+                entry["obs2_mask"] = obs2_mask
+                entry["obs2_points"] = obs2_points
             out.append(entry)
         return out
 
