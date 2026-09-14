@@ -1,0 +1,60 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of tweedie.yaml (TweedieCFM, K_inner=5):
+# two-stage contract (models.monai_unet_adapter.MonaiMeanEstimatorCell for
+# stage 1, a MonaiUNet1D residual-velocity backbone for stage 2), swapped
+# in for TweedieCFM's UNet1D-based cells. Same M-tier rationale as
+# monai_vanilla_cfm.yaml -- no MonaiTweedieCFM-specific tier comparison
+# exists in the L96 benchmark to prefer a different tier.
+#
+# NOT verified end-to-end in this repo: `monai` isn't in the project's
+# standard env by default (torch/CUDA conflict -- see requirements-monai.txt
+# / the 2026-09-07 CHANGELOG entry).
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_tweedie_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  use_obs: true
+  use_forcing: true
+  use_params: true
+  monai_tweedie_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    K_inner: 5
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+    tau_sampling: uniform  # uniform | logit_normal | beta
+    logit_normal_loc: 0.0
+    logit_normal_scale: 1.0
+    beta_alpha: 0.1
+    beta_beta: 1.0
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  stage2:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 1.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  checkpoint_stage2: checkpoints/stage2.pt
+  outputs_dir: outputs

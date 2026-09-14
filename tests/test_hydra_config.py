@@ -35,11 +35,13 @@ def test_config_yaml_loads():
 
 
 def test_data_only_config_keys():
-    """The bare data config (lorenz63) holds only data/baselines/cases --
-    model/training/paths now live in each config/models/*.yaml."""
+    """The bare data config (lorenz63) holds data/baselines/cases plus the
+    shared training.loss default (every model needs use_gradient/
+    gradient_weight; model/paths and the rest of training/ still live in
+    each config/models/*.yaml, which merges on top of this)."""
     with hydra.initialize(config_path="../config"):
         cfg = hydra.compose("lorenz63")
-    expected_keys = {"data", "baselines", "cases"}
+    expected_keys = {"data", "baselines", "cases", "training"}
     assert set(cfg.keys()) == expected_keys, f"Mismatch: {expected_keys ^ set(cfg.keys())}"
 
 

@@ -42,7 +42,7 @@ class LitModel(pl.LightningModule):
                 params = self.model.mean_estimator.parameters()
             else:
                 params = self.model.non_gaussian.parameters()
-        elif self.model_type == "tweedie_cfm":
+        elif self.model_type in ("tweedie_cfm", "monai_tweedie_cfm"):
             if self.stage == 1:
                 params = self.model.mean_estimator.parameters()
             else:
@@ -119,7 +119,7 @@ class LitModel(pl.LightningModule):
                     p.requires_grad = False
                 for p in self.model.non_gaussian.parameters():
                     p.requires_grad = True
-        elif self.model_type == "tweedie_cfm":
+        elif self.model_type in ("tweedie_cfm", "monai_tweedie_cfm"):
             if self.stage == 1:
                 for p in self.model.velocity_unet.parameters():
                     p.requires_grad = False
@@ -189,7 +189,7 @@ class LitModel(pl.LightningModule):
                 else self.model.compute_loss(batch)
         elif self.model_type == "predict_state_cfm":
             loss = self.model.compute_loss(batch)
-        elif self.model_type == "tweedie_cfm":
+        elif self.model_type in ("tweedie_cfm", "monai_tweedie_cfm"):
             loss = self.model.compute_loss(batch)
         elif self.model_type == "joint_tweedie_cfm":
             loss = self.model.compute_loss(batch)
@@ -224,7 +224,7 @@ class LitModel(pl.LightningModule):
             return self.model(batch)
         elif self.model_type == "predict_state_cfm":
             return self.model.sample(batch)
-        elif self.model_type in ("tweedie_cfm", "joint_tweedie_cfm"):
+        elif self.model_type in ("tweedie_cfm", "monai_tweedie_cfm", "joint_tweedie_cfm"):
             if self.stage == 1:
                 return self.model.estimate_mean(batch.obs)
             else:

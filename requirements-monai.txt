@@ -1,13 +1,25 @@
-# Extra/override requirements for models/monai_unet_adapter.py (MonaiUNet1D /
-# MonaiDirectUNet) -- install in a SEPARATE env from the project's standard
-# `fdv` env (e.g. `fdv-monai-proto`), on top of requirements.txt.
+# SUPERSEDED as of 2026-09-14 for this repo's `intern` env: torch==2.8.0+cu126
+# + monai==1.6.0 (+ the torchvision==0.23.0+cu126 pin that must move in
+# lockstep with torch, + einops, a monai dependency) are now merged directly
+# into requirements.txt -- see that file's header comment.
 #
-# monai==1.6.0 requires a newer torch than this project's standard
-# torch>=2.0.0 pin supports in practice -- torch==2.8.0+cu126 is the version
-# validated here. Installing monai into the shared/default env previously
-# broke CUDA for the rest of the project by dragging torch forward; keep this
-# combination isolated to its own env instead of merging it into
-# requirements.txt. The +cu126 local version isn't on PyPI -- install with:
+# Kept here as a standalone overlay for anyone who instead wants to keep
+# monai isolated in a SEPARATE env from a torch>=2.0.0-pinned default env
+# (the original rationale below, and still the safer choice if you don't
+# want every environment touching this repo to carry monai's heavier/newer
+# torch requirement). On that path: install requirements.txt first, then
+# this file on top, with the same --extra-index-url as below.
+#
+# monai==1.6.0 requires a newer torch than a torch>=2.0.0 pin supports in
+# practice -- torch==2.8.0+cu126 is the version validated here. An earlier
+# attempt to add monai to a shared env broke CUDA for the rest of the
+# project by dragging torch forward without also moving torchvision, which
+# stayed pinned to the old torch's build and failed on import
+# (torchvision._meta_registrations -- circular-import AttributeError) the
+# moment anything imported pytorch_lightning (torchmetrics -> torchvision).
+# The +cu126 local version isn't on PyPI -- install with:
 #   pip install -r requirements-monai.txt --extra-index-url https://download.pytorch.org/whl/cu126
 torch==2.8.0+cu126
+torchvision==0.23.0+cu126
 monai==1.6.0
+einops>=0.8.0

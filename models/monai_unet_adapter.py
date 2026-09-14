@@ -1,14 +1,18 @@
 """Adapter exposing MONAI's DiffusionModelUNet with the same call signature as
 models.unet.UNet1D, for prototyping (see /homes/rfablet/.claude/plans/monai-diffunet-prototype.md).
 
-monai is intentionally NOT in requirements.txt: monai==1.6.0 requires
-torch==2.8.0+cu126, newer than this project's standard torch==2.4.1+cu121 (a
-prior attempt to add monai to the shared env broke CUDA for everything else).
-This module -- and anything importing it -- must run in a separate env built
-from requirements-monai.txt (e.g. `fdv-monai-proto`), not the project's
-default `fdv` env. Every other importer of this module already guards the
-import (see evaluation/neural_inference.py's try/except) so the rest of the
-codebase keeps working with the default env.
+As of 2026-09-14 (this repo's `intern` env), monai IS in requirements.txt:
+monai==1.6.0 requires torch>=2.8.0, so requirements.txt now pins
+torch==2.8.0+cu126 directly (see that file's header) rather than keeping
+monai in a separate env. The historical alternative -- a standalone
+requirements-monai.txt overlay for a separate env (e.g. `fdv-monai-proto`)
+-- is still there for anyone who'd rather not have every environment
+touching this repo carry monai's newer torch requirement; that file also
+has the fuller history of what broke the one time this was done carelessly
+(torchvision left on its old pin after a bare torch upgrade). Every other
+importer of this module still guards the import (see
+evaluation/neural_inference.py's try/except), so an env that genuinely
+lacks monai keeps working.
 
 Verified directly against the installed monai==1.6.0 wheel:
 - DiffusionModelUNet.forward(x, timesteps, context=None, class_labels=None, ...)
@@ -37,7 +41,8 @@ from monai.networks.nets import DiffusionModelUNet
 
 from models.interpolant import LinearInterpolant
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
-from models.vanilla_cfm import VanillaCFM
+from models.unet import cond_extra_width
+from models.vanilla_cfm import VanillaCFM, TweedieCFM
 
 _PATCHED_1D_RESBLOCK = False
 
@@ -205,10 +210,27 @@ class MonaiVanillaCFM(VanillaCFM):
 
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False,
-                 param_dim=4, cond_extra_dim=0, num_res_blocks=2, norm_num_groups=32):
+                 param_dim=4, use_obs=True, use_forcing=False, use_params=False,
+                 cond_extra_dim=None, num_res_blocks=2, norm_num_groups=32,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
         nn.Module.__init__(self)
-        self.cond_extra_dim = cond_extra_dim
         self.param_dim = param_dim
+        # Same legacy-vs-flags resolution as VanillaCFM.__init__ (not called
+        # directly here since it would also build a UNet1D we'd throw away)
+        # -- forward()/compute_cfm_loss()/sample() are inherited unchanged
+        # from VanillaCFM and read self.use_obs/use_forcing/use_params via
+        # models.unet.make_cond, so these must be set for real, not left to
+        # AttributeError.
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
+        self.cond_extra_dim = cond_extra_dim
         self.unet = MonaiUNet1D(
             state_dim=state_dim,
             obs_dim=state_dim + cond_extra_dim,
@@ -218,7 +240,10 @@ class MonaiVanillaCFM(VanillaCFM):
             use_obs=True,
             dropout=dropout,
         )
-        self.interpolant = LinearInterpolant(nu=1.0)
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
         self.N_outer = N_outer
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
@@ -278,3 +303,88 @@ class MonaiConditionalPriorCFM(ConditionalPriorCFM):
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
         self.train_tau_0_only = False
+
+
+class MonaiMeanEstimatorCell(nn.Module):
+    """MonaiUNet1D-backed drop-in for models.residual.MeanEstimatorCell:
+    same (x, obs, tau) -> residual contract, only the backbone differs.
+    Used as TweedieCFM/MonaiTweedieCFM's stage-1 mean estimator.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, num_res_blocks=2,
+                 norm_num_groups=32, use_obs=True, dropout=0.1):
+        super().__init__()
+        self.net = MonaiUNet1D(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=use_obs,
+            dropout=dropout,
+        )
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+        return self.net(x=x, obs=obs, tau=tau)
+
+
+class MonaiTweedieCFM(TweedieCFM):
+    """MonaiUNet1D-backed drop-in for TweedieCFM: identical two-stage
+    contract (MonaiMeanEstimatorCell for stage 1, a residual-space velocity
+    UNet for stage 2 -- see TweedieCFM's docstring), only the backbone
+    construction differs. estimate_mean/forward/compute_loss/sample/
+    set_stage are all inherited unchanged from TweedieCFM (they only ever
+    call self.mean_estimator(...)/self.velocity_unet(...), and
+    MonaiUNet1D's forward has the same (x, obs=, tau=) shape as UNet1D's).
+    Subclassing (rather than composing) means training/lightning_module.py's
+    isinstance-free "tweedie_cfm"-vs-"monai_tweedie_cfm" model_type checks
+    are the only place that needs to know about this class -- everything
+    else (model_factory, evaluate_model, save_trajectories) already
+    dispatches by model_type string.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
+                 K_inner=5, N_outer=10, sigma_prior=1.0, dropout=0.1,
+                 train_tau_0_only=False, param_dim=4,
+                 use_obs=True, use_forcing=False, use_params=False,
+                 cond_extra_dim=None, num_res_blocks=2, norm_num_groups=32,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
+        nn.Module.__init__(self)
+        self.state_dim = state_dim
+        self.K_inner = K_inner
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = train_tau_0_only
+        self.param_dim = param_dim
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
+        self.cond_extra_dim = cond_extra_dim
+
+        self.mean_estimator = MonaiMeanEstimatorCell(
+            state_dim=state_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.velocity_unet = MonaiUNet1D(
+            state_dim=state_dim,
+            obs_dim=2 * state_dim + self.cond_extra_dim,  # [obs, mean] + forcing/params
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
+        self._stage = 1

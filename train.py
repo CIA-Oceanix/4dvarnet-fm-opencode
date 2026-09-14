@@ -155,9 +155,39 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=mvc.dropout,
             train_tau_0_only=mvc.get("train_tau_0_only", False),
             param_dim=param_dim,
-            cond_extra_dim=mvc.get("cond_extra_dim", 1 + param_dim),
+            use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=mvc.get("cond_extra_dim", None),
             num_res_blocks=mvc.get("num_res_blocks", 2),
             norm_num_groups=mvc.get("norm_num_groups", 32),
+            tau_sampling=mvc.get("tau_sampling", "uniform"),
+            logit_normal_loc=mvc.get("logit_normal_loc", 0.0),
+            logit_normal_scale=mvc.get("logit_normal_scale", 1.0),
+            beta_alpha=mvc.get("beta_alpha", 2.5),
+            beta_beta=mvc.get("beta_beta", 1.0),
+        )
+    elif model_type == "monai_tweedie_cfm":
+        from models.monai_unet_adapter import MonaiTweedieCFM
+        mtc = cfg.model.monai_tweedie_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = MonaiTweedieCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mtc.hidden_channels,
+            time_emb_dim=mtc.time_emb_dim,
+            K_inner=mtc.K_inner,
+            N_outer=mtc.N_outer,
+            sigma_prior=mtc.sigma_prior,
+            dropout=mtc.dropout,
+            train_tau_0_only=mtc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=mtc.get("cond_extra_dim", None),
+            num_res_blocks=mtc.get("num_res_blocks", 2),
+            norm_num_groups=mtc.get("norm_num_groups", 32),
+            tau_sampling=mtc.get("tau_sampling", "uniform"),
+            logit_normal_loc=mtc.get("logit_normal_loc", 0.0),
+            logit_normal_scale=mtc.get("logit_normal_scale", 1.0),
+            beta_alpha=mtc.get("beta_alpha", 2.5),
+            beta_beta=mtc.get("beta_beta", 1.0),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
@@ -453,7 +483,7 @@ def _eval_true_param_list(w, param_names):
 STOCHASTIC_MODEL_TYPES = {
     "tweedie", "vanilla_cfm", "monai_vanilla_cfm",
     "joint_cfm", "joint_cfm_coupled", "joint_tweedie_cfm",
-    "predict_state_cfm", "tweedie_cfm",
+    "predict_state_cfm", "tweedie_cfm", "monai_tweedie_cfm",
     "sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond",
     "fourdvarnet_cfm",
 }
@@ -472,6 +502,7 @@ def _predict_once(model, batch, model_type, return_params=False):
         pred, params = model(batch)
         return pred, params
     elif model_type in ("vanilla_cfm", "monai_vanilla_cfm", "predict_state_cfm", "tweedie_cfm",
+                        "monai_tweedie_cfm",
                         "sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond",
                         "fourdvarnet", "fourdvarnet_cfm"):
         return model.sample(batch), None
@@ -723,7 +754,7 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
             model = train_stage(model, loaders, cfg, stage=2, device=device)
             train_time += time.time() - t0
             print(f"    Stage 2 done in {time.time()-t0:.1f}s")
-        elif model_type in ("tweedie_cfm", "joint_tweedie_cfm") and epochs_s2 > 0:
+        elif model_type in ("tweedie_cfm", "monai_tweedie_cfm", "joint_tweedie_cfm") and epochs_s2 > 0:
             t0 = time.time()
             stage_cfg = cfg.training.stage2
             lit = LitModel(model, model_type=model_type, stage=2,
@@ -853,7 +884,7 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
         "model_type": model_type,
         "config": {
             "hidden_channels": list(hc_src.hidden_channels) if hc_src is not None and "hidden_channels" in hc_src else list(cfg.model.get("hidden_channels", [])),
-            "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie", "tweedie_cfm", "joint_tweedie_cfm") else 0),
+            "epochs": epochs_s1 + (epochs_s2 if model_type in ("tweedie", "tweedie_cfm", "monai_tweedie_cfm", "joint_tweedie_cfm") else 0),
             "epochs_trained": (epochs_trained_s1 or 0) + (epochs_trained_s2 or 0) or None,
             "N_ensemble": N_ensemble if model_type in STOCHASTIC_MODEL_TYPES else 1,
         },
