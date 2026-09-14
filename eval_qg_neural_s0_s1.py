@@ -69,16 +69,23 @@ SCHEMES = {
         "param_dim": 0, "cond_extra_dim": 0, "cond_mode": "none",
     },
     # Q7 (2026-09-14): DirectUNet with T merged into channels instead of Q1's
-    # batch-folding (models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime) --
-    # still training (job 53483) as of this entry, so points at the
-    # Lightning ModelCheckpoint's running best-by-val_loss .ckpt (not a
-    # final stage1_best.pt, which train_qg_neural.py only writes after
-    # trainer.fit() completes) -- a genuine but PRELIMINARY checkpoint, not
-    # the final converged model. _load_model's state_dict extraction
-    # already handles a full Lightning .ckpt (state_dict/"model." prefix),
-    # no special-casing needed.
+    # batch-folding (models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime).
+    # Finished training (200/200 epochs) -- trained at the OLD easy default
+    # (lag=1.0d/noise=0.01, like Q1/Q3/Q4), so it's out-of-distribution at
+    # this script's own current (DA-matched) default, same caveat as Q1/Q3.
+    # See Q7-noise05 below for the matched-difficulty retrain.
     "Q7": {
-        "ckpt": "experiments/Q7_direct_unet_tchannels_s0/checkpoints/stage1_best.ckpt",
+        "ckpt": "experiments/Q7_direct_unet_tchannels_s0/stage1_best.pt",
+        "param_dim": 0, "cond_extra_dim": 0, "cond_mode": "none",
+        "model_type": "direct_unet_tchannels",
+    },
+    # Q7-noise05 (2026-09-14): Q7 retrained at this script's own current
+    # default (lag=5.0d/noise=0.05, the DA reference case) -- the genuinely
+    # matched obs-only reference for the T-channels bench refresh (mirrors
+    # Q3-noise0.05's role for Q3). No --lag-days/--noise-frac override
+    # needed to evaluate it in-distribution.
+    "Q7-noise05": {
+        "ckpt": "experiments/Q7_direct_unet_tchannels_s0_noise05/stage1_best.pt",
         "param_dim": 0, "cond_extra_dim": 0, "cond_mode": "none",
         "model_type": "direct_unet_tchannels",
     },
