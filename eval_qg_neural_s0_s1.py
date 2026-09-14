@@ -86,6 +86,18 @@ SCHEMES = {
         "ckpt": "experiments/Q3_direct_unet_s0_oracle_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
     },
+    # Q8 (2026-09-14): T-channels retrain of Q3 (models.monai_unet_qg2d.
+    # MonaiDirectUNetQGChannelTime instead of MonaiDirectUNetQG), trained
+    # directly at this eval script's own current default (lag=5.0d/
+    # noise=0.05, the DA reference case) -- unlike Q3/Q4/Q5, no --lag-days/
+    # --noise-frac override is needed to evaluate Q8 in-distribution; the
+    # defaults already match. Finished training (200/200 epochs), a real
+    # stage1_best.pt.
+    "Q8": {
+        "ckpt": "experiments/Q8_direct_unet_tchannels_s0_oracle_cond/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "model_type": "direct_unet_tchannels",
+    },
     "Q4": {
         "ckpt": "experiments/Q4_direct_unet_s1_noisy_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
