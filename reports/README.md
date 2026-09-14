@@ -6,7 +6,7 @@
 
 [logit-normal τ: Scaling Rectified Flow Transformers for High-Resolution Image Synthesis](https://arxiv.org/pdf/2403.03206) paper
 
-[score-based: Rozet & Louppe, "Score-based Data Assimilation" (NeurIPS 2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7f7fa581cc8a1970a4332920cdf87395-Abstract-Conference.html), as formalized in Sec. 3.4 / Eq. (12)-(14) of `docs/preprint_4dvarnet_fm_2025.pdf` — samples p(x1|y) by guiding the **unconditional** VanillaCFM (beta τ) prior with a linear-Gaussian observation-score correction at each Euler step (`score_based_inference.py`), instead of training a model that sees y directly.
+[score-based: Rozet & Louppe, "Score-based Data Assimilation" (NeurIPS 2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7f7fa581cc8a1970a4332920cdf87395-Abstract-Conference.html), as formalized in Sec. 3.4 / Eq. (12)-(14) of `docs/preprint_4dvarnet_fm_2025.pdf` — samples p(x1|y) by guiding a purely **unconditional** flow-matching prior (`models/sda.py::UnconditionalPriorCFM`, trained via `config/models/sda_prior.yaml`, no obs/forcing/params conditioning at all) with a DPS-style normalized-gradient observation-cost correction at each Euler step (`evaluation/sda_sampler.py::sda_guided_sample`, run via `eval_sda_l63.py`) — the same model class and sampler the L96 SDA benchmark uses, instead of training a model that sees y directly. (Row below is being regenerated against this implementation; previous numbers came from an earlier, VanillaCFM-based prior + a different guidance rule and are not directly comparable.)
 
 ## State estimation 
 

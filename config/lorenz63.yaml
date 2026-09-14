@@ -2,6 +2,11 @@ defaults:
   - baselines
   - _self_
 
+training:
+  loss:
+    use_gradient: true
+    gradient_weight: 0.1
+
 data:
   system: lorenz63
   state_names: ["X", "Y", "Z"]

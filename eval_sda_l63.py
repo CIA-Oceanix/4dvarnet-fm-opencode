@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """
-Score-based data assimilation using the unconditional VanillaCFM as prior.
+Score-based data assimilation for Lorenz-63, using the master-branch SDA
+stack (models/sda.py + evaluation/sda_sampler.py) instead of a bespoke
+L63-only sampler.
 
-Implements Section 3.4 ("Revisiting score-based DA") of the 4DVarNet-FM
-preprint (docs/preprint_4dvarnet_fm_2025.pdf), following Rozet & Louppe
-(2023): given a pre-trained model of E[x1|x_tau] that never sees the
-observations y (an "unconditional" flow-matching prior on state, still
-allowed to condition on forcing/params like the other CFM baselines --
-here `config/models/vanilla_cfm_beta0.5_unconditional.yaml`, use_obs=False),
-we correct that prior mean at every Euler step with a linear-Gaussian
-Bayes update against y (Eq. 13-14), then advance the flow with the
-corrected conditional expectation via the existing conditional-expectation
-ODE (Eq. 7/8, `LinearInterpolant.compute_drift`).
+Follows Rozet & Louppe, "Score-based Data Assimilation" (NeurIPS 2023), as
+formalized in Sec. 3.4 / Eq. (12)-(14) of docs/preprint_4dvarnet_fm_2025.pdf:
+a purely unconditional flow-matching prior p(x_1) -- models.sda.
+UnconditionalPriorCFM, which never reads obs/forcing/params, trained via
+`python train.py --config-name models/sda_prior` exactly like any other
+stage-1-only CFM -- is turned into a state estimator p(x_1|y) at *inference*
+time only, by nudging its Euler integration toward the observations at every
+step (DPS/Pi-GDM-style normalized-gradient guidance on an L2 observation
+cost; see evaluation/sda_sampler.py::sda_guided_sample for the derivation).
 
-Reuses the already-trained checkpoints under
-experiments/l63/vanilla_cfm_beta0.5_unconditional/{s0,s1}/checkpoints/ --
-no retraining. Writes results.json in the same schema as the sibling
-experiments/l63/<model>/ directories so it drops straight into the same
-comparison tables.
+This is the same model class and sampler the L96 SDA benchmark uses
+(config/experiment/SDA1_prior_l96.yaml, eval_sda_l96.py) -- only the
+dataset/harness plumbing here is L63-specific (data.build.build_datasets,
+train.py's model_factory/_make_eval_batch, and the experiments/l63/<model>/
+results.json schema every other L63 model writes), since master has no L63
+pipeline of its own.
+
+No retraining: reuses the checkpoint already written by
+`python train.py --config-name models/sda_prior` under
+experiments/l63/sda_prior/{s0,s1}/checkpoints/stage1.pt.
 
 Usage:
-    python score_based_inference.py
-    python score_based_inference.py model.N_ensemble=20
+    python train.py --config-name models/sda_prior   # train the prior once
+    python eval_sda_l63.py                            # then run guided DA
+    python eval_sda_l63.py model.N_ensemble=20 model.sda_prior.guidance_weight=0.5
 """
 import os
 import sys
@@ -38,64 +45,29 @@ torch.set_float32_matmul_precision('medium')
 
 from data.build import build_datasets
 from train import model_factory, _make_eval_batch, EXP_DIR
-from evaluation.metrics import rmse, energy_score, param_rmse as _param_rmse_fn
+from evaluation.metrics import rmse, energy_score
+from evaluation.sda_sampler import sda_guided_sample
 
-SOURCE_MODEL = "vanilla_cfm_beta0.5_unconditional"
+SOURCE_MODEL = "sda_prior"
 EXPERIMENT_ID = "score_based_cfm"
 
 
-def score_based_sample(model, batch, N_outer, R_var, sigma_prior=1.0):
-    """Sample x1 ~ p(x1|y) by guiding the unconditional prior E[x1|x_tau]
-    with observations y at each Euler step (Eq. 12-14 of the preprint).
-
-    r_tau^2 = alpha_tau^2 * sigma_prior^2 / beta_tau^2 is the (linear-
-    Gaussian) conditional variance of x1 given x_tau alone (Eq. 6's
-    background precision, inverted); the Kalman gain r_tau^2/(r_tau^2+R_var)
-    interpolates between "trust y" (tau->0, r_tau^2->inf) and "trust the
-    unconditional prior mean" (tau->1, r_tau^2->0), matching the intuition
-    that x_tau becomes fully informative about x1 as tau->1.
-    """
-    obs = batch.obs
-    B, T, D = obs.shape
-    device = obs.device
-    interpolant = model.interpolant
-    y = torch.nan_to_num(obs, nan=0.0)
-    mask = batch.obs_mask
-    if mask.dim() == 2:
-        mask = mask.unsqueeze(-1).expand(B, T, D)
-    mask = mask.float()
-
-    x = torch.randn_like(obs) * sigma_prior
-    dt = 1.0 / N_outer
-    for step in range(N_outer):
-        tau = torch.full((B,), step / N_outer, device=device)
-        v_prior = model.forward(x, batch, tau)
-        a = interpolant.alpha(tau).view(B, 1, 1)
-        b = interpolant.beta(tau).clamp(min=1e-3).view(B, 1, 1)
-        mu = x + (1.0 - tau).view(B, 1, 1) * v_prior
-        r2 = (a ** 2) * (sigma_prior ** 2) / (b ** 2)
-        gain = r2 / (r2 + R_var)
-        mu_guided = mu + gain * mask * (y - mu)
-        drift = interpolant.compute_drift(x, mu_guided, tau)
-        x = x + dt * drift
-    return x
-
-
-def evaluate_score_based(model, dataset, device, N_ensemble, N_outer, R_var,
-                         sigma_prior, param_names, param_dim):
-    """Mirrors `train.evaluate_model`, but draws samples via
-    `score_based_sample` instead of `model.sample(batch)`."""
+def evaluate_sda_guided(model, dataset, device, n_ensemble, n_outer, r_var,
+                        guidance_weight, param_names, param_dim):
+    """Mirrors `train.evaluate_model`, but draws samples via the
+    observation-guided sampler (`sda_guided_sample`) instead of the model's
+    own unconditional `model.sample(batch)`."""
     rmse_list, es_list, ens_var_list = [], [], []
     all_sq_err, all_ref = [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
-        member_preds = []
-        for _ in range(N_ensemble):
-            pred = score_based_sample(model, batch, N_outer, R_var, sigma_prior)
-            member_preds.append(pred.detach().cpu().numpy()[0])
+        members, _ = sda_guided_sample(
+            model, batch, R_var=r_var, N_outer=n_outer,
+            guidance_weight=guidance_weight, n_members=n_ensemble,
+        )
+        ensemble = members[0].permute(2, 0, 1).detach().cpu().numpy()  # (B=1,T,D,M) -> (M,T,D)
         truth = w["true_state"].numpy()
-        ensemble = np.stack(member_preds, axis=0)  # (N_ensemble, T, D)
         pred = ensemble.mean(axis=0)
         rmse_list.append(rmse(pred, truth))
         es_list.append(energy_score(ensemble, truth))
@@ -114,23 +86,23 @@ def evaluate_score_based(model, dataset, device, N_ensemble, N_outer, R_var,
     return mean_rmse, std_rmse, r2, crps_mean, crps_std, ensemble_spread
 
 
-def save_trajectories(model, dataset, device, N_ensemble, N_outer, R_var,
-                      sigma_prior, param_names, param_dim, save_path):
-    trajs, truths, members = [], [], []
+def save_sda_trajectories(model, dataset, device, n_ensemble, n_outer, r_var,
+                          guidance_weight, param_names, param_dim, save_path):
+    trajs, truths, members_list = [], [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim)
-        member_preds = []
-        for _ in range(N_ensemble):
-            pred = score_based_sample(model, batch, N_outer, R_var, sigma_prior)
-            member_preds.append(pred.detach().cpu().numpy()[0])
-        truth = w["true_state"].numpy()
-        stacked = np.stack(member_preds, axis=-1)  # (T, D, M)
+        members, _ = sda_guided_sample(
+            model, batch, R_var=r_var, N_outer=n_outer,
+            guidance_weight=guidance_weight, n_members=n_ensemble,
+        )
+        ensemble = members[0].permute(2, 0, 1).detach().cpu().numpy()  # (M,T,D)
+        stacked = np.transpose(ensemble, (1, 2, 0))  # (T,D,M), matches save_trajectories elsewhere
         trajs.append(stacked.mean(axis=-1))
-        truths.append(truth)
-        members.append(stacked)
+        truths.append(w["true_state"].numpy())
+        members_list.append(stacked)
     np.savez_compressed(save_path, trajectories=np.stack(trajs, axis=0),
-                        truths=np.stack(truths, axis=0), members=np.stack(members, axis=0))
+                        truths=np.stack(truths, axis=0), members=np.stack(members_list, axis=0))
 
 
 def _rmse_entry(state_names, m, s, r2, crps_mean, crps_std, ens_spread, elapsed_seconds):
@@ -161,13 +133,13 @@ def main(cfg: DictConfig):
     combined_results_path = os.path.join(exp_dir, "results.json")
 
     dc = cfg.data
-    vc = cfg.model.vanilla_cfm
+    sp = cfg.model.sda_prior
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
-    param_dim = cfg.model.get("param_dim", 4)
+    param_dim = cfg.model.get("param_dim", 0)
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
     N_ensemble = cfg.model.get("N_ensemble", 50)
-    N_outer = vc.N_outer
-    sigma_prior = vc.sigma_prior
+    N_outer = sp.N_outer
+    guidance_weight = sp.get("guidance_weight", 1.0)
     R_var = dc.R_var
 
     combined = {}
@@ -186,9 +158,13 @@ def main(cfg: DictConfig):
 
         test_key = f"test_{case}"
         dataset = datasets[test_key]
+        # sda_guided_sample runs its guided steps under torch.enable_grad()
+        # internally (it needs autograd for the observation-cost gradient),
+        # so wrapping the outer loop in no_grad here is safe -- same pattern
+        # evaluation/neural_inference.py::_run_case_inference uses for L96.
         with torch.no_grad():
-            m, s, r2, crps_mean, crps_std, ens_spread = evaluate_score_based(
-                model, dataset, device, N_ensemble, N_outer, R_var, sigma_prior,
+            m, s, r2, crps_mean, crps_std, ens_spread = evaluate_sda_guided(
+                model, dataset, device, N_ensemble, N_outer, R_var, guidance_weight,
                 param_names, param_dim)
         eval_elapsed = time.time() - t0
         print(f"  {case}: rmse={np.mean(m):.4f}  r2={np.mean(r2):.4f}  "
@@ -198,9 +174,9 @@ def main(cfg: DictConfig):
         case_dir = os.path.join(exp_dir, case)
         os.makedirs(case_dir, exist_ok=True)
         with torch.no_grad():
-            save_trajectories(model, dataset, device, N_ensemble, N_outer, R_var,
-                              sigma_prior, param_names, param_dim,
-                              os.path.join(case_dir, f"trajectories_{case}.npz"))
+            save_sda_trajectories(model, dataset, device, N_ensemble, N_outer, R_var,
+                                  guidance_weight, param_names, param_dim,
+                                  os.path.join(case_dir, f"trajectories_{case}.npz"))
 
         entry = _rmse_entry(state_names, m, s, r2, crps_mean, crps_std, ens_spread, eval_elapsed)
         with open(os.path.join(case_dir, "results.json"), "w") as f:
@@ -211,13 +187,14 @@ def main(cfg: DictConfig):
         total_time += eval_elapsed
 
     combined["config"] = {
-        "hidden_channels": list(vc.hidden_channels),
+        "hidden_channels": list(sp.hidden_channels),
         "N_outer": N_outer,
         "N_ensemble": N_ensemble,
         "model_type": "score_based_cfm",
         "prior_model": SOURCE_MODEL,
         "R_var": R_var,
-        "sigma_prior": sigma_prior,
+        "sigma_prior": sp.sigma_prior,
+        "guidance_weight": guidance_weight,
     }
     combined["total_time_seconds"] = total_time
     with open(combined_results_path, "w") as f:

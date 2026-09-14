@@ -1,0 +1,43 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+# Score-based DA (Rozet & Louppe, NeurIPS 2023) unconditional prior: a pure
+# x -> v(x, tau) flow-matching velocity field that never sees obs, forcing,
+# or params (models/sda.py::UnconditionalPriorCFM). Trained here exactly
+# like any other stage-1-only CFM; the observation-guided DPS-style sampler
+# (evaluation/sda_sampler.py::sda_guided_sample) is applied at inference
+# time only, via eval_sda_l63.py -- see that file's docstring.
+model:
+  model_type: sda_prior
+  state_dim: 3
+  param_dim: 0
+  N_ensemble: 50
+  sda_prior:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    # DPS-style normalized-gradient guidance step size used only at
+    # inference time by eval_sda_l63.py (evaluation/sda_sampler.py); has no
+    # effect on training. See eval_sda_l96.py's --guidance-weight for the
+    # L96 analogue -- no principled default, pick via a small sweep on s0.
+    guidance_weight: 1.0
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  stage2:
+    epochs: 0
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs
