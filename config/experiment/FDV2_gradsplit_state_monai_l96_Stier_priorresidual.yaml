@@ -1,0 +1,69 @@
+# @package _global_
+# Same config as FDV2_gradsplit_state_monai_l96_Stier.yaml (see that file's
+# header for the full gradsplit+state rationale), with ONE change:
+# prior_residual=true, i.e. Phi(x) = x + prior_unet(x, tau) instead of the
+# bare backbone output.
+#
+# Motivation: a Jacobian decomposition of the plateaued job 53447's trained
+# prior_unet (prior_residual=false, default) found the true prior_cost
+# gradient's Jacobian term (-2*J^T@r, J=d(Phi)/dx) dominating the residual
+# term (2*r, subgrad+state's own proxy direction) by 11-53x in RMS across
+# three tested x regimes, and nearly orthogonal to it (cos~0.04-0.13) --
+# i.e. once training moves MonaiUNet1D's zero-initialized output layers away
+# from zero (they DO use the same zero_module() convention as OpenAI's
+# guided-diffusion UNet -- verified directly against the installed
+# monai==1.6.0 wheel, so that's not the gap), nothing architecturally
+# anchors Phi's Jacobian near identity anymore -- the zero-init only ever
+# guaranteed that at t=0.
+#
+# prior_residual=true bakes that identity anchor in explicitly and
+# permanently: d(x + f(x))/dx = I + df/dx regardless of how far f's own
+# weights have moved from zero-init, matching what a residual/denoising-
+# style prior wrapper (Phi(x) = x - CNN(x), the likely convention in
+# ocean4dvarnet/4dvarnet-global-mapping's ronan_devs branch, which trains
+# fine under the real autograd gradient with an OpenAI guided-diffusion
+# UNet backbone) would give structurally for free. This run tests whether
+# that alone resolves gradsplit+state's persistent training plateau.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: gradsplit+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    prior_residual: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

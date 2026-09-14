@@ -320,6 +320,15 @@ class FourDVarNetConfig:
     # g_prior's contribution specifically. No effect on any other
     # update_input mode.
     gradsplit_prior_scale: float = 1.0
+    # False (default, backward-compatible): Phi(x) = prior_unet(x, tau), the
+    # bare backbone output. True: Phi(x) = x + prior_unet(x, tau), an
+    # explicit residual/identity anchor around the whole backbone (not just
+    # MONAI's internal zero-init, which only holds at initialization). Added
+    # after a Jacobian decomposition of gradsplit+state's real prior_cost
+    # gradient found the Jacobian term dominating and nearly orthogonal to
+    # the residual term on a plateaued checkpoint -- see _prior_ae's
+    # docstring in models/fourdvarnet.py.
+    prior_residual: bool = False
 
 
 @dataclass

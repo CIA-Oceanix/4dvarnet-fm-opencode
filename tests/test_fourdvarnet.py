@@ -9,6 +9,8 @@ from models.fourdvarnet import (
     FourDVarNetSolver,
     _build_update_input,
     _normalize_channels,
+    _prior_ae,
+    _prior_cost,
     _soft_clip,
 )
 
@@ -803,6 +805,103 @@ class TestInitStateVar:
         batch = _MockBatch(B=2, T=20, D=3, seed=2)
         with torch.no_grad():
             assert torch.equal(model_a(batch), model_b(batch))
+
+
+class TestPriorResidual:
+    """``prior_residual`` (False default -> Phi(x) = prior_unet(x, tau) raw
+    output, today's behavior). True means Phi(x) = x + prior_unet(x, tau) --
+    an explicit identity anchor around the whole backbone, added after a
+    Jacobian decomposition of gradsplit+state's real prior_cost gradient
+    found the true Jacobian term dominating and nearly uncorrelated with the
+    proxy residual term on a plateaued checkpoint (see _prior_ae's
+    docstring)."""
+
+    def test_prior_ae_default_is_raw_output(self):
+        model = _make_model(update_input="grad-only", dropout=0.0)
+        model.prior_unet.eval()
+        x = torch.randn(2, 10, 3)
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        assert torch.equal(_prior_ae(model.prior_unet, x), raw)
+
+    def test_prior_ae_residual_adds_state(self):
+        model = _make_model(update_input="grad-only", dropout=0.0)
+        model.prior_unet.eval()
+        x = torch.randn(2, 10, 3)
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        wrapped = _prior_ae(model.prior_unet, x, residual=True)
+        assert torch.allclose(wrapped, x + raw)
+        assert not torch.allclose(wrapped, raw)
+
+    def test_prior_cost_residual_uses_wrapped_phi(self):
+        model = _make_model(update_input="grad-only", dropout=0.0)
+        model.prior_unet.eval()
+        x = torch.randn(2, 10, 3)
+        expected = F.mse_loss(x, x + _prior_ae(model.prior_unet, x), reduction="sum")
+        assert torch.allclose(_prior_cost(model.prior_unet, x, residual=True), expected)
+
+    def test_build_update_input_subgrad_g_prior_uses_wrapped_phi(self):
+        """subgrad+state's g_prior proxy is x - Phi(x): with residual=True,
+        Phi(x) = x + raw, so g_prior = x - (x + raw) = -raw -- the sign flips
+        relative to the default x - raw, a sharp, easy-to-check signature of
+        the flag actually being threaded through."""
+        B, T, D = 2, 10, 3
+        model = _make_model(update_input="subgrad+state", dropout=0.0)
+        model.prior_unet.eval()
+        x = torch.randn(B, T, D)
+        obs_clean = torch.randn(B, T, D)
+        obs_mask = torch.ones(B, T, 1)
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        out_default = _build_update_input("subgrad+state", x, obs_clean, obs_mask, None,
+                                           prior_unet=model.prior_unet, prior_residual=False)
+        out_residual = _build_update_input("subgrad+state", x, obs_clean, obs_mask, None,
+                                            prior_unet=model.prior_unet, prior_residual=True)
+        g_prior_default = out_default[..., D:2 * D]
+        g_prior_residual = out_residual[..., D:2 * D]
+        assert torch.allclose(g_prior_default, x - raw, atol=1e-5)
+        assert torch.allclose(g_prior_residual, -raw, atol=1e-5)
+
+    def test_default_omitted_preserves_existing_behavior(self):
+        """prior_residual defaults to False both at the FourDVarNetSolver
+        constructor and every downstream function -- a config that never
+        mentions it must reproduce the exact same forward() output as one
+        that passes prior_residual=False explicitly."""
+        torch.manual_seed(0)
+        model_a = _make_model(update_input="gradsplit+state", N_outer=3)
+        torch.manual_seed(0)
+        model_b = _make_model(update_input="gradsplit+state", N_outer=3, prior_residual=False)
+        model_b.load_state_dict(model_a.state_dict())
+        model_a.eval()
+        model_b.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        with torch.no_grad():
+            assert torch.equal(model_a(batch), model_b(batch))
+
+    def test_forward_and_aux_loss_run_with_residual_flag(self):
+        model = _make_model(update_input="gradsplit+state", N_outer=2,
+                             aux_var_cost_weight=0.1, prior_residual=True)
+        assert model.prior_residual is True
+        batch = _MockBatch(B=2, T=10, D=3)
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert model.prior_unet is not None
+        assert any(p.grad is not None for p in model.prior_unet.parameters())
+
+    def test_aux_loss_differs_between_residual_and_default(self):
+        torch.manual_seed(0)
+        model_a = _make_model(update_input="gradsplit+state", N_outer=2,
+                               aux_var_cost_weight=0.1, prior_residual=False)
+        torch.manual_seed(0)
+        model_b = _make_model(update_input="gradsplit+state", N_outer=2,
+                               aux_var_cost_weight=0.1, prior_residual=True)
+        model_b.load_state_dict(model_a.state_dict())
+        model_a.eval()
+        model_b.eval()
+        batch = _MockBatch(B=2, T=10, D=3, seed=2)
+        with torch.no_grad():
+            loss_a = model_a.compute_loss(batch)
+            loss_b = model_b.compute_loss(batch)
+        assert not torch.allclose(loss_a, loss_b)
 
 
 def _make_cfm_model(**kwargs):
