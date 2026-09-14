@@ -48,8 +48,15 @@ from train import model_factory, _make_eval_batch, EXP_DIR
 from evaluation.metrics import rmse, energy_score
 from evaluation.sda_sampler import sda_guided_sample
 
-SOURCE_MODEL = "sda_prior"
-EXPERIMENT_ID = "score_based_cfm"
+DEFAULT_SOURCE_MODEL = "sda_prior"
+
+
+def _experiment_id(source_model: str) -> str:
+    """Keeps the established "score_based_cfm" experiment dir (and its
+    report row) for the plain UNet1D prior; any other prior model_type
+    (e.g. "monai_sda_prior") gets its own dir so it can't silently clobber
+    that one's results.json/checkpoints."""
+    return "score_based_cfm" if source_model == DEFAULT_SOURCE_MODEL else f"score_based_cfm_{source_model}"
 
 
 def evaluate_sda_guided(model, dataset, device, n_ensemble, n_outer, r_var,
@@ -122,18 +129,25 @@ def _rmse_entry(state_names, m, s, r2, crps_mean, crps_std, ens_spread, elapsed_
     return d
 
 
-@hydra.main(config_path="config", config_name=f"models/{SOURCE_MODEL}", version_base="1.3")
+@hydra.main(config_path="config", config_name=f"models/{DEFAULT_SOURCE_MODEL}", version_base="1.3")
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+
+    # Derived from the actually-composed config, not the CLI-default
+    # constant above -- so `--config-name models/monai_sda_prior` (or any
+    # future prior model_type) picks up its own sub-block/checkpoint dir/
+    # results dir instead of silently reading "sda_prior"'s.
+    SOURCE_MODEL = cfg.model.model_type
+    EXPERIMENT_ID = _experiment_id(SOURCE_MODEL)
 
     exp_dir = os.path.join(EXP_DIR, "l63", EXPERIMENT_ID)
     os.makedirs(exp_dir, exist_ok=True)
     combined_results_path = os.path.join(exp_dir, "results.json")
 
     dc = cfg.data
-    sp = cfg.model.sda_prior
+    sp = cfg.model[SOURCE_MODEL]
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
     param_dim = cfg.model.get("param_dim", 0)
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])

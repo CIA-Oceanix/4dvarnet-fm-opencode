@@ -1,0 +1,48 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of direct_unet.yaml: identical data/training
+# setup, only the backbone changes (models.unet.UNet1D ->
+# models.monai_unet_adapter.MonaiDirectUNet, FiLM-style timestep
+# conditioning instead of UNet1D's additive-only conditioning).
+#
+# M tier (hidden [64,128,256], num_res_blocks=2) -- the default here -- is
+# the best-performing monai tier for this single-pass regression contract in
+# the L96 benchmark (reports/l96/outputs/l96_consolidated_benchmark.md:
+# DirectUNet-M(monai) S0 RMSE 0.501-0.506 vs DirectUNet-S+(monai) 0.515;
+# DirectUNet-L(monai,cos) edges M out at 0.487 but only once cosine-annealed
+# LR fixes its flat-LR instability and needs a reduced eval batch size to
+# avoid OOM -- M is the safer, still-best-validated default). cond_extra_dim
+# mirrors direct_unet.yaml's effective obs+forcing+params conditioning
+# (param_dim=4 default -> 1 forcing + 4 params = 5).
+#
+# NOT verified end-to-end in this repo: `monai` isn't in the project's
+# standard env (torch/CUDA conflict -- see requirements-monai.txt / the
+# 2026-09-07 CHANGELOG entry); needs a separate env with
+# torch==2.8.0+cu126 + monai==1.6.0 to actually train this.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 3
+  param_dim: 4
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs
