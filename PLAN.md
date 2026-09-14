@@ -1360,6 +1360,25 @@ field addition must reference the pre-existing cache file by its
 already-known name directly rather than recomputing the (now different)
 hash. Worth keeping in mind for any future `QGConfig` field addition.
 
+### Sensitivity-study consolidation (2026-09-14)
+
+`reports/qg/generate_da_sensitivity_report.py` (previously ETKF inflation/
+additive/ridge + EnKF inflation only, from the 2026-09-11 work) extended
+with two new sections covering the two later sensitivity studies above:
+"4DVar (Strong/Weak): covariance-scale sensitivity -- negative result" and
+"ETKF/EnKF obs-density sensitivity: psi2 observations, `cols_sampling=
+"random"`, and a `loc_radius` correction" (the latter keeps the full
+"initial sweep" → "correction steps 1-4" narrative, not just the final
+corrected conclusion, per this project's convention of documenting
+retractions rather than silently overwriting them). `qg_da_report.md`'s
+own condensed "Hyperparameter sensitivity analysis" section (which already
+had ETKF-ridge and 4DVar paragraphs) got a matching short paragraph for
+the obs-density study, pointing to the dedicated report's full trail.
+One consolidated document now covers all three studies instead of PLAN.md
+prose scattered across three sweep directories
+(`qg_da_sensitivity_sweep/`, `qg_4dvar_sensitivity_sweep/`,
+`qg_obs_density_sweep/`).
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
