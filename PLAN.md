@@ -1458,6 +1458,61 @@ matched observation difficulty. Same `gradient_clip_val=1.0` precaution.
 T-channels bench table will use this retrain, not the original Q7, as its
 obs-only reference row.
 
+**Final S0/S1 comparison (2026-09-14, all four fully trained)**:
+
+| scheme | S0 ψ EV | S0 q EV | S1 ψ EV | S1 q EV |
+|---|---|---|---|---|
+| Q7-noise05 (obs-only) | 0.9805 | 0.6238 | 0.9805 | 0.6238 |
+| Q8 (oracle cond.) | 0.9827 | 0.6093 | 0.9490 | 0.5571 |
+| Q9 (noisy cond.) | 0.9798 | 0.5978 | 0.9763 | 0.5959 |
+| Q10 (noisy cond.+IC) | 0.9824 | 0.6745 | 0.9808 | 0.6744 |
+
+Genuinely surprising finding: forcing/param conditioning alone (Q8
+oracle, Q9 noisy) buys almost nothing over the plain obs-only Q7-noise05
+on S0, and Q8 actively degrades the most under S1 model error (it has a
+conditioning channel that becomes wrong; Q7-noise05 has none to be
+wrong). **IC conditioning (Q10) is the one addition that clearly pays
+off** -- best or tied-best on 3 of 4 columns, barely degrading S0->S1.
+Every T-channels scheme beats every DA baseline on both ψ and q,
+mirroring the L96 SDA finding that background/IC information matters
+more than forcing/param conditioning.
+
+### Promoted to the canonical Q1-Q4 (2026-09-14)
+
+Per the user's explicit direction, Q7-noise05/Q8/Q9/Q10 were promoted to
+be the new canonical `Q1`/`Q2`/`Q3`/`Q4` in `reports/qg/outputs/
+qg_neural_report.md`'s benchmark table, retiring the older
+batch-folding-backbone family (Q1/Q3/Q4/Q3-noise0.05/Q5) from that
+report. Renaming map:
+
+| old | new config | role |
+|---|---|---|
+| Q7-noise05 | `Q1_direct_unet_tchannels_s0.yaml` | obs-only |
+| Q8 | `Q2_direct_unet_tchannels_s0_oracle_cond.yaml` | oracle cond. |
+| Q9 | `Q3_direct_unet_tchannels_s1_noisy_cond.yaml` | noisy cond. |
+| Q10 | `Q4_direct_unet_tchannels_s1_noisy_ic_cond.yaml` | noisy cond.+IC |
+
+The older `Q1_direct_unet_s0.yaml`/`Q2_vanilla_cfm_s0.yaml` (untouched,
+different scheme)/`Q3_direct_unet_s0_oracle_cond*.yaml`/
+`Q4_direct_unet_s1_noisy_cond.yaml`/`Q5_direct_unet_s1_noisy_ic_cond*.yaml`
+config files are kept on disk unchanged (still valid, reproducible
+historical experiments) -- the new files use distinct "tchannels"
+filenames to avoid any collision, matching the same `Qn_` prefix as
+their new benchmark position. This branch's own local (gitignored)
+checkpoint directories for the retired schemes were deleted (freeing
+disk); the winning checkpoints were moved to the master worktree's
+`experiments/qg/{Q1,Q2,Q3,Q4}/` (mirroring L96's `experiments/l96/`
+archive convention, each with a `config.yaml` copy alongside), symlinked
+back into this worktree's own `experiments/` under the new names.
+`eval_qg_neural_s0_s1.py`'s `SCHEMES` was rebuilt with just the 4 new
+entries (old Q1/Q3/Q4/Q3-noise0.05/Q5/Q7/Q7-noise05/Q8/Q9/Q10 entries
+removed); re-running it at the identical config reproduced the exact
+same EV numbers as before the migration (regression check). The report
+generator (`reports/qg/generate_qg_neural_report.py`) was updated to
+describe the 4 new schemes; since all four were trained directly at the
+DA-matched config, the table's † "not apples-to-apples" marker no longer
+applies to any row.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
