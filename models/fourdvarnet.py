@@ -491,7 +491,9 @@ class FourDVarNetSolver(nn.Module):
     ``TweedieCFM``'s ``mean_estimator``/``velocity_unet`` hyperparameter
     sharing), constructed only when ``update_input`` needs it so
     ``"obs+state"``/``"obs-only"`` checkpoints stay exactly as before (no
-    dead weights).
+    dead weights). ``dropout`` sharing is the default, not forced: pass
+    ``prior_dropout`` to decouple it (e.g. dropout for the main solver unet
+    only, ``prior_dropout=0.0`` -- see ``self.prior_dropout``'s docstring).
 
     Unlike ``"obs+state"``/``"obs-only"`` (a bounded-by-construction update,
     empirically stable throughout FDV1's own training -- no clamp was ever
@@ -530,7 +532,8 @@ class FourDVarNetSolver(nn.Module):
                  grad_clip_range=None,
                  init_state_var=0.0,
                  gradsplit_prior_scale=1.0,
-                 prior_residual=False):
+                 prior_residual=False,
+                 prior_dropout=None):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -596,6 +599,19 @@ class FourDVarNetSolver(nn.Module):
         # in compute_loss below) -- see _prior_ae's docstring for the
         # Jacobian-decomposition finding that motivated it.
         self.prior_residual = prior_residual
+        # None (default): prior_unet uses the same `dropout` as the main
+        # solver unet -- today's behavior, backward-compatible. Set to
+        # decouple the two, e.g. to add dropout as a regularizer for the
+        # main solver unet only while keeping prior_unet's dropout unchanged
+        # (or 0.0) -- relevant for grad-only/grad+state/gradsplit+state,
+        # whose prior_unet forward is the one repeatedly re-run inside
+        # torch.autograd.grad(..., create_graph=True): any dropout there
+        # injects a fresh random mask into that higher-order (double-
+        # backward) computation at every unrolled iteration, on top of
+        # whatever noise the double-backward itself already contributes --
+        # unlike the main solver unet, whose own forward is always a single,
+        # ordinary (first-order) backward.
+        self.prior_dropout = dropout if prior_dropout is None else prior_dropout
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -660,7 +676,7 @@ class FourDVarNetSolver(nn.Module):
                 hidden_channels=(prior_hidden_channels if prior_hidden_channels is not None
                                   else hidden_channels),
                 time_emb_dim=(time_emb_dim if prior_tau_conditioning else 0),
-                dropout=dropout,
+                dropout=self.prior_dropout,
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
                 monai_num_res_blocks=monai_num_res_blocks,

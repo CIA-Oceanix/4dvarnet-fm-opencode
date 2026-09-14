@@ -1,0 +1,88 @@
+# @package _global_
+# grad+state (the COMBINED single-gradient mode -- torch.autograd.grad of
+# the summed var_cost = prior_weight*prior_cost(x) + obs_cost(x,obs), not
+# gradsplit+state's two-SEPARATE-gradients variant), closer to the
+# ocean4dvarnet/4dvarnet-global-mapping (ronan_devs) setup that previously
+# trained a real-gradient 4DVarNet solver successfully with steepest-descent
+# quality at least matching subgrad+state's proxy.
+#
+# Three changes vs FDV2_grad_state_monai_l96_Stier.yaml (job 53428, killed
+# unstable -- root-caused to a ~5.7x true g_prior/g_obs imbalance after a
+# combined-then-normalized tensor dilutes the sparse g_obs channel):
+#
+#  1. prior_residual=true -- Phi(x) = x + prior_unet(x, tau) instead of the
+#     bare backbone output. Motivated by the Jacobian decomposition finding
+#     (see FDV2_gradsplit_state_monai_l96_Stier_priorresidual.yaml's header)
+#     that Phi's Jacobian has nothing architecturally anchoring it near
+#     identity once training moves MonaiUNet1D's zero-initialized output
+#     layers away from zero. trainable_prior_weight stays true (unchanged
+#     from the original grad+state config) -- unlike gradsplit+state, where
+#     prior_weight is provably vestigial (separate normalization cancels
+#     any positive scalar), grad+state sums prior_weight*grad(prior_cost)
+#     with grad(obs_cost) BEFORE normalizing, so a trainable prior_weight
+#     genuinely changes the combined direction here.
+#
+#  2. prior_dropout=0.0 (decoupled from dropout=0.1, kept on the main solver
+#     unet only) -- prior_unet's forward is repeatedly re-run inside
+#     torch.autograd.grad(..., create_graph=True) for this mode; dropout
+#     there would inject a fresh random mask into that higher-order
+#     (double-backward) computation at every unrolled iteration, adding
+#     noise on top of whatever the double-backward itself already
+#     contributes. The main solver unet's own forward is always a single,
+#     ordinary (first-order) backward, so dropout there carries none of
+#     that risk -- kept at the existing 0.1.
+#
+#  3. N_outer=5 (down from 10) -- faster iteration (roughly half the wall-
+#     clock per epoch) and, as a side effect, a shorter double-backward
+#     chain for prior_unet's meta-gradient to flow through per forward call.
+#
+# Tests whether prior_residual alone (already shown to fix gradsplit+state's
+# divergence, job 53489) also stabilizes grad+state -- the mode closer to
+# what previously worked well with an OpenAI guided-diffusion UNet backbone
+# -- and whether it can then match/approach subgrad+state's convergence
+# speed, addressing the open "double backprop itself may be the remaining
+# bottleneck" question raised after prior_residual's first results.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 5
+    dropout: 0.1
+    prior_dropout: 0.0
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: true
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    prior_residual: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

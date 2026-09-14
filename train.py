@@ -356,6 +356,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             init_state_var=fdv.get("init_state_var", 0.0),
             gradsplit_prior_scale=fdv.get("gradsplit_prior_scale", 1.0),
             prior_residual=fdv.get("prior_residual", False),
+            prior_dropout=fdv.get("prior_dropout", None),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM

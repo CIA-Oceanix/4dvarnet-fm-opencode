@@ -904,6 +904,34 @@ class TestPriorResidual:
         assert not torch.allclose(loss_a, loss_b)
 
 
+class TestPriorDropout:
+    """``prior_dropout`` (None default -> prior_unet shares the main solver
+    unet's own ``dropout`` value, today's behavior). Setting it decouples
+    the two -- e.g. dropout for the main solver unet only, ``prior_dropout=
+    0.0`` for prior_unet, to avoid injecting extra per-iteration mask noise
+    into grad-only/grad+state/gradsplit+state's double-backward computation
+    of ``g_prior``."""
+
+    def test_default_none_shares_main_dropout(self):
+        model = _make_model(update_input="grad-only", dropout=0.3)
+        assert model.prior_dropout == 0.3
+        assert model.prior_unet.bottleneck.drop.p == 0.3
+        assert model.unet.bottleneck.drop.p == 0.3
+
+    def test_explicit_prior_dropout_decouples_from_main_dropout(self):
+        model = _make_model(update_input="grad-only", dropout=0.3, prior_dropout=0.0)
+        assert model.prior_dropout == 0.0
+        assert model.prior_unet.bottleneck.drop.p == 0.0
+        assert model.unet.bottleneck.drop.p == 0.3
+
+    def test_prior_unet_not_built_case_is_unaffected(self):
+        """update_input="obs+state" with aux_var_cost_weight=0 builds no
+        prior_unet at all -- prior_dropout must not raise even though
+        there's nothing to apply it to."""
+        model = _make_model(update_input="obs+state", prior_dropout=0.0)
+        assert model.prior_unet is None
+
+
 def _make_cfm_model(**kwargs):
     defaults = dict(state_dim=3, hidden_channels=[4, 8], N_outer=3, K_inner=2)
     defaults.update(kwargs)

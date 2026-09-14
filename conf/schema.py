@@ -329,6 +329,13 @@ class FourDVarNetConfig:
     # the residual term on a plateaued checkpoint -- see _prior_ae's
     # docstring in models/fourdvarnet.py.
     prior_residual: bool = False
+    # None (default): prior_unet uses the same dropout as the main solver
+    # unet -- today's behavior. Set to decouple them, e.g. dropout for the
+    # main solver unet only (prior_unet's own forward is repeatedly re-run
+    # inside torch.autograd.grad(..., create_graph=True) for
+    # grad-only/grad+state/gradsplit+state, so dropout there adds fresh mask
+    # noise into that higher-order computation at every unrolled iteration).
+    prior_dropout: Optional[float] = None
 
 
 @dataclass
