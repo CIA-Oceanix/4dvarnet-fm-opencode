@@ -16,6 +16,7 @@ from evaluation.baselines import (
     ObsOperator,
     _build_qg_col_loc_matrices,
     _build_qg_loc_matrices,
+    _gc_matrix,
 )
 from evaluation.metrics import crps as _crps
 from models.dynamics import DynamicsBase
@@ -185,6 +186,15 @@ def _event_columns(cfg, window):
     return per_time
 
 
+def _event_column_groups(cfg, window):
+    """Extract (possibly multi-)column lists per time for the
+    `cols_sampling="random"` mode (`window["obs_columns"]` is already a
+    per-time list of x-index lists in this mode -- see
+    `data.qg._generate_random_column_point_observations` -- unlike
+    `_event_columns`'s tensor-backed single-column-per-step contract)."""
+    return window["obs_columns"]
+
+
 def _psi_h(dyn, obs_cols, ny, nx, device):
     """H-function for obs of upper-layer streamfunction columns.
 
@@ -219,6 +229,184 @@ def _psi_h(dyn, obs_cols, ny, nx, device):
             stacked = torch.stack([psi1[:, :, c] for c in cols], dim=1)
             return stacked.reshape(state.shape[0], o)
     return h
+
+
+def _event_points(cfg, window):
+    """Extract (x, y) point lists per time for the psi2 random-point stream.
+
+    `None` at every step when the window carries no `obs2_points` stream
+    (`cfg.psi2_points_per_day == 0`, the default) -- otherwise a singleton
+    `(x, y)` at observed steps, `None` elsewhere, matching `_event_columns`'s
+    contract (one obs event per masked step for this stream).
+    """
+    per_time = [None] * cfg.num_steps
+    if "obs2_points" not in window:
+        return per_time
+    pts_t = window["obs2_points"]
+    for t in window["obs2_mask"].nonzero(as_tuple=False).flatten().tolist():
+        x, y = int(pts_t[t, 0]), int(pts_t[t, 1])
+        if 0 <= x < cfg.nx and 0 <= y < cfg.ny:
+            per_time[t] = (x, y)
+    return per_time
+
+
+def _psi_h_combined(dyn, obs_cols, obs_points, ny, nx, device):
+    """H-function for combined upper-layer column obs + lower-layer point obs.
+
+    At each time, concatenates whichever of the two streams has an event
+    (upper-layer columns first, then the lower-layer point), so the returned
+    vector's width varies by time: 0 (neither), `C*ny` (columns only), 1
+    (point only), or `C*ny + 1` (both, e.g. an unavoidable schedule
+    collision). `ETKF._per_time`'s `idx.numel()`-based width derivation
+    (paired with this operator's `h_index_at`, see `_combined_index_at`)
+    is what makes a per-time-varying width safe to feed through the
+    otherwise constant-width assimilation machinery.
+
+    Args:
+        dyn: QG dynamics (access via dyn.inner.streamfunctions)
+        obs_cols: list of column lists per time, upper layer (as `_psi_h`)
+        obs_points: list of (x, y) pairs per time, lower layer (or None)
+        ny, nx: obs-grid dimensions
+        device: torch device
+    """
+    def h(state, index=None):
+        batch = state.ndim > 1
+        psi = dyn.inner.streamfunctions(state)
+        if dyn.inner.ny != ny or dyn.inner.nx != nx:
+            psi = spectral_resize_2d(psi, ny, nx)
+        cols = obs_cols[index]
+        pt = obs_points[index]
+        if not batch:
+            psi1 = psi[0] if psi.ndim == 3 else psi
+            psi2 = psi[1] if psi.ndim == 3 else psi
+            parts = []
+            if cols:
+                parts.append(torch.cat([psi1[:, c] for c in cols]))
+            if pt is not None:
+                x, y = pt
+                parts.append(psi2[y, x].reshape(1))
+            return torch.cat(parts) if parts else torch.zeros(0, device=device)
+        else:
+            psi1 = psi[:, 0] if psi.ndim == 4 else psi
+            psi2 = psi[:, 1] if psi.ndim == 4 else psi
+            B = state.shape[0]
+            parts = []
+            if cols:
+                C = len(cols)
+                stacked = torch.stack([psi1[:, :, c] for c in cols], dim=1)
+                parts.append(stacked.reshape(B, C * ny))
+            if pt is not None:
+                x, y = pt
+                parts.append(psi2[:, y, x].reshape(B, 1))
+            return torch.cat(parts, dim=-1) if parts else torch.zeros((B, 0), device=device)
+    return h
+
+
+def _combined_index_at(obs_cols, obs_points, ny):
+    """`h_index_at` callback for `_psi_h_combined`: a dummy per-time index
+    array whose LENGTH (not content -- unused elsewhere in `assimilate()`)
+    matches the combined H-function's actual per-time output width, so
+    `ETKF._per_time`'s `idx.numel()` derives the right observation
+    dimension at every time (0/1/`C*ny`/`C*ny + 1`)."""
+    def index_at(t):
+        if t is None:
+            return None
+        cols = obs_cols[t]
+        pt = obs_points[t]
+        w = (len(cols) * ny if cols else 0) + (1 if pt is not None else 0)
+        return torch.arange(w) if w > 0 else None
+    return index_at
+
+
+def _combined_observations(window, cfg, device):
+    """Per-time observation vectors for the combined psi1 (column or
+    column-point) + optional psi2-point stream: list (length
+    `cfg.num_steps`) of 1-D tensors (psi1 values then the psi2 point value,
+    matching `_psi_h_combined`'s concatenation order), `None` at unobserved
+    steps.
+
+    `window["obs"]` is either a dense `(T, ny)` tensor (`cols_sampling=
+    "sequential"`, the default) or already a per-time list of variable-width
+    tensors/`None` (`cols_sampling="random"`) -- `[t]` indexing works
+    identically either way, only the per-element `.to(device)` differs.
+    `obs2`/`obs2_mask` (psi2 points) are optional -- absent when only
+    `cols_sampling="random"` (not `psi2_points_per_day`) is active.
+    """
+    T = cfg.num_steps
+    obs1, mask1 = window["obs"], window["obs_mask"]
+    obs2, mask2 = window.get("obs2"), window.get("obs2_mask")
+    out = [None] * T
+    for t in range(T):
+        parts = []
+        if bool(mask1[t]):
+            v1 = obs1[t]
+            if v1 is not None:
+                parts.append(v1.to(device))
+        if obs2 is not None and bool(mask2[t]):
+            parts.append(obs2[t].reshape(1).to(device))
+        if parts:
+            out[t] = torch.cat(parts)
+    return out
+
+
+def _combined_obs_mask(window, cfg):
+    if "obs2_mask" not in window:
+        return window["obs_mask"]
+    return window["obs_mask"] | window["obs2_mask"]
+
+
+def _build_qg_col_point_loc_matrices(state_dim, obs_cols_t, obs_points_t,
+                                     nlayers, ny, nx, loc_radius, device,
+                                     state_ny=None, state_nx=None):
+    """Per-time Gaspari-Cohn localization for the combined psi1-column
+    (upper layer) + psi2-point (lower layer) obs stream. Generalizes
+    `_build_qg_col_loc_matrices` (columns only, always layer 0) to a
+    per-time-varying obs composition/width, matching
+    `_psi_h_combined`/`_combined_index_at`'s concatenation order (columns
+    first, then the point).
+    """
+    s_ny = state_ny if state_ny is not None else ny
+    s_nx = state_nx if state_nx is not None else nx
+    gpl = s_ny * s_nx
+    ar = torch.arange(state_dim, device=device, dtype=torch.float64)
+    state_layer = ar // gpl
+    g = ar % gpl
+    state_y = (g // s_nx) * (ny / s_ny)
+    state_x = (g % s_nx) * (nx / s_nx)
+    layer_gap = 2.0 * max(ny, nx)
+    Lx_t: list[torch.Tensor | None] = []
+    Ly_t: list[torch.Tensor | None] = []
+    for cols, pt in zip(obs_cols_t, obs_points_t):
+        if not cols and pt is None:
+            Lx_t.append(None)
+            Ly_t.append(None)
+            continue
+        oy_parts, ox_parts, ol_parts = [], [], []
+        if cols:
+            cols_arr = torch.as_tensor(cols, dtype=torch.long, device=device)
+            C = cols_arr.numel()
+            oy_parts.append(torch.arange(ny, device=device, dtype=torch.float64).repeat(C))
+            ox_parts.append(cols_arr.to(torch.float64).repeat_interleave(ny))
+            ol_parts.append(torch.zeros(C * ny, device=device, dtype=torch.float64))
+        if pt is not None:
+            x, y = pt
+            oy_parts.append(torch.tensor([float(y)], device=device, dtype=torch.float64))
+            ox_parts.append(torch.tensor([float(x)], device=device, dtype=torch.float64))
+            ol_parts.append(torch.ones(1, device=device, dtype=torch.float64))
+        oy = torch.cat(oy_parts)
+        ox = torch.cat(ox_parts)
+        ol = torch.cat(ol_parts)
+        dy = state_y.unsqueeze(1) - oy.unsqueeze(0)
+        dx = state_x.unsqueeze(1) - ox.unsqueeze(0)
+        dl = (state_layer.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
+        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
+        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
+        doy = oy.unsqueeze(1) - oy.unsqueeze(0)
+        dox = ox.unsqueeze(1) - ox.unsqueeze(0)
+        dol = (ol.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
+        dod = torch.sqrt(doy ** 2 + dox ** 2 + dol ** 2)
+        Ly_t.append(_gc_matrix(dod / loc_radius).to(torch.float32))
+    return Lx_t, Ly_t
 
 
 def _q_obs_indices_t(cfg, window):
@@ -276,6 +464,23 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_loc_matrices
     else:
         dyn = _build_dyn(cfg, window, device)
+        # Either new obs-density capability (multi-column-per-step psi1
+        # sampling, and/or lower-layer psi2 points) routes through the same
+        # combined machinery; with neither active this is byte-identical to
+        # the original single-column-per-step path below.
+        if cfg.cols_sampling == "random" or "obs2_points" in window:
+            obs_cols = (_event_column_groups(cfg, window) if cfg.cols_sampling == "random"
+                       else _event_columns(cfg, window))
+            obs_points = _event_points(cfg, window)
+            h = _psi_h_combined(dyn, obs_cols, obs_points, cfg.ny, cfg.nx, device)
+            obs = _combined_observations(window, cfg, device)
+            r_var = (cfg.obs_noise_std_frac
+                     * float(window["target_state_psi"].std())) ** 2
+            obs_op = ObsOperator(
+                dyn.state_dim, h=h,
+                h_index_at=_combined_index_at(obs_cols, obs_points, cfg.ny),
+                n_obs=cfg.ny)
+            return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_point_loc_matrices
         obs_cols = _event_columns(cfg, window)
         h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
         obs, r_var, od = _obs_spec_rc(cfg, window, device)
@@ -367,10 +572,12 @@ def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
 
 
 def _evaluate_window(cfg, window, method, device, obs=None, forcing=None,
-                     init_ensemble=None, init_lag_days=None):
+                     init_ensemble=None, init_lag_days=None, mask=None):
     if obs is None:
         obs, _ = _q_alongtrack_obs(cfg, window, device)
-    mask = window["obs_mask"].to(device)
+    if mask is None:
+        mask = window["obs_mask"]
+    mask = mask.to(device)
     truth = window["true_state"].to(device)
     if window["da_model"] == "qg1l":
         # 1-layer DA compares against the truth's upper layer only.
@@ -815,10 +1022,18 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None and method_name in ("enkf", "etkf"):
-                    cols_t = _event_columns(cfg, w)
-                    Lx_t, Ly_t = _build_qg_col_loc_matrices(
-                        dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
-                        loc_radius, device, state_ny=da_nx, state_nx=da_nx)
+                    if cfg.cols_sampling == "random" or "obs2_points" in w:
+                        cols_t = (_event_column_groups(cfg, w) if cfg.cols_sampling == "random"
+                                 else _event_columns(cfg, w))
+                        points_t = _event_points(cfg, w)
+                        Lx_t, Ly_t = _build_qg_col_point_loc_matrices(
+                            dyn.state_dim, cols_t, points_t, 2, cfg.ny, cfg.nx,
+                            loc_radius, device, state_ny=da_nx, state_nx=da_nx)
+                    else:
+                        cols_t = _event_columns(cfg, w)
+                        Lx_t, Ly_t = _build_qg_col_loc_matrices(
+                            dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
+                            loc_radius, device, state_ny=da_nx, state_nx=da_nx)
                 if method_name == "enkf":
                     method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
@@ -845,8 +1060,11 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     method.x0_bg = shared_init if init == "lagged" else None
                 else:
                     raise ValueError(f"unknown method_name: {method_name}")
+            eval_mask = (_combined_obs_mask(w, cfg) if "obs2_mask" in w
+                        else None)
             res = _evaluate_window(cfg, w, method, device, obs=obs,
-                                   forcing=forcing, init_ensemble=init_ensemble)
+                                   forcing=forcing, init_ensemble=init_ensemble,
+                                   mask=eval_mask)
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
             traj_da = res.trajectory
@@ -1035,6 +1253,19 @@ def main():
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
+    ap.add_argument("--cols-sampling", choices=["sequential", "random"], default="sequential",
+                     help="'sequential' (default): --cols-per-day distinct "
+                          "single-column steps/day, capped at steps_per_day "
+                          "by its no-collision policy. 'random': --cols-per-day "
+                          "random (t, x) column-point draws across the whole "
+                          "day, multiple columns per step allowed, no ceiling "
+                          "-- use this if --cols-per-day exceeds steps_per_day.")
+    ap.add_argument("--psi2-points-per-day", type=int, default=0,
+                     help="Independent lower-layer (psi2) random-point obs per "
+                          "day, in ADDITION to the upper-layer (psi1) column "
+                          "obs above (obs_var='psi' only). Default 0 (disabled, "
+                          "the historical single-stream upper-layer-only "
+                          "behaviour).")
     ap.add_argument("--obs-var-r-scale", type=float, default=1.0)
     ap.add_argument("--da-window-steps", type=int, default=12)
     ap.add_argument("--fourdvar-optimizer", choices=["adam", "lbfgs"], default="adam")
@@ -1071,6 +1302,8 @@ def main():
     cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
                       spinup_years=args.spinup_years, num_windows=args.num_windows,
                       obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
+                      cols_sampling=args.cols_sampling,
+                      psi2_points_per_day=args.psi2_points_per_day,
                       seed=args.seed, init_lag_days=args.init_lag_days)
     if args.obs_noise_frac is not None:
         cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
