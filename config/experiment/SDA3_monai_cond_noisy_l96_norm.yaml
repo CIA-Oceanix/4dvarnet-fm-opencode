@@ -1,0 +1,45 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of SDA3_cond_noisy_l96: same params+forcing
+# conditioned prior contract as SDA2_monai_cond_mixed_l96_norm, isolating one
+# variable -- noisy (data.noisy_da_bias, a fresh per-step sample of a random
+# 0-1.5x fraction of the true->DA bias) instead of true params -- plus
+# data.normalize=true. Reference architecture tier (M: hidden_channels
+# [64,128,256], num_res_blocks=2) selected 2026-09-08 via the S+/M/L
+# DirectUNet complexity-tier experiment.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 24
+  param_dim: 8
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  train_forcing_state_bias: 0.1
+  param_names: [F, c1, hx, eps, w1, w2, w3, w4]
+  noisy_da_bias: true
+  noisy_da_max: 1.5
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

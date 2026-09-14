@@ -1,0 +1,41 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of L1b_direct_unet_s0s1_norm: identical data
+# setup, normalization, and training hyperparameters (lr=0.001, 200 epochs,
+# gradient_clip_val=10.0) as the DirectUNet run that collapsed under
+# normalization -- the only change is the backbone (models.unet.UNet1D ->
+# models.monai_unet_adapter.MonaiDirectUNet, wrapping MONAI's
+# DiffusionModelUNet with FiLM-style timestep conditioning instead of
+# UNet1D's additive-only conditioning). See
+# /homes/rfablet/.claude/plans/monai-diffunet-prototype.md.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

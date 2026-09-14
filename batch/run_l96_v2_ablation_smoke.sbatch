@@ -37,7 +37,6 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 echo
 
-rm -rf "experiments/${EXP}"
 python train.py \
   --config-name experiment/${EXP} \
   hydra.run.dir=. \
@@ -46,7 +45,8 @@ python train.py \
   ++data.num_train_windows=5 \
   ++data.num_val_windows=2 \
   training.stage1.epochs=1 \
-  training.stage2.epochs=1
+  training.stage2.epochs=1 \
+  +fresh=true
 
 echo ""
 echo " Done: ${EXP} smoke at $(date)"

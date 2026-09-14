@@ -1,0 +1,47 @@
+# @package _global_
+# Same as FDV1_obsstate_monai_l96_initvar01.yaml (FDV1's own architecture,
+# update_input=obs+state, init_state_var=0.1 -- confirmed harmless to FDV1's
+# convergence by job 53288) but on the "S" MonaiUNet1D capacity tier
+# (hidden_channels=[32,64,128], monai_num_res_blocks=1, 1,055,544 params)
+# instead of the default "M" tier (hidden_channels=[64,128,256],
+# monai_num_res_blocks=2, 5,889,048 params) every other FDV1/FDV2 config
+# uses -- see project_l96_monai_unet_complexity_tiers memory /
+# _build_backbone_unet's docstring for the full tier ladder.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

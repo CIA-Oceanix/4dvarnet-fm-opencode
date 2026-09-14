@@ -136,7 +136,6 @@ def test_forcing_ou_properties(cs2_config, device):
     eta_np = eta.cpu().numpy()
     
     # Compute lag-1 autocorrelation
-    mean_eta = np.mean(eta_np)
     var_eta = np.var(eta_np)
     
     if var_eta > 1e-6:

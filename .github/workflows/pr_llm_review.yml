@@ -1,0 +1,88 @@
+name: PR LLM Review
+
+# Automated stand-in for opencode's `reviewer` subagent (see opencode.json),
+# running on GitHub's infrastructure instead of a local session so a Claude
+# Code Auto Mode session opening a PR never has to self-approve it.
+#
+# Uses the official anthropics/claude-code-action, authenticated with a
+# Claude Pro/Max subscription OAuth token (CLAUDE_CODE_OAUTH_TOKEN, generated
+# locally via `claude setup-token`) rather than a metered Anthropic API key.
+#
+# The review is submitted as a REAL GitHub PR review (gh pr review --approve
+# / --request-changes), run under the separate `rfablet-review` account's PAT
+# (REVIEWER_GH_TOKEN secret) -- required both by GitHub (no self-approval)
+# and by this repo's branch rulesets (required_approving_review_count: 1).
+# GH_TOKEN is set explicitly at the step level (not just the action's
+# `github_token` input) so gh CLI calls made by Claude's own Bash tool are
+# guaranteed to authenticate as that account.
+on:
+  pull_request:
+    branches:
+      - 'feat/qg-*'
+      - 'feat/l96-*'
+      - 'feat/sw-*'
+      - master
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  llm-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.REVIEWER_GH_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.REVIEWER_GH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the required PR-approval gate for this repository: a
+            branch ruleset blocks merging without at least one approving
+            review, and you are it. Fetch the diff (`gh pr diff <PR NUMBER>`)
+            and review it for:
+
+            1. Correctness bugs: logic errors, shape/dtype mismatches,
+               off-by-one errors, wrong sign/operator, silently-wrong
+               defaults, tests that don't actually exercise the claimed
+               behavior.
+            2. Safety/hygiene: committed secrets or credentials,
+               destructive/irreversible operations, force-pushes or history
+               rewrites, checkpoints or large binaries that don't belong in
+               git, obviously broken CI config.
+            3. Reasonable engineering judgment: this repo prizes minimal,
+               non-speculative diffs. Do NOT request changes for style
+               preferences, missing hypothetical edge cases, or scope you'd
+               merely have done differently, or for missing
+               abstractions/error-handling/tests beyond what the change
+               warrants.
+
+            Default to APPROVE for reasonable, working changes. Use
+            REQUEST_CHANGES only when you find a concrete defect or a
+            genuine safety/hygiene problem you can point to with a specific
+            file/line. When uncertain, prefer APPROVE with a note over
+            blocking on speculation -- you are a gate against real defects,
+            not a substitute for the human maintainer's judgment.
+
+            Submit your verdict as a REAL GitHub review (not a plain
+            comment), exactly once:
+
+              gh pr review <PR NUMBER> --approve --body "<2-6 sentence summary>"
+            or
+              gh pr review <PR NUMBER> --request-changes --body "<specific defect(s), file/line>"
+
+            Do not push commits, do not modify any files, do not use
+            `gh pr comment` instead of `gh pr review`.
+
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*)"

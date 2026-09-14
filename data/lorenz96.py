@@ -619,7 +619,8 @@ def _make_l96_s0_s1_cache_key(cfg: Lorenz96Config, *,
                               param_noise: float,
                               bias_range,
                               train_seed: int, val_seed: int,
-                              s0_seed: int, s1_seed: int) -> str:
+                              s0_seed: int, s1_seed: int,
+                              train_forcing_state_bias: float = 0.1) -> str:
     import hashlib
     key_data = {
         "num_train_windows": num_train_windows,
@@ -629,6 +630,7 @@ def _make_l96_s0_s1_cache_key(cfg: Lorenz96Config, *,
         "bias_range": bias_range,
         "train_seed": train_seed, "val_seed": val_seed,
         "s0_seed": s0_seed, "s1_seed": s1_seed,
+        "train_forcing_state_bias": train_forcing_state_bias,
         "dt": cfg.dt, "T_max": cfg.T_max,
         "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
         "spinup_steps": cfg.spinup_steps, "window_spacing": cfg.window_spacing,
@@ -656,7 +658,8 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              fast_generation: bool = True,
                              train_seed: int = None, val_seed: int = None,
                              s0_seed: int = None, s1_seed: int = None,
-                             require_cache: bool = False) -> Dict:
+                             require_cache: bool = False,
+                             train_forcing_state_bias: float = 0.1) -> Dict:
     """Build the S0/S1 train/val/test datasets.
 
     `fast_generation=True` (default) uses the vectorized batched path for
@@ -669,6 +672,15 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
     and `generate_dataset.py` pre-warming avoid regenerating trajectories.
     An explicit `cached_datasets` (e.g. a test-only cache loaded by the
     caller) takes priority over the on-disk cache for the keys it supplies.
+
+    `train_forcing_state_bias` (default 0.1) sets the ground-truth forcing
+    corruption for train/val -- matching `test_s1`'s level by default, which
+    is why every model trained this way already sees S1-like model error
+    during training (this is NOT an "S0-only" training regime despite
+    `param_bias=0.0` in the base cfg; that only affects the DA baselines'
+    biased forward model, never the true trajectory). Pass 0.0 for a
+    genuinely nominal-only training set (test_s0/test_s1 are unaffected
+    either way, so results stay comparable across both regimes).
     """
     import os
     dynamics = _make_lorenz96_dynamics(cfg)
@@ -684,7 +696,8 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
         num_val_windows=num_val_windows, num_test_windows=num_test_windows,
         param_noise=param_noise, bias_range=bias_range,
         train_seed=train_seed, val_seed=val_seed,
-        s0_seed=s0_seed, s1_seed=s1_seed)
+        s0_seed=s0_seed, s1_seed=s1_seed,
+        train_forcing_state_bias=train_forcing_state_bias)
     cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
     disk_cache_exists = os.path.exists(cache_path)
 
@@ -714,13 +727,13 @@ def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
 
     train = _build("train", RandomBiasLorenz96Dataset,
                    {"seed": train_seed, "num_windows": num_train_windows, "case": 1,
-                    "param_bias": 0.0, "forcing_state_bias": 0.1},
+                    "param_bias": 0.0, "forcing_state_bias": train_forcing_state_bias},
                    fast_generation,
                    param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                    randomize_params=randomize_params)
     val = _build("val", RandomBiasLorenz96Dataset,
                  {"seed": val_seed, "num_windows": num_val_windows, "case": 1,
-                  "param_bias": 0.0, "forcing_state_bias": 0.1},
+                  "param_bias": 0.0, "forcing_state_bias": train_forcing_state_bias},
                  fast_generation,
                  param_noise=param_noise, bias_mode="random", bias_range=bias_range,
                  randomize_params=randomize_params)

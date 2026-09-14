@@ -12,7 +12,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from data.lorenz63 import Lorenz63Config, Lorenz63Dataset
 from evaluation.baselines import EnKF
 
-NW = 5; DUR = 3.0; SEED = 123; SPIN = 5000
+NW = 5
+DUR = 3.0
+SEED = 123
+SPIN = 5000
 
 # ── Perturbation breakdown (EnKF only) ──────────────────────────────────
 cfg1 = Lorenz63Config(case=1, param_bias=0.0, forcing_state_bias=0.0,
@@ -105,7 +108,8 @@ with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
             fontsize=9, fontfamily='monospace', verticalalignment='top')
     fig.suptitle('Synthesis: Perturbation Impact Analysis', fontsize=14, fontweight='bold')
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    pdf.savefig(fig); plt.close()
+    pdf.savefig(fig)
+    plt.close()
 
     # ── Page 2: Perturbation breakdown bar chart (EnKF) ──
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -127,11 +131,14 @@ with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
     ax.set_ylim(0, max(degs) + 1.0)
     ax.legend(loc='upper right', fontsize=11)
     ax.grid(True, axis='y', alpha=0.3, ls='--')
-    plt.tight_layout(); pdf.savefig(fig); plt.close()
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close()
 
     # ── Page 3: Coupling comparison (3 methods) ──
     fig, ax = plt.subplots(figsize=(9, 5.5))
-    x = np.arange(len(method_labels)); w = 0.35
+    x = np.arange(len(method_labels))
+    w = 0.35
     mcolors = ['#1f77b4', '#ff7f0e', '#2ca02c']
 
     for idx, (deg_arr, label) in enumerate([
@@ -155,11 +162,14 @@ with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
     ax.set_ylabel('Degradation Ratio (CS2 / CS1)', fontsize=12, fontweight='bold')
     ax.set_title('Structural Mismatch Amplifies Degradation Across All Baselines',
                  fontsize=14, fontweight='bold')
-    ax.set_xticks(x); ax.set_xticklabels(method_labels, fontsize=11)
+    ax.set_xticks(x)
+    ax.set_xticklabels(method_labels, fontsize=11)
     ax.set_ylim(0, max(max(deg_linear), max(deg_quartic)) + 1.5)
     ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
     ax.grid(True, axis='y', alpha=0.3, ls='--')
-    plt.tight_layout(); pdf.savefig(fig); plt.close()
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close()
 
     # ── Page 4: Trajectory comparison (EnKF, best vs worst) ──
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
@@ -170,16 +180,21 @@ with PdfPages('reports/outputs/coupling_comparison.pdf') as pdf:
         ekf.coupling_type = ctype
         res = ekf.assimilate(ds_p[0]['obs'], ds_p[0]['obs_mask'], ds_p.get_da_forcing(0),
                              ds_p[0]['true_state'], *cfg_p.da_params)
-        tg = cfg_p.time_grid; L = min(len(ds_p[0]['true_state']), len(res.trajectory))
+        tg = cfg_p.time_grid
+        L = min(len(ds_p[0]['true_state']), len(res.trajectory))
         ax.plot(tg[:L], ds_p[0]['true_state'][:L, 0], 'k', lw=1.5, label='Truth', alpha=0.7)
         ax.plot(tg[:L], res.trajectory[:L, 0], color='#2ca02c', lw=1.5, ls='--',
                 label=f'EnKF (CS2 RMSE={np.mean(res.rmse):.3f})')
         ax.set_title(f'EnKF — {pname}', fontsize=12, fontweight='bold')
-        ax.set_xlabel('Time (s)', fontsize=11); ax.set_ylabel('X', fontsize=11)
-        ax.legend(fontsize=9); ax.grid(True, alpha=0.3, ls='--')
+        ax.set_xlabel('Time (s)', fontsize=11)
+        ax.set_ylabel('X', fontsize=11)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3, ls='--')
     fig.suptitle('CS2 Trajectory Comparison: Linear vs Full Perturbation',
                  fontsize=14, fontweight='bold')
-    plt.tight_layout(); pdf.savefig(fig); plt.close()
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close()
 
 print("✓ reports/outputs/coupling_comparison.pdf (4 pages)")
 print("  Page 1: Perturbation table (EnKF)")

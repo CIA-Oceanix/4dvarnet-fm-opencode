@@ -84,7 +84,7 @@ dyn_traj = torch.cat(dyn_traj, dim=0)
 rollout_diff = (dyn_traj - inline_traj).abs().max().item()
 print(f"  Max diff: {rollout_diff:.3e}  {'PASS' if rollout_diff < 1e-10 else 'FAIL'}")
 
-import signal
+import signal  # noqa: E402
 class TimeoutError(Exception):
     pass
 def timeout_handler(signum, frame):

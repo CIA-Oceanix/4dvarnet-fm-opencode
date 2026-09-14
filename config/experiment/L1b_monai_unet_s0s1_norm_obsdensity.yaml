@@ -1,0 +1,59 @@
+# @package _global_
+# Fast-Y observation-density-augmented variant of L1b_monai_unet_s0s1_norm
+# (M tier, [64,128,256]) with data.obs_density_augment=true added -- see
+# L1b_monai_unet_s0s1_norm_l_cosine_obsdensity.yaml for the full rationale.
+#
+# Launched as a follow-up to the L-tier(cosine) obsdensity run
+# (L1b_monai_unet_s0s1_norm_l_cosine_obsdensity), which converged fine on
+# val_loss but collapsed toward the fast-Y conditional mean at eval time
+# (pred/true variance ratio ~35%, corr ~0.55-0.64) -- CFM-M's *same*
+# augmentation pipeline instead reconstructed fast-Y almost fully (variance
+# ratio ~96%, corr ~0.94-0.95), ruling out a data/eval bug and pointing at
+# an L-tier-specific training pathology (consistent with L's pre-existing
+# flat-LR instability documented in l96_consolidated_benchmark.md). This
+# M-tier run tests whether the smaller, more stable capacity tier handles
+# the augmented objective as cleanly as CFM did.
+#
+# Uses cosine annealing (use_cosine_scheduler: true) even though the M-tier
+# baseline was roughly LR-schedule-agnostic (flat 0.501 vs cosine 0.506,
+# non-augmented) -- cosine is the only proven fix for L-tier's flat-LR
+# instability, costs ~nothing on M at baseline, and removes a whole axis of
+# uncertainty now that we're testing a harder augmented objective with an
+# elevated instability risk. Adopted as the default for all obsdensity
+# training going forward, not just L.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt
+  obs_density_augment: true
+  obs_density_full_prob: 0.4
+  obs_density_min_keep: 0

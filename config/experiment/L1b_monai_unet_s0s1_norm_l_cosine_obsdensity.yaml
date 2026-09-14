@@ -1,0 +1,54 @@
+# @package _global_
+# Fast-Y observation-density-augmented variant of L1b_monai_unet_s0s1_norm_l_cosine
+# (identical architecture/hyperparameters -- L tier, [128,256,512], cosine LR,
+# 200 epochs) with data.obs_density_augment=true added: at every (window,
+# obs-time) during TRAINING, with probability obs_density_full_prob the
+# canonical full density (all 16 fast-Y) is kept, otherwise a uniformly-random
+# keep_k in [obs_density_min_keep, 15] fast-Y channels are kept and the rest
+# NaN'd out of obs (data/obs_density.py::sample_training_density_mask, wired
+# via data/dataloader.py::make_collate_fm). Val/test stay at full density
+# always (see train.py::make_l96_dataloaders). Motivation: the fast-Y
+# observation-density GENERALIZATION study (eval_obs_density_l96.py,
+# feature/l96-obs-density-generalization, PR #180) found the un-augmented
+# checkpoint degrades ~1.9x RMSE at half density and ~2.7x at zero fast-Y
+# density -- DirectUNet/CFM never see partial-channel obs dropout during
+# training (only whole-timestep NaN blocks), so a dropped channel reads as a
+# spurious near-zero observation. This config closes that gap by training on
+# it directly. Compare against the un-augmented checkpoint via
+# eval_obs_density_l96.py --directunet-checkpoint pointed at this experiment.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [128, 256, 512]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 200
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt
+  obs_density_augment: true
+  obs_density_full_prob: 0.4
+  obs_density_min_keep: 0

@@ -1,0 +1,150 @@
+import pytest
+import torch
+
+monai = pytest.importorskip("monai")
+
+from models.monai_unet_qg2d import MonaiDirectUNetQG  # noqa: E402
+
+
+class _FakeBatch:
+    pass
+
+
+def _batch(B, T, ny, nx, cond_extra_dim=0, param_dim=0, ic_dim=0):
+    D = 2 * ny * nx
+    b = _FakeBatch()
+    b.obs = torch.randn(B, T, D)
+    # forcing is always a (B, T, ny, nx) spatial field (the wind-curl map,
+    # see data.qg_neural's Q3/Q4 conditioning docstring) -- zeros when
+    # cond_extra_dim=0 since forward() never reads it in that case.
+    b.forcing = torch.zeros(B, T, ny, nx)
+    b.params = torch.zeros(B, param_dim)
+    # ic (Q5) is one static (B, ic_dim*ny*nx) field per window -- zeros when
+    # ic_dim=0 since forward() never reads it in that case.
+    b.ic = torch.zeros(B, ic_dim * ny * nx)
+    return b
+
+
+def test_forward_with_forcing_and_params_conditioning():
+    """The forward pass actually uses forcing/params when cond_extra_dim/
+    param_dim > 0, not just accepting the shape: zeroing them out must
+    change the output vs. real conditioning (sanity-checks Q3/Q4's
+    conditioning is wired, not dead)."""
+    ny = nx = 8
+    days = 3
+    model = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, param_dim=4, cond_extra_dim=1,
+                              hidden_channels=[8, 16])
+    # MONAI's DiffusionModelUNet zero-initializes its output conv (standard
+    # diffusion-model init, see test_circular_shift_equivariance above) --
+    # break it so the output isn't trivially all-zero regardless of input.
+    final = model.unet.backbone.out[2].conv
+    torch.nn.init.normal_(final.weight, std=0.05)
+    torch.nn.init.normal_(final.bias, std=0.05)
+    model.eval()
+
+    b = _FakeBatch()
+    b.obs = torch.randn(1, days, 2 * ny * nx)
+    b.forcing = torch.randn(1, days, ny, nx)
+    b.params = torch.randn(1, 4)
+    out = model(b)
+    assert out.shape == (1, days, 2 * ny * nx)
+    assert torch.isfinite(out).all()
+
+    b_zero = _FakeBatch()
+    b_zero.obs = b.obs
+    b_zero.forcing = torch.zeros_like(b.forcing)
+    b_zero.params = torch.zeros_like(b.params)
+    out_zero = model(b_zero)
+    assert not torch.allclose(out, out_zero)
+
+
+def test_forward_with_ic_conditioning():
+    """Q5: the forward pass actually uses `batch.ic` when ic_dim > 0 (zeroing
+    it must change the output), and the SAME static IC field is broadcast
+    identically across all T days (unlike forcing, which varies per day)."""
+    ny = nx = 8
+    days = 3
+    model = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, ic_dim=2, hidden_channels=[8, 16])
+    final = model.unet.backbone.out[2].conv
+    torch.nn.init.normal_(final.weight, std=0.05)
+    torch.nn.init.normal_(final.bias, std=0.05)
+    model.eval()
+
+    b = _FakeBatch()
+    b.obs = torch.randn(1, days, 2 * ny * nx)
+    b.forcing = torch.zeros(1, days, ny, nx)
+    b.params = torch.zeros(1, 0)
+    b.ic = torch.randn(1, 2 * ny * nx)
+    out = model(b)
+    assert out.shape == (1, days, 2 * ny * nx)
+    assert torch.isfinite(out).all()
+
+    b_zero = _FakeBatch()
+    b_zero.obs = b.obs
+    b_zero.forcing = b.forcing
+    b_zero.params = b.params
+    b_zero.ic = torch.zeros_like(b.ic)
+    out_zero = model(b_zero)
+    assert not torch.allclose(out, out_zero)
+
+
+def test_forward_shape():
+    ny = nx = 16
+    m = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, hidden_channels=[8, 16])
+    b = _batch(2, 3, ny, nx)
+    out = m(b)
+    assert out.shape == (2, 3, 2 * ny * nx)
+
+
+def test_nan_obs_handled():
+    ny = nx = 16
+    m = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, hidden_channels=[8, 16])
+    b = _batch(1, 2, ny, nx)
+    b.obs[0, 0, 0] = float("nan")
+    out = m(b)
+    assert torch.isfinite(out).all()
+
+
+def test_circular_shift_equivariance():
+    """The whole point of this model over `models.direct_unet.DirectUNet`
+    (which never convolves spatially at all) is respecting the QG domain's
+    doubly-periodic (ny, nx) grid: shifting the input by a multiple of the
+    backbone's total downsampling factor (2 pool stages -> 4) must shift the
+    output identically, in both x and y."""
+    torch.manual_seed(0)
+    ny = nx = 16
+    m = MonaiDirectUNetQG(ny=ny, nx=nx, nlayers=2, hidden_channels=[8, 16])
+    # Break MONAI's zero-initialized output conv (standard diffusion-model
+    # init) so the output is a real, non-degenerate test signal.
+    final = m.unet.backbone.out[2].conv
+    torch.nn.init.normal_(final.weight, std=0.05)
+    torch.nn.init.normal_(final.bias, std=0.05)
+    m.eval()
+
+    B, T = 1, 2
+    obs = torch.randn(B, T, 2 * ny * nx)
+    b = _FakeBatch()
+    b.obs = obs
+    b.forcing = torch.zeros(B, T)
+    b.params = torch.zeros(B, 0)
+
+    shift = 4
+    with torch.no_grad():
+        out1 = m(b).reshape(B * T, 2, ny, nx)
+
+        obs_grid = obs.reshape(B * T, 2, ny, nx)
+        b2 = _FakeBatch()
+        b2.obs = torch.roll(obs_grid, shifts=shift, dims=-1).reshape(B, T, -1)
+        b2.forcing = b.forcing
+        b2.params = b.params
+        out2 = m(b2).reshape(B * T, 2, ny, nx)
+        diff_x = (torch.roll(out1, shifts=shift, dims=-1) - out2).abs().max()
+        assert diff_x < 1e-4
+
+        b3 = _FakeBatch()
+        b3.obs = torch.roll(obs_grid, shifts=shift, dims=-2).reshape(B, T, -1)
+        b3.forcing = b.forcing
+        b3.params = b.params
+        out3 = m(b3).reshape(B * T, 2, ny, nx)
+        diff_y = (torch.roll(out1, shifts=shift, dims=-2) - out3).abs().max()
+        assert diff_y < 1e-4

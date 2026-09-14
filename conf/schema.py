@@ -58,6 +58,14 @@ class DataConfig:
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
     test_cache: Optional[str] = None
+    resample_bias_draws: bool = False
+    bias_max: float = 0.2
+    # Training-time fast-Y observation-density augmentation (see
+    # data/obs_density.py::sample_training_density_mask, wired via
+    # data/dataloader.py::make_collate_fm) -- val/test are never augmented.
+    obs_density_augment: bool = False
+    obs_density_full_prob: float = 0.4
+    obs_density_min_keep: int = 0
 
     # s0/s1 dataset-cache seeding (None falls back to the historical
     # hardcoded defaults: train=42, val=99, s0=123, s1=131)
@@ -186,6 +194,8 @@ class JointCFMConfig:
     logit_normal_scale: float = 1.0
     beta_alpha: float = 2.5
     beta_beta: float = 1.0
+    param_ref: Optional[List[float]] = None
+    param_flow_pool: str = "mean"
 
 
 @dataclass
@@ -193,6 +203,45 @@ class JointDirectUNetConfig:
     param_dim: int = 4
     param_loss_weight: float = 0.1
     param_head_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    param_head_backbone: str = "cnn"
+
+
+@dataclass
+class JointCFMCoupledConfig:
+    param_dim: int = 4
+    param_loss_weight: float = 0.1
+    param_flow_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_flow_pool: str = "mean"
+
+
+@dataclass
+class ParamHeadConfig:
+    param_dim: int = 8
+    param_head_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    state_checkpoint: Optional[str] = None
+    state_model_type: str = "direct_unet"
+    state_hidden_channels: Optional[List[int]] = None
+    state_cond_extra_dim: int = 0
+    state_source: str = "l1b"
+    augment_derivatives: bool = False
+
+
+@dataclass
+class ParamHeadUNetConfig:
+    param_dim: int = 8
+    hidden_channels: Optional[List[int]] = None
+    param_ref: Optional[List[float]] = None
+    param_head_pool: str = "mean"
+    state_checkpoint: Optional[str] = None
+    state_model_type: str = "direct_unet"
+    state_hidden_channels: Optional[List[int]] = None
+    state_cond_extra_dim: int = 0
+    state_source: str = "l1b"
 
 
 @dataclass
@@ -229,8 +278,89 @@ class TweedieCFMConfig:
 
 
 @dataclass
+class SDAPriorConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+
+
+@dataclass
+class FourDVarNetConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    dropout: float = 0.1
+    update_input: str = "obs+state"
+    R_var: float = 0.5
+    prior_weight: float = 1.0
+    clip_range: float = 50.0
+    trainable_prior_weight: bool = True
+    aux_var_cost_weight: float = 0.0
+    prior_tau_conditioning: bool = False
+    unet_backbone: str = "unet1d"
+    monai_norm_num_groups: int = 32
+    # 2 (default, MonaiUNet1D's own default) = "M" tier with
+    # hidden_channels=[64,128,256] (5,889,048 params, today's default for
+    # every FDV1/FDV2 config). 1 with hidden_channels=[32,64,128] = "S" tier
+    # (1,055,544 params). Ignored for unet_backbone="unet1d". See
+    # project_l96_monai_unet_complexity_tiers memory / _build_backbone_unet's
+    # docstring for the full tier ladder.
+    monai_num_res_blocks: int = 2
+    # None (default) = prior_unet shares hidden_channels with the main solver
+    # unet, i.e. today's behavior. Set to a narrower tier (e.g. [32,64,128],
+    # the S+ tier) to give the solver more relative capacity than the prior,
+    # matching CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch
+    # convention (glo12-sla-4th-unrolling-ossev1.yaml: solver model_channels=64
+    # vs prior model_channels=32).
+    prior_hidden_channels: Optional[List[int]] = None
+    # Truncated-BPTT over the N_outer unroll: split it into tbptt_n_blocks
+    # contiguous blocks of tbptt_block_size iterations each (must multiply to
+    # N_outer), detach the state between blocks, and average the training
+    # loss computed at the end of every block. Default (n_blocks=1,
+    # block_size=None -> derived as N_outer) is a single block, i.e. today's
+    # behavior (one continuous backward graph, loss from the final iteration
+    # only) -- fully backward-compatible with every existing config/checkpoint.
+    tbptt_n_blocks: int = 1
+    tbptt_block_size: Optional[int] = None
+    # None (default) = falls back to clip_range, today's behavior. Bounds
+    # ONLY the grad-only/grad+state autograd gradient (after
+    # _normalize_channels' RMS division, via a smooth tanh soft-clip, not a
+    # hard clamp) -- independent of clip_range, which still only bounds the
+    # raw state branch via a hard clamp every iteration. Set narrower than
+    # clip_range to make the soft-clip nonlinearity actually engage near its
+    # real operating range (the grad term is RMS-normalized to ~1) without
+    # also tightening the unrelated state-branch clamp.
+    grad_clip_range: Optional[float] = None
+    # 0.0 (default) = x_0 starts at all-zeros, today's behavior. >0 means x_0
+    # ~ N(0, init_state_var) instead (a VARIANCE, not a std -- e.g. 0.1 means
+    # std ~ 0.316 in this normalized state space), sampled fresh every
+    # forward() call, independent of update_input.
+    init_state_var: float = 0.0
+
+
+@dataclass
+class FourDVarNetCFMConfig:
+    hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
+    time_emb_dim: int = 64
+    N_outer: int = 10
+    K_inner: int = 5
+    sigma_prior: float = 0.5
+    dropout: float = 0.1
+    train_tau_0_only: bool = False
+    update_input: str = "obs+state"
+    clip_range: float = 50.0
+    R_var: float = 0.5
+    obs_weight: float = 1.0
+    min_obs_weight: float = 1e-3
+    trainable_obs_weight: bool = True
+    grad_clip_range: Optional[float] = None
+
+
+@dataclass
 class ModelConfig:
-    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm"
+    model_type: str = "tweedie"  # "tweedie" | "direct_unet" | "vanilla_cfm" | "joint_cfm" | "predict_state_cfm" | "tweedie_cfm" | "param_head" | "param_head_unet" | "sda_prior" | "sda_prior_cond" | "fourdvarnet" | "fourdvarnet_cfm"
     state_dim: int = 3
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
@@ -243,14 +373,20 @@ class ModelConfig:
     direct_unet: DirectUNetConfig = field(default_factory=DirectUNetConfig)
     vanilla_cfm: VanillaCFMConfig = field(default_factory=VanillaCFMConfig)
     joint_cfm: JointCFMConfig = field(default_factory=JointCFMConfig)
+    joint_cfm_coupled: JointCFMCoupledConfig = field(default_factory=JointCFMCoupledConfig)
     joint_direct_unet: JointDirectUNetConfig = field(default_factory=JointDirectUNetConfig)
+    param_head: ParamHeadConfig = field(default_factory=ParamHeadConfig)
+    param_head_unet: ParamHeadUNetConfig = field(default_factory=ParamHeadUNetConfig)
     predict_state_cfm: PredictStateCFMConfig = field(default_factory=PredictStateCFMConfig)
     tweedie_cfm: TweedieCFMConfig = field(default_factory=TweedieCFMConfig)
+    sda_prior: SDAPriorConfig = field(default_factory=SDAPriorConfig)
+    fdv: FourDVarNetConfig = field(default_factory=FourDVarNetConfig)
+    fdv_cfm: FourDVarNetCFMConfig = field(default_factory=FourDVarNetCFMConfig)
 
 
 @dataclass
 class StageConfig:
-    max_epochs: int = 200
+    epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
     # EarlyStopping on val_loss: stop after `early_stopping_patience` epochs with no
@@ -258,13 +394,23 @@ class StageConfig:
     # disable early stopping for this stage (train the full `max_epochs`).
     early_stopping_patience: Optional[int] = 300
     early_stopping_min_delta: float = 1e-3
+    use_cosine_scheduler: bool = True  # deliberate default since 2026-09-10, see CHANGELOG.md
+    obs_weight_lr_scale: float = 1.0
+    prior_unet_lr_scale: float = 1.0
+
+
+@dataclass
+class LossConfig:
+    use_gradient: bool = True
+    gradient_weight: float = 0.1
 
 
 @dataclass
 class TrainingConfig:
-    stage1: StageConfig = field(default_factory=lambda: StageConfig(max_epochs=200, lr=1e-3, gradient_clip_val=10.0))
-    stage2: StageConfig = field(default_factory=lambda: StageConfig(max_epochs=400, lr=1e-3, gradient_clip_val=1.0))
+    stage1: StageConfig = field(default_factory=lambda: StageConfig(epochs=200, lr=1e-3, gradient_clip_val=10.0))
+    stage2: StageConfig = field(default_factory=lambda: StageConfig(epochs=400, lr=1e-3, gradient_clip_val=1.0))
     batch_size: int = 32
+    loss: LossConfig = field(default_factory=LossConfig)
 
 
 @dataclass

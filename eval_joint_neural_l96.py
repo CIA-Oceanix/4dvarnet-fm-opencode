@@ -53,6 +53,10 @@ def main():
                         help="Euler integration steps for joint CFM sampling")
     parser.add_argument("--n-members", type=int, default=1,
                         help="Number of ensemble members to sample")
+    parser.add_argument("--ens-then-head", action="store_true",
+                        help="For ensembles: average the member states first, then "
+                             "estimate params once from the ensemble-mean state "
+                             "(stabilizes the multi-tau param head at low k)")
     parser.add_argument("--seed", type=int, default=0,
                         help="Random seed for torch")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
@@ -98,7 +102,8 @@ def main():
     n_outer = args.n_outer if args.n_outer is not None else getattr(model, "N_outer", 10)
     logger.info(f"Running joint inference (step 1): cases={args.cases} n_members={args.n_members} n_outer={n_outer}")
     estimates = run_inference(model, dataloaders, device, obs_var_indices,
-                              n_members=args.n_members, n_outer=n_outer)
+                              n_members=args.n_members, n_outer=n_outer,
+                              ens_then_head=args.ens_then_head)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +113,7 @@ def main():
     for case in args.cases:
         est = estimates[case]
         if args.n_members > 1:
-            npz_path = output_path.parent / f"joint_estimates_{case}_ens{args.n_members}.npz"
+            npz_path = output_path.parent / f"joint_estimates_{case}_ens{args.n_members}_k{n_outer}.npz"
             np.savez_compressed(npz_path,
                                 members=est["members"],
                                 truth=est["truth"],

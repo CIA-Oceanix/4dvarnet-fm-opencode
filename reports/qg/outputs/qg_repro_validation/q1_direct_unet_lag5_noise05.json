@@ -1,0 +1,34 @@
+{
+  "model_type": "direct_unet",
+  "ckpt": "experiments/Q1_direct_unet_s0_monai2d/stage1_best.pt",
+  "eval_config": {
+    "lag_days": 5.0,
+    "noise_frac": 0.05,
+    "num_windows": 100
+  },
+  "train_test_mismatch_caveat": "Checkpoint trained at lag=1.0d/noise=0.01 (train_qg_neural.py defaults); this eval redraws obs at lag=5.0d/noise=0.05 to match the DA baselines' reference case, but the model was NOT retrained for this distribution -- not a fully fair comparison.",
+  "psi": {
+    "layer1": {
+      "rmse": 6628.3955078125,
+      "ev": 0.8597869277000427
+    },
+    "layer2": {
+      "rmse": 3955.65673828125,
+      "ev": 0.9344521760940552
+    },
+    "pooled_rmse": 5292.0263671875,
+    "pooled_ev": 0.8971195220947266
+  },
+  "q": {
+    "layer1": {
+      "rmse": 2.4927558115450665e-05,
+      "ev": 0.2120990753173828
+    },
+    "layer2": {
+      "rmse": 4.033663572045043e-06,
+      "ev": 0.10891465842723846
+    },
+    "pooled_rmse": 1.4480610843747854e-05,
+    "pooled_ev": 0.16050687432289124
+  }
+}

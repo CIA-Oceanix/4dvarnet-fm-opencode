@@ -1,5 +1,6 @@
 """Standalone neural model inference and evaluation for L96."""
 import logging
+import os
 from typing import Any, Optional
 
 import numpy as np
@@ -9,7 +10,21 @@ from torch.utils.data import DataLoader
 
 from data.lorenz96 import Lorenz96Config
 from models.direct_unet import DirectUNet, JointDirectUNet
-from models.vanilla_cfm import JointCFM, PredictStateCFM, TweedieCFM, VanillaCFM
+from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
+try:
+    from models.monai_unet_adapter import MonaiDirectUNet
+except ImportError:
+    # monai is an optional, deliberately-isolated dependency (see
+    # models/monai_unet_adapter.py) -- not installed by default, so this
+    # module's isinstance dispatch must not hard-require it. The sentinel
+    # class below is never constructed; it only exists so the isinstance
+    # check further down stays syntactically valid and simply never matches.
+    class MonaiDirectUNet:
+        pass
+from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
+from models.vanilla_cfm import JointCFM, JointCFMCoupled, PredictStateCFM, TweedieCFM, VanillaCFM
+from data.obs_density import NUM_FAST, NUM_SLOW, apply_density_mask_to_obs, fast_channel_keep_mask
+from evaluation.sda_sampler import sda_guided_sample
 
 
 class BatchDict:
@@ -25,6 +40,26 @@ def collate_eval(batch):
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
     return {"true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing, "params": None}
+
+
+def make_collate_eval(norm_stats: Optional[dict] = None):
+    """Return a ``collate_eval``-compatible collate fn that additionally
+    z-score normalizes ``obs`` (the model's input) when ``norm_stats`` is
+    given. ``true_state`` stays raw always: it is never fed to the model,
+    only used later for scoring. ``norm_stats is None`` reproduces plain
+    ``collate_eval`` exactly.
+    """
+    if norm_stats is None:
+        return collate_eval
+
+    from data.normalization import normalize
+
+    def _collate(batch):
+        d = collate_eval(batch)
+        d["obs"] = normalize(d["obs"], norm_stats)
+        return d
+
+    return _collate
 
 
 L96_JOINT_PARAM_NAMES = ("F", "c1", "hx", "eps", "w1", "w2", "w3", "w4")
@@ -73,8 +108,45 @@ def collate_joint_eval(batch):
     }
 
 
+def make_collate_joint_eval(norm_stats: Optional[dict] = None):
+    """``collate_joint_eval`` counterpart to :func:`make_collate_eval`."""
+    if norm_stats is None:
+        return collate_joint_eval
+
+    from data.normalization import normalize
+
+    def _collate(batch):
+        d = collate_joint_eval(batch)
+        d["obs"] = normalize(d["obs"], norm_stats)
+        return d
+
+    return _collate
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# Filename train.py saves the fully-resolved training config under, next to
+# each experiment's checkpoints/ dir (see train.py::main).
+RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
+
+
+def _find_resolved_config(checkpoint_path: str) -> Optional[str]:
+    """Look for train.py's auto-saved resolved config next to ``checkpoint_path``.
+
+    Checkpoints live at ``<exp_dir>/checkpoints/<name>.{pt,ckpt}``; the resolved
+    config is saved at ``<exp_dir>/resolved_config.yaml``. Also checks the
+    checkpoint's own directory, for non-standard layouts.
+    """
+    ckpt_dir = os.path.dirname(os.path.abspath(checkpoint_path))
+    candidates = [os.path.join(ckpt_dir, RESOLVED_CONFIG_FILENAME)]
+    if os.path.basename(ckpt_dir) == "checkpoints":
+        candidates.append(os.path.join(os.path.dirname(ckpt_dir), RESOLVED_CONFIG_FILENAME))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> tuple:
@@ -82,11 +154,67 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state_dict = ckpt["state_dict"]
 
+    # Only a file literally named resolved_config.yaml (train.py's
+    # unconditional, defaults-composed dump -- guaranteed to declare every
+    # field model_factory reads for its model_type) is trusted to skip
+    # shape-inference entirely, whether that path was auto-discovered here or
+    # passed explicitly via --config (e.g. an sbatch script pointing straight
+    # at experiments/<exp>/resolved_config.yaml). Any other --config may be a
+    # raw experiment preset relying on un-merged defaults (e.g. from
+    # lorenz96_default.yaml), so it keeps going through the tolerant
+    # partial-merge path below, as before.
+    if config_path is None:
+        config_path = _find_resolved_config(checkpoint_path)
+        if config_path:
+            logger.info(f"Auto-discovered resolved training config: {config_path}")
+    is_resolved_config = config_path is not None and os.path.basename(config_path) == RESOLVED_CONFIG_FILENAME
+
     # Handle Lightning .ckpt files
     if "hyper_parameters" in ckpt:
         # Lightning checkpoint: extract model_type from hyper_parameters
         model_type = ckpt["hyper_parameters"].get("model_type", "direct_unet")
+
+        # A resolved training config lets us recover the exact architecture
+        # the checkpoint was trained with, rather than reverse-engineering it
+        # from state-dict shapes below. Shape-inference remains the fallback
+        # for checkpoints predating this change (no resolved_config.yaml).
+        if is_resolved_config:
+            try:
+                candidate_cfg = OmegaConf.load(config_path)
+                if candidate_cfg.get("model", {}).get("model_type") is not None:
+                    return state_dict, candidate_cfg
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Could not load config from {config_path}: {e}")
+
         is_joint = "joint" in model_type
+
+        # The whole inference block below reverse-engineers architecture from
+        # UNet1D-specific state_dict key names (enc_out/downs/...). That
+        # assumption breaks for FourDVarNetSolver's unet_backbone=monai (its
+        # state UNet is MonaiUNet1D, wrapping MONAI's DiffusionModelUNet under
+        # a `.backbone` submodule with completely different internal names) --
+        # none of those keys exist, so inference can't recover state_dim/etc
+        # at all. There's no way to shape-infer a monai backbone's config
+        # (its hidden_channels/norm_num_groups aren't recoverable from weight
+        # shapes alone the way UNet1D's are), so require --config and load
+        # the real training config directly instead of inferring anything.
+        if model_type in ("fourdvarnet", "fourdvarnet_cfm") and not (
+            "model.unet.enc_out.2.weight" in state_dict
+            or "model.velocity_unet.enc_out.2.weight" in state_dict
+        ):
+            if not config_path:
+                raise ValueError(
+                    f"Checkpoint's state UNet doesn't match UNet1D's expected "
+                    f"key names (likely unet_backbone != 'unet1d', e.g. "
+                    f"'monai') -- pass --config to reconstruct the "
+                    f"architecture directly; shape inference cannot recover "
+                    f"a non-UNet1D backbone's config."
+                )
+            cfg = OmegaConf.load(config_path)
+            OmegaConf.set_struct(cfg, False)
+            cfg.model.type = model_type
+            OmegaConf.set_struct(cfg, True)
+            return state_dict, cfg
 
         # Infer architecture parameters from state_dict
         inferred_params = {}
@@ -118,12 +246,25 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
             # back to the old inference below.
             param_flow_key = "model.param_flow.head.0.weight"
             param_head_key = "model.param_head.head.weight"
-            if param_flow_key in state_dict or param_head_key in state_dict:
+            param_flow_unet_key = "model.param_flow.head.2.weight"
+            param_head_unet_key = "model.param_head.head.2.weight"
+            has_fl = param_flow_key in state_dict or param_flow_unet_key in state_dict
+            has_ph = param_head_key in state_dict or param_head_unet_key in state_dict
+            if has_fl or has_ph:
                 # state UNet: cond_extra_dim = proj_in - 2*state_dim, output_dim = state_dim
                 cond_extra_dim = proj_in - 2 * output_dim
                 state_dim = output_dim
-                head_key = param_flow_key if param_flow_key in state_dict else param_head_key
-                param_dim = state_dict[head_key].shape[0]
+                # param-dim comes from the head's OUTPUT conv. The head may be a
+                # CNN (param_flow.head.0 / bare param_head.head) or a UNet
+                # encoder-decoder ending in head.2 (the output 1x1 conv).
+                if param_flow_unet_key in state_dict:
+                    param_dim = state_dict[param_flow_unet_key].shape[0]
+                elif param_head_unet_key in state_dict:
+                    param_dim = state_dict[param_head_unet_key].shape[0]
+                elif param_flow_key in state_dict:
+                    param_dim = state_dict[param_flow_key].shape[0]
+                else:
+                    param_dim = state_dict[param_head_key].shape[0]
             else:
                 # Legacy JointDirectUNet / old joint dual-head layout:
                 # state_dim = proj_in - 1 - output_dim, cond_extra_dim = 1 + param_dim
@@ -141,6 +282,29 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 # TweedieCFM's velocity UNet uses obs_dim = 2*state_dim
                 # (context = cat([obs_clean, mean])); proj_in = state_dim + 2*state_dim + cond_extra_dim.
                 cond_extra_dim = proj_in - 3 * state_dim
+            elif model_type == "sda_prior":
+                # UnconditionalPriorCFM's UNet is built with use_obs=False (see
+                # models/sda.py) so ConditionEncoder.proj_in == state_dim only
+                # (no obs/cond_extra concatenation) -- the generic obs_dim=state_dim
+                # formula below does not apply.
+                cond_extra_dim = 0
+            elif model_type == "sda_prior_cond":
+                # ConditionalPriorCFM's UNet is built with use_obs=True,
+                # obs_dim=1+param_dim, cond_extra_dim=0 (see models/sda.py):
+                # proj_in = state_dim + 1 + param_dim, so what's recovered here
+                # is param_dim, not cond_extra_dim (which stays 0).
+                param_dim = proj_in - state_dim - 1
+                cond_extra_dim = 0
+            elif model_type in ("fourdvarnet", "fourdvarnet_cfm"):
+                # FourDVarNetSolver/FourDVarNetPredictStateCFM both build their
+                # UNet1D with use_obs=False and an already-doubled state_dim=2*D
+                # for "obs+state" (proj_in=2D, output_dim=D) or plain D for
+                # "obs-only" (proj_in=D=output_dim) -- either way there is no
+                # *extra* conditioning tensor beyond what's already folded into
+                # that doubled/plain state_dim, so cond_extra_dim=0 always (the
+                # generic proj_in-2*state_dim formula below would wrongly give
+                # -D for "obs-only").
+                cond_extra_dim = 0
             else:
                 # cond_extra_dim = proj_in - 2*state_dim for obs_dim = state_dim
                 cond_extra_dim = proj_in - 2 * state_dim
@@ -164,6 +328,17 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                     state_dict[f"model.{head_name}.blocks.{i}.conv1.weight"].shape[0]
                     for i in hb_blocks
                 ]
+            # UNet param backbone: downs.N.block.conv1.weight exists when the
+            # head is a UNet (JointCFMCoupled param flow / UNet JointDirectUNet
+            # head). Read the encoder triple exactly as for the state UNet.
+            elif f"model.{head_name}.downs.1.block.conv1.weight" in state_dict:
+                c1 = state_dict[f"model.{head_name}.downs.1.block.conv1.weight"]
+                ch = [c1.shape[1], c1.shape[0]]
+                if f"model.{head_name}.downs.2.block.conv1.weight" in state_dict:
+                    ch.append(state_dict[f"model.{head_name}.downs.2.block.conv1.weight"].shape[0])
+                else:
+                    ch.append(256)
+                inferred_params[f"{head_name}_channels"] = ch
 
         # Infer hidden_channels from downs layers
         # downs.N.block.conv1: [hidden[N], hidden[N-1], 3] -> read N=1 and N=2 so
@@ -189,6 +364,9 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                 "cond_extra_dim": inferred_params.get("cond_extra_dim", 0),
                 "param_flow_channels": inferred_params.get("param_flow_channels", None),
                 "param_head_channels": inferred_params.get("param_head_channels", None),
+                "param_flow_pool": "attn" if "model.param_flow.attn_pool.query" in state_dict else "mean",
+                "param_head_pool": "attn" if "model.param_head.attn_pool.query" in state_dict else "mean",
+                "param_head_backbone": "unet" if "model.param_head.downs.0.block.conv1.weight" in state_dict else "cnn",
                 "device": "cpu",
             },
             "deterministic": False,
@@ -222,6 +400,38 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
                         m[key] = tc[key]
                 if len(tc) > 0:
                     m.tweedie_cfm = tc
+            sp = yaml_cfg.model.get("sda_prior", {})
+            if hasattr(sp, "get"):
+                m = cfg.model
+                for key in ("N_outer", "sigma_prior", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in sp:
+                        m[key] = sp[key]
+                if len(sp) > 0:
+                    m.sda_prior = sp
+            fdv = yaml_cfg.model.get("fdv", {})
+            if hasattr(fdv, "get"):
+                m = cfg.model
+                for key in ("N_outer", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in fdv:
+                        m[key] = fdv[key]
+                if len(fdv) > 0:
+                    m.fdv = fdv
+            fc = yaml_cfg.model.get("fdv_cfm", {})
+            if hasattr(fc, "get"):
+                m = cfg.model
+                for key in ("N_outer", "sigma_prior", "time_emb_dim", "dropout"):
+                    if m.get(key) is None and key in fc:
+                        m[key] = fc[key]
+                if len(fc) > 0:
+                    m.fdv_cfm = fc
+            for sub in ("joint_cfm", "joint_direct_unet"):
+                sub_cfg = yaml_cfg.model.get(sub, {})
+                if hasattr(sub_cfg, "get"):
+                    m = cfg.model
+                    for key in ("param_ref", "param_flow_pool", "param_head_pool",
+                                "param_flow_channels", "param_head_channels"):
+                        if m.get(key) is None and key in sub_cfg:
+                            m[key] = sub_cfg[key]
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not merge tweedie_cfm from {config_path}: {e}")
 
@@ -243,10 +453,20 @@ def resolve_model_class(cfg: Any) -> tuple:
         return JointDirectUNet, cfg
     elif model_type == "JOINTCFM":
         return JointCFM, cfg
+    elif model_type == "JOINTCFMCOUPLED":
+        return JointCFMCoupled, cfg
     elif model_type == "TWEEDIECFM":
         return TweedieCFM, cfg
     elif model_type == "PREDICTSTATECFM":
         return PredictStateCFM, cfg
+    elif model_type == "SDAPRIOR":
+        return UnconditionalPriorCFM, cfg
+    elif model_type == "SDAPRIORCOND":
+        return ConditionalPriorCFM, cfg
+    elif model_type == "FOURDVARNET":
+        return FourDVarNetSolver, cfg
+    elif model_type == "FOURDVARNETCFM":
+        return FourDVarNetPredictStateCFM, cfg
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -287,6 +507,22 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_flow_channels=cfg.model.get("param_flow_channels", None),
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
+            param_ref=cfg.model.get("param_ref", None),
+            param_flow_pool=cfg.model.get("param_flow_pool", "mean"),
+        )
+    elif model_class == JointCFMCoupled:
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=cfg.model.get("time_emb_dim", 64),
+            N_outer=cfg.model.get("N_outer", 10),
+            sigma_prior=cfg.model.get("sigma_prior", 0.5),
+            dropout=cfg.model.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 1),
+            param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
+            param_flow_channels=cfg.model.get("param_flow_channels", None),
+            param_ref=cfg.model.get("param_ref", None),
+            param_flow_pool=cfg.model.get("param_flow_pool", "mean"),
         )
     elif model_class == JointDirectUNet:
         model = model_class(
@@ -296,6 +532,9 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             param_dim=cfg.model.get("param_dim", 1),
             param_loss_weight=cfg.model.get("param_loss_weight", 0.1),
             param_head_channels=cfg.model.get("param_head_channels", None),
+            param_ref=cfg.model.get("param_ref", None),
+            param_head_pool=cfg.model.get("param_head_pool", "mean"),
+            param_head_backbone=cfg.model.get("param_head_backbone", "cnn"),
         )
     elif model_class == TweedieCFM:
         tc = cfg.model.get("tweedie_cfm", {})
@@ -330,10 +569,115 @@ def create_model(model_class, cfg: Any) -> torch.nn.Module:
             train_tau_0_only=cfg.model.get("train_tau_0_only", False),
             cond_extra_dim=cfg.model.get("cond_extra_dim", 0),
         )
+    elif model_class == UnconditionalPriorCFM:
+        sp = cfg.model.get("sda_prior", {})
+        sp_get = sp.get if hasattr(sp, "get") else None
+
+        def _sp(key, default):
+            val = sp_get(key) if sp_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=_sp("time_emb_dim", 64),
+            N_outer=_sp("N_outer", 10),
+            sigma_prior=_sp("sigma_prior", 0.5),
+            dropout=_sp("dropout", 0.1),
+        )
+    elif model_class == ConditionalPriorCFM:
+        sp = cfg.model.get("sda_prior", {})
+        sp_get = sp.get if hasattr(sp, "get") else None
+
+        def _sp(key, default):
+            val = sp_get(key) if sp_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            hidden_channels=hidden,
+            time_emb_dim=_sp("time_emb_dim", 64),
+            N_outer=_sp("N_outer", 10),
+            sigma_prior=_sp("sigma_prior", 0.5),
+            dropout=_sp("dropout", 0.1),
+        )
+    elif model_class == FourDVarNetSolver:
+        fdv = cfg.model.get("fdv", {})
+        fdv_get = fdv.get if hasattr(fdv, "get") else None
+
+        def _fdv(key, default):
+            val = fdv_get(key) if fdv_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=_fdv("time_emb_dim", 64),
+            N_outer=_fdv("N_outer", 10),
+            dropout=_fdv("dropout", 0.1),
+            update_input=_fdv("update_input", "obs+state"),
+            R_var=_fdv("R_var", 0.5),
+            prior_weight=_fdv("prior_weight", 1.0),
+            clip_range=_fdv("clip_range", 50.0),
+            trainable_prior_weight=_fdv("trainable_prior_weight", True),
+            aux_var_cost_weight=_fdv("aux_var_cost_weight", 0.0),
+            prior_tau_conditioning=_fdv("prior_tau_conditioning", False),
+            unet_backbone=_fdv("unet_backbone", "unet1d"),
+            monai_norm_num_groups=_fdv("monai_norm_num_groups", 32),
+        )
+    elif model_class == FourDVarNetPredictStateCFM:
+        fc = cfg.model.get("fdv_cfm", {})
+        fc_get = fc.get if hasattr(fc, "get") else None
+
+        def _fc(key, default):
+            val = fc_get(key) if fc_get is not None else None
+            if val is None:
+                val = cfg.model.get(key, default)
+            return val
+
+        model = model_class(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=hidden,
+            time_emb_dim=_fc("time_emb_dim", 64),
+            N_outer=_fc("N_outer", 10),
+            K_inner=_fc("K_inner", 5),
+            sigma_prior=_fc("sigma_prior", 0.5),
+            dropout=_fc("dropout", 0.1),
+            train_tau_0_only=_fc("train_tau_0_only", False),
+            update_input=_fc("update_input", "obs+state"),
+            clip_range=_fc("clip_range", 50.0),
+            R_var=_fc("R_var", 0.5),
+            obs_weight=_fc("obs_weight", 1.0),
+            min_obs_weight=_fc("min_obs_weight", 1e-3),
+            trainable_obs_weight=_fc("trainable_obs_weight", True),
+        )
     else:
         raise ValueError(f"Unknown model type: {model_class}")
-    
+
     return model
+
+
+def _apply_model_overrides(cfg: Any, overrides: dict) -> None:
+    """Apply ``overrides`` to ``cfg.model``, under either config schema.
+
+    The legacy shape-inferred ``cfg`` is flat (``cfg.model.<key>``); a training
+    config (resolved or raw preset) nests family-specific fields one level
+    down (e.g. ``cfg.model.vanilla_cfm.<key>``). Set the key at the top level
+    always, and additionally in any existing sub-block that already declares
+    it, so the override takes effect regardless of which schema ``cfg`` is.
+    """
+    for key, value in overrides.items():
+        cfg.model[key] = value
+        for sub in cfg.model.values():
+            if OmegaConf.is_config(sub) and key in sub:
+                sub[key] = value
 
 
 def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs) -> tuple:
@@ -346,14 +690,20 @@ def load_model(checkpoint_path: str, config_path: Optional[str] = None, **kwargs
     """
     overrides = kwargs.pop("overrides", None)
     state_dict, cfg = load_checkpoint(checkpoint_path, config_path)
-    if overrides:
-        for key, value in overrides.items():
-            cfg.model[key] = value
-    model_class, cfg_model = resolve_model_class(cfg)
-    model = create_model(model_class, cfg_model)
-    
-    # Move model to correct device
     device = kwargs.get("device", "cpu")
+    if overrides:
+        _apply_model_overrides(cfg, overrides)
+
+    if cfg.get("model", {}).get("model_type") is not None:
+        # A training config is available: build the model exactly as train.py
+        # did (model_factory), rather than the flat/shape-inferred path.
+        from train import model_factory
+        model = model_factory(cfg, torch.device(device))
+    else:
+        model_class, cfg_model = resolve_model_class(cfg)
+        model = create_model(model_class, cfg_model)
+
+    # Move model to correct device
     model.to(device)
     
     # Strip "model." prefix if present (Lightning wrapper)
@@ -442,7 +792,9 @@ def prepare_dataset(
 
     # Create dataloaders for both the S0 and S1 test splits
     is_joint = bool(kwargs.get("is_joint", False))
-    collate = collate_joint_eval if is_joint else collate_eval
+    norm_stats = kwargs.get("norm_stats")
+    collate = (make_collate_joint_eval(norm_stats) if is_joint
+               else make_collate_eval(norm_stats))
     dataloaders = {}
     for key, case in (("test_s0", "s0"), ("test_s1", "s1")):
         split = dataset[key]
@@ -464,6 +816,11 @@ def _run_case_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
+    r_var: float = 0.5,
+    guidance_weight: float = 1.0,
+    obs_indices=None,
+    obs_density_keep_k: int | None = None,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -477,11 +834,30 @@ def _run_case_inference(
     evaluator. For joint models the batch also carries ``params``; each
     window's predicted params are returned in ``"params_pred"`` (W, P) and the
     ground-truth in ``"params_true"`` (W, P).
+
+    ``obs_density_keep_k`` (optional): the fast-Y observation-density
+    generalization study (see ``data/obs_density.py``) -- randomly
+    keeps only ``keep_k`` of the 16 canonical fast-Y channels, redrawn
+    independently per (window, timestep), leaving the 8 slow-X channels
+    always observed. ``None`` (default) is a true no-op (full density,
+    identical to the pre-existing behavior). For direct-obs-consuming models
+    (everything except the SDA priors) the dropped channels are NaN'd out of
+    ``batch["obs"]`` before the model ever sees it; for the SDA priors
+    (``UnconditionalPriorCFM``/``ConditionalPriorCFM``, never obs-conditioned
+    on their own) the keep-mask is instead passed to ``sda_guided_sample`` as
+    ``obs_channel_mask``, excluding dropped-channel terms from the guidance
+    cost directly -- no zero-imputation ambiguity there. Uses the caller's
+    global torch RNG state (``torch.manual_seed`` before calling), matching
+    every other stochastic knob in this module.
     """
+    if obs_density_keep_k is not None and obs_indices is not None:
+        raise ValueError("obs_density_keep_k and obs_indices are mutually exclusive")
     model.eval()
-    is_joint = isinstance(model, (JointCFM, JointDirectUNet))
+    is_joint = isinstance(model, (JointCFM, JointCFMCoupled, JointDirectUNet))
+    is_sda_prior = isinstance(model, (UnconditionalPriorCFM, ConditionalPriorCFM))
     member_preds: list[list] = [[] for _ in range(n_members)]
-    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint else None
+    member_param_preds: list[list] = [[] for _ in range(n_members)] if is_joint and not ens_then_head else None
+    ens_then_head_params: list = [] if (is_joint and ens_then_head) else None
     all_true = []
     param_trues = []
     x0_all = []
@@ -491,24 +867,73 @@ def _run_case_inference(
         for batch in dataloader:
             # Convert tensors to device, skip None values
             batch = {k: v.to(device) if v is not None else v for k, v in batch.items()}
+
+            obs_channel_mask = None
+            if obs_density_keep_k is not None:
+                Bb, Tb, Db = batch["obs"].shape
+                if Db != NUM_SLOW + NUM_FAST:
+                    raise ValueError(
+                        f"obs_density_keep_k requires the canonical {NUM_SLOW}+{NUM_FAST}D "
+                        f"obsj2 observed subspace, got obs dim {Db}"
+                    )
+                obs_channel_mask = fast_channel_keep_mask(Bb, Tb, obs_density_keep_k, device=device)
+                if not is_sda_prior:
+                    # Direct-obs-consuming models: NaN out the dropped channels
+                    # so nan_to_num(obs, nan=0.0) zeroes them like any other
+                    # unobserved value; the SDA priors never read obs as a
+                    # network input, so their obs stays raw and the mask is
+                    # applied to the guidance cost instead (see below).
+                    batch["obs"] = apply_density_mask_to_obs(batch["obs"], obs_channel_mask)
+
             batch_obj = BatchDict(batch)
 
             for m in range(n_members):
-                if isinstance(model, JointCFM):
-                    pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
+                if isinstance(model, (JointCFM, JointCFMCoupled)):
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, N_outer=n_outer, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, N_outer=n_outer, return_params=True)
                 elif isinstance(model, JointDirectUNet):
-                    pred, params = model.sample(batch_obj, return_params=True)
-                elif isinstance(model, DirectUNet):
+                    if ens_then_head:
+                        pred = model.sample(batch_obj, return_params=False)
+                    else:
+                        pred, params = model.sample(batch_obj, return_params=True)
+                elif isinstance(model, (DirectUNet, MonaiDirectUNet)):
                     pred = model(batch_obj)
                 elif isinstance(model, VanillaCFM):
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 elif isinstance(model, (PredictStateCFM, TweedieCFM)):
                     pred = model.sample(batch_obj, N_outer=n_outer)
+                elif isinstance(model, (UnconditionalPriorCFM, ConditionalPriorCFM)):
+                    # Neither SDA prior is conditioned on obs by construction
+                    # (ConditionalPriorCFM adds params/forcing conditioning
+                    # but still never sees obs) -- state estimation requires
+                    # the observation-guided sampler (evaluation/sda_sampler.py),
+                    # not model.sample().
+                    pred, _ = sda_guided_sample(model, batch_obj, R_var=r_var,
+                                                N_outer=n_outer,
+                                                guidance_weight=guidance_weight,
+                                                n_members=1,
+                                                obs_indices=obs_indices,
+                                                obs_channel_mask=obs_channel_mask)
+                elif isinstance(model, (FourDVarNetSolver, FourDVarNetPredictStateCFM)):
+                    pred = model.sample(batch_obj, N_outer=n_outer)
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
-                if is_joint:
+                if is_joint and not ens_then_head:
                     member_param_preds[m].append(params.detach().float().cpu())
+            if ens_then_head:
+                # Average the n_members state estimates for THIS batch, then
+                # estimate params once from the ensemble-mean state (stability
+                # for the param head). member_preds keeps accumulating globally.
+                cur = [torch.cat([member_preds[m][-1]], dim=0) for m in range(n_members)]
+                x_hat_mean = torch.stack(cur, dim=-1).mean(dim=-1)
+                if isinstance(model, JointCFM):
+                    p = model.sample_params_from_state(batch_obj, x_hat_mean, N_outer=n_outer)
+                else:
+                    _, p = model.sample(batch_obj, return_params=True)
+                ens_then_head_params.append(p.detach().float().cpu())
             all_true.append(batch["true_state"].detach().cpu())
             if is_joint:
                 param_trues.append(batch["true_params"].detach().cpu())
@@ -542,10 +967,15 @@ def _run_case_inference(
         out["members"] = members
         out["trajectories"] = members.mean(axis=-1)
     if is_joint:
-        # Each member predicts a (W, P) param vector; stack+mean to get the
-        # per-window ensemble-mean params (W, P), matching params_true (W, P).
-        per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
-        out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
+        if ens_then_head:
+            # Params estimated once from the ensemble-mean state, one (W_batch, P)
+            # per batch.
+            out["params_pred"] = torch.cat(ens_then_head_params, dim=0).numpy()
+        else:
+            # Each member predicts a (W, P) param vector; stack+mean to get the
+            # per-window ensemble-mean params (W, P), matching params_true (W, P).
+            per_member_params = [torch.cat(pp, dim=0).numpy() for pp in member_param_preds]
+            out["params_pred"] = np.mean(np.stack(per_member_params, axis=0), axis=0)
         out["params_true"] = torch.cat(param_trues, dim=0).numpy()
         # Full-state initial conditions + clean forcing for the forecast-skill
         # metric (these must NOT be subsampled to the observed subspace).
@@ -561,6 +991,11 @@ def run_inference(
     obs_var_indices: tuple | None = None,
     n_members: int = 1,
     n_outer: int = 1,
+    ens_then_head: bool = False,
+    r_var: float = 0.5,
+    guidance_weight: float = 1.0,
+    obs_indices=None,
+    obs_density_keep_k: int | None = None,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -568,8 +1003,28 @@ def run_inference(
     ``trajectories``/``truth`` arrays (plus ``members`` when ``n_members > 1``;
     no metrics). To produce scores, pass these to the generic evaluator
     (``evaluate_estimates`` / ``evaluate_ensemble_estimates``).
+
+    ``r_var``/``guidance_weight``/``obs_indices`` only affect ``SDA``-style
+    models (``UnconditionalPriorCFM``/``ConditionalPriorCFM``) -- see
+    ``evaluation/sda_sampler.sda_guided_sample``; every other model type
+    ignores them. ``obs_indices`` is unrelated to this function's own
+    ``obs_var_indices`` param (that one restricts what truth gets scored
+    against; ``obs_indices`` restricts what the SDA guidance cost is allowed
+    to see, within that same 24D subspace -- e.g. ``range(8)`` for
+    slow-only-observed).
+
+    ``obs_density_keep_k`` (optional, mutually exclusive with ``obs_indices``):
+    applies the fast-Y observation-density generalization mask (see
+    ``data/obs_density.py``) to EVERY model type -- unlike
+    ``obs_indices``, this is not SDA-specific: direct-obs-consuming models get
+    the dropped fast-Y channels NaN'd out of ``obs`` itself, while the SDA
+    priors get the keep-mask forwarded to the guidance cost. ``None``
+    (default) is a true no-op.
     """
     return {
-        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer)
+        case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
+                                  ens_then_head=ens_then_head, r_var=r_var,
+                                  guidance_weight=guidance_weight, obs_indices=obs_indices,
+                                  obs_density_keep_k=obs_density_keep_k)
         for case, dl in dataloaders.items()
     }

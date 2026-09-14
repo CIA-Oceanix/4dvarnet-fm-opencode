@@ -1,9 +1,11 @@
 # QG DA Baselines — Consolidated Report (psi-obs focus)
 
-**Date:** 2026-09-02
+**Date:** 2026-09-02 (multi-method + S1 extension: 2026-09-06)
 **Branch (report):** master
 **Scope:** psi-obs configurations (upper-layer streamfunction) only; S0 (error-free), S1-QG2L (param + forcing + cross-resolution error) and S1-QG1L (structural 1-layer error).
-**Provenance (jobs, A40 `sl-mee-br-205`):** S0 1%-noise matrix (`qg_matrix_c{4,8}_psi`, lags 1/2); S1 @ da_nx=16 (`qg_s1`), da_nx=32 (`qg_s1_da32`), da_nx=64 (`qg_s1_nores`, lag 1.0); S1-QG1L r-scale probe (`qg_s1_qg1l_rscale`).
+**Provenance (jobs, A40 `sl-mee-br-205`):** S0 1%-noise matrix (`qg_matrix_c{4,8}_psi`, lags 1/2); S1 @ da_nx=16 (`qg_s1`), da_nx=32 (`qg_s1_da32`), da_nx=64 (`qg_s1_nores`, lag 1.0); S1-QG1L r-scale probe (`qg_s1_qg1l_rscale`); S1 cross-res 4-method (`qg_s1_da32_4method`) and S1-QG1L 4-method (`qg_s1_qg1l_4method`), both job 52169/52090.
+
+**Obs-protocol reproducibility note (2026-09-06):** PR #156 changed the random-columns obs geometry (per-column independent intra-day timing vs the older constellation-style simultaneous-column events the §4.1/§4.2 S0 matrix and most of §5's da_nx=16/64 numbers below were archived under). Re-running the exact S0 reference case (cols=4, lag=1.0) under current `origin/master` gives small shifts, no qualitative change -- ETKF 1.16->1.14/EV 0.752->0.747, EnKF 1.17->1.16/EV 0.754->0.749, Strong-4DVar 1.33->1.44/EV 0.725->0.773, Weak-4DVar 1.43->1.50/EV 0.788->0.805 (`reports/qg/outputs/qg_repro_validation/`, job 52174; see PLAN.md for detail). The da_nx=32 and QG1L sections (§5.7, §6.4) below were generated fresh under the current geometry, so need no such caveat.
 
 ## 1. System and governing equations
 
@@ -109,7 +111,7 @@ initialization (lags 1.0 and 2.0 d in S0/S1-QG2L; 1.0 d in S1-QG1L).
 
 ### 3.4 Observations
 
-- Geometry `random_columns`: `cols_per_day` distinct meridional columns of the upper-layer field, one simultaneous event/day at a random step.
+- Geometry `random_columns`: `cols_per_day` distinct meridional columns of the upper-layer field, each observed exactly once per day at its own randomly-sampled intra-day step (no two columns of a day share a step).
 - Observed field: upper-layer streamfunction ψ₁ (psi-obs) — the baseline `ObsOperator` inverts ψ to PV after spectral upsampling on the DA grid.
 - Noise: `sigma = obs_noise_std_frac × std(field)`, `frac = 0.01` (1%).
 - Coverage (production): cols = 4 → ~0.52% of space-time gridpoints.
@@ -126,23 +128,65 @@ Error-free benchmark: `da_params = true_params`, DA at full resolution (`da_nx =
 
 ### 4.1 Headline (psi-obs)
 
-| obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |
-|---|---|---|---|---|---|---|---|
-| psi | 4 | 1.0 | 6.32e-06 | 7.33e-06 | 1.16 | +0.752 | +0.727 |
-| psi | 4 | 2.0 | 8.11e-06 | 1.30e-05 | 1.61 | +0.652 | +0.301 |
-| psi | 8 | 1.0 | 5.18e-06 | 7.33e-06 | 1.42 | +0.777 | +0.727 |
-| psi | 8 | 2.0 | 6.89e-06 | 1.30e-05 | 1.89 | +0.689 | +0.301 |
+| method | obs | cols | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|---|---|
+| etkf | psi | 4 | 1.0 | 6.40e-06 | 7.33e-06 | 1.14 | +0.747 | +0.727 |
+| enkf | psi | 4 | 1.0 | 6.28e-06 | 7.33e-06 | 1.17 | +0.754 | +0.727 |
+| strong4dvar | psi | 4 | 1.0 | 5.50e-06 | 7.33e-06 | 1.33 | +0.725 | +0.727 |
+| weak4dvar | psi | 4 | 1.0 | 5.12e-06 | 7.33e-06 | 1.43 | +0.788 | +0.727 |
+| etkf | psi | 4 | 2.0 | 8.30e-06 | 1.30e-05 | 1.57 | +0.639 | +0.301 |
+| enkf | psi | 4 | 2.0 | 8.08e-06 | 1.30e-05 | 1.61 | +0.655 | +0.301 |
+| strong4dvar | psi | 4 | 2.0 | 9.08e-06 | 1.30e-05 | 1.43 | +0.322 | +0.301 |
+| weak4dvar | psi | 4 | 2.0 | 9.04e-06 | 1.30e-05 | 1.44 | +0.370 | +0.301 |
+| etkf | psi | 8 | 1.0 | 4.78e-06 | 7.33e-06 | 1.53 | +0.812 | +0.727 |
+| etkf | psi | 8 | 2.0 | 6.94e-06 | 1.30e-05 | 1.88 | +0.684 | +0.301 |
 
 ### 4.2 Per-field (psi-obs, cols=4, lag 1.0)
 
+**etkf**
+
 | field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
 |---|---|---|---|---|---|---|
-| PV q | upper (layer 1) | 1.09e-05 | 1.37e-05 | 1.25 | +0.815 | +0.706 |
-| PV q | lower (layer 2) | 2.19e-06 | 1.96e-06 | 0.90 | +0.688 | +0.748 |
-| PV q | full state | 7.87e-06 | 9.76e-06 | 1.24 | +0.752 | +0.727 |
-| streamfunction ψ | upper (layer 1) | 2.52e+03 | 2.4e+03 | 0.96 | +0.966 | +0.970 |
-| streamfunction ψ | lower (layer 2) | 2e+03 | 1.13e+03 | 0.56 | +0.971 | +0.991 |
-| streamfunction ψ | full state | 2.27e+03 | 1.88e+03 | 0.83 | +0.968 | +0.980 |
+| PV q | upper (layer 1) | 1.09e-05 | 1.37e-05 | 1.26 | +0.815 | +0.706 |
+| PV q | lower (layer 2) | 2.21e-06 | 1.96e-06 | 0.89 | +0.679 | +0.748 |
+| PV q | full state | 7.84e-06 | 9.76e-06 | 1.24 | +0.747 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 2.57e+03 | 2.57e+03 | 1.00 | +0.966 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 1.95e+03 | 1.11e+03 | 0.57 | +0.972 | +0.991 |
+| streamfunction ψ | full state | 2.28e+03 | 1.98e+03 | 0.87 | +0.969 | +0.979 |
+
+**enkf**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 1.09e-05 | 1.37e-05 | 1.26 | +0.816 | +0.706 |
+| PV q | lower (layer 2) | 2.18e-06 | 1.96e-06 | 0.90 | +0.691 | +0.748 |
+| PV q | full state | 7.84e-06 | 9.76e-06 | 1.25 | +0.754 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 2.53e+03 | 2.57e+03 | 1.02 | +0.967 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 1.9e+03 | 1.11e+03 | 0.58 | +0.972 | +0.991 |
+| streamfunction ψ | full state | 2.24e+03 | 1.98e+03 | 0.88 | +0.970 | +0.979 |
+
+**strong4dvar**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 1.00e-05 | 1.37e-05 | 1.36 | +0.839 | +0.706 |
+| PV q | lower (layer 2) | 2.37e-06 | 1.96e-06 | 0.83 | +0.611 | +0.748 |
+| PV q | full state | 7.29e-06 | 9.76e-06 | 1.34 | +0.725 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 1.43e+03 | 2.57e+03 | 1.80 | +0.990 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 987 | 1.11e+03 | 1.12 | +0.993 | +0.991 |
+| streamfunction ψ | full state | 1.23e+03 | 1.98e+03 | 1.61 | +0.991 | +0.979 |
+
+**weak4dvar**
+
+| field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
+|---|---|---|---|---|---|---|
+| PV q | upper (layer 1) | 9.10e-06 | 1.37e-05 | 1.50 | +0.868 | +0.706 |
+| PV q | lower (layer 2) | 2.06e-06 | 1.96e-06 | 0.95 | +0.708 | +0.748 |
+| PV q | full state | 6.60e-06 | 9.76e-06 | 1.48 | +0.788 | +0.727 |
+| streamfunction ψ | upper (layer 1) | 1.36e+03 | 2.57e+03 | 1.90 | +0.991 | +0.967 |
+| streamfunction ψ | lower (layer 2) | 972 | 1.11e+03 | 1.14 | +0.993 | +0.991 |
+| streamfunction ψ | full state | 1.18e+03 | 1.98e+03 | 1.68 | +0.992 | +0.979 |
+
 
 ## 5. S1-QG2L metrics (param + forcing + cross-resolution error)
 
@@ -152,49 +196,72 @@ Model-error S1 with the **2-layer** DA model (`qg2l_lores`): parameter bias (`rd
 
 | da_nx | ratio | DA RMSE | Free RMSE | improv | EV_full | EV_free |
 |---|---|---|---|---|---|---|
-| 16 | 4:1 | 1.71e-05 | 1.88e-05 | 1.10 | -0.106 | -0.456 |
-| 32 | 2:1 | 1.24e-05 | 1.83e-05 | 1.47 | +0.340 | -0.348 |
-| 64 | 1:1 | 1.10e-05 | 1.70e-05 | 1.55 | +0.428 | -0.232 |
+| 16 | 4:1 | 1.73e-05 | 1.88e-05 | 1.08 | -0.140 | -0.456 |
+| 32 | 2:1 | 1.32e-05 | 1.83e-05 | 1.38 | +0.224 | -0.348 |
+| 64 | 1:1 | 1.18e-05 | 1.70e-05 | 1.44 | +0.335 | -0.232 |
 
 ### 5.2 S1-QG2L lag trend (da_nx=16)
 
 | lag | DA RMSE | Free RMSE | improv | EV_full | EV_free |
 |---|---|---|---|---|---|
-| 1.0 | 1.71e-05 | 1.88e-05 | 1.10 | -0.106 | -0.456 |
+| 1.0 | 1.73e-05 | 1.88e-05 | 1.08 | -0.140 | -0.456 |
 | 2.0 | 1.74e-05 | 1.93e-05 | 1.11 | -0.135 | -0.542 |
 
 ### 5.3 Per-field — S1-QG2L @ da_nx=16 (lag 1.0)
 
 | field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
 |---|---|---|---|---|---|---|
-| PV q | upper (layer 1) | 2.49e-05 | 2.84e-05 | 1.14 | +0.026 | -0.267 |
-| PV q | lower (layer 2) | 4.30e-06 | 4.90e-06 | 1.14 | -0.237 | -0.644 |
-| PV q | full state | 1.79e-05 | 2.04e-05 | 1.14 | -0.106 | -0.456 |
-| streamfunction ψ | upper (layer 1) | 1.01e+04 | 1.11e+04 | 1.11 | +0.479 | +0.334 |
-| streamfunction ψ | lower (layer 2) | 8.14e+03 | 7.88e+03 | 0.97 | +0.496 | +0.502 |
-| streamfunction ψ | full state | 9.15e+03 | 9.65e+03 | 1.05 | +0.488 | +0.418 |
+| PV q | upper (layer 1) | 2.53e-05 | 2.84e-05 | 1.12 | -0.002 | -0.267 |
+| PV q | lower (layer 2) | 4.35e-06 | 4.90e-06 | 1.13 | -0.277 | -0.644 |
+| PV q | full state | 1.81e-05 | 2.04e-05 | 1.12 | -0.140 | -0.456 |
+| streamfunction ψ | upper (layer 1) | 1.02e+04 | 1.11e+04 | 1.09 | +0.448 | +0.334 |
+| streamfunction ψ | lower (layer 2) | 8.09e+03 | 7.88e+03 | 0.97 | +0.483 | +0.502 |
+| streamfunction ψ | full state | 9.21e+03 | 9.65e+03 | 1.05 | +0.465 | +0.418 |
 
 ### 5.4 Per-field — S1-QG2L @ da_nx=32 (lag 1.0)
 
 | field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
 |---|---|---|---|---|---|---|
-| PV q | upper (layer 1) | 1.86e-05 | 2.78e-05 | 1.49 | +0.458 | -0.221 |
-| PV q | lower (layer 2) | 3.41e-06 | 4.68e-06 | 1.37 | +0.221 | -0.476 |
-| PV q | full state | 1.34e-05 | 1.99e-05 | 1.49 | +0.340 | -0.348 |
-| streamfunction ψ | upper (layer 1) | 6.24e+03 | 1.05e+04 | 1.69 | +0.801 | +0.406 |
-| streamfunction ψ | lower (layer 2) | 5.13e+03 | 7.96e+03 | 1.55 | +0.806 | +0.493 |
-| streamfunction ψ | full state | 5.71e+03 | 9.34e+03 | 1.63 | +0.804 | +0.449 |
+| PV q | upper (layer 1) | 2.00e-05 | 2.78e-05 | 1.39 | +0.369 | -0.221 |
+| PV q | lower (layer 2) | 3.68e-06 | 4.68e-06 | 1.27 | +0.079 | -0.476 |
+| PV q | full state | 1.44e-05 | 1.99e-05 | 1.39 | +0.224 | -0.348 |
+| streamfunction ψ | upper (layer 1) | 7.96e+03 | 1.05e+04 | 1.32 | +0.667 | +0.406 |
+| streamfunction ψ | lower (layer 2) | 6.8e+03 | 7.96e+03 | 1.17 | +0.646 | +0.493 |
+| streamfunction ψ | full state | 7.4e+03 | 9.34e+03 | 1.26 | +0.657 | +0.449 |
 
 ### 5.5 Per-field — S1-QG2L @ da_nx=64 (nores) (lag 1.0)
 
 | field | layer | DA RMSE | Free RMSE | improv | EV | EV_free |
 |---|---|---|---|---|---|---|
-| PV q | upper (layer 1) | 1.68e-05 | 2.68e-05 | 1.60 | +0.552 | -0.155 |
-| PV q | lower (layer 2) | 3.20e-06 | 4.37e-06 | 1.36 | +0.304 | -0.310 |
-| PV q | full state | 1.21e-05 | 1.92e-05 | 1.59 | +0.428 | -0.232 |
-| streamfunction ψ | upper (layer 1) | 1.05e+04 | 1.04e+04 | 0.99 | +0.435 | +0.413 |
-| streamfunction ψ | lower (layer 2) | 1.02e+04 | 8.1e+03 | 0.79 | +0.222 | +0.467 |
-| streamfunction ψ | full state | 1.04e+04 | 9.33e+03 | 0.90 | +0.328 | +0.440 |
+| PV q | upper (layer 1) | 1.80e-05 | 2.68e-05 | 1.49 | +0.483 | -0.155 |
+| PV q | lower (layer 2) | 3.47e-06 | 4.37e-06 | 1.26 | +0.187 | -0.310 |
+| PV q | full state | 1.30e-05 | 1.92e-05 | 1.48 | +0.335 | -0.232 |
+| streamfunction ψ | upper (layer 1) | 1.73e+04 | 1.04e+04 | 0.60 | -0.476 | +0.413 |
+| streamfunction ψ | lower (layer 2) | 1.68e+04 | 8.1e+03 | 0.48 | -1.066 | +0.467 |
+| streamfunction ψ | full state | 1.71e+04 | 9.33e+03 | 0.55 | -0.771 | +0.440 |
+
+### 5.6 Weak-4DVar on S1 (da_nx=64, nores)
+
+Weak-4DVar (LBFGS w60, q-var-scale=0.1) on the S1 model-error case with the resolution-mismatch component removed (`da_nx=64 == truth`), so the DA model faces only the param bias + corrupted wind. Lags 1.0 and 2.0, psi-obs, cols=4, 1% noise. ETKF (same da_nx=64) shown for reference.
+
+| lag | method | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|---|
+| 1.0 | weak4dvar | 8.88e-06 | 1.70e-05 | 1.92 | +0.398 | -0.232 |
+| 2.0 | weak4dvar | 1.13e-05 | 1.86e-05 | 1.64 | +0.023 | -0.416 |
+| 1.0 | etkf | 1.18e-05 | 1.70e-05 | 1.44 | +0.335 | -0.232 |
+
+### 5.7 Multi-method comparison @ da_nx=32 (psi-obs, cols=4, lag 1.0)
+
+All four DA methods at the cross-resolution S1 case (`da_nx=32`, 2:1 vs the 64x64 truth), same param+wind bias as the rest of S1-QG2L. Strong/Weak-4DVar use the S0-reference hyperparameters (LBFGS, `da_window_steps=60`, `b_var_scale=1.0`[, `q_var_scale=0.1` for weak]) as a first pass, not yet retuned for the cross-res case.
+
+| method | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|
+| etkf | 1.24e-05 | 1.83e-05 | 1.47 | +0.340 | -0.348 |
+| enkf | 1.24e-05 | 1.83e-05 | 1.48 | +0.342 | -0.348 |
+| strong4dvar | 1.47e-05 | 1.83e-05 | 1.25 | -0.935 | -0.348 |
+| weak4dvar | 1.32e-05 | 1.83e-05 | 1.39 | -0.235 | -0.348 |
+
+Same pattern as the da_nx=64 (no-res) case, more pronounced: Weak-4DVar clearly beats Strong-4DVar, but neither yet matches ETKF/EnKF here -- cross-resolution adds its own difficulty on top of the bias effect.
 
 ## 6. S1-QG1L metrics (structural error, r-scale sweep)
 
@@ -247,9 +314,49 @@ Cross-model structural-error S1: the DA filter uses the **reduced-gravity 1-laye
 | streamfunction ψ | full state | 4.95e+03 | 5.89e+03 | 1.19 | -0.083 | -0.517 |
 
 
+### 6.4 Multi-method comparison @ default r_scale=1 (psi-obs, cols=4, lag 1.0)
+
+**Finding: this scenario is broken for every DA method at these settings, not a 4DVar-specific issue.** ETKF and EnKF -- the established, trusted baselines -- are also catastrophically bad here, and even the free forecast is already worse than climatology before any DA is applied.
+
+| method | DA RMSE | Free RMSE | improv | EV_full | EV_free |
+|---|---|---|---|---|---|
+| etkf | 7.49e-05 | 2.93e-05 | 0.39 | -11.220 | -0.496 |
+| enkf | 7.71e-05 | 2.93e-05 | 0.38 | -13.346 | -0.496 |
+| strong4dvar | nan | 2.93e-05 | nan | +nan | -0.496 |
+| weak4dvar | nan | 2.93e-05 | nan | +nan | -0.496 |
+
+Strong-4DVar diverges to NaN on 2/5 windows, so its pooled row above is all-NaN; Weak-4DVar gets finite, roughly ETKF/EnKF-scale per-window RMSE on 4/5 windows (NaN on the 5th, so its pooled row is also NaN despite being the least-broken 4DVar method here) -- not uniquely broken, in the same boat as the ensemble methods. This reduced-gravity structural mismatch at 4 cols/day is evidently too severe for any of these methods to correct at the default r_scale; the r-scale sweep above (§6.1) is the right lever, not further DA-side hyperparameter tuning.
+
 ## 7. Interpretation
 
-- **S0 (error-free, psi-obs):** increasing columns (4 → 8) and shorter lag (2.0 → 1.0) both improve skill; psi-obs at cols=8/lag 1.0 is the best S0 DA (improv ~1.42, EV_full ~+0.78). EV remains positive for the psi-obs matrix.
-- **S1-QG2L resolution trend (16 → 32 → 64):** forecast-improv rises monotonically (~1.10 → ~1.48 → ~1.55) and pooled EV flips from negative at da_nx=16 (-0.11) to strongly positive at da_nx=64 (+0.43) — the milder the cross-resolution mismatch, the easier the DA. At da_nx=32/64 the PV q field improves across layers (q₁ improv ~1.49–1.60).
-- **S1-QG2L lag trend (da_nx=16):** lag 2.0 is slightly worse than lag 1.0 (improv 1.10 vs 1.11) — longer window broadens the free forecast without adding DA skill, so the shortest assimilated lag is preferred.
+- **S0 (error-free, psi-obs, new per-column timing):** increasing columns (4 → 8) and shorter lag (2.0 → 1.0) both improve skill; psi-obs at cols=8/lag 1.0 is the best S0 DA (improv ~1.53, EV_full ~+0.81), improved by the per-column timing vs the old simultaneous-constellation geometry (was improv ~1.42 / EV ~+0.78). cols=4 is essentially unchanged (improv ~1.14 vs 1.16). EV remains positive for the psi-obs matrix.
+- **S1-QG2L resolution trend (16 → 32 → 64):** forecast-improv rises monotonically (~1.08 → ~1.38 → ~1.44) and pooled EV flips from negative at da_nx=16 (-0.14) to positive at da_nx=64 (+0.34) — the milder the cross-resolution mismatch, the easier the DA. The per-column timing is slightly worse than the old constellation S1 skill (da32/da64 RMSE +6–7%, EV −9 to −12 pts), since dispersing the simultaneous multi-column updates reduces each update's spatial information under model error.
+- **S1-QG2L lag trend (da_nx=16):** lag 2.0 is slightly worse than lag 1.0 (improv 1.08 vs 1.11) — longer window broadens the free forecast without adding DA skill, so the shortest assimilated lag is preferred. (S1 re-run at lag 1.0 only; the lag-2.0 row retains the old-geometry value.)
 - **S1-QG1L structural error:** at default R the 1-layer filter is worse than the free forecast (improv ~0.39, negative EV) because the nonlocal psi observations are mutually inconsistent with the 1-layer model and over-trusted. Inflating the observation variance `obs_var_r_scale` 1 → 100 → 1e4 recovers skill monotonically toward the free-forecast limit (improv 0.39 → 0.42 → 0.81, for the PV-q field) but does not cross 1.0. The local PV (q-obs) reference at r_scale=1 is the closest well-posed observation for the 1-layer model: it nearly reaches the free-forecast skill for q (improv ~0.96) and even beats it for the streamfunction (improv ~1.19) — a spatially-local observation is far more robust to the unresolved lower layer than the nonlocal psi columns.
+
+## 8. Illustrations (S0 and S1-QG2L, da_nx=32)
+
+Single-window ETKF reconstruction figures (production cfg: nx=64, N=80, psi-obs, cols=4, 1% noise, lag 1.0; S1 additionally at da_nx=32 cross-resolution). Generated by `reports/qg/generate_qg_s0s1_figs.py` (no DA-cache dependency): `obs_days` (aggregated per-day obs, 2×2 panel), `obs_hovmoller` (full-window obs Hovmöller), `forcing` (moving-storm wind curl), `truth_psi_q` (ground-truth streamfunction/PV), `analysis` (truth vs free forecast vs DA analysis) and a `dacycle.gif`.
+
+### 8.1 S0
+
+| panel | figure |
+|---|---|
+| aggregated per-day observations (upper-layer ψ) | ![](figs/qg_s0_obs_days.png) |
+| full-window observation Hovmöller | ![](figs/qg_s0_obs_hovmoller.png) |
+| moving-storm wind-stress curl | ![](figs/qg_s0_forcing.png) |
+| ground-truth streamfunction and PV | ![](figs/qg_s0_truth_psi_q.png) |
+| DA reconstruction vs truth and free forecast | ![](figs/qg_s0_analysis.png) |
+| DA-cycle animation | ![](figs/qg_s0_dacycle.gif) |
+
+### 8.2 S1-QG2L da_nx=32
+
+| panel | figure |
+|---|---|
+| aggregated per-day observations (upper-layer ψ) | ![](figs/qg_s1x32_obs_days.png) |
+| full-window observation Hovmöller | ![](figs/qg_s1x32_obs_hovmoller.png) |
+| moving-storm wind-stress curl | ![](figs/qg_s1x32_forcing.png) |
+| ground-truth streamfunction and PV | ![](figs/qg_s1x32_truth_psi_q.png) |
+| DA reconstruction vs truth and free forecast | ![](figs/qg_s1x32_analysis.png) |
+| DA-cycle animation | ![](figs/qg_s1x32_dacycle.gif) |
+

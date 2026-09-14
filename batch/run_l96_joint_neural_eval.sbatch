@@ -20,14 +20,17 @@ export PYTHONUNBUFFERED=1
 DATASET="experiments/l96_datasets_obsj2_int100_nwin200.pt"
 
 # experiment|extra_flags  (tau0 flag required for tau=0-trained joint CFM ckpts:
-# Lightning hyper_parameters do not record train_tau_0_only)
+# Lightning hyper_parameters do not record train_tau_0_only; --config is needed
+# to reconstruct the attention-pool param head and param_ref)
 TASKS=(
-  "L7_joint_cfm_s0s1|--train-tau0-only"
-  "L8_joint_direct_unet_s0s1|"
-  "L9_joint_cfm_s0s1_multitau|"
+  "L7_joint_cfm_s0s1|config/experiment/L7_joint_cfm_s0s1.yaml|--train-tau0-only"
+  "L8_joint_direct_unet_s0s1|config/experiment/L8_joint_direct_unet_s0s1.yaml|"
+  "L9_joint_cfm_s0s1_multitau|config/experiment/L9_joint_cfm_s0s1_multitau.yaml|"
 )
 SPEC=${TASKS[$SLURM_ARRAY_TASK_ID]}
 EXP=${SPEC%%|*}
+SPEC=${SPEC#*|}
+CFG=${SPEC%%|*}
 FLAGS=${SPEC#*|}
 
 echo "============================================"
@@ -37,7 +40,8 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo "============================================"
 
 python eval_joint_neural_l96.py \
-  --checkpoint "experiments/${EXP}/checkpoints/stage1_best.ckpt" \
+  --checkpoint "experiments/${EXP}/checkpoints/stage2_best.ckpt" \
+  --config "${CFG}" \
   --dataset "${DATASET}" \
   --num-windows 200 \
   --obs-interval 100 \

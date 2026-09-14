@@ -79,11 +79,21 @@ Stop for user input only on a genuine external blocker:
 ### Hygiene
 
 - Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
-- Add a CHANGELOG.md entry (see format below) for every merged change.
+- Add a CHANGELOG.d/ fragment (see format below) for every merged change.
+- Don't reformat or restyle unrelated code in the same change — keep diffs scoped to
+  the requested task, even when touching a file that could use a broader cleanup.
 
 ## Changelog Format
 
-Each entry in `CHANGELOG.md` should follow this format:
+**Do NOT edit `CHANGELOG.md` directly.** Editing a single shared file's top
+section is exactly what makes every concurrently-open PR conflict with every
+other one (each inserts its entry at the same spot). Instead, add a new file
+to `CHANGELOG.d/` as part of the same PR that makes the change — new files
+never conflict with each other in git, which removes that conflict class
+entirely. See `CHANGELOG.d/README.md` for the full convention.
+
+Filename: `YYYY-MM-DD-<short-slug>.md`. Content — the same format as before,
+just in its own file now:
 
 ```
 ## YYYY-MM-DD: Short Title
@@ -93,6 +103,10 @@ Each entry in `CHANGELOG.md` should follow this format:
 **Rationale:** Why this change was made.
 **Verification:** Test command run and result.
 ```
+
+Periodically (not part of any individual PR), run
+`python scripts/assemble_changelog.py` to fold all pending fragments into
+`CHANGELOG.md` (newest first) and delete the consumed fragment files.
 
 ## Build, Lint, and Test Commands
 
@@ -115,6 +129,11 @@ Always run tests after making changes.
 - `reports/` — Report generation scripts
 - `batch/` — SLURM batch scripts for HPC
 - `tests/` — Unit and integration tests
+- Top-level entry points: `train.py` (Hydra-driven training), `run_experiment.py` /
+  `run_experiments.py` (single/batch experiment runners), and per-case-study
+  `eval_*.py` / `evaluate_all*.py` scripts (e.g. `eval_baselines.py`,
+  `evaluate_all_l96.py`, `train_qg_neural.py`) — these multiply per topic branch,
+  so this list isn't exhaustive; `ls *.py` in the relevant worktree is authoritative.
 
 ## Key Conventions
 
@@ -126,6 +145,13 @@ Always run tests after making changes.
 - **Two-stage training** pattern: Stage 1 trains the mean estimator, Stage 2 freezes it and trains the residual
 - **Data** is generated on-the-fly; no large data files committed to git
 - **Tests** use `pytest` with markers (`@pytest.mark.slow`) for expensive tests
+- **LR scheduling default (as of 2026-09-10):** cosine-annealed LR (`use_cosine_scheduler:
+  true`) is the deliberate, standing default for training runs -- not opt-in. This is a
+  project policy decision, not an accident: an earlier *unintentional* version of this same
+  flip was caught and reverted during PR #176's review specifically because it would have
+  silently retrained ~71 untouched configs with no explanation. See CHANGELOG.md's
+  2026-09-10 "FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default"
+  entry before reverting this default on sight.
 
 ## When Making Model Changes
 

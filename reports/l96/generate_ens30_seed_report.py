@@ -66,8 +66,8 @@ def main():
 
     for scheme, label in [("no1", "1-step (n_outer=1)"), ("no10", "10-step (n_outer=10)")]:
         runs = collect(scheme, seeds)
-        new = [r for l, r in runs if "seed0" not in l]
-        orig = [r for l, r in runs if "seed0" in l]
+        new = [r for run_lbl, r in runs if "seed0" not in run_lbl]
+        orig = [r for run_lbl, r in runs if "seed0" in run_lbl]
         r_arr = np.array([r["rmse"] for r in new])
         e_arr = np.array([r["ev"] for r in new])
         s_arr = np.array([r["es"] for r in new])
@@ -90,14 +90,14 @@ def main():
     lines.append("## Summary\n")
     no1_runs = collect("no1", seeds)
     no10_runs = collect("no10", seeds)
-    no1_new = np.array([r["rmse"] for l, r in no1_runs if "seed0" not in l])
-    no10_new = np.array([r["rmse"] for l, r in no10_runs if "seed0" not in l])
+    no1_new = np.array([r["rmse"] for run_lbl, r in no1_runs if "seed0" not in run_lbl])
+    no10_new = np.array([r["rmse"] for run_lbl, r in no10_runs if "seed0" not in run_lbl])
     lines.append(f"- 10-step vs 1-step RMSE ratio (mean): **{no10_new.mean()/no1_new.mean():.4f}** "
                  f"({(1-no10_new.mean()/no1_new.mean())*100:.1f}% reduction)")
     lines.append(f"- 1-step RMSE (seeds 1-5): {no1_new.mean():.4f} +- {no1_new.std():.4f}")
     lines.append(f"- 10-step RMSE (seeds 1-5): {no10_new.mean():.4f} +- {no10_new.std():.4f}")
-    lines.append(f"- Cross-seed std < 0.001 for both schemes -> the multi-tau advantage is "
-                 f"NOT a seed artifact.\n")
+    lines.append("- Cross-seed std < 0.001 for both schemes -> the multi-tau advantage is "
+                 "NOT a seed artifact.\n")
 
     lines.append("## Context (single-run anchors, not rerun)\n")
     lines.append("| scheme | RMSE |")

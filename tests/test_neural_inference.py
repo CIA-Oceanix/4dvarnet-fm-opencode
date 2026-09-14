@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """Tests for neural inference and evaluation."""
+from unittest.mock import Mock
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
-from pathlib import Path
 from omegaconf import OmegaConf
-from unittest.mock import Mock, patch
 
-from evaluation.neural_inference import (
-    load_checkpoint,
-    resolve_model_class,
-    create_model,
-    load_model,
-    run_inference,
-    _run_case_inference,
-)
 from evaluation.estimate_metrics import evaluate_estimates, evaluate_npz
+from evaluation.neural_inference import (
+    _run_case_inference,
+    create_model,
+    load_checkpoint,
+    load_model,
+    resolve_model_class,
+    run_inference,
+)
+from data.obs_density import NUM_FAST, NUM_SLOW
 from models.direct_unet import DirectUNet
-from models.vanilla_cfm import VanillaCFM, TweedieCFM, PredictStateCFM
+from models.vanilla_cfm import PredictStateCFM, TweedieCFM, VanillaCFM
 
 
 class _DictBatch:
@@ -54,28 +55,28 @@ class TestNeuralInference:
         """Test model class resolution for DirectUNet."""
         cfg = Mock()
         cfg.model = {"type": "DirectUNet"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == DirectUNet
 
     def test_resolve_model_class_vanilla_cfm(self):
         """Test model class resolution for VanillaCFM."""
         cfg = Mock()
         cfg.model = {"type": "VanillaCFM"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == VanillaCFM
 
     def test_resolve_model_class_tweedie_cfm(self):
         """Test model class resolution for TweedieCFM (V2)."""
         cfg = Mock()
         cfg.model = {"type": "tweedie_cfm"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == TweedieCFM
 
     def test_resolve_model_class_predict_state_cfm(self):
         """Test model class resolution for PredictStateCFM (V3)."""
         cfg = Mock()
         cfg.model = {"type": "predict_state_cfm"}
-        model_class, cfg_model = resolve_model_class(cfg)
+        model_class, _cfg_model = resolve_model_class(cfg)
         assert model_class == PredictStateCFM
 
     def test_create_model_tweedie_cfm(self):
@@ -244,6 +245,108 @@ class TestNeuralInference:
         expected_truth = truth[..., list(obs_var_indices)].numpy()
         assert np.allclose(out["truth"], expected_truth)
 
+    def test_obs_density_keep_k_nans_dropped_fast_channels(self):
+        """obs_density_keep_k=0 must NaN out all 16 fast-Y columns of obs
+        before a direct-obs-consuming model ever sees them, leaving the 8
+        slow-X columns untouched."""
+        D = NUM_SLOW + NUM_FAST
+        B, T = 3, 5
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0  # never exactly 0/NaN by construction
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        torch.manual_seed(0)
+        out = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                  obs_density_keep_k=0)
+        traj = torch.from_numpy(out["trajectories"])
+        assert not torch.isnan(traj[..., :NUM_SLOW]).any()
+        assert torch.isnan(traj[..., NUM_SLOW:]).all()
+
+    def test_obs_density_keep_k_full_density_is_noop(self):
+        D = NUM_SLOW + NUM_FAST
+        B, T = 2, 4
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        out_baseline = _run_case_inference(model, dataloader, torch.device("cpu"))
+        out_full = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       obs_density_keep_k=NUM_FAST)
+        assert np.allclose(out_baseline["trajectories"], out_full["trajectories"])
+
+    def test_obs_density_keep_k_partial_keeps_exact_count(self):
+        D = NUM_SLOW + NUM_FAST
+        B, T = 4, 6
+
+        class _Identity(DirectUNet):
+            def __init__(self):
+                super().__init__(state_dim=D, hidden_channels=[4, 8])
+            def forward(self, batch):
+                return batch.obs
+
+        obs = torch.rand(B, T, D) + 1.0
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _Identity()
+
+        torch.manual_seed(0)
+        out = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                  obs_density_keep_k=4)
+        traj = torch.from_numpy(out["trajectories"])
+        finite_fast = ~torch.isnan(traj[..., NUM_SLOW:])
+        assert torch.all(finite_fast.sum(dim=-1) == 4)
+
+    def test_obs_density_keep_k_and_obs_indices_mutually_exclusive(self):
+        D = NUM_SLOW + NUM_FAST
+        obs = torch.rand(2, 3, D)
+        dataloader = _build_case_dataloader(obs, obs)
+        model = _IdentityModel()
+        with pytest.raises(ValueError):
+            _run_case_inference(model, dataloader, torch.device("cpu"),
+                                obs_indices=[0, 1], obs_density_keep_k=4)
+
+    def test_obs_density_keep_k_sda_prior_all_dropped_matches_zero_guidance(self):
+        """For the SDA priors, obs_density_keep_k=0 must exclude every fast-Y
+        channel from the guidance cost -- equivalent to zero guidance weight
+        on those channels but NOT on the still-fully-observed slow-X ones, so
+        this only reduces (never fully zeroes) the guidance vs. an unmasked
+        run; here we just check it runs, returns finite output, and differs
+        from the full-density (keep_k=16) run (obs_density_keep_k has a real
+        effect on the trajectory)."""
+        from models.sda import UnconditionalPriorCFM
+
+        D = NUM_SLOW + NUM_FAST
+        B, T = 1, 8
+        model = UnconditionalPriorCFM(state_dim=D, hidden_channels=[4, 8], N_outer=3)
+        model.eval()
+        obs = torch.rand(B, T, D)
+        dataloader = _build_case_dataloader(obs, obs)
+
+        torch.manual_seed(1)
+        out_full = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       n_outer=3, guidance_weight=2.0,
+                                       obs_density_keep_k=NUM_FAST)
+        torch.manual_seed(1)
+        out_zero = _run_case_inference(model, dataloader, torch.device("cpu"),
+                                       n_outer=3, guidance_weight=2.0,
+                                       obs_density_keep_k=0)
+        assert np.isfinite(out_full["trajectories"]).all()
+        assert np.isfinite(out_zero["trajectories"]).all()
+        assert not np.allclose(out_full["trajectories"], out_zero["trajectories"])
+
     def _save_lightning_ckpt(self, tmp_path, model, model_type):
         state_dict = {f"model.{k}": v for k, v in model.state_dict().items()}
         path = tmp_path / f"stage1_{model_type}.ckpt"
@@ -410,6 +513,108 @@ class TestNeuralInference:
             assert tuple(src[k].shape) == tuple(dst[k].shape), k
         for k in src:
             if "param_head" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
+    def test_load_model_joint_cfm_coupled_roundtrip(self, tmp_path):
+        """A JointCFMCoupled (UNet param-flow) checkpoint must reload with zero
+        missing/unexpected weights. The depth-3 UNet param flow uses downs/up/
+        bottleneck keys and a Sequential head (head.0/head.2), so a CNN-only
+        loader would silently drop the whole backbone and mismatch the head.
+        """
+        from models.vanilla_cfm import JointCFMCoupled
+
+        SD, PD = 24, 8
+        model = JointCFMCoupled(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32], time_emb_dim=64,
+                                param_flow_channels=[4, 8, 16], param_flow_pool="attn")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_cfm_coupled")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointCFMCoupled)
+        assert loaded.state_dim == SD and loaded.param_dim == PD
+        assert loaded.unet.cond_encoder.proj.in_features == 2 * SD + 1 + PD
+        assert type(loaded.param_flow).__name__ == "ParamFlowUNet"
+        assert cfg.model.param_dim == PD
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_flow" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
+    def test_load_model_joint_direct_unet_unet_head_roundtrip(self, tmp_path):
+        """A JointDirectUNet with a UNet param head (param_head_backbone=unet)
+        must reload with the UNet head reconstructed (backbone inferred from the
+        param_head.downs.* keys), not a CNN head that would drop every key of
+        the encoder-decoder and the Sequential head output conv.
+        """
+        from models.direct_unet import JointDirectUNet
+
+        SD, PD = 24, 8
+        model = JointDirectUNet(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32],
+                                param_head_channels=[4, 8, 16],
+                                param_head_pool="attn", param_head_backbone="unet")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_direct_unet")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointDirectUNet)
+        assert type(loaded.param_head).__name__ == "ParamHeadUNet"
+        assert cfg.model.param_head_backbone == "unet"
+        assert loaded.param_dim == PD
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_head" in k:
+                assert torch.allclose(src[k], dst[k]), k
+
+    def test_load_model_joint_direct_unet_cnn_head_unchanged(self, tmp_path):
+        """The default CNN head back-compat: `joint_direct_unet` checkpoints with
+        a ParamHeadCNN must still resolve to a CNN head (backbone=cnn).
+        """
+        from models.direct_unet import JointDirectUNet
+
+        SD, PD = 24, 8
+        model = JointDirectUNet(state_dim=SD, param_dim=PD,
+                                hidden_channels=[8, 16, 32],
+                                param_head_channels=[4, 8, 16])
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_direct_unet")
+        loaded, cfg = load_model(path)
+        assert type(loaded.param_head).__name__ == "ParamHeadCNN"
+        assert cfg.model.param_head_backbone == "cnn"
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst)
+
+    def test_load_model_joint_cfm_attn_pool_roundtrip(self, tmp_path):
+        """An attention-pool JointCFM checkpoint must reload with the attn_pool
+        reconstructed (param_flow_pool inferred from the state dict), not fall
+        back to the mean pool (which would silently drop attn_pool.query).
+        """
+        from models.vanilla_cfm import JointCFM
+
+        SD, PD = 24, 8
+        pf_channels = [4, 8, 16]
+        model = JointCFM(state_dim=SD, param_dim=PD,
+                         hidden_channels=[8, 16, 32], param_flow_channels=pf_channels,
+                         param_flow_pool="attn")
+        assert hasattr(model.param_flow, "attn_pool")
+        path = self._save_lightning_ckpt(tmp_path, model, "joint_cfm")
+        loaded, cfg = load_model(path)
+        assert isinstance(loaded, JointCFM)
+        assert hasattr(loaded.param_flow, "attn_pool"), \
+            "attn-pool JointCFM loaded with the mean pool"
+        assert cfg.model.param_flow_pool == "attn"
+        src = model.state_dict()
+        dst = loaded.state_dict()
+        assert set(src) == set(dst), f"key mismatch: {set(src) ^ set(dst)}"
+        for k in src:
+            assert tuple(src[k].shape) == tuple(dst[k].shape), k
+        for k in src:
+            if "param_flow" in k:
                 assert torch.allclose(src[k], dst[k]), k
 
     def test_evaluate_npz_roundtrip(self, tmp_path):

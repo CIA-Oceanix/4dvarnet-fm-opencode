@@ -17,12 +17,18 @@ from evaluation.baselines import (
     _build_qg_col_loc_matrices,
     _build_qg_loc_matrices,
 )
+from evaluation.metrics import crps as _crps
 from models.dynamics import DynamicsBase
 from models.qg1l_dynamics import QG1LDynamics
 from models.qg_dynamics import QGDynamics
 from models.qg_interp import spectral_resize_2d
+from models.qg_psi_dynamics import wrap_psi
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# State clip applied by the DA dynamics constructors (see `_build_dyn`); the
+# 4D-Var control-fwd clips to the same envelope so trajectories stay finite.
+_QG_STATE_CLIP = 1e-3
 
 
 class WindStateAdapter(DynamicsBase):
@@ -89,7 +95,7 @@ def _upsample_to_truth(state, da_nx, nlayers, truth_n, device):
     return _resize_state_layers(state, nlayers, da_nx, truth_n, device)
 
 
-def _build_dyn(cfg, window, device):
+def _build_dyn(cfg, window, device, psi_state: bool = False):
     da_params = window["da_params"]
     model = window["da_model"]
     nx_da = _da_nx_for_window(cfg, window)
@@ -105,6 +111,8 @@ def _build_dyn(cfg, window, device):
     else:
         inner = QGDynamics(**common, delta=cfg.delta,
                            U2=da_params.get("U2", cfg.U2))
+    if psi_state:
+        inner = wrap_psi(inner, model)
     return WindStateAdapter(inner.to(device))
 
 
@@ -133,15 +141,14 @@ def _q_alongtrack_obs(cfg, window, device):
             obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=torch.Generator().manual_seed(cfg.seed + 8000))
     elif "obs_columns" in window:
         cols_t = window["obs_columns"]
-        C = cols_t.shape[1]
-        obs = torch.full((T, C * ny), float("nan"))
+        obs = torch.full((T, ny), float("nan"))
         obs_mask = window["obs_mask"]
         obs_steps = obs_mask.nonzero(as_tuple=False).flatten().tolist()
         rng = torch.Generator().manual_seed(cfg.seed + 8000)
         for t in obs_steps:
-            for ci, x_col in enumerate(cols_t[t].tolist()):
-                if 0 <= x_col < nx:
-                    obs[t, ci * ny:(ci + 1) * ny] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
+            x_col = int(cols_t[t])
+            if 0 <= x_col < nx:
+                obs[t] = q1[t, :, x_col] + sigma * torch.randn(ny, generator=rng)
     else:
         obs = torch.full((T, ny), float("nan"))
     return obs.to(device), sigma ** 2, field_std
@@ -162,8 +169,20 @@ def _per_pass_indices(cfg, window):
 
 
 def _event_columns(cfg, window):
-    """Extract column lists per time for random_columns geometry."""
-    return window["obs_columns"]
+    """Extract column lists per time for random_columns geometry.
+
+    Each masked step observes exactly one x-column, so the per-time column list
+    is a singleton `[x_col]` at observed steps and `None` otherwise, matching
+    the H-operator contract (list of column lists per time, e.g. [[0], None, …]).
+    """
+    nx = cfg.nx
+    cols_t = window["obs_columns"]
+    per_time = [None] * cfg.num_steps
+    for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
+        x_col = int(cols_t[t])
+        if 0 <= x_col < nx:
+            per_time[t] = [x_col]
+    return per_time
 
 
 def _psi_h(dyn, obs_cols, ny, nx, device):
@@ -214,15 +233,11 @@ def _q_obs_indices_t(cfg, window):
         return per_time
     elif "obs_columns" in window:
         cols_t = window["obs_columns"]
-        C = cols_t.shape[1]
         per_time = [None] * T
         for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
-            idx = []
-            for ci in range(C):
-                x_col = int(cols_t[t, ci])
-                if 0 <= x_col < nx:
-                    idx.extend([y * nx + x_col for y in range(ny)])
-            per_time[t] = idx if idx else None
+            x_col = int(cols_t[t])
+            if 0 <= x_col < nx:
+                per_time[t] = [y * nx + x_col for y in range(ny)]
         return per_time
     return [None] * T
 
@@ -242,6 +257,23 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         per_time = _q_obs_indices_t(cfg, window)
         obs_operator = ObsOperator(cfg.state_dim, obs_indices_t=per_time)
         return obs, r_var * obs_var_r_scale, obs_operator, _build_qg_loc_matrices
+    if obs_var == "psi_state":
+        # Psi-state: the DA state itself is the streamfunction. For a
+        # same-resolution DA model we could use a trivial index lookup, but to
+        # support cross-resolution (S1, da_nx < nx) we use the H-mode operator
+        # `_psi_h`, which spectrally upsamples the DA-model psi-state to the
+        # obs (truth) grid before selecting the observed upper-layer columns
+        # (identical geometry to the `psi` path, but reading the psi-state
+        # directly -- `_PsiMixin.streamfunctions` is the identity reshape).
+        dyn = _build_dyn(cfg, window, device, psi_state=True)
+        obs_cols = _event_columns(cfg, window)
+        h = _psi_h(dyn, obs_cols, cfg.ny, cfg.nx, device)
+        obs = window["obs"].to(device)
+        r_var = (cfg.obs_noise_std_frac
+                 * float(window["target_state_psi"].std())) ** 2
+        od = cfg.ny
+        obs_op = ObsOperator(dyn.state_dim, h=h, h_index_at=None, n_obs=od)
+        return obs, r_var * obs_var_r_scale, obs_op, _build_qg_col_loc_matrices
     else:
         dyn = _build_dyn(cfg, window, device)
         obs_cols = _event_columns(cfg, window)
@@ -254,7 +286,7 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
 def _obs_spec_rc(cfg, window, device):
     obs = window["obs"].to(device)
     r_var = (cfg.obs_noise_std_frac * float(window["target_state_psi"].std())) ** 2
-    od = cfg.cols_per_day * cfg.ny
+    od = cfg.ny
     return obs, r_var, od
 
 
@@ -426,7 +458,7 @@ def _free_forecast_init(cfg, window, init_lag_days, device):
 
 
 def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state,
-                        upper_only=False):
+                        upper_only=False, psi_state=False):
     """RMSE of the no-obs model forecast rolled from a shared init state.
 
     `init_state` is the SAME initial condition used to seed the DA ensemble, so
@@ -435,11 +467,16 @@ def _free_forecast_rmse(cfg, dyn, window, device, forcing, init_state,
     DA model (S1), `init_state` is in DA-model space and the rolled forecast is
     spectrally upsampled to the truth grid before the RMSE is taken. For a
     1-layer DA model (qg1l), `upper_only=True` compares the roll against the
-    truth's upper layer only.
+    truth's upper layer only. For a psi-state DA model (`psi_state=True`),
+    `init_state`/the roll are streamfunctions and are converted back to PV
+    before comparison against the q-space truth.
     """
     truth = window["true_state"].float()
     roll = dyn.rollout_trajectory(init_state, cfg.num_steps - 1, wind_state=forcing)
     roll = roll.detach().cpu().numpy()
+    if psi_state:
+        roll = dyn.inner.psi_to_q(torch.from_numpy(roll).float().to(device))
+        roll = roll.detach().cpu().numpy()
     nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
     if upper_only:
         truth = truth[:, : per_layer_for(cfg)]
@@ -453,12 +490,216 @@ def per_layer_for(cfg):
     return cfg.ny * cfg.nx
 
 
+class _QG4DVarResult:
+    __slots__ = ("trajectory",)
+
+    def __init__(self, trajectory):
+        self.trajectory = trajectory
+
+
+class QG4DVar:
+    """Strong/Weak-constraint 4D-Var for the QG q-state, daily-cycled.
+
+    q-state control with either q (index-mode) or psi (H-mode) observations,
+    cycling the background every ``da_window_steps`` (default 12 = 1 day at
+    dt=7200s). This deliberately does NOT reuse the generic
+    ``Strong4DVar``/``Weak4DVar`` in ``evaluation/baselines.py``: their closure
+    calls ``H(state)`` without the absolute time index, but the QG psi-obs
+    H-function (``_psi_h``) selects per-time columns via ``index``, and they
+    seed the background from an obs-interpolation heuristic rather than the
+    run's shared lagged init.
+
+    The control is whitened (``x0 = xb + L*w`` with ``L = b_var_scale*sigma``
+    and background cost ``0.5||w||^2``) so the solve is well-conditioned despite
+    the ~1e9 q<->psi scale gap introduced by spectral PV inversion. Weak mode
+    adds per-step whitened model-error controls ``q_t = dyn(q_{t-1}) + Lq*u_t``
+    with penalty ``0.5||u||^2``.
+    """
+
+    def __init__(self, cfg, dyn, obs_operator, da_window_steps=12,
+                 b_var_scale=1.0, q_var_scale=1.0, optimizer="adam",
+                 opt_steps=150, max_iter=40, lr=0.05, mode="strong",
+                 grad_clip=100.0, device=None):
+        self.cfg = cfg
+        self.dyn = dyn
+        self.obs_operator = obs_operator
+        self.da_window_steps = int(da_window_steps)
+        self.b_var_scale = float(b_var_scale)
+        self.q_var_scale = float(q_var_scale)
+        self.optimizer = optimizer
+        self.opt_steps = int(opt_steps)
+        self.max_iter = int(max_iter)
+        self.lr = float(lr)
+        self.mode = mode
+        self.grad_clip = float(grad_clip)
+        self.device = device or torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.state_dim = dyn.state_dim
+        self.x0_bg = None
+        self.r_var = 1.0
+
+    def _forward_strong(self, x0, win, force, clip):
+        traj = [x0]
+        for t in range(1, win):
+            s = self.dyn.step(traj[-1], force[t - 1])
+            if clip is not None:
+                s = torch.clamp(s, -clip, clip)
+            traj.append(s)
+        return torch.stack(traj)
+
+    def _forward_weak(self, x0, u, win, force, Lq, clip):
+        traj = [x0]
+        for t in range(1, win):
+            s = self.dyn.step(traj[-1], force[t - 1])
+            s = s + Lq * u[t]
+            if clip is not None:
+                s = torch.clamp(s, -clip, clip)
+            traj.append(s)
+        return torch.stack(traj)
+
+    def _obs_cost(self, traj, win_obs, win_mask, start):
+        Jo = torch.zeros((), device=self.device, dtype=torch.float32)
+        for t in range(self.da_window_steps):
+            if win_mask[t]:
+                diff = self.obs_operator(
+                    traj[t], index=start + t) - win_obs[t]
+                Jo = Jo + torch.sum(diff ** 2)
+        return Jo
+
+    @staticmethod
+    def _reset_nan(params, bg):
+        with torch.no_grad():
+            for p in params:
+                p.fill_(0.0)
+
+    def _optimize(self, loss_fn, params, bg):
+        if self.optimizer == "lbfgs":
+            opt = torch.optim.LBFGS(
+                params, lr=self.lr, max_iter=self.max_iter, history_size=10)
+
+            def closure():
+                opt.zero_grad()
+                J, _ = loss_fn()
+                if not torch.isfinite(J).all():
+                    return J
+                J.backward()
+                return J
+
+            opt.step(closure)
+            if any(not torch.isfinite(p).all() for p in params):
+                self._reset_nan(params, bg)
+            return
+        opt = torch.optim.Adam(params, lr=self.lr)
+        for _ in range(self.opt_steps):
+            opt.zero_grad()
+            J, _ = loss_fn()
+            if not torch.isfinite(J).all():
+                self._reset_nan(params, bg)
+                break
+            J.backward()
+            for p in params:
+                if p.grad is not None:
+                    p.grad = torch.nan_to_num(
+                        p.grad.detach(), nan=0.0, posinf=0.0, neginf=0.0)
+                    p.grad = torch.clamp(
+                        p.grad, -self.grad_clip, self.grad_clip)
+            opt.step()
+
+    def _solve_window(self, xb, win_obs, win_mask, start, win_force):
+        sd = self.state_dim
+        win = self.da_window_steps
+        sigma = float(xb.std().clamp_min(1e-12))
+        L = self.b_var_scale * sigma
+        bg = xb
+
+        if self.mode == "strong":
+            w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+            params = [w_ctrl]
+
+            def loss_fn():
+                x0 = bg + L * w_ctrl
+                traj = self._forward_strong(
+                    x0, win, win_force, clip=_QG_STATE_CLIP)
+                Jb = 0.5 * torch.sum(w_ctrl ** 2)
+                Jo = self._obs_cost(traj, win_obs, win_mask, start)
+                return 0.5 * Jo / self.r_var + Jb, traj
+
+            self._optimize(loss_fn, params, bg)
+            x_ctrl = bg + L * w_ctrl.detach()
+            return self._forward_strong(
+                x_ctrl, win, win_force, clip=_QG_STATE_CLIP).detach()
+
+        Lq = self.q_var_scale * sigma
+        w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+        u = torch.zeros((win, sd), device=self.device, requires_grad=True)
+        params = [w_ctrl, u]
+
+        def loss_fn():
+            x0 = bg + L * w_ctrl
+            traj = self._forward_weak(
+                x0, u, win, win_force, Lq, clip=_QG_STATE_CLIP)
+            Jb = 0.5 * torch.sum(w_ctrl ** 2)
+            Jq = 0.5 * torch.sum(u[1:] ** 2)
+            Jo = self._obs_cost(traj, win_obs, win_mask, start)
+            return 0.5 * Jo / self.r_var + Jb + Jq, traj
+
+        self._optimize(loss_fn, params, bg)
+        x0 = bg + L * w_ctrl.detach()
+        return self._forward_weak(
+            x0, u.detach(), win, win_force, Lq,
+            clip=_QG_STATE_CLIP).detach()
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None):
+        obs = observations.to(self.device)
+        mask = obs_mask.to(self.device)
+        force = forcing.to(self.device)
+        T = obs.shape[0]
+        sd = self.state_dim
+        win = self.da_window_steps
+
+        if self.x0_bg is not None:
+            xb = self.x0_bg.detach().to(self.device).float()
+        else:
+            xb = torch.zeros(sd, device=self.device)
+
+        num_windows = max(1, T // win)
+        analysis = torch.zeros(T, sd, device=self.device)
+        current_bg = xb
+        for wnd in range(num_windows):
+            start = wnd * win
+            end = min(start + win, T)
+            wlen = end - start
+            if wlen < 1:
+                break
+            win_obs = obs[start:end]
+            win_mask = mask[start:end]
+            win_force = force[start:end]
+            if wlen != win:
+                # last partial window: run at its actual length by temporarily
+                # shrinking the cycle window.
+                saved = self.da_window_steps
+                self.da_window_steps = wlen
+                traj = self._solve_window(
+                    current_bg, win_obs, win_mask, start, win_force)
+                self.da_window_steps = saved
+            else:
+                traj = self._solve_window(
+                    current_bg, win_obs, win_mask, start, win_force)
+            analysis[start:end] = traj
+            current_bg = traj[-1].detach()
+
+        return _QG4DVarResult(trajectory=analysis.detach().cpu().numpy())
+
+
 def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         loc_radius=None, scenarios=("test_s0", "test_s1"),
         out_path=None, init="lagged", geometry="random_columns",
         obs_var="q", init_lag_days=None, ds=None, disp_frac=1.0,
-        etkf_ridge=0.0, etkf_additive=0.0, band_half=0.25,
-        save_traj=None, obs_var_r_scale=1.0):
+        etkf_ridge=1.0, etkf_additive=0.0, band_half=0.25,
+        save_traj=None, obs_var_r_scale=1.0,
+        da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
+        fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
+        q_var_scale=1.0, fourdvar_grad_clip=100.0):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if ds is None:
@@ -470,6 +711,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         if scen not in ds:
             continue
         rmse_list = []
+        crps_list = []
         fcast_rmse = []
         analyses = []
         refs = []
@@ -481,7 +723,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         truth_inner = None
         for i in range(len(d)):
             w = d[i]
-            dyn = _build_dyn(cfg, w, device)
+            is_psi_state = (obs_var == "psi_state")
+            dyn = _build_dyn(cfg, w, device, psi_state=is_psi_state)
             da_nx = _da_nx_for_window(cfg, w)
             nlayers = dyn.state_dim // (dyn.inner.ny * dyn.inner.nx)
             is_qg1l = w["da_model"] == "qg1l"
@@ -512,23 +755,33 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     # free forecast start from this same projective init.
                     shared_init = shared_init[:per_layer]
                     lead = w["init_lead_truth"].float()[:, :per_layer]
-                    sigma_raw = float(lead.std(0).mean())
                 elif cross_res:
                     shared_init = _downsample_to_da(
                         shared_init, da_nx, nlayers, cfg.nx, device)
                     lead = _downsample_to_da(
                         w["init_lead_truth"].float(), da_nx, nlayers, cfg.nx, device)
-                    sigma_raw = float(lead.std(0).mean())
                 else:
-                    sigma_raw = float(w["init_lead_truth"].std(0).mean())
+                    lead = w["init_lead_truth"].float()
+                if is_psi_state:
+                    # Convert the shared init (q-space) to the psi-space state
+                    # so the DA ensemble and free forecast are in the same
+                    # representation as the filter dynamics.
+                    shared_init = dyn.inner.q_to_psi(shared_init)
+                    # Dispersion scale in psi units so the ensemble spread has
+                    # the same physical meaning as the q-space scheme.
+                    sigma_raw = float(dyn.inner.q_to_psi(lead).std(0).mean())
+                else:
+                    sigma_raw = float(lead.std(0).mean())
                 init_ensemble = _ensemble_from_init(
                     shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
             if obs_var == "q":
                 per_time = _q_obs_indices_t(cfg, w)
-                field_std = float(w["target_state_q"].std())
+                field_std = float(
+                    (w["target_state_q"] if obs_var == "q"
+                     else w["target_state_psi"]).std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None:
+                if loc_radius is not None and method_name in ("enkf", "etkf"):
                     Lx_t, Ly_t = _build_qg_loc_matrices(
                         dyn.state_dim, per_time, 2, cfg.ny, cfg.nx,
                         loc_radius, device)
@@ -538,17 +791,30 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                else:
+                elif method_name == "etkf":
                     method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
-            else:  # obs_var == "psi"
+                elif method_name in ("strong4dvar", "weak4dvar"):
+                    method = QG4DVar(
+                        cfg, dyn, obs_op, da_window_steps=da_window_steps,
+                        b_var_scale=b_var_scale, q_var_scale=q_var_scale,
+                        optimizer=optimizer, opt_steps=fourdvar_opt_steps,
+                        max_iter=fourdvar_max_iter, lr=fourdvar_lr,
+                        grad_clip=fourdvar_grad_clip,
+                        mode="strong" if method_name == "strong4dvar" else "weak",
+                        device=device)
+                    method.r_var = float(r_var)
+                    method.x0_bg = shared_init if init == "lagged" else None
+                else:
+                    raise ValueError(f"unknown method_name: {method_name}")
+            else:  # obs_var in ("psi", "psi_state")
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None:
+                if loc_radius is not None and method_name in ("enkf", "etkf"):
                     cols_t = _event_columns(cfg, w)
                     Lx_t, Ly_t = _build_qg_col_loc_matrices(
                         dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
@@ -559,18 +825,36 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                else:
+                elif method_name == "etkf":
                     method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
+                elif method_name in ("strong4dvar", "weak4dvar"):
+                    method = QG4DVar(
+                        cfg, dyn, obs_op, da_window_steps=da_window_steps,
+                        b_var_scale=b_var_scale, q_var_scale=q_var_scale,
+                        optimizer=optimizer, opt_steps=fourdvar_opt_steps,
+                        max_iter=fourdvar_max_iter, lr=fourdvar_lr,
+                        grad_clip=fourdvar_grad_clip,
+                        mode="strong" if method_name == "strong4dvar" else "weak",
+                        device=device)
+                    method.r_var = float(r_var)
+                    method.x0_bg = shared_init if init == "lagged" else None
+                else:
+                    raise ValueError(f"unknown method_name: {method_name}")
             res = _evaluate_window(cfg, w, method, device, obs=obs,
                                    forcing=forcing, init_ensemble=init_ensemble)
             mean_init_lag_list.append(init_lag_val)
             ref = w["true_state"].numpy()
             traj_da = res.trajectory
+            if is_psi_state:
+                # psi-state filter output -> PV before metrics/refs (q-space).
+                traj_da = dyn.inner.psi_to_q(
+                    torch.from_numpy(traj_da).float().to(device))
+                traj_da = traj_da.detach().cpu().numpy()
             if cross_res:
                 traj_da = _upsample_to_truth(
                     traj_da, da_nx, nlayers, cfg.nx, device)
@@ -581,12 +865,39 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             refs.append(ref)
             rmse_list.append(float(np.sqrt(np.mean(
                 (traj_da - ref) ** 2))))
+            # Per-window CRPS on the q-state: ensemble methods (ETKF/EnKF)
+            # score their real per-member spread (BaselineResult.ensemble);
+            # deterministic methods (4DVar, no `.ensemble` attr) fall back to
+            # a single-member "ensemble", which crps() degenerates to MAE for.
+            ens_raw = getattr(res, "ensemble", None)
+            # traj_da has already been upsampled to truth resolution above
+            # (if cross_res) -- only a real da_nx-resolution ensemble
+            # (ens_raw is not None) still needs that upsampling here.
+            ens = traj_da[None] if ens_raw is None else ens_raw
+            if is_psi_state and ens_raw is not None:
+                ens_flat = ens.reshape(-1, ens.shape[-1])
+                ens_flat = dyn.inner.psi_to_q(
+                    torch.from_numpy(ens_flat).float().to(device))
+                ens = ens_flat.detach().cpu().numpy().reshape(ens.shape[0], ens.shape[1], -1)
+            if cross_res and ens_raw is not None:
+                ens = np.stack([
+                    _upsample_to_truth(ens[n], da_nx, nlayers, cfg.nx, device)
+                    for n in range(ens.shape[0])
+                ])
+            if is_qg1l:
+                ens = ens[:, :, :per_layer]
+            crps_list.append(float(np.mean(_crps(ens, ref))))
             fcast_rmse.append(_free_forecast_rmse(
-                cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l))
+                cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l,
+                psi_state=is_psi_state))
             if shared_init is not None:
                 free_roll = dyn.rollout_trajectory(
                     shared_init, cfg.num_steps - 1, wind_state=forcing)
                 free_roll = free_roll.detach().cpu().numpy()
+                if is_psi_state:
+                    free_roll = dyn.inner.psi_to_q(
+                        torch.from_numpy(free_roll).float().to(device))
+                    free_roll = free_roll.detach().cpu().numpy()
                 if is_qg1l:
                     free_roll = free_roll[:, :per_layer]
                 if cross_res:
@@ -598,6 +909,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         ev_upper = _pooled_expvar(
             [a[:, :per_layer] for a in analyses],
             [r[:, :per_layer] for r in refs])
+        # Pooled (not per-window) truth std, so a normalized CRPS is
+        # dimensionless and comparable across fields/methods without the
+        # per-window-normalization distortion a low-energy window would
+        # otherwise introduce (a window with small true variance would get
+        # an inflated normalized score if divided by its own std instead).
+        q_std_pooled = float(np.std(np.concatenate(refs, axis=0)))
         da_r = float(np.mean(rmse_list))
         fc_r = float(np.mean(fcast_rmse))
         ev_free = None
@@ -646,6 +963,11 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         summary[scen] = {
             "rmse_mean": da_r,
             "rmse_list": rmse_list,
+            "crps_mean": float(np.mean(crps_list)),
+            "crps_list": crps_list,
+            "crps_normalized": float(np.mean(crps_list)) / max(q_std_pooled, 1e-30),
+            "q_std_pooled": q_std_pooled,
+            "crps_is_deterministic": getattr(res, "ensemble", None) is None,
             "forecast_rmse_mean": fc_r,
             "forecast_improvement": fc_r / max(da_r, 1e-30),
             "expvar_full": float(np.mean(ev)),
@@ -659,15 +981,17 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
               f"ev_full={summary[scen]['expvar_full']:.3f} "
-              f"ev_free={summary[scen]['expvar_free']:.3f}")
+              f"ev_free={summary[scen]['expvar_free']:.3f} "
+              f"crps={summary[scen]['crps_mean']:.4e} "
+              f"crps_norm={summary[scen]['crps_normalized']:.4f}"
+              f"{' (=MAE, deterministic)' if summary[scen]['crps_is_deterministic'] else ''}")
 
     payload = {"method": method_name, "nx": cfg.nx,
                "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
-
-    payload = {"method": method_name, "nx": cfg.nx,
-               "N_ensemble": N_ensemble, "inflation": inflation,
-               "loc_radius": loc_radius, "scenarios": summary}
+               "loc_radius": loc_radius, "scenarios": summary,
+               "init_lag_days": init_lag_days,
+               "obs_noise_std_frac": cfg.obs_noise_std_frac,
+               "num_windows": cfg.num_windows}
     if out_path:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w") as f:
@@ -686,32 +1010,94 @@ def main():
     ap.add_argument("--ensemble", type=int, default=60)
     ap.add_argument("--inflation", type=float, default=1.05)
     ap.add_argument("--loc-radius", type=float, default=None)
+    ap.add_argument("--etkf-ridge", type=float, default=1.0,
+                     help="ETKF Kalman-gain transform-matrix ridge regularization "
+                          "multiplier. Default 1.0 (as of the 2026-09-11 QG DA "
+                          "sensitivity study: monotonically improves ETKF's PV-q "
+                          "EV vs. the implicit ~1e-4 floor at etkf_ridge<=0, "
+                          "closing the previously-unexplained EnKF>ETKF gap on "
+                          "the revised S1 case -- see PLAN.md and "
+                          "reports/qg/outputs/da_sensitivity_s0_s1_report.md).")
+    ap.add_argument("--etkf-additive", type=float, default=0.0,
+                     help="ETKF additive-inflation noise std (raw q-field units). "
+                          "Default 0.0 (found only harmful, never helpful, in the "
+                          "same sensitivity study).")
     ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--init", choices=["lagged", "white"], default="lagged")
     ap.add_argument("--geometry", choices=["alongtrack", "random_columns"], default="alongtrack")
-    ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
+    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q",
+                    help="DA state representation: 'q' (PV q-state, the DEFAULT "
+                         "QG DA config), 'psi' (q-state with psi-obs H-function), "
+                         "or 'psi_state' (streamfunction as the state, a research "
+                         "alternative, not the default)")
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--obs-var-r-scale", type=float, default=1.0)
+    ap.add_argument("--da-window-steps", type=int, default=12)
+    ap.add_argument("--fourdvar-optimizer", choices=["adam", "lbfgs"], default="adam")
+    ap.add_argument("--fourdvar-max-iter", type=int, default=40)
+    ap.add_argument("--fourdvar-opt-steps", type=int, default=150)
+    ap.add_argument("--fourdvar-lr", type=float, default=0.05)
+    ap.add_argument("--b-var-scale", type=float, default=1.0)
+    ap.add_argument("--q-var-scale", type=float, default=1.0)
+    ap.add_argument("--fourdvar-grad-clip", type=float, default=100.0)
+    ap.add_argument("--obs-noise-frac", type=float, default=None)
+    ap.add_argument("--da-nx", type=int, default=None)
+    ap.add_argument("--window-spacing-days", type=float, default=None,
+                     help="Days between successive window start times (default "
+                          "QGConfig value, 90.0). Set below window-days to pack "
+                          "more windows into a shorter source trajectory, at the "
+                          "cost of window-to-window overlap in the underlying "
+                          "true flow (independent obs/corruption/init draws per "
+                          "window either way).")
+    ap.add_argument("--seed", type=int, default=7,
+                     help="QGConfig.seed (default 7, the small-scale exploratory "
+                          "runs' value). Set to match a specific pre-generated "
+                          "truth cache, e.g. one of the SPLIT_SEED_BASE values in "
+                          "reports/qg/generate_qg_window_chunk.py.")
+    ap.add_argument("--cache-dir", default=None,
+                     help="If set, load/save the generated truth via "
+                          "make_qg_s0_s1_datasets(..., cache_dir=...) instead of "
+                          "generating fresh in run(). Use to point at a "
+                          "pre-generated dataset (e.g. the 1000/100/100 "
+                          "train/val/test cache) instead of regenerating.")
     args = ap.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
-    cfg = QGConfig(nx=args.nx, window_days=args.window_days,
-                   spinup_years=args.spinup_years, num_windows=args.num_windows,
-                   obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
-                   seed=7)
+    cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
+                      spinup_years=args.spinup_years, num_windows=args.num_windows,
+                      obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
+                      seed=args.seed, init_lag_days=args.init_lag_days)
+    if args.obs_noise_frac is not None:
+        cfg_kwargs["obs_noise_std_frac"] = args.obs_noise_frac
+    if args.da_nx is not None:
+        cfg_kwargs["da_nx"] = args.da_nx
+    if args.window_spacing_days is not None:
+        cfg_kwargs["window_spacing_days"] = args.window_spacing_days
+    cfg = QGConfig(**cfg_kwargs)
     print(f"device={device}")
+    ds = None
+    if args.cache_dir:
+        ds = make_qg_s0_s1_datasets(cfg, num_test_windows=cfg.num_windows,
+                                    cache_dir=args.cache_dir, device=device)
     for method in args.method_list.split(","):
         run(method, cfg, device=device, N_ensemble=args.ensemble,
             inflation=args.inflation, loc_radius=args.loc_radius,
             scenarios=tuple(args.scenarios.split(",")), out_path=args.out,
             init=args.init, geometry=args.geometry, obs_var=args.obs_var,
             init_lag_days=args.init_lag_days, band_half=args.band_half,
-            obs_var_r_scale=args.obs_var_r_scale)
+            obs_var_r_scale=args.obs_var_r_scale,
+            etkf_ridge=args.etkf_ridge, etkf_additive=args.etkf_additive,
+            da_window_steps=args.da_window_steps, optimizer=args.fourdvar_optimizer,
+            fourdvar_max_iter=args.fourdvar_max_iter,
+            fourdvar_opt_steps=args.fourdvar_opt_steps,
+            fourdvar_lr=args.fourdvar_lr,
+            b_var_scale=args.b_var_scale, q_var_scale=args.q_var_scale,
+            fourdvar_grad_clip=args.fourdvar_grad_clip, ds=ds)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,58 @@
+# @package _global_
+# Same as FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01.yaml
+# (update_input=obs+state, init_state_var=0.1, aux_var_cost_weight=0.01) but
+# on an even smaller MonaiUNet1D tier: hidden_channels=[24,48,96],
+# monai_num_res_blocks=1, monai_norm_num_groups=8 -- 596,784 params, ~56.5%
+# of the S tier's 1,055,544 (the closest achievable ratio to "half of S"
+# among the candidates tried: [16,32,64]x1=267,944 (25%), [20,40,80]x1=
+# 416,124 (39%), [24,48,96]x1=596,784 (57%), [28,56,112]x1=809,924 (77%)).
+# Not an official name in project_l96_monai_unet_complexity_tiers -- an
+# interpolated "XS+"/"half-S" point, added on request.
+#
+# Purpose: job 53289 (M-tier + random init + aux_var_cost_weight=0.01)
+# plateaued permanently at val_loss ~0.384 -- a severe, lasting degradation.
+# Job 53315 (S-tier, same random init + aux weight) instead converged
+# cleanly, tracking well below 53289's final plateau by epoch ~50 and still
+# improving. This tests whether an even smaller solver UNet continues that
+# trend (aux-loss degradation shrinking/vanishing as capacity shrinks) or
+# reverses it (a floor below which the smaller network can't absorb the aux
+# term's gradient interference either).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [24, 48, 96]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    R_var: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 8
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

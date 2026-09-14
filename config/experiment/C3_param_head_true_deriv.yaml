@@ -1,0 +1,41 @@
+# @package _global_
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: param_head
+  state_dim: 24
+  param_dim: 8
+  param_head:
+    param_dim: 8
+    param_head_channels: [32, 64, 128]
+    param_ref: [8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]
+    param_head_pool: mean
+    state_source: "true"
+    augment_derivatives: true
+
+training:
+  stage1:
+    epochs: 300
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  resample_bias_draws: true
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  param_names: [F, c1, hx, eps, w1, w2, w3, w4]
+  randomize:
+    F:            {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    c1:           {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    hx:           {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    eps:          {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    fast_weights: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    h:            {randomized: false, noise: 0.2, biased: false, bias: 0.0}

@@ -1,0 +1,67 @@
+# @package _global_
+# Deterministic (fixed prior_weight, not trainable) MonaiUNet1D-backbone
+# analogue of FDV2_grad_state_l96_fixedw: same grad+state update, R_var=0.5,
+# prior_weight=1.0 fixed (trainable_prior_weight=false, no aux_var_cost_weight,
+# no cosine scheduler / discounted LR groups -- those exist specifically to
+# stabilize the *trainable*-weight recipe and are irrelevant here) -- only the
+# backbone (models.unet.UNet1D -> models.monai_unet_adapter.MonaiUNet1D via
+# unet_backbone="monai") differs, mirroring FDV2_grad_state_monai_l96's
+# backbone-only comparison role but against the fixed-weight baseline instead
+# of the trainable-weight recipe. Run this before the trainable-weight/cosine
+# variant so the backbone-only effect is isolated first.
+#
+# Now includes gradient checkpointing (PR #172, unconditional, no config flag)
+# after rebasing this branch onto origin/master -- the grad+state update mode's
+# torch.autograd.grad(..., create_graph=True) double-backward chained across
+# all N_outer=10 iterations was the documented cause of this exact
+# config's prior CUDA OOM on RTX8000/H100 (fixed only by an H200, or by
+# reducing N_outer to 2) at the production batch_size=16. Checkpointing
+# should eliminate that OOM by no longer retaining all N_outer iterations'
+# activations simultaneously -- untested with this monai backbone specifically
+# (the #172/#173 benchmark used the standard UNet1D backbone only), so this is
+# a reasonable expectation, not yet verified for this exact combination.
+#
+# One deliberate deviation from FDV2_grad_state_l96_fixedw's exact recipe:
+# prior_tau_conditioning is false here (that config sets it true, to
+# reproduce job 52205's exact architecture) -- unet_backbone="monai" +
+# prior_tau_conditioning=true raises ValueError (MonaiUNet1D has no
+# time_emb_dim=0-style switch to fully omit tau-conditioning; see
+# _build_backbone_unet), so no such combination exists for this backbone.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: false
+    prior_tau_conditioning: false
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

@@ -58,7 +58,6 @@ def run():
 
     dt = 0.001
     T_max = 3.0
-    num_steps = int(T_max / dt)
     obs_interval = args.obs_interval
 
     base_cfg = Lorenz96Config(

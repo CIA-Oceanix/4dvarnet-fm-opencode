@@ -26,13 +26,13 @@ model:
 
 training:
   stage1:
-    max_epochs: 3000
+    epochs: 3000
     lr: 0.001
     gradient_clip_val: 10.0
     early_stopping_patience: 300
     early_stopping_min_delta: 0.001
   stage2:
-    max_epochs: 3000
+    epochs: 3000
     lr: 0.001
     gradient_clip_val: 1.0
     early_stopping_patience: 300

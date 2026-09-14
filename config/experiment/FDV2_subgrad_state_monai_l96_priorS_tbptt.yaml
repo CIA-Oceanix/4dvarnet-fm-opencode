@@ -1,0 +1,73 @@
+# @package _global_
+# FDV2_subgrad_state_monai_l96 with two architecture/training changes tested
+# together for the first time:
+#
+# 1. Solver-M + prior-S: prior_hidden_channels=[32,64,128] (S+ tier) while
+#    the main solver unet stays M-tier [64,128,256] -- prior_unet no longer
+#    shares the solver's capacity, matching CIA-Oceanix/4dvarnet-global-mapping's
+#    ronan_devs branch convention (glo12-sla-4th-unrolling-ossev1.yaml: prior
+#    model_channels=32 vs solver model_channels=64, same ratio). Expected to
+#    speed up training (prior_unet runs every one of the N_outer=10
+#    iterations, same as the solver) with an open question on whether
+#    reconstruction quality holds up at a smaller prior capacity.
+#
+# 2. Truncated-BPTT, 2 blocks of 5 iterations: tbptt_n_blocks=2,
+#    tbptt_block_size=2*5=N_outer=10. The unroll runs iterations 0-4, the
+#    resulting state is detached before iteration 5 (severing the backward
+#    graph there -- only 5 iterations' worth of activations need to be kept
+#    for gradient at any one time, not all 10), then iterations 5-9 continue
+#    from the detached state. Training loss = mean of MSE(state, target) at
+#    the end of each block (iteration 4 and iteration 9) -- deep supervision
+#    plus a smaller backward graph. Ported from ronan_devs'
+#    Lit4dVarNetTwoSolvers.base_step detach()-at-a-boundary +
+#    averaged-multi-stage-loss pattern (see models/fourdvarnet.py::
+#    FourDVarNetSolver._unrolled_blocks docstring), adapted to one
+#    weight-tied solver called twice instead of two distinct solver
+#    instances. val_loss (model-selection metric, stage1_best.ckpt) is
+#    UNCHANGED by this -- compute_loss uses the block-averaged loss only in
+#    training mode; validation/eval always scores the final iteration's
+#    answer alone, exactly as every other FDV config does.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [64, 128, 256]
+    prior_hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: true
+    aux_var_cost_weight: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    tbptt_n_blocks: 2
+    tbptt_block_size: 5
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+    obs_weight_lr_scale: 0.5
+    prior_unet_lr_scale: 0.5
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

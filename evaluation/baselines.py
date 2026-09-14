@@ -90,7 +90,6 @@ def _build_qg_loc_matrices(state_dim: int, obs_indices_t: list, nlayers: int,
             Ly_t.append(None)
             continue
         idx = torch.tensor(idx_t, dtype=torch.long, device=device)
-        od = len(idx)
         obs_layer = idx.to(device).to(torch.float64) // gpl
         gg = (idx.to(device) % gpl).to(torch.float64)
         obs_y = gg // nx
@@ -608,7 +607,7 @@ class Strong4DVar:
         H = self.obs_operator
 
         # ES accumulator for deterministic methods (N=1 -> ES = MAE)
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_acc = _ESAccumulator(num_steps, self.state_dim, 1) if ref_full is not None else None
@@ -735,7 +734,7 @@ class Strong4DVar:
             current_bg = final_traj[:, -1].detach()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
@@ -849,12 +848,16 @@ class ETKF:
 
         analysis = np.zeros((num_steps, sd))
         ens_var = np.zeros((num_steps, sd))
-        ens_hist = np.zeros((N, num_steps, sd))
+        # Full per-member trajectory (not just the mean/variance reductions
+        # above), so callers can score ensemble-aware metrics like CRPS
+        # (evaluation/metrics.py::crps) -- previously BaselineResult.ensemble
+        # was a np.zeros(...) stub, never actually populated.
+        ens_traj = np.zeros((N, num_steps, sd), dtype=np.float32)
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
-        ens_hist[:, 0] = ensemble.cpu().numpy()
+        ens_traj[:, 0] = ensemble.detach().cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -927,15 +930,12 @@ class ETKF:
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
 
-            analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
-            ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
-            ens_hist[:, t] = ensemble.detach().cpu().numpy()
+            ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
-        per_member_rmse = np.sqrt(np.mean((ens_hist - ref[np.newaxis, :, :]) ** 2, axis=1))  # (N, sd)
-        rmse = np.mean(per_member_rmse, axis=0)  # mean RMSE across ensemble members
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_hist, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_traj, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
     def assimilate_batch(
         self,
         observations: torch.Tensor,
@@ -979,7 +979,7 @@ class ETKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_accs = (
@@ -1152,10 +1152,8 @@ class EnKF:
 
         if self.R_var_vec is not None:
             r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
-            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
         else:
             r_sqrt = np.sqrt(self.R_var)
-            r_inv = 1.0 / self.R_var
 
         if self.init_ensemble is not None:
             ensemble = self.init_ensemble.clone()
@@ -1170,12 +1168,13 @@ class EnKF:
 
         analysis = np.zeros((num_steps, self.state_dim))
         ens_var = np.zeros((num_steps, self.state_dim))
-        ens_hist = np.zeros((self.N_ensemble, num_steps, self.state_dim))
+        # Full per-member trajectory, see the matching ETKF.assimilate comment.
+        ens_traj = np.zeros((self.N_ensemble, num_steps, self.state_dim), dtype=np.float32)
         analysis[0] = torch.mean(ensemble, dim=0).cpu().numpy()
         ens_var[0] = torch.var(ensemble, dim=0).cpu().numpy()
-        ens_hist[:, 0] = ensemble.cpu().numpy()
+        ens_traj[:, 0] = ensemble.detach().cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_acc = _ESAccumulator(num_steps, self.state_dim, self.N_ensemble) if ref_full is not None else None
@@ -1221,15 +1220,12 @@ class EnKF:
                 if nan_mask.any():
                     ensemble = torch.nan_to_num(ensemble)
 
-            analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
-            ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
-            ens_hist[:, t] = ensemble.detach().cpu().numpy()
+            ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
-        per_member_rmse = np.sqrt(np.mean((ens_hist - ref[np.newaxis, :, :]) ** 2, axis=1))  # (N, sd)
-        rmse = np.mean(per_member_rmse, axis=0)  # mean RMSE across ensemble members
-        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_hist, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
+        rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_traj, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
 
     def assimilate_batch(
         self,
@@ -1251,10 +1247,8 @@ class EnKF:
 
         if self.R_var_vec is not None:
             r_sqrt = torch.tensor(np.sqrt(self.R_var_vec), dtype=torch.float32, device=self.device)
-            r_inv = 1.0 / torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device)
         else:
             r_sqrt = np.sqrt(self.R_var)
-            r_inv = 1.0 / self.R_var
 
         interp_obs = _interp_observations(observations, obs_mask)
         if self.init_ensemble is not None:
@@ -1272,7 +1266,7 @@ class EnKF:
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
         ) else None
         es_accs = (
@@ -1386,7 +1380,6 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         sd = self.state_dim
@@ -1470,7 +1463,6 @@ class JointWeak4DVar(Weak4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         sd = self.state_dim
@@ -1589,7 +1581,6 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         sd = self.state_dim
@@ -1667,7 +1658,6 @@ class JointStrong4DVar(Strong4DVar):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         sd = self.state_dim
@@ -1801,7 +1791,6 @@ class JointEnKF(EnKF):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         N = self.N_ensemble
@@ -1870,7 +1859,6 @@ class JointEnKF(EnKF):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
@@ -1965,7 +1953,6 @@ class JointETKF(ETKF):
         c1: float = 1.0,
             **kwargs,
     ) -> BaselineResult:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         num_steps = observations.shape[0]
         N = self.N_ensemble
@@ -2053,7 +2040,6 @@ class JointETKF(ETKF):
         c1: float = 1.0,
             **kwargs,
     ) -> list:
-        params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
         N = self.N_ensemble
@@ -2301,7 +2287,7 @@ class JointEnKFL96(EnKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -2392,7 +2378,7 @@ class JointEnKFL96(EnKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_accs = (
@@ -2579,7 +2565,7 @@ class JointETKFL96(ETKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
@@ -2670,7 +2656,7 @@ class JointETKFL96(ETKF):
         idx = self._obs_idx()
         H = self._mk_Hstate(idx, sd, self._aug_dim)
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_accs = (
@@ -2806,7 +2792,7 @@ class JointStrong4DVarL96(Strong4DVar):
         n_est = self._n_scl + len(fw_full)
         param_est = np.zeros((num_steps, n_est))
 
-        ref_full = true_state.numpy() if (
+        ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, 1) if ref_full is not None else None

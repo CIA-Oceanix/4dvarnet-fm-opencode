@@ -1,0 +1,46 @@
+# @package _global_
+# L complexity-tier + cosine-annealing variant of L2b_monai_vanilla_cfm_s0s1_norm
+# (MonaiVanillaCFM, tau=0 CFM contract). hidden_channels [128,256,512], matching the
+# DirectUNet L tier (23,476,248 params), vs the M-tier CFM baseline
+# (hidden_channels [64,128,256], RMSE 0.482/0.480). training.stage1.use_cosine_scheduler
+# is true (CosineAnnealingLR over the full 400-epoch run), for consistency with the
+# cosine-annealed DirectUNet S+/M/L sweep and FDV2's cosine scheduler (PR #168).
+# NOTE: DirectUNet's L tier OOMs its DA-benchmark eval at the default batch=200
+# (26.8GiB attention allocation on a 44GB GPU) -- eval this tier with a smaller
+# --batch-size too (16 confirmed working for DirectUNet-L).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_vanilla_cfm:
+    hidden_channels: [128, 256, 512]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: true
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

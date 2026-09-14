@@ -20,16 +20,30 @@ def spread(ensemble_variance: np.ndarray) -> np.ndarray:
 
 
 def crps(ensemble: np.ndarray, truth: np.ndarray) -> float:
+    """Per-dimension fair-ensemble CRPS: E|X-y| - 0.5*E|X-X'| (lower is
+    better, 0 for a perfect deterministic forecast). A single-member
+    "ensemble" (N=1) degenerates to the mean absolute error, since the
+    pairwise-spread term vanishes.
+
+    E|X-X'| (mean absolute difference over all N^2 member pairs, including
+    the N zero self-pairs) is computed via the standard order-statistic
+    identity sum_{i<j}|x_i-x_j| = sum_i (2i-N-1)*x_(i) (x_(i) = i-th smallest
+    of N, 1-indexed) instead of materializing the full N x N pairwise-diff
+    array per dimension in a Python loop -- the naive version is O(N^2*T*D)
+    with D iterations of Python overhead, which at QG's D~8192 took minutes
+    per window (confirmed: >2.5min for N=80,T=360,D=8192, unusable for a
+    100-window run). This is O(N*log(N)*T*D), fully vectorized (one sort
+    along the member axis), no per-dimension Python loop.
+    """
     N, T, D = ensemble.shape
-    scores = np.zeros(D)
-    for d in range(D):
-        e = ensemble[:, :, d]
-        t = truth[:, d]
-        abs_diff = np.abs(e[np.newaxis, :, :] - e[:, np.newaxis, :])
-        pairwise = np.mean(abs_diff, axis=(0, 1))
-        abs_err = np.mean(np.abs(e - t[np.newaxis, :]), axis=0)
-        scores[d] = np.mean(pairwise - abs_err)
-    return scores
+    abs_err = np.mean(np.abs(ensemble - truth[np.newaxis, :, :]), axis=0)  # (T, D)
+    if N > 1:
+        sorted_ens = np.sort(ensemble, axis=0)  # (N, T, D)
+        i = np.arange(1, N + 1, dtype=ensemble.dtype).reshape(N, 1, 1)
+        pairwise = np.sum((2 * i - N - 1) * sorted_ens, axis=0) * (2.0 / (N * N))  # (T, D)
+    else:
+        pairwise = np.zeros((T, D), dtype=ensemble.dtype)
+    return np.mean(abs_err - 0.5 * pairwise, axis=0)
 
 
 def energy_score(ensemble: np.ndarray, truth: np.ndarray) -> np.ndarray:

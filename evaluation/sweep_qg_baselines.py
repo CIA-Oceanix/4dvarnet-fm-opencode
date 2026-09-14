@@ -36,19 +36,37 @@ def main():
     ap.add_argument("--geometry", default="random_columns")
     ap.add_argument("--init-lag-days-list", default="2.0")
     ap.add_argument("--da-nx", type=int, default=None)
+    ap.add_argument("--window-spacing-days", type=float, default=None)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
     ap.add_argument("--cols-per-day-list", default=None)
     ap.add_argument("--obs-noise-frac-list", default=None)
-    ap.add_argument("--obs-var", choices=["q", "psi"], default="q")
+    ap.add_argument("--obs-var", choices=["q", "psi", "psi_state"], default="q",
+                    help="DA state representation: 'q' (PV q-state, the DEFAULT "
+                         "QG DA config), 'psi' (q-state with psi-obs H-function), "
+                         "or 'psi_state' (streamfunction as the state, a research "
+                         "alternative, not the default)")
     ap.add_argument("--obs-var-r-scale-list", default=None)
+    ap.add_argument("--da-window-steps", type=int, default=12)
+    ap.add_argument("--da-window-steps-list", default=None)
+    ap.add_argument("--fourdvar-optimizer", choices=["adam", "lbfgs"], default="adam")
+    ap.add_argument("--fourdvar-max-iter", type=int, default=40)
+    ap.add_argument("--fourdvar-opt-steps", type=int, default=150)
+    ap.add_argument("--fourdvar-lr", type=float, default=0.05)
+    ap.add_argument("--fourdvar-lr-list", default=None)
+    ap.add_argument("--b-var-scale-list", default=None)
+    ap.add_argument("--q-var-scale-list", default=None)
+    ap.add_argument("--fourdvar-grad-clip", type=float, default=100.0)
     ap.add_argument("--scenarios", default="test_s0,test_s1")
     ap.add_argument("--outdir", default="reports/qg/outputs/figs")
     ap.add_argument("--device", default=None)
     ap.add_argument("--tag", default="sweep")
     ap.add_argument("--disp-frac", type=float, default=1.0)
     ap.add_argument("--disp-frac-list", default=None)
-    ap.add_argument("--etkf-ridge-list", default=None)
+    ap.add_argument("--etkf-ridge-list", default=None,
+                     help="Comma-separated etkf_ridge values to sweep. Default "
+                          "(unset) is [1.0], the promoted default as of the "
+                          "2026-09-11 QG DA sensitivity study -- see PLAN.md.")
     ap.add_argument("--etkf-additive-list", default=None)
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--save-traj", action="store_true")
@@ -71,7 +89,7 @@ def main():
     disps = ([float(x) for x in args.disp_frac_list.split(",")]
              if args.disp_frac_list else [args.disp_frac])
     ridges = ([float(x) for x in args.etkf_ridge_list.split(",")]
-              if args.etkf_ridge_list else [0.0])
+              if args.etkf_ridge_list else [1.0])
     addit = ([float(x) for x in args.etkf_additive_list.split(",")]
              if args.etkf_additive_list else [0.0])
     colss = ([int(x) for x in args.cols_per_day_list.split(",")]
@@ -80,6 +98,17 @@ def main():
               if args.obs_noise_frac_list else [None])
     rscales = ([float(x) for x in args.obs_var_r_scale_list.split(",")]
                if args.obs_var_r_scale_list else [1.0])
+    daws = ([int(x) for x in args.da_window_steps_list.split(",")]
+            if args.da_window_steps_list else [args.da_window_steps])
+    fdv_lrs = ([float(x) for x in args.fourdvar_lr_list.split(",")]
+               if args.fourdvar_lr_list else [args.fourdvar_lr])
+    bscales = ([float(x) for x in args.b_var_scale_list.split(",")]
+               if args.b_var_scale_list else [1.0])
+    qscales = ([float(x) for x in args.q_var_scale_list.split(",")]
+               if args.q_var_scale_list else [1.0])
+    cfg_extra = {}
+    if args.window_spacing_days is not None:
+        cfg_extra["window_spacing_days"] = args.window_spacing_days
     for cols in colss:
         for noise in noises:
             if noise is None:
@@ -90,7 +119,7 @@ def main():
                     da_nx=args.da_nx,
                     s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
                     s1_loc_sigma_frac=args.s1_loc_sigma_frac,
-                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac, **cfg_extra)
             else:
                 cfg = QGConfig(
                     nx=args.nx, window_days=args.window_days,
@@ -99,7 +128,7 @@ def main():
                     obs_noise_std_frac=noise, seed=7, da_nx=args.da_nx,
                     s1_param_bias=args.s1_param_bias, s1_amp_bias=args.s1_amp_bias,
                     s1_loc_sigma_frac=args.s1_loc_sigma_frac,
-                    s1_sigma_eta_frac=args.s1_sigma_eta_frac)
+                    s1_sigma_eta_frac=args.s1_sigma_eta_frac, **cfg_extra)
             print(f"device={device} building dataset (cols={cols},"
                   f"noise={noise}) once", flush=True)
             t0 = time.time()
@@ -115,49 +144,66 @@ def main():
                                     for ridge in ridges:
                                         for a in addit:
                                           for rscale in rscales:
-                                            tag = (f"{method}_c{cols}"
-                                                   f"_nz{nzlab(noise)}"
-                                                   f"_i{infl}_l{loc}_lag{lag}"
-                                                   f"_n{n}_d{disp}_r{ridge}_a{a}"
-                                                   f"_rs{rscale:g}")
-                                            t1 = time.time()
-                                            p = run(method, cfg, device=device,
-                                                    N_ensemble=n,
-                                                    inflation=infl, loc_radius=loc,
-                                                    init=args.init,
-                                                    geometry=args.geometry,
-                                                    scenarios=scenarios,
-                                                    out_path=None, ds=ds,
-                                                    init_lag_days=float(lag),
-                                                    band_half=args.band_half,
-                                                    obs_var=args.obs_var,
-                                                    disp_frac=disp,
-                                                    etkf_ridge=ridge,
-                                                    etkf_additive=a,
-                                                    obs_var_r_scale=rscale,
-                                                    save_traj=os.path.join(args.outdir, "trajectories") if args.save_traj else None)
-                                            dt = time.time() - t1
-                                            rows = " ".join(
-                                                f"{s}:EV{p['scenarios'][s]['expvar_full']:.3f}"
-                                                f"/FF{p['scenarios'][s].get('expvar_free'):.3f}"
-                                                for s in p["scenarios"])
-                                            print(f"[{args.tag}|{tag}] {dt:.1f}s {rows}",
-                                                  flush=True)
-                                            s0 = p["scenarios"].get("test_s0", {})
-                                            mpf = s0.get("metrics_per_field")
-                                            if mpf:
-                                                line = "  ".join(
-                                                    f"{fld}{k[-1]}:ev{d['ev']:.2f}/ff{d['ev_free']:.2f}"
-                                                    f"/im{d['improv']:.2f}"
-                                                    for fld in ("q", "psi")
-                                                    for k in ("layer1", "layer2")
-                                                    for d in [mpf[fld][k]])
-                                                print(f"      [{args.tag}] {line}", flush=True)
-                                            with open(os.path.join(
-                                                    args.outdir,
-                                                    f"qg_{args.tag}_{tag}.json"),
-                                                    "w") as f:
-                                                json.dump(p, f, indent=2)
+                                            for daw in daws:
+                                              for fdvlr in fdv_lrs:
+                                                for bsc in bscales:
+                                                  for qsc in qscales:
+                                                    fdv_suffix = (f"_w{daw}_lr{fdvlr}"
+                                                                  f"_b{bsc}_q{qsc}"
+                                                                  if method in ("strong4dvar", "weak4dvar")
+                                                                  else "")
+                                                    tag = (f"{method}_c{cols}"
+                                                           f"_nz{nzlab(noise)}"
+                                                           f"_i{infl}_l{loc}_lag{lag}"
+                                                           f"_n{n}_d{disp}_r{ridge}_a{a}"
+                                                           f"_rs{rscale:g}"
+                                                           + fdv_suffix)
+                                                    t1 = time.time()
+                                                    p = run(method, cfg, device=device,
+                                                            N_ensemble=n,
+                                                            inflation=infl, loc_radius=loc,
+                                                            init=args.init,
+                                                            geometry=args.geometry,
+                                                            scenarios=scenarios,
+                                                            out_path=None, ds=ds,
+                                                            init_lag_days=float(lag),
+                                                            band_half=args.band_half,
+                                                            obs_var=args.obs_var,
+                                                            disp_frac=disp,
+                                                            etkf_ridge=ridge,
+                                                            etkf_additive=a,
+                                                            obs_var_r_scale=rscale,
+                                                            da_window_steps=daw,
+                                                            optimizer=args.fourdvar_optimizer,
+                                                            fourdvar_max_iter=args.fourdvar_max_iter,
+                                                            fourdvar_opt_steps=args.fourdvar_opt_steps,
+                                                            fourdvar_lr=fdvlr,
+                                                            b_var_scale=bsc,
+                                                            q_var_scale=qsc,
+                                                            fourdvar_grad_clip=args.fourdvar_grad_clip,
+                                                            save_traj=os.path.join(args.outdir, "trajectories") if args.save_traj else None)
+                                                    dt = time.time() - t1
+                                                    rows = " ".join(
+                                                        f"{s}:EV{p['scenarios'][s]['expvar_full']:.3f}"
+                                                        f"/FF{p['scenarios'][s].get('expvar_free'):.3f}"
+                                                        for s in p["scenarios"])
+                                                    print(f"[{args.tag}|{tag}] {dt:.1f}s {rows}",
+                                                          flush=True)
+                                                    s0 = p["scenarios"].get("test_s0", {})
+                                                    mpf = s0.get("metrics_per_field")
+                                                    if mpf:
+                                                        line = "  ".join(
+                                                            f"{fld}{k[-1]}:ev{d['ev']:.2f}/ff{d['ev_free']:.2f}"
+                                                            f"/im{d['improv']:.2f}"
+                                                            for fld in ("q", "psi")
+                                                            for k in ("layer1", "layer2")
+                                                            for d in [mpf[fld][k]])
+                                                        print(f"      [{args.tag}] {line}", flush=True)
+                                                    with open(os.path.join(
+                                                            args.outdir,
+                                                            f"qg_{args.tag}_{tag}.json"),
+                                                            "w") as f:
+                                                        json.dump(p, f, indent=2)
     print("SWEEP DONE", flush=True)
 
 

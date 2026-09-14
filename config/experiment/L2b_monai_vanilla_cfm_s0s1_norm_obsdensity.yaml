@@ -1,0 +1,45 @@
+# @package _global_
+# Fast-Y observation-density-augmented variant of L2b_monai_vanilla_cfm_s0s1_norm
+# (identical architecture/hyperparameters -- M tier, tau=0 CFM, 400 epochs)
+# with data.obs_density_augment=true added -- see
+# L1b_monai_unet_s0s1_norm_l_cosine_obsdensity.yaml for the full rationale
+# (same augmentation, same motivation: closing the OOD gap the fast-Y
+# observation-density generalization study found, PR #180).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: true
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt
+  obs_density_augment: true
+  obs_density_full_prob: 0.4
+  obs_density_min_keep: 0

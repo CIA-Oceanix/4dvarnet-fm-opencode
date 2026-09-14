@@ -33,9 +33,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from evaluation.estimate_metrics import nrmse_param, trajectory_forecast_skill
-from evaluation.run_l96 import make_obs_j_indices
-from models.lorenz96_dynamics import Lorenz96Dynamics
+from evaluation.estimate_metrics import nrmse_param, trajectory_forecast_skill  # noqa: E402
+from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
+from models.lorenz96_dynamics import Lorenz96Dynamics  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)

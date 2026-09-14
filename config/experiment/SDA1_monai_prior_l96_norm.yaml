@@ -1,0 +1,41 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of SDA1_prior_l96: same unconditional
+# flow-matching prior p(x_1) contract (no obs/params/forcing conditioning at
+# training time; state estimation entirely via DPS-guided sampling at
+# inference, evaluation/sda_sampler.py), plus data.normalize=true. Reference
+# architecture tier (M: hidden_channels [64,128,256], num_res_blocks=2)
+# selected 2026-09-08 via the S+/M/L DirectUNet complexity-tier experiment.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: monai_sda_prior
+  state_dim: 24
+  param_dim: 0
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  test_cache: experiments/l96_datasets_obsj2_int100_nwin200.pt

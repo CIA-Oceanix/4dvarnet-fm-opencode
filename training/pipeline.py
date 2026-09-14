@@ -5,6 +5,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from training.lightning_module import LitModel
+from training.resume import resume_ckpt_path
 
 # Val loss is logged every epoch and is noisy for the CFM models (stochastic
 # sampling loss), so a plain patience-only EarlyStopping would reset on
@@ -20,16 +21,17 @@ DEFAULT_EARLY_STOPPING_MIN_DELTA = 1e-3
 def create_trainer(cfg: DictConfig, stage: int, max_epochs: int = None) -> pl.Trainer:
     stage_cfg = cfg.training.stage1 if stage == 1 else cfg.training.stage2
     if max_epochs is None:
-        max_epochs = stage_cfg.max_epochs
-    callbacks = [
-        ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1,
-            dirpath=cfg.paths.checkpoint_dir,
-            filename=f"stage{stage}_best",
-        )
-    ]
+        max_epochs = stage_cfg.epochs
+    checkpoint_cb = ModelCheckpoint(
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        save_last=True,
+        dirpath=cfg.paths.checkpoint_dir,
+        filename=f"stage{stage}_best",
+    )
+    checkpoint_cb.CHECKPOINT_NAME_LAST = f"stage{stage}_last"
+    callbacks = [checkpoint_cb]
     patience = stage_cfg.get("early_stopping_patience", DEFAULT_EARLY_STOPPING_PATIENCE)
     if patience:
         callbacks.append(EarlyStopping(
@@ -78,9 +80,13 @@ def train_stage(
         model, model_type=cfg.model.model_type, stage=stage,
         lr=stage_cfg.lr,
         gradient_clip_val=stage_cfg.gradient_clip_val,
+        use_gradient_loss=cfg.training.loss.use_gradient,
+        gradient_weight=cfg.training.loss.gradient_weight,
+        use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
+        max_epochs=stage_cfg.epochs,
     )
     trainer = create_trainer(cfg, stage)
-    trainer.fit(lit_module, loaders["train"], loaders["val"])
+    trainer.fit(lit_module, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(stage))
     load_best_checkpoint(lit_module, trainer)
     path = cfg.paths[f"checkpoint_stage{stage}"]
     torch.save(lit_module.model.state_dict(), path)
@@ -94,6 +100,6 @@ def run_2stage_pipeline(
     device: torch.device,
 ) -> nn.Module:
     model = train_stage(model, loaders, cfg, stage=1, device=device)
-    if cfg.training.stage2.max_epochs > 0:
+    if cfg.training.stage2.epochs > 0:
         model = train_stage(model, loaders, cfg, stage=2, device=device)
     return model

@@ -1,0 +1,13 @@
+# Extra/override requirements for models/monai_unet_adapter.py (MonaiUNet1D /
+# MonaiDirectUNet) -- install in a SEPARATE env from the project's standard
+# `fdv` env (e.g. `fdv-monai-proto`), on top of requirements.txt.
+#
+# monai==1.6.0 requires a newer torch than this project's standard
+# torch>=2.0.0 pin supports in practice -- torch==2.8.0+cu126 is the version
+# validated here. Installing monai into the shared/default env previously
+# broke CUDA for the rest of the project by dragging torch forward; keep this
+# combination isolated to its own env instead of merging it into
+# requirements.txt. The +cu126 local version isn't on PyPI -- install with:
+#   pip install -r requirements-monai.txt --extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.8.0+cu126
+monai==1.6.0
