@@ -108,6 +108,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             dropout=dc.dropout,
             param_dim=param_dim,
             use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=dc.get("cond_extra_dim", None),
         )
     elif model_type == "monai_direct_unet":
         from models.monai_unet_adapter import MonaiDirectUNet
@@ -135,6 +136,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=vc.get("train_tau_0_only", False),
             param_dim=param_dim,
             use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=vc.get("cond_extra_dim", None),
             tau_sampling=vc.get("tau_sampling", "uniform"),
             logit_normal_loc=vc.get("logit_normal_loc", 0.0),
             logit_normal_scale=vc.get("logit_normal_scale", 1.0),
@@ -261,6 +263,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=psc.get("train_tau_0_only", False),
             param_dim=param_dim,
             use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=psc.get("cond_extra_dim", None),
             tau_sampling=psc.get("tau_sampling", "uniform"),
             logit_normal_loc=psc.get("logit_normal_loc", 0.0),
             logit_normal_scale=psc.get("logit_normal_scale", 1.0),
@@ -282,6 +285,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=tc.train_tau_0_only,
             param_dim=param_dim,
             use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=tc.get("cond_extra_dim", None),
             tau_sampling=tc.get("tau_sampling", "uniform"),
             logit_normal_loc=tc.get("logit_normal_loc", 0.0),
             logit_normal_scale=tc.get("logit_normal_scale", 1.0),

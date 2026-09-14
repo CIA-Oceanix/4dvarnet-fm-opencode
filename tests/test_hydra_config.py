@@ -14,8 +14,8 @@ def test_schema_imports():
     assert mc.hidden_channels == [64, 128, 256]
 
     tc = TrainingConfig()
-    assert tc.stage1.max_epochs == 200
-    assert tc.stage2.max_epochs == 400
+    assert tc.stage1.epochs == 200
+    assert tc.stage2.epochs == 400
 
     bc = BaselinesConfig()
     assert bc.da_window_steps == 300
@@ -25,29 +25,29 @@ def test_schema_imports():
 def test_config_yaml_loads():
     """Config YAML can be loaded via Hydra."""
     with hydra.initialize(config_path="../config"):
-        cfg = hydra.compose("models/A1_baseline")
+        cfg = hydra.compose("models/direct_unet")
     assert cfg is not None
     assert cfg.data.dt == 0.01
     assert cfg.data.system == "lorenz63"
     assert cfg.model.state_dim == 3
-    assert cfg.training.stage1.max_epochs == 200
+    assert cfg.training.stage1.epochs == 3000
     assert cfg.baselines.da_window_steps == 50
 
 
 def test_data_only_config_keys():
-    """The bare data config (lorenz63) holds only data/baselines/s0/s1 --
+    """The bare data config (lorenz63) holds only data/baselines/cases --
     model/training/paths now live in each config/models/*.yaml."""
     with hydra.initialize(config_path="../config"):
         cfg = hydra.compose("lorenz63")
-    expected_keys = {"data", "baselines", "s0", "s1"}
+    expected_keys = {"data", "baselines", "cases"}
     assert set(cfg.keys()) == expected_keys, f"Mismatch: {expected_keys ^ set(cfg.keys())}"
 
 
 def test_config_all_keys_present():
     """All expected top-level keys exist in a model config."""
     with hydra.initialize(config_path="../config"):
-        cfg = hydra.compose("models/A1_baseline")
-    expected_keys = {"data", "model", "training", "paths", "baselines", "s0", "s1", "note"}
+        cfg = hydra.compose("models/direct_unet")
+    expected_keys = {"data", "model", "training", "paths", "baselines", "cases"}
     assert set(cfg.keys()) == expected_keys, f"Missing keys: {expected_keys - set(cfg.keys())}"
 
 
@@ -71,8 +71,8 @@ def test_data_section_keys():
 def test_model_section_keys():
     """All expected model keys exist."""
     with hydra.initialize(config_path="../config"):
-        cfg = hydra.compose("models/A1_baseline")
-    model_keys = {"state_dim", "hidden_channels", "time_emb_dim", "K_inner", "N_outer", "nu", "use_obs", "use_energy", "dropout"}
+        cfg = hydra.compose("models/direct_unet")
+    model_keys = {"model_type", "state_dim", "use_obs", "use_forcing", "use_params", "direct_unet"}
     assert set(cfg.model.keys()) == model_keys
 
 
@@ -88,8 +88,8 @@ def test_overrides_compose_correctly():
 def test_override_hidden_channels():
     """List-type overrides work."""
     with hydra.initialize(config_path="../config"):
-        cfg = hydra.compose("models/A1_baseline", overrides=["model.hidden_channels=[128,256]"])
-    assert cfg.model.hidden_channels == [128, 256]
+        cfg = hydra.compose("models/direct_unet", overrides=["model.direct_unet.hidden_channels=[128,256]"])
+    assert cfg.model.direct_unet.hidden_channels == [128, 256]
 
 
 def test_dataclass_properties_match_old_config():

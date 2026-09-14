@@ -930,6 +930,8 @@ class ETKF:
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
 
+            analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
             ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
@@ -1220,6 +1222,8 @@ class EnKF:
                 if nan_mask.any():
                     ensemble = torch.nan_to_num(ensemble)
 
+            analysis[t] = torch.mean(ensemble, dim=0).detach().cpu().numpy()
+            ens_var[t] = torch.var(ensemble, dim=0).detach().cpu().numpy()
             ens_traj[:, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
