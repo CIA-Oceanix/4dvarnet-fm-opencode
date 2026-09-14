@@ -1438,6 +1438,26 @@ Once all three finish: replace Q1/Q3/Q4/Q3-noise0.05/Q5 in
 `reports/qg/outputs/qg_neural_report.md`'s benchmark table with Q7/Q8/Q9/
 Q10 (per the user's explicit choice) -- open follow-up, not done yet.
 
+**Mid-training check (2026-09-14, epoch ~25-85 of 200 for all three)**:
+val `loss_psi` (the normalized-psi-only component, directly comparable
+across schemes) is substantially lower for Q8/Q9/Q10 than for Q7 at
+matching epochs (e.g. epoch 20: Q7 0.128 vs Q8 0.044/Q9 0.054/Q10 0.053)
+-- expected, conditioning is doing real work. **But this comparison is
+confounded**: Q7 was trained at the OLD easy default (lag=1.0d/
+noise=0.01), while Q8/Q9/Q10 train at the NEW DA-matched default
+(lag=5.0d/noise=0.05, harder observations) -- so Q7 is the wrong obs-only
+reference point for the final table now, carrying the same "not
+apples-to-apples" caveat marker Q1 has in the current published table.
+
+**`Q7_direct_unet_tchannels_s0_noise05.yaml`** (new): Q7 retrained at
+lag=5.0d/noise=0.05 to match Q8/Q9/Q10's obs difficulty exactly, mirroring
+the Q3/Q3-noise0.05 precedent -- isolates the conditioning comparison at
+matched observation difficulty. Same `gradient_clip_val=1.0` precaution.
+1 new YAML config sanity test. Full 200-epoch training launched
+(`batch/run_qg_q7_direct_unet_tchannels_noise05_train.sbatch`). The final
+T-channels bench table will use this retrain, not the original Q7, as its
+obs-only reference row.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

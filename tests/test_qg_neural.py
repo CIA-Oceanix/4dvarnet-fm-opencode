@@ -945,6 +945,25 @@ def test_q7_direct_unet_tchannels_yaml_config():
         assert c % 4 == 0, f"{c} not divisible by build_model()'s hardcoded norm_num_groups=4"
 
 
+def test_q7_noise05_direct_unet_tchannels_yaml_config():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(
+        base, "config", "experiment", "Q7_direct_unet_tchannels_s0_noise05.yaml"))
+    assert cfg.model_type == "direct_unet_tchannels"
+    assert int(cfg.model.param_dim) == 0
+    assert int(cfg.model.cond_extra_dim) == 0
+    assert float(cfg.training.gradient_clip_val) == 1.0
+    # New config (matched to Q8/Q9/Q10's obs difficulty): no
+    # obs_noise_std_frac/init_lag_days override -- picks up
+    # train_qg_neural.py's current fallback default (0.05/5.0) directly,
+    # unlike the original Q7 which pins the old 0.01/1.0.
+    assert "obs_noise_std_frac" not in cfg.data
+    assert "init_lag_days" not in cfg.data
+
+
 def _tchannels_cond_yaml_config(filename, param_dim, cond_extra_dim, ic_dim=0):
     import os
 
