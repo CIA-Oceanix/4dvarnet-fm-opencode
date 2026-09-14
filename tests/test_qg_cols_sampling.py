@@ -27,24 +27,24 @@ def _window(**kw):
     return cfg, ds["test_s0"][0]
 
 
-def test_col_points_disabled_by_default():
+def test_cols_sampling_sequential_is_default():
     cfg, w = _window(cols_per_day=2)
-    assert cfg.col_points_per_day == 0
+    assert cfg.cols_sampling == "sequential"
     assert torch.is_tensor(w["obs_columns"])
     assert torch.is_tensor(w["obs"])
 
 
-def test_col_points_produces_list_storage():
-    cfg, w = _window(col_points_per_day=3)
+def test_cols_sampling_random_produces_list_storage():
+    cfg, w = _window(cols_per_day=3, cols_sampling="random")
     assert isinstance(w["obs_columns"], list)
     assert isinstance(w["obs"], list)
     assert len(w["obs_columns"]) == cfg.num_steps
 
 
-def test_col_points_total_event_count():
-    """Total column-events across the window == points_per_day * n_days,
+def test_cols_sampling_random_total_event_count():
+    """Total column-events across the window == cols_per_day * n_days,
     regardless of how many land on the same step."""
-    cfg, w = _window(col_points_per_day=5)
+    cfg, w = _window(cols_per_day=5, cols_sampling="random")
     spd = round(86400.0 / cfg.dt)
     n_days = cfg.num_steps // spd
     total = sum(len(c) for c in w["obs_columns"] if c is not None)
@@ -55,10 +55,10 @@ def test_col_points_total_event_count():
                 assert 0 <= x < cfg.nx
 
 
-def test_col_points_exceeds_steps_per_day_ceiling():
+def test_cols_sampling_random_exceeds_steps_per_day_ceiling():
     """The whole point of this mode: a density that would hang the
-    collision-avoiding cols_per_day sampler must work here."""
-    cfg = _cfg(col_points_per_day=20, dt=7200.0)  # steps_per_day = 12
+    collision-avoiding sequential sampler must work here."""
+    cfg = _cfg(cols_per_day=20, cols_sampling="random", dt=7200.0)  # steps_per_day = 12
     ds = make_qg_s0_s1_datasets(cfg)
     w = ds["test_s0"][0]
     spd = round(86400.0 / cfg.dt)
@@ -70,15 +70,15 @@ def test_col_points_exceeds_steps_per_day_ceiling():
     assert len(multi) > 0, "expected at least one step with >1 column at this density"
 
 
-def test_cols_per_day_raises_instead_of_hanging_past_ceiling():
-    cfg = _cfg(cols_per_day=20, dt=7200.0)  # steps_per_day = 12 < 20
+def test_sequential_raises_instead_of_hanging_past_ceiling():
+    cfg = _cfg(cols_per_day=20, dt=7200.0)  # steps_per_day = 12 < 20, sequential default
     with pytest.raises(ValueError, match="exceeds steps_per_day"):
         make_qg_s0_s1_datasets(cfg)
 
 
-def test_col_points_deterministic():
-    da = make_qg_s0_s1_datasets(_cfg(col_points_per_day=4))
-    db = make_qg_s0_s1_datasets(_cfg(col_points_per_day=4))
+def test_cols_sampling_random_deterministic():
+    da = make_qg_s0_s1_datasets(_cfg(cols_per_day=4, cols_sampling="random"))
+    db = make_qg_s0_s1_datasets(_cfg(cols_per_day=4, cols_sampling="random"))
     wa, wb = da["test_s0"][0], db["test_s0"][0]
     assert wa["obs_columns"] == wb["obs_columns"]
     for a, b in zip(wa["obs"], wb["obs"]):
@@ -89,13 +89,13 @@ def test_col_points_deterministic():
 
 
 def test_event_column_groups_matches_stored_columns():
-    cfg, w = _window(col_points_per_day=4)
+    cfg, w = _window(cols_per_day=4, cols_sampling="random")
     groups = _event_column_groups(cfg, w)
     assert groups is w["obs_columns"]
 
 
 def test_psi_h_combined_handles_multi_column_step():
-    cfg, w = _window(col_points_per_day=6)
+    cfg, w = _window(cols_per_day=6, cols_sampling="random")
     device = torch.device("cpu")
     dyn = _build_dyn(cfg, w, device)
     obs_cols = _event_column_groups(cfg, w)
@@ -111,8 +111,8 @@ def test_psi_h_combined_handles_multi_column_step():
     assert torch.allclose(out, manual, atol=1e-6)
 
 
-def test_make_obs_system_routes_col_points_through_combined_path():
-    cfg, w = _window(col_points_per_day=5)
+def test_make_obs_system_routes_random_sampling_through_combined_path():
+    cfg, w = _window(cols_per_day=5, cols_sampling="random")
     device = torch.device("cpu")
     obs, r_var, obs_op, loc_fn = _make_obs_system(cfg, w, device, "psi", loc_radius=6.0)
     assert loc_fn.__name__ == "_build_qg_col_point_loc_matrices"
@@ -120,11 +120,13 @@ def test_make_obs_system_routes_col_points_through_combined_path():
 
 
 @pytest.mark.slow
-def test_etkf_run_smoke_with_col_points_above_ceiling():
+def test_etkf_run_smoke_with_cols_sampling_random_above_ceiling():
     """The originally-requested cols_per_day=16 config: infeasible under the
-    old sampler (would hang), must work via col_points_per_day."""
+    default 'sequential' sampler (would hang), must work via
+    cols_sampling='random'."""
     cfg = _cfg(nx=16, window_days=5.0, spinup_years=0.02, num_windows=1,
-              col_points_per_day=16, seed=123, init_lag_days=0.5, dt=7200.0)
+              cols_per_day=16, cols_sampling="random", seed=123,
+              init_lag_days=0.5, dt=7200.0)
     ds = make_qg_s0_s1_datasets(cfg)
     device = torch.device("cpu")
     summary = run("etkf", cfg, ds=ds, scenarios=("test_s0",), init="lagged",

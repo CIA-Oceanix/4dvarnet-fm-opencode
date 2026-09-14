@@ -1162,6 +1162,10 @@ row above vs. the baseline row), well inside N=10 noise, and if anything
 marginally *better* on S1, not worse. This rules out the new sampler
 introducing some systematic artifact of its own at low density.
 
+> **RETRACTED below ("MAJOR CORRECTION" section further down) -- both of
+> the next two callouts turned out to be a `loc_radius`-mismatch artifact,
+> not a real finding. Read the correction before citing either claim.**
+
 **Key finding, directly confirms the original motivation**: on S1 (real
 model error), simply observing *more* of the same (biased) upper layer is
 not just unhelpful but actively **destabilizing** -- cols=8 already
@@ -1177,7 +1181,13 @@ specifically, the only config that doesn't degrade relative to baseline.
 Genuinely new information about the previously-unobserved deep layer helps
 where more of the same upper-layer information hurts.
 
-**Collapse investigated (2026-09-14), not a bug**: the cols=16 (random)
+**Collapse investigated (2026-09-14), not a bug -- correctly ruled out
+coding errors, but the "reinforces S1's bias" framing below is superseded
+by the "MAJOR CORRECTION" section further down: the root cause is
+`loc_radius`/ensemble-size mismatch, not model-error reinforcement (the
+PV-inversion amplification mechanism described here is still an accurate
+description of *why* the symptom shows up as psi collapsing worse than q,
+just not of what actually triggers it)**: the cols=16 (random)
 S1 collapse looked dramatic enough to double-check. Per-window PV-q RMSE
 values are all finite and unremarkable (6e-6 to 2.4e-5, no NaN/blow-up),
 and the result reproduces across reruns -- so it isn't a numerical/coding
@@ -1197,14 +1207,43 @@ degraded. Confirmed this isn't specific to the new sampler: `cols=8`
 degradation (psi 0.829→0.732), just less extreme -- cols=16(random) is a
 more extreme point on the same real trend, not an isolated artifact.
 
+**EnKF cross-check (2026-09-14) -- collapse is method-agnostic, not
+ETKF-specific**: repeated `baseline`/`cols=8`/`cols=16-random` on EnKF, same
+N=10 windows. Found the *same* graded destabilization on S1, if anything
+**more severe** at the extreme:
+
+| config | method | S1 q full | S1 q layer2 | S1 psi full |
+|---|---|---|---|---|
+| baseline (cols=4) | ETKF | 0.328 | 0.231 | 0.829 |
+| baseline (cols=4) | EnKF | 0.280 | 0.155 | 0.737 |
+| cols=8 | ETKF | 0.326 | 0.191 | 0.732 |
+| cols=8 | EnKF | 0.190 | 0.004 | 0.163 |
+| cols=16, random | ETKF | 0.103 | -0.100 | -1.189 |
+| cols=16, random | EnKF | **-0.236** | **-0.586** | **-4.945** |
+
+This required extending the earlier `ETKF`-only variable-observation-width
+fix (see the `etkf_ridge` sensitivity PR) to `EnKF` too -- `EnKF.assimilate()`
+still had the old `num_steps = observations.shape[0]` (crashes on a list-
+based combined observation) and `EnKF._per_time`'s un-unified h-mode/
+index-mode `od_t` derivation; applied the identical two-line fix (`idx.
+numel()`-based width, `obs_mask.shape[0]`-based `num_steps`) used for ETKF.
+Same caveat as before: only the dead (never exercised with `init="lagged"`)
+`init_ensemble is None` branch still references the old constant `od`, left
+alone. Confirms the S1 obs-density collapse is a property of the
+observation configuration under model error, not an artifact of ETKF's
+particular (deterministic, ridge-regularized) update mechanism -- both the
+deterministic and stochastic ensemble filters share it, consistent with
+the earlier inflation-collapse finding also being shared across methods.
+
 Caveats: N=10 (screening scale, same convention as the ETKF/4DVar
 sensitivity work above); an N=100 confirmation of both the psi1+psi2 win
 and the cols=16 collapse magnitude is still the natural next step (the
 qualitative direction of both findings is now well-supported, but exact
 N=100 numbers aren't in yet).
 
-Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 10 files,
-including the cols=4/random sanity-check pair). New tests:
+Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 16 files:
+the ETKF sweep, the cols=4/random sanity-check pair, and the EnKF
+baseline/cols=8/cols=16-random cross-check). New tests:
 `tests/test_qg_psi2_points.py` (15), `tests/test_qg_cols_sampling.py` (10,
 renamed from `test_qg_col_points.py` in the naming cleanup) -- both new obs
 streams, the combined H-function/localization machinery, the
@@ -1223,6 +1262,94 @@ confusing. Refactored to a single density parameter (`cols_per_day`,
 unchanged) plus a `cols_sampling` mode selector (`"sequential"` default /
 `"random"` new) -- one meaningfully-named field per concept, not two
 overlapping ones.
+
+**MAJOR CORRECTION (2026-09-14, same day, later) -- both headline
+conclusions above were wrong, superseded by this section.** The user
+pushed back on the "more upper-layer density destabilizes S1" finding
+(asked directly: "isn't there an impact of a too large/too weak
+inflation? Can you try with 64 cols per day? We would expect this to be
+much easier as a reconstruction task.") -- entirely correctly.
+
+**Step 1, inflation sweep at `cols=16` (`"random"`, S1)**: {0.90, 0.95,
+1.00, 1.02, 1.05} -> q_full {-0.412, -0.355, **0.095**, -23.9, -282}.
+`inflation=1.0` was already the tested optimum -- ruled out inflation
+mismatch as the explanation.
+
+**Step 2, `cols=64` (`"random"`, `loc_radius=6.0` unchanged)**: expected
+(per the user's intuition) to be *easier* than `cols=16` -- instead S1
+q_full=-0.294, **psi_full=-17.6** (far worse). But critically, **S0 (no
+model error) also degraded** at this density (psi 0.907->0.637) -- a
+pure-model-error explanation predicts *no* S0 effect, so this was the
+tell that something else was going on.
+
+**Step 3, `loc_radius` sweep at `cols=64` (N_ensemble=80 fixed, matching
+the "ensemble size stays small operationally" constraint)**: shrinking
+`loc_radius` from 6.0 -> 2.0 **fully recovers and then exceeds** the
+original baseline, on both scenarios:
+
+| loc_radius | S0 psi | S1 psi | S1 q_full |
+|---|---|---|---|
+| 6.0 (unchanged) | 0.637 | -17.6 (collapse) | -0.294 |
+| 4.0 | 0.938 | 0.788 | 0.409 |
+| 3.0 | 0.972 | 0.942 | 0.514 |
+| **2.0 (best)** | **0.980** | **0.962** | **0.560** |
+
+At `loc=2.0`, `cols=64` **beats** the original `cols=4/loc=6` baseline
+(S1 psi 0.962 vs 0.829, q 0.560 vs 0.328) -- the user's original intuition
+was right. Repeated at `cols=16` (`loc_radius` in {4,3,2}): same story,
+full recovery, `q_full` up to 0.506, `psi_full` up to 0.939 -- also beats
+the baseline. **Root cause**: `loc_radius=6.0` was tuned for the sparse
+(4-8/day) regime; localization exists specifically to counter ensemble
+sampling error given a *fixed, small* ensemble (N=80 throughout, deliberately
+not scaled up, matching the operational constraint the user named). Higher
+observation density means more *simultaneous* columns per assimilation
+step, so the same fixed ensemble/localization combination that was fine at
+low density becomes badly under-resourced at high density -- shrinking
+`loc_radius` decomposes each update into smaller, better-conditioned local
+problems instead of one large poorly-conditioned global one. This is the
+standard operational answer when ensemble size can't grow: adapt
+localization to observation density, don't leave it fixed. (The other
+standard tool for the same problem, not tried here: serial/sequential
+per-observation processing instead of one large combined observation
+vector.)
+
+**So finding #1 above ("more upper-layer density destabilizes S1") is
+retracted**: it was a `loc_radius`-mismatch artifact, not a real
+physical/model-error effect. Properly localized, more upper-layer density
+is unambiguously better on both S0 and S1, as conventional DA wisdom would
+predict.
+
+**Finding #2 ("psi2 observations are uniquely valuable") is also not
+supported once the comparison is made fair.** The psi1(4)+psi2(10)
+combined config was only ever tested at `loc_radius=6.0`; a follow-up
+sweep ({5,4,3,2}) found it was *already* near its own optimum (loc=5:
+q_full=0.395 vs loc=6's 0.389 -- barely moves, its total density is
+modest enough that 6.0 was already fine). But once psi1-only configs are
+given their OWN fair, density-matched `loc_radius`, they clearly
+outperform the psi1+psi2 mix at its much lower density:
+
+| config (S1) | q_full | psi_full |
+|---|---|---|
+| psi1(4)+psi2(10), loc=5 (its own optimum) | 0.395 | 0.881 |
+| psi1-only, cols=16, loc=3-4 (tuned) | 0.498 | 0.939 |
+| **psi1-only, cols=64, loc=2 (tuned)** | **0.560** | **0.962** |
+
+**Genuinely open question, not yet answered**: does psi2 information add
+anything *at matched total density* against a properly-tuned pure-psi1
+config (e.g. cols~54 + psi2=10 vs cols=64, both with their own tuned
+`loc_radius`)? Not tested -- the only combined config tried so far has
+much lower total density than the high-density pure-psi1 configs, so this
+comparison so far only shows "more well-localized data beats less
+well-localized-but-mixed data," not "psi1 alone beats psi1+psi2 at equal
+density." A fair head-to-head at matched density is the natural next step
+if this question matters going forward.
+
+**Practical implication for this codebase**: `loc_radius` should be swept
+per obs-density config, not held at one project-wide default (6.0), for
+any future high-density obs-config experiment (this generalizes beyond
+`cols_sampling="random"` -- would apply to any density increase, e.g. a
+future `cols_per_day` increase within the `"sequential"` mode's own
+`steps_per_day` ceiling too, once that ceiling itself is investigated).
 
 **Tooling gotcha**: adding a new `QGConfig` field (even at a neutral
 default) changes `_truth_cache_path`'s hash (it hashes the *entire*

@@ -1105,12 +1105,14 @@ class EnKF:
                 self.state_dim, self.obs_operator, NO, J, loc_radius, device)
 
     def _per_time(self, t: int) -> tuple:
-        if self.obs_operator.h_mode:
-            idx = self.obs_operator.index_at(t)
-            od_t = self.obs_operator.obs_dim
-        else:
-            idx = self.obs_operator.index_at(t)
-            od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
+        # See ETKF._per_time's identical unification: idx.numel() (rather
+        # than the operator's precomputed constant obs_dim) also covers
+        # h-mode operators whose h_index_at returns a per-time-varying-
+        # length index (e.g. the combined psi1/psi2 obs-density streams) --
+        # falls back to the constant when idx is None, identical to every
+        # existing (constant-width) h-mode/index-mode operator.
+        idx = self.obs_operator.index_at(t)
+        od_t = idx.numel() if idx is not None else self.obs_operator.obs_dim
         loc_Lx = self.loc_Lx_t[t] if self.loc_Lx_t is not None else getattr(
             self, "loc_Lx", None)
         loc_Ly = self.loc_Ly_t[t] if self.loc_Ly_t is not None else getattr(
@@ -1131,7 +1133,10 @@ class EnKF:
     ) -> BaselineResult:
         params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
-        num_steps = observations.shape[0]
+        # obs_mask.shape[0] (not observations.shape[0]): see ETKF.assimilate's
+        # identical comment -- observations may be a variable-width list
+        # (combined multi-stream obs), obs_mask is always a proper tensor.
+        num_steps = obs_mask.shape[0]
         H = self.obs_operator
         if self.obs_operator.h_mode:
             od = self.obs_operator.obs_dim
