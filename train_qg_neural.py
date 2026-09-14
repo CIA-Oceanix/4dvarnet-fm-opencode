@@ -528,10 +528,11 @@ def main():
     # every split, so train/val's on-the-fly obs follow the same protocol.
     ap.add_argument("--obs-geometry", default="random_columns")
     ap.add_argument("--cols-per-day", type=int, default=4)
-    # default=None (not 0.01/1.0) so the experiment YAML's data.* values (if
-    # any) aren't silently overridden -- Q5 needs obs_noise_std_frac=0.05/
-    # init_lag_days=5.0 to actually take effect from its config alone,
-    # without requiring the launcher to also pass these on the CLI.
+    # default=None (not 0.05/5.0) so the experiment YAML's data.* values (if
+    # any) aren't silently overridden -- e.g. Q1/Q1-obsdensity/Q2/Q3/Q4 pin
+    # obs_noise_std_frac=0.01/init_lag_days=1.0 explicitly in their own YAML
+    # to preserve their historical trained-at values now that the code
+    # fallback below has changed (2026-09-14, see PLAN.md).
     ap.add_argument("--obs-noise-std-frac", type=float, default=None)
     ap.add_argument("--init-lag-days", type=float, default=None)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
@@ -552,10 +553,18 @@ def main():
     # `model.param_dim`/`model.cond_extra_dim`/`data.cond_mode` -- CLI flags
     # below only override it when explicitly given.
     exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    # Fallback default (2026-09-14): the DA-baseline reference case's own
+    # eval config (0.05/5.0, see eval_qg_neural_s0_s1.py and PLAN.md) --
+    # deliberately changed from the earlier 0.01/1.0 so a NEW config that
+    # doesn't override these fields trains apples-to-apples with the DA
+    # baselines by default, same precedent as the cosine-LR-scheduler
+    # default flip. Existing configs trained at 0.01/1.0 pin that value
+    # explicitly in their own YAML so this change doesn't silently alter
+    # them (see Q1_direct_unet_s0.yaml's comment).
     obs_noise_std_frac = (args.obs_noise_std_frac if args.obs_noise_std_frac is not None
-                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.01)))
+                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.05)))
     init_lag_days = (args.init_lag_days if args.init_lag_days is not None
-                     else float(exp_cfg.data.get("init_lag_days", 1.0)))
+                     else float(exp_cfg.data.get("init_lag_days", 5.0)))
     gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
                         else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
     q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None

@@ -102,3 +102,9 @@ data:
   cache_dir: reports/qg_cache
   normalize: true
   norm_stats_path: experiments/qg_psi_norm_stats.pt
+  # Pinned explicitly (2026-09-14, see Q1_direct_unet_s0.yaml's fuller
+  # comment / PLAN.md): train_qg_neural.py's fallback default changed to
+  # the DA reference case (0.05/5.0) -- this preserves this config's
+  # actual trained-at values unchanged.
+  obs_noise_std_frac: 0.01
+  init_lag_days: 1.0

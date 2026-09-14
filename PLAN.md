@@ -1317,6 +1317,41 @@ epochs. Full 200-epoch training launched (job 53483), `experiments/
 Q7_direct_unet_tchannels_s0/`. Not yet evaluated against Q1 -- open
 follow-up once training completes.
 
+### Training default now matches the DA eval default (2026-09-14,
+### `feature/qg-q6-fourdvarnet`)
+
+`train_qg_neural.py`'s `obs_noise_std_frac`/`init_lag_days` CLI args
+default to `None`, falling back to whatever the experiment YAML's
+`data.*` says, or a hardcoded literal if the YAML doesn't say either.
+That hardcoded literal used to be `0.01`/`1.0` -- NOT the DA-baseline
+reference case's own value (`0.05`/`5.0`, see `eval_qg_neural_s0_s1.py`
+and the DA benchmark reports), so any new config that forgot to set these
+fields explicitly would silently train out-of-distribution relative to
+the DA comparison, producing a recurring "not apples-to-apples" caveat on
+every eval report. Fixed once for all, per the same precedent as the
+2026-09-10 cosine-LR-scheduler default flip (see `AGENTS.md`): the
+hardcoded fallback in `train_qg_neural.py` is now `0.05`/`5.0`, and every
+config that actually relied on the old implicit `0.01`/`1.0` fallback
+was pinned to that value explicitly first, so this change alters nothing
+about what any existing/in-flight run trains at:
+`Q1_direct_unet_s0.yaml`, `Q1_direct_unet_s0_obsdensity_aug.yaml`,
+`Q2_vanilla_cfm_s0.yaml`, `Q3_direct_unet_s0_oracle_cond.yaml`,
+`Q4_direct_unet_s1_noisy_cond.yaml`, `Q6_fourdvarnet_s0.yaml`,
+`Q7_direct_unet_tchannels_s0.yaml`. (`Q3_direct_unet_s0_oracle_cond_
+noise05.yaml` and `Q5_direct_unet_s1_noisy_ic_cond.yaml` already set
+`0.05`/`5.0` explicitly and needed no change.) Only a genuinely NEW
+config that omits both fields would pick up the new default.
+
+`eval_qg_neural_s0_s1.py`'s own `--lag-days`/`--noise-frac` CLI defaults
+were flipped the same way, `1.0`/`0.01` -> `5.0`/`0.05`, so running the
+eval script with no flags now matches the DA reference case by default;
+pass `--lag-days 1.0 --noise-frac 0.01` explicitly to evaluate the
+still-old-default schemes above in-distribution instead. Note this is
+purely a CLI-default change -- the cached-truth lookup key (`CACHE_KW`,
+`obs_noise_std_frac=0.01, init_lag_days=1.0`) is unrelated and was left
+untouched: it identifies a specific pre-generated truth cache on disk,
+not a training/eval default, and changing it would just miss the cache.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):
