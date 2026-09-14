@@ -320,6 +320,23 @@ def main() -> None:
         "ensemble spread to exploit on the unobserved layer) rather than a "
         "fixable covariance-tuning gap, unlike ETKF's case.")
     add("")
+    add("**ETKF/EnKF obs-density/configuration sensitivity -- a "
+        "`loc_radius`-tuning lesson, not a new physical effect "
+        "(2026-09-13/14)**: an initial N=10 sweep varying `cols_per_day` "
+        "and a new independent lower-layer (psi2) point-observation stream "
+        "looked like it found \"more upper-layer density destabilizes S1\" "
+        "and \"psi2 observations are uniquely valuable\" -- **both "
+        "retracted** after user pushback prompted an inflation check, a "
+        "`cols=64` run, and a `loc_radius` sweep. The real story: "
+        "`loc_radius=6.0` was tuned for the sparse 4-8/day regime and "
+        "becomes an ensemble-conditioning bottleneck at higher density "
+        "with a fixed small ensemble (N=80) -- shrinking it fully "
+        "recovers and then exceeds the original baseline at both cols=16 "
+        "and cols=64, on both S0 and S1. Whether psi2 information adds "
+        "value *at matched total density* against a properly-tuned "
+        "pure-psi1 config remains genuinely open. Full correction trail "
+        "in `da_sensitivity_s0_s1_report.md`'s dedicated section.")
+    add("")
 
     # ---- Synthesis ----
     add("## Synthesis: best configuration per method (S0 vs S1)")
