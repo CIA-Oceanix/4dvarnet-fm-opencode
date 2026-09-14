@@ -1208,6 +1208,80 @@ solver adds no meaningful overhead at this N_outer=10/S-tier size). Full
 `experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
 training completes.
 
+**Killed at epoch 126/400 (2026-09-14) -- flat/non-learning loss, not a
+crash**: `train_loss`/`val_loss` sat at ≈91.5 essentially unchanged from
+epoch 0 through 126 (~6h), `val_loss_psi` suspiciously flat at
+0.8413-0.8420 the whole time, `train_loss_psi` noisy with no trend
+(0.17-3.08). Back-of-envelope: with `q_loss_weight=2.5415e9`, the ≈91.5
+total implies a raw q-loss ≈3.5e-8 -- **~90x worse** than the zero-mean-
+prediction baseline (`Var(q)≈3.93e-10`, which alone would contribute ≈1.0
+to the total). Not investigated further before the redesign below (root
+cause not confirmed to be a bug vs. a genuine architecture mismatch) --
+job 53474 killed rather than let it keep running.
+
+### Q6 redesign: `monai2d` backbone -- true 2D circular convs, T merged into
+### channels (2026-09-14)
+
+User feedback on the flat-loss run: `unet_backbone="monai"` (`MonaiUNet1D`)
+is architecturally a poor fit for QG regardless of the padding fix above --
+it flattens the whole `state_dim` vector into a 1D sequence with no 2D
+locality/periodicity prior at all (unlike Q1's own `MonaiDirectUNetQG`).
+Proposed instead: reuse `MonaiDirectUNetQG`'s real 2D circular-conv
+backbone, but merge the T (days) axis into the *channel* dimension
+(`(B, T*channels_per_day, ny, nx)`) rather than `MonaiDirectUNetQG`'s own
+convention of folding T into the *batch* dimension (`(B*T, channels, ny,
+nx)`, fully independent per-day processing, no cross-day coupling at all --
+confirmed by re-reading `MonaiDirectUNetQG.forward`). Channel-merging lets
+the network mix information across days via ordinary conv channel-mixing,
+and -- as a side benefit -- completely eliminates the T-divisibility
+constraint that needed the pad/crop workaround above (only `ny`/`nx` need
+to divide the backbone's downsampling depth, and QG's 64x64 grid already
+does).
+
+**New `models.monai_unet_qg2d.MonaiUNet2DQGSolver`**: a drop-in backbone
+for `FourDVarNetSolver` (`unet_backbone="monai2d"`) -- `forward(x, tau=...)`
+matches `MonaiUNet1D`'s exact `(B, C, T)` in/out convention (so *zero*
+changes were needed to `_solver_iteration`/`_prior_ae`/`FourDVarNetSolver.
+forward()`, all shared with L96), internally reshaping `(B, C, T) -> (B, T,
+C) -> (B, T*channels_per_day, ny, nx)` (`channels_per_day = C //
+(ny*nx)`, exact by construction since `C` is always a whole multiple of
+`ny*nx` -- `_UPDATE_INPUT_CHANNEL_MULTIPLIER`-scaled `state_dim`), runs
+`MonaiUNet2DCircular`, reshapes back. `FourDVarNetSolver.__init__` gained
+`qg_T`/`qg_ny`/`qg_nx` (only required/used for `unet_backbone="monai2d"`,
+threaded through both `self.unet` and `self.prior_unet` construction);
+`train_qg_neural.py`'s `build_model()` passes them automatically from the
+`QGConfig` (`qg_T=num_days(cfg), qg_ny=cfg.ny, qg_nx=cfg.nx`) whenever
+`model_type="fourdvarnet"`, regardless of which backbone the YAML picks.
+`QGNeuralLightning`'s padding wrapper (`_pad_batch_for_monai1d`/
+`_padded_prior_cost`) is now only invoked when `unet_backbone=="monai"`
+specifically (a plain, unpadded `_plain_prior_cost` otherwise) -- padding
+`monai2d` would only waste compute and introduce a spurious edge effect
+for no reason, since it has no T-constraint to work around.
+
+Q6's config switched to `unet_backbone: monai2d`, "S"-tier
+(`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`,
+`monai_norm_num_groups=4` -- MONAI requires every channel count divisible
+by this, including the backbone's internal `T*channels_per_day` totals:
+120 for the main solver's `obs+state` concatenation, 60 for `prior_unet`;
+4 is the largest value dividing {32,64,128,60,120} all at once). Verified
+end-to-end at full production scale (nx=64, `state_dim=8192`, T=30,
+batch=2) on CPU: 5,157,432 params, finite forward/`compute_loss`/backward,
+no padding needed at all. 9 new tests (`tests/test_monai_unet_qg2d.py`,
+`tests/test_qg_neural.py`) cover the new backbone's construction/forward/
+backward, its two `ValueError` guards, the full Q6 YAML config, and that
+`QGNeuralLightning` correctly skips the (now-inapplicable) padding wrapper
+for this backbone.
+
+**Smoke test (job 53476) confirms real learning, unlike the flat "monai"
+run**: `train_loss_psi` 0.213→0.092 and `val_loss_psi` 0.429→0.260 from
+epoch 0 to 1 (both clearly decreasing, not flat), and S0 psi EV=0.679
+after just 2 epochs (vs. the old backbone's -0.12 at the same point) --
+`train_time_seconds`≈502s (~251s/epoch, a bit slower than Q1 but
+reasonable for the 2D-conv-per-day-times-T-channels architecture). Full
+400-epoch training relaunched under the new backbone (job 53477),
+`experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
+training completes.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

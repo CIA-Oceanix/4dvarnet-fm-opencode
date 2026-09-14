@@ -97,6 +97,83 @@ class MonaiUNet2DCircular(nn.Module):
         return self.backbone(inp, timesteps)
 
 
+class MonaiUNet2DQGSolver(nn.Module):
+    """QG-native backbone for `models.fourdvarnet.FourDVarNetSolver`
+    (`unet_backbone="monai2d"`): merges the T (days) axis into the *channel*
+    dimension (`T * channels_per_day` total input channels) instead of
+    `MonaiUNet1D`'s convention of treating T as a downsampled 1D-sequence
+    axis (which requires T divisible by the backbone's downsampling depth --
+    QG's 30-day windows often aren't, see `train_qg_neural.py`'s
+    `_pad_batch_for_monai1d`) or `MonaiDirectUNetQG`'s convention of folding
+    T into the *batch* dimension (every day processed fully independently,
+    no cross-day coupling at all). Here every day keeps its true `(ny, nx)`
+    circular-conv grid, and the 2D backbone's ordinary channel-mixing lets
+    it learn correlations across days too.
+
+    Drop-in for `MonaiUNet1D`/`UNet1D` at every `FourDVarNetSolver` call
+    site (`_build_backbone_unet`'s `use_obs=False` convention: FDV's own
+    channel-concat, e.g. `cat([x, obs], dim=-1)` for `update_input=
+    "obs+state"`, is already baked into the incoming channel axis before
+    this class ever sees it): `forward(x, tau=...)` takes `x` shaped
+    `(B, C, T)` (channel-first, sequence-last -- `MonaiUNet1D`'s own
+    convention) and returns the same `(B, C_out, T)` shape. `C` (`state_dim`/
+    `output_dim` at construction) must be a whole multiple of `ny*nx` --
+    `C // (ny*nx)` is the per-day channel count (e.g. `2*nlayers` for
+    `update_input="obs+state"`'s `state`+`obs` concatenation, matching QG's
+    `nlayers=2`-layer-major `D` layout exactly, the same one
+    `MonaiDirectUNetQG.forward` reshapes directly into `(nlayers, ny, nx)`).
+
+    `time_emb_dim` is accepted (for call-site parity with
+    `_build_backbone_unet`'s uniform kwargs) but ignored, same as
+    `MonaiUNet1D` -- MONAI's `DiffusionModelUNet` always carries its own
+    internal time embedding.
+    """
+
+    def __init__(self, state_dim: int, T: int, ny: int, nx: int,
+                 hidden_channels: list[int] | None = None,
+                 num_res_blocks: int = 2, norm_num_groups: int = 8,
+                 output_dim: int | None = None, dropout: float = 0.1,
+                 time_emb_dim: int = 0):
+        super().__init__()
+        if state_dim % (ny * nx) != 0:
+            raise ValueError(
+                f"state_dim ({state_dim}) must be a whole multiple of "
+                f"ny*nx ({ny}*{nx}={ny * nx}) for unet_backbone='monai2d'")
+        output_dim = output_dim if output_dim is not None else state_dim
+        if output_dim % (ny * nx) != 0:
+            raise ValueError(
+                f"output_dim ({output_dim}) must be a whole multiple of "
+                f"ny*nx ({ny}*{nx}={ny * nx}) for unet_backbone='monai2d'")
+        self.T = T
+        self.ny = ny
+        self.nx = nx
+        self.in_ch_per_day = state_dim // (ny * nx)
+        self.out_ch_per_day = output_dim // (ny * nx)
+        self.backbone2d = MonaiUNet2DCircular(
+            in_channels=T * self.in_ch_per_day, out_channels=T * self.out_ch_per_day,
+            hidden_channels=hidden_channels, num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups, use_obs=False)
+        if dropout > 0:
+            from monai.networks.nets import diffusion_model_unet as _dmu
+            for module in self.backbone2d.backbone.modules():
+                if isinstance(module, _dmu.DiffusionUNetResnetBlock):
+                    module.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor = None,
+                tau: torch.Tensor = None) -> torch.Tensor:
+        B, C, T = x.shape
+        if T != self.T:
+            raise ValueError(f"expected T={self.T} (days), got {T}")
+        ch_per_day = C // (self.ny * self.nx)
+        # (B, C, T) -> (B, T, C) -> (B, T*ch_per_day, ny, nx): the day axis
+        # becomes additional channels, each day's C channels keep their
+        # true (ny, nx) grid layout.
+        x_grid = x.permute(0, 2, 1).reshape(B, T * ch_per_day, self.ny, self.nx)
+        out = self.backbone2d(x_grid, tau=tau)  # (B, T*out_ch_per_day, ny, nx)
+        out = out.reshape(B, T, self.out_ch_per_day * self.ny * self.nx)
+        return out.permute(0, 2, 1)  # (B, C_out, T)
+
+
 class MonaiDirectUNetQG(nn.Module):
     """MONAI-backed circular DirectUNet for QG, drop-in for
     `models.direct_unet.DirectUNet`.

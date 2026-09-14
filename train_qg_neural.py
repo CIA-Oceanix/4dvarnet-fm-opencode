@@ -77,6 +77,7 @@ from data.qg_neural import (
     ensure_truth_cache,
     ensure_truth_cache_redrawn,
     layer_split,
+    num_days,
     psi_daily,
     psi_to_q,
     q_daily,
@@ -125,7 +126,12 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # many knobs to justify individual CLI args, same reasoning as
         # param_dim/cond_extra_dim already being YAML-only).
         from models.fourdvarnet import FourDVarNetSolver
-        return FourDVarNetSolver(state_dim=cfg.state_dim, **(fdv_kwargs or {}))
+        # qg_T/qg_ny/qg_nx are only actually used by unet_backbone="monai2d"
+        # (models.monai_unet_qg2d.MonaiUNet2DQGSolver) -- harmless to always
+        # pass them (ignored otherwise), avoids needing to special-case the
+        # call based on which backbone the YAML picked.
+        return FourDVarNetSolver(state_dim=cfg.state_dim, qg_T=num_days(cfg),
+                                 qg_ny=cfg.ny, qg_nx=cfg.nx, **(fdv_kwargs or {}))
     raise ValueError(f"unknown model_type {model_type!r}")
 
 
@@ -191,6 +197,13 @@ def _padded_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
     return F.mse_loss(state, recon, reduction="sum")
 
 
+def _plain_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
+    """`models.fourdvarnet._prior_cost`, unpadded -- for backbones with no
+    T-axis divisibility constraint (`unet_backbone` "unet1d"/"monai2d")."""
+    from models.fourdvarnet import _prior_cost
+    return _prior_cost(prior_unet, state)
+
+
 def epochs_for(model_type: str) -> int:
     return 200 if model_type == "direct_unet" else 400
 
@@ -248,17 +261,28 @@ class QGNeuralLightning(pl.LightningModule):
             # exactly equivalent to compute_loss()'s own main MSE term (see
             # FourDVarNetSolver.compute_loss's docstring) -- only its
             # optional prior-consistency term needs replicating by hand here.
+            #
+            # T-axis padding (_pad_batch_for_monai1d/_padded_prior_cost) is
+            # only needed for unet_backbone="monai" (MonaiUNet1D treats T as
+            # its own downsampled 1D-sequence axis). unet_backbone="monai2d"
+            # (models.monai_unet_qg2d.MonaiUNet2DQGSolver, Q6's actual
+            # backbone) merges T into the channel axis instead -- no
+            # divisibility constraint on T at all, so padding here would
+            # only waste compute and introduce a spurious edge effect for
+            # no reason.
             T = batch.states.shape[1]
-            shim, n_pad = _pad_batch_for_monai1d(batch, T)
+            needs_pad = self.model.unet_backbone == "monai"
+            shim, n_pad = _pad_batch_for_monai1d(batch, T) if needs_pad else (batch, 0)
             est = self.model(shim)
             if n_pad:
                 est = est[:, :T]
             loss_psi = F.mse_loss(est, batch.states)
             if self.model.prior_unet is not None and self.model.aux_var_cost_weight > 0:
                 numel = est.numel()
+                prior_cost_fn = _padded_prior_cost if needs_pad else _plain_prior_cost
                 loss_psi = loss_psi + self.model.aux_var_cost_weight * (
-                    _padded_prior_cost(self.model.prior_unet, est) / numel
-                    + _padded_prior_cost(self.model.prior_unet, batch.states) / numel)
+                    prior_cost_fn(self.model.prior_unet, est) / numel
+                    + prior_cost_fn(self.model.prior_unet, batch.states) / numel)
             return est, loss_psi
         raise ValueError(f"unsupported model_type {self.model_type!r}")
 
@@ -330,7 +354,8 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
                 pred = model(batch)
             elif model_type == "fourdvarnet":
                 T = batch.states.shape[1]
-                shim, n_pad = _pad_batch_for_monai1d(batch, T)
+                needs_pad = model.unet_backbone == "monai"
+                shim, n_pad = _pad_batch_for_monai1d(batch, T) if needs_pad else (batch, 0)
                 pred = model.sample(shim, N_outer=10)
                 if n_members > 1:
                     members = [model.sample(shim, N_outer=10) for _ in range(n_members)]

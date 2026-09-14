@@ -1,37 +1,52 @@
 # Q6: FourDVarNetSolver (FDV1) neural baseline on QG S0 -- same obs-only
 # role as Q1 (no forcing/param/IC conditioning: FourDVarNetSolver has no
 # such hooks at all, unlike DirectUNet), but an unrolled variational solver
-# instead of a single-pass CNN. Hyperparameters mirror L96's current
+# instead of a single-pass CNN. Non-architecture hyperparameters (N_outer,
+# update_input, R_var, aux_var_cost_weight=0.01, etc.) mirror L96's current
 # winning "S"-tier config (`FDV1_obsstate_monai_l96_initvar01_Stier_
-# auxpriorcost01.yaml`, on the `feature/l96-fdv2-stier-sweep` branch --
-# 1,055,544 params, `aux_var_cost_weight=0.01` beats both the 0.1 variant
-# and the plain no-aux-term baseline there) -- adapted to QG's state_dim
-# (8192 at nx=64, vs. L96's 24) and its own production 1000/100/100 cache/
-# split-seed convention.
+# auxpriorcost01.yaml`, on the `feature/l96-fdv2-stier-sweep` branch).
 #
-# unet_backbone=monai here uses `models.monai_unet_adapter.MonaiUNet1D`
-# (a *flattened* 1D adapter treating the whole state_dim vector as a
-# single sequence axis, L96's own convention) -- NOT `MonaiDirectUNetQG`'s
-# genuine 2D circular-padded grid convolution. This is architecturally
-# weaker than Q1 for QG's actual 2D spatial structure (no periodic
-# boundary handling, no 2D locality prior); a QG-native 2D backbone for
-# FourDVarNetSolver would be a separate, larger follow-up. Q6 answers "does
-# the unrolled-solver *scheme* help on QG" holding this known backbone
-# limitation constant, not "what's the best possible FDV1 architecture for
-# QG".
+# unet_backbone=monai2d (2026-09-14, revised from an earlier "monai"
+# attempt): `models.monai_unet_qg2d.MonaiUNet2DQGSolver`, a genuinely 2D
+# circular-conv backbone (matches Q1's own MonaiDirectUNetQG architecture)
+# that merges the T (days) axis into the *channel* dimension
+# (T*channels_per_day total) instead of either (a) the original "monai"
+# backbone's convention of treating T as its own downsampled 1D-sequence
+# axis (required T divisible by the backbone's downsampling depth -- QG's
+# 30-day windows aren't, needed an awkward pad/crop workaround), or (b)
+# MonaiDirectUNetQG's own convention of folding T into the *batch*
+# dimension (every day processed fully independently, no cross-day
+# coupling at all, unlike this scheme's design intent). Every day keeps
+# its true (ny, nx) circular grid; the network mixes information across
+# days via ordinary channel mixing in the conv layers instead. No T-axis
+# divisibility constraint at all (only ny/nx need to divide the
+# backbone's downsampling depth, and QG's 64x64 grid already comfortably
+# does) -- qg_T/qg_ny/qg_nx are threaded through automatically by
+# train_qg_neural.py's build_model() from the QGConfig, not set here.
 #
-# Real bug fixed as a prerequisite (2026-09-13): FourDVarNetSolver's obs
-# cost only supported a per-*timestep* mask (uniform across the whole
-# state vector), fine for L96 (fixed observable-channel subset, obs_j)
-# but wrong for QG (`cols_per_day` sparse columns vary both per day *and*
-# per cell within an observed day) -- feeding it QG's old day-level
-# any-obs mask would have silently treated every unobserved cell's
-# zero-fill as a real obs=0 measurement. Fixed: `QGBatch.obs_mask` is now a
-# genuine per-cell mask (unused by direct_unet/vanilla_cfm, which never
-# read it), and `models/fourdvarnet.py`'s `_unrolled_blocks` only
-# `.unsqueeze(-1)`s a 2D (B,T) mask, using an already-3D (B,T,D) mask as-is
-# -- backward-compatible with L96's own (B,T) convention. See PLAN.md's
-# 2026-09-13 Q6 section.
+# "S"-tier for this backbone: hidden_channels=[32,64,128],
+# monai_num_res_blocks=1 (same ratio to Q1's M-tier [64,128,256]/2 as
+# L96's own S-tier is to its M-tier). monai_norm_num_groups=4 (not Q1's 8):
+# MONAI requires every channel count -- including the T*channels_per_day
+# totals this backbone builds internally (120 for the main solver's
+# "obs+state" concatenation, 60 for the prior_unet) -- to be a multiple of
+# norm_num_groups; 4 is the largest value dividing all of
+# {32, 64, 128, 60, 120}.
+#
+# Real correctness bug fixed as a prerequisite (2026-09-13): FourDVarNetSolver's
+# obs cost only supported a per-*timestep* mask (uniform across the whole
+# state vector), fine for L96 (fixed observable-channel subset, obs_j) but
+# wrong for QG (`cols_per_day` sparse columns vary both per day *and* per
+# cell within an observed day) -- feeding it QG's old day-level any-obs
+# mask would have silently treated every unobserved cell's zero-fill as a
+# real obs=0 measurement. Fixed: `QGBatch.obs_mask` is now a genuine
+# per-cell mask (unused by direct_unet/vanilla_cfm, which never read it),
+# and `models/fourdvarnet.py`'s `_unrolled_blocks` only `.unsqueeze(-1)`s a
+# 2D (B,T) mask, using an already-3D (B,T,D) mask as-is -- backward-
+# compatible with L96's own (B,T) convention. Caveat, unchanged by the
+# monai2d switch: `update_input=obs+state` never references obs_mask at
+# all, so this fix has no effect on Q6's own results either way -- see
+# PLAN.md's 2026-09-13/14 Q6 section.
 #
 # Shares no model_type with Q1/Q3/Q4/Q5/Q1-obsdensity (all direct_unet) --
 # pass --exp-id explicitly anyway, for consistency with those configs:
@@ -60,7 +75,6 @@ model:
   cond_extra_dim: 0
   fdv:
     hidden_channels: [32, 64, 128]
-    time_emb_dim: 64
     N_outer: 10
     dropout: 0.1
     update_input: obs+state
@@ -68,8 +82,8 @@ model:
     clip_range: 50.0
     init_state_var: 0.1
     aux_var_cost_weight: 0.01
-    unet_backbone: monai
-    monai_norm_num_groups: 32
+    unet_backbone: monai2d
+    monai_norm_num_groups: 4
     monai_num_res_blocks: 1
 training:
   epochs: 400

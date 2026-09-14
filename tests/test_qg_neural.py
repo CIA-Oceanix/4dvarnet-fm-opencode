@@ -374,6 +374,47 @@ def test_lightning_fourdvarnet_monai_backbone_pads_nondivisible_days():
     assert all(torch.isfinite(g).all() for g in grads)
 
 
+def test_lightning_fourdvarnet_monai2d_backbone():
+    """unet_backbone="monai2d" (models.monai_unet_qg2d.MonaiUNet2DQGSolver,
+    Q6's actual backbone as of 2026-09-14) merges the T (days) axis into
+    the channel dimension instead of treating it as a downsampled
+    1D-sequence axis -- no T-divisibility constraint at all, so (unlike
+    "monai"'s test above) this must work with T=30 unpadded. Also confirms
+    QGNeuralLightning's fourdvarnet branch correctly skips the padding
+    wrapper for this backbone (unet_backbone != "monai")."""
+    pytest.importorskip("monai")
+    from models.fourdvarnet import FourDVarNetSolver
+    from train_qg_neural import QGNeuralLightning
+    cfg = _cfg()
+    batch = _synth_batch(split=layer_split(cfg), rd=cfg.rd, days=30)
+    norm = {"mean": torch.zeros(2), "std": torch.ones(2)}
+    ny = nx = int(round(layer_split(cfg) ** 0.5))
+    model = FourDVarNetSolver(state_dim=cfg.state_dim, hidden_channels=[8, 16, 32],
+                             N_outer=2, dropout=0.1, update_input="obs+state",
+                             unet_backbone="monai2d", monai_num_res_blocks=1,
+                             monai_norm_num_groups=4, aux_var_cost_weight=0.01,
+                             qg_T=30, qg_ny=ny, qg_nx=nx)
+    assert model.prior_unet is not None
+    lit = QGNeuralLightning(model, "fourdvarnet", norm, cfg, q_loss_weight=0.1,
+                            use_cosine_scheduler=False)
+    opt = lit.configure_optimizers()
+    loss, loss_psi, _lq = lit._total_loss(batch)
+    assert torch.isfinite(loss)
+    assert torch.isfinite(loss_psi)
+    opt.zero_grad()
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert len(grads) > 0
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+def test_fourdvarnet_monai2d_requires_qg_shape_args():
+    pytest.importorskip("monai")
+    from models.fourdvarnet import FourDVarNetSolver
+    with pytest.raises(ValueError, match="qg_T"):
+        FourDVarNetSolver(state_dim=128, unet_backbone="monai2d")
+
+
 def test_estimate_windows_shapes():
     from train_qg_neural import estimate_windows
     # 30-day window so the UNet's time downsampling has enough samples
@@ -862,6 +903,27 @@ def test_model_type_choices_include_every_build_model_branch():
     assert build_model_types == model_type_choices, (
         f"build_model() supports {build_model_types} but --model-type's "
         f"choices only allows {model_type_choices} -- keep these in sync")
+
+
+def test_q6_fourdvarnet_yaml_config():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", "Q6_fourdvarnet_s0.yaml"))
+    assert cfg.model_type == "fourdvarnet"
+    assert int(cfg.model.param_dim) == 0
+    assert int(cfg.model.cond_extra_dim) == 0
+    assert cfg.model.fdv.unet_backbone == "monai2d"
+    assert float(cfg.model.fdv.aux_var_cost_weight) == 0.01
+    assert list(cfg.model.fdv.hidden_channels) == [32, 64, 128]
+    # MONAI requires every channel count -- including this backbone's
+    # internal T*channels_per_day totals -- to be a multiple of
+    # monai_norm_num_groups; a config-only mistake here fails at model
+    # construction, not YAML load, so check the divisibility directly.
+    groups = int(cfg.model.fdv.monai_norm_num_groups)
+    for c in list(cfg.model.fdv.hidden_channels) + [60, 120]:
+        assert c % groups == 0, f"{c} not divisible by monai_norm_num_groups={groups}"
 
 
 def test_normalized_forcing_is_order_one_not_raw_scale():
