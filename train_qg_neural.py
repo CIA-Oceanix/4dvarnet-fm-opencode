@@ -116,16 +116,21 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # *channel* axis (via MonaiUNet2DQGSolver, Q6's own backbone) rather
         # than MonaiDirectUNetQG's per-day-independent batch-folding --
         # isolates whether cross-day channel mixing helps the simple
-        # single-pass scheme too. Obs-only (no param_dim/cond_extra_dim/
-        # ic_dim -- MonaiDirectUNetQGChannelTime has no such hooks, matching
-        # Q1's own cond_mode="none"). norm_num_groups=4 (not Q1's 8): MONAI
-        # requires every channel count -- including this backbone's internal
-        # T*channels_per_day totals (2*T*nlayers=120 in, T*nlayers=60 out at
-        # T=30) -- divisible by it; 4 is the largest value dividing all of
-        # {64,128,256,60,120}.
+        # single-pass scheme too. Obs-only by default (param_dim=
+        # cond_extra_dim=ic_dim=0, matching Q1's own cond_mode="none"), but
+        # (2026-09-14) MonaiDirectUNetQGChannelTime now supports the same
+        # forcing/param/IC conditioning hooks as MonaiDirectUNetQG, so Q8/
+        # Q9/Q10 (T-channels retrains of Q3/Q4/Q5's conditioning ablations)
+        # pass non-zero values here too. norm_num_groups=4 (not Q1's 8):
+        # MONAI requires every channel count -- including this backbone's
+        # internal T*channels_per_day totals -- divisible by it; 4 divides
+        # {64,128,256} and every totals this config combines (60 obs-only
+        # out, up to 300 in for Q10's param_dim=3+cond_extra_dim=1+ic_dim=2).
         from models.monai_unet_qg2d import MonaiDirectUNetQGChannelTime
         return MonaiDirectUNetQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
-                                           hidden_channels=[64, 128, 256], norm_num_groups=4)
+                                           hidden_channels=[64, 128, 256], norm_num_groups=4,
+                                           param_dim=param_dim, cond_extra_dim=cond_extra_dim,
+                                           ic_dim=ic_dim)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,

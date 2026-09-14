@@ -255,17 +255,25 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
     match what the model was constructed with -- unlike `MonaiDirectUNetQG`,
     which tolerates any `T` since it never appears in a conv axis at all).
 
-    Obs-only: no forcing/param/IC conditioning support (matching Q1's own
-    `cond_mode="none"`) -- this variant isolates "does merging T into
-    channels help the DirectUNet scheme too", not conditioning composition
-    with cross-day coupling. `forward(batch) -> (B, T, D)`, same external
-    contract as `MonaiDirectUNetQG` (`batch.obs` only; `batch.forcing`/
-    `batch.params`/`batch.ic`, if non-trivial, are ignored -- same as
-    passing `cond_extra_dim=param_dim=ic_dim=0` to `MonaiDirectUNetQG`).
+    Same forcing/param/IC conditioning hooks as `MonaiDirectUNetQG`
+    (2026-09-14: `param_dim`/`cond_extra_dim`/`ic_dim`, all 0 by default --
+    the original obs-only behavior, matching Q1's `cond_mode="none"`, is
+    unchanged when none are set), so Q3/Q4/Q5-style conditioning ablations
+    can be retrained on this T-merged-into-channels backbone instead of
+    `MonaiDirectUNetQG`'s per-day-independent one. Every conditioning field
+    is folded into the same per-day channel block as the state placeholder
+    + obs (in that order: state, obs, forcing, params, ic) *before* T is
+    merged into channels, so the backbone's ordinary channel mixing can
+    relate a conditioning field on one day to the state/obs on another --
+    unlike `MonaiDirectUNetQG`, where each day's conditioning only ever
+    informs that same day's own independent forward pass. `forward(batch)
+    -> (B, T, D)`, same external contract as `MonaiDirectUNetQG`
+    (`batch.obs`/`batch.forcing`/`batch.params`/`batch.ic`).
     """
 
     def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
                  hidden_channels: list[int] | None = None,
+                 param_dim: int = 0, cond_extra_dim: int = 0, ic_dim: int = 0,
                  num_res_blocks: int = 2, norm_num_groups: int = 8,
                  dropout: float = 0.1):
         super().__init__()
@@ -274,11 +282,16 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
         self.T = T
         self.nlayers = nlayers
         self.state_dim = nlayers * ny * nx
-        # Zeroed "state" input placeholder + obs conditioning, matching
-        # MonaiDirectUNetQG's own convention -- concatenated along the
-        # per-day channel block (2*nlayers total) before T is merged in.
+        self.param_dim = param_dim
+        self.cond_extra_dim = cond_extra_dim
+        self.ic_dim = ic_dim
+        # Zeroed "state" input placeholder + obs + (optional) forcing/
+        # params/ic conditioning, matching MonaiDirectUNetQG's own
+        # convention -- concatenated along the per-day channel block
+        # before T is merged in.
+        in_ch_per_day = 2 * nlayers + cond_extra_dim + param_dim + ic_dim
         self.unet = MonaiUNet2DQGSolver(
-            state_dim=2 * self.state_dim, T=T, ny=ny, nx=nx,
+            state_dim=in_ch_per_day * ny * nx, T=T, ny=ny, nx=nx,
             hidden_channels=hidden_channels, output_dim=self.state_dim,
             dropout=dropout, norm_num_groups=norm_num_groups,
             num_res_blocks=num_res_blocks)
@@ -290,6 +303,27 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
             raise ValueError(f"expected T={self.T} (days), got {T}")
         obs_clean = torch.nan_to_num(obs, nan=0.0)
         x = torch.zeros_like(obs_clean)
-        inp = torch.cat([x, obs_clean], dim=-1).transpose(1, 2)  # (B, 2D, T)
+        cond = [x, obs_clean]
+        if self.cond_extra_dim > 0:
+            # `batch.forcing` is (B, T, ny, nx) (cond_extra_dim=1 always in
+            # practice -- see MonaiDirectUNetQG.forward's own comment) --
+            # already the right per-day channel-major-then-spatial flat
+            # layout, no reshape beyond folding (ny, nx) into one axis.
+            cond.append(batch.forcing.reshape(B, T, self.cond_extra_dim * self.ny * self.nx))
+        if self.param_dim > 0:
+            # `batch.params` is one (B, param_dim) vector per WINDOW (not
+            # per day) -- broadcast across T days and tile each scalar
+            # param spatially into its own constant (ny, nx) channel,
+            # matching MonaiDirectUNetQG's own params_t convention.
+            cond.append(batch.params.view(B, 1, self.param_dim, 1).expand(
+                B, T, self.param_dim, self.ny * self.nx).reshape(
+                B, T, self.param_dim * self.ny * self.nx))
+        if self.ic_dim > 0:
+            # `batch.ic` (Q5) is one static (B, ic_dim*ny*nx) flat field per
+            # WINDOW -- broadcast identically across all T days, unlike
+            # forcing (varies per day) or params (a scalar vector).
+            cond.append(batch.ic.unsqueeze(1).expand(B, T, self.ic_dim * self.ny * self.nx))
+        inp = torch.cat(cond, dim=-1) if len(cond) > 1 else cond[0]
+        inp = inp.transpose(1, 2)  # (B, C, T)
         out = self.unet(inp)  # (B, D, T)
         return out.transpose(1, 2)  # (B, T, D)

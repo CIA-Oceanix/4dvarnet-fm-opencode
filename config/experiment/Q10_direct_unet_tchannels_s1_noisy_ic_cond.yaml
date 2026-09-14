@@ -1,0 +1,72 @@
+# Q10: T-channels retrain of Q5 (noisy forcing+param conditioning PLUS the
+# raw initial-condition snapshot) -- `model_type=direct_unet_tchannels`
+# (Q7/Q8/Q9's T-merged-into-channels backbone,
+# `models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime`, 2026-09-14: gained
+# the same `ic_dim` hook as `MonaiDirectUNetQG`) instead of Q5's
+# `MonaiDirectUNetQG`. Part of the 2026-09-14 T-channels bench refresh
+# (see Q8's own header comment).
+#
+# IC representation, noisy-severity values, and lag/noise choice: identical
+# rationale to Q5 (see Q5_direct_unet_s1_noisy_ic_cond.yaml for the full
+# discussion) -- lag=5.0d/noise=0.05 is required for the IC to actually be
+# informative rather than a barely-decorrelated snapshot. Unlike Q5, this
+# is now just train_qg_neural.py's own current fallback default (no
+# explicit override needed) since it's a genuinely new config -- see
+# Q8's own comment / PLAN.md's 2026-09-14 "Training default now matches
+# the DA eval default" section.
+#
+# gradient_clip_val: 1.0, same as Q5 (which never actually collapsed at
+# either clip value but adopted 1.0 anyway for consistency at this noise
+# level -- see Q5's own comment).
+#
+# Shares model_type=direct_unet_tchannels with Q7/Q8/Q9 -- pass --exp-id
+# explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet_tchannels \
+#     --exp-id Q10_direct_unet_tchannels_s1_noisy_ic_cond \
+#     --exp-dir experiments/Q10_direct_unet_tchannels_s1_noisy_ic_cond \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# psi/param/forcing norm stats reused unchanged from Q1/Q3/Q4/Q5's
+# precompute. No new precompute needed.
+
+experiment_id: Q10_direct_unet_tchannels_s1_noisy_ic_cond
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  # [U1, rd, rek] -- beta excluded, see data/qg_neural.py's PARAM_KEYS comment.
+  param_dim: 3
+  cond_extra_dim: 1
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cond_mode: noisy
+  param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # [0, 0.2] effective bias range: s1_param_bias/s1_amp_bias=0.1 (the actual
+  # DA S1 reference severity) x noisy_max=2.0 (frac~U(0,2)) -- same as Q5.
+  noisy_max: 2.0
+  s1_param_bias: 0.1
+  s1_amp_bias: 0.1
+  include_ic: true

@@ -945,6 +945,59 @@ def test_q7_direct_unet_tchannels_yaml_config():
         assert c % 4 == 0, f"{c} not divisible by build_model()'s hardcoded norm_num_groups=4"
 
 
+def _tchannels_cond_yaml_config(filename, param_dim, cond_extra_dim, ic_dim=0):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    assert cfg.model_type == "direct_unet_tchannels"
+    assert int(cfg.model.param_dim) == param_dim
+    assert int(cfg.model.cond_extra_dim) == cond_extra_dim
+    assert list(cfg.model.hidden_channels) == [64, 128, 256]
+    # in_ch_per_day = 2*nlayers + cond_extra_dim + param_dim + ic_dim
+    # (nlayers=2, hardcoded in build_model()'s direct_unet_tchannels branch).
+    in_ch_per_day = 2 * 2 + cond_extra_dim + param_dim + ic_dim
+    out_ch_per_day = 2  # nlayers
+    T = 30
+    for c in list(cfg.model.hidden_channels) + [T * in_ch_per_day, T * out_ch_per_day]:
+        assert c % 4 == 0, f"{c} not divisible by build_model()'s hardcoded norm_num_groups=4"
+    return cfg
+
+
+def test_q8_direct_unet_tchannels_oracle_cond_yaml_config():
+    cfg = _tchannels_cond_yaml_config(
+        "Q8_direct_unet_tchannels_s0_oracle_cond.yaml", param_dim=3, cond_extra_dim=1)
+    assert cfg.data.cond_mode == "true"
+    assert float(cfg.training.gradient_clip_val) == 1.0
+    # New config: no obs_noise_std_frac/init_lag_days override -- picks up
+    # train_qg_neural.py's current fallback default (0.05/5.0) directly.
+    assert "obs_noise_std_frac" not in cfg.data
+    assert "init_lag_days" not in cfg.data
+
+
+def test_q9_direct_unet_tchannels_noisy_cond_yaml_config():
+    cfg = _tchannels_cond_yaml_config(
+        "Q9_direct_unet_tchannels_s1_noisy_cond.yaml", param_dim=3, cond_extra_dim=1)
+    assert cfg.data.cond_mode == "noisy"
+    assert float(cfg.data.noisy_max) == 1.5
+    assert float(cfg.training.gradient_clip_val) == 1.0
+    assert "obs_noise_std_frac" not in cfg.data
+    assert "init_lag_days" not in cfg.data
+
+
+def test_q10_direct_unet_tchannels_noisy_ic_cond_yaml_config():
+    cfg = _tchannels_cond_yaml_config(
+        "Q10_direct_unet_tchannels_s1_noisy_ic_cond.yaml",
+        param_dim=3, cond_extra_dim=1, ic_dim=2)
+    assert cfg.data.cond_mode == "noisy"
+    assert float(cfg.data.noisy_max) == 2.0
+    assert bool(cfg.data.include_ic) is True
+    assert float(cfg.training.gradient_clip_val) == 1.0
+    assert "obs_noise_std_frac" not in cfg.data
+    assert "init_lag_days" not in cfg.data
+
+
 def test_normalized_forcing_is_order_one_not_raw_scale():
     """Regression test for the training-collapse bug: raw wind_curl is
     ~1e-13-1e-12 (see data/qg_neural.py's module docstring), ~12-13 orders

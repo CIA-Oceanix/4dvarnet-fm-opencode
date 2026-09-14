@@ -9,9 +9,11 @@
 # flat-loss run (2026-09-14) -- see PLAN.md's Q6 sections for the full
 # rationale/backbone comparison.
 #
-# Obs-only (no forcing/param/IC conditioning support at all --
-# MonaiDirectUNetQGChannelTime has no such hooks, matching Q1's own
-# cond_mode="none"/param_dim=0/cond_extra_dim=0).
+# Obs-only (param_dim=0/cond_extra_dim=0, matching Q1's own
+# cond_mode="none"). MonaiDirectUNetQGChannelTime gained the same
+# forcing/param/IC conditioning hooks as MonaiDirectUNetQG on 2026-09-14
+# (see Q8/Q9/Q10, the T-channels retrains of Q3/Q4/Q5) -- Q7 itself stays
+# obs-only, isolating the backbone question in isolation from conditioning.
 #
 # norm_num_groups=4 (not Q1's 8, hardcoded in train_qg_neural.py's
 # build_model() alongside hidden_channels=[64,128,256] -- both dead YAML
