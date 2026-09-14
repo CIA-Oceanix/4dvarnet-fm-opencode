@@ -41,7 +41,7 @@ class DataConfig:
     param_bias: float = 0.0
     case: int = 1
     test_randparam: bool = True
-    test_param_noise: float = 0.2
+    param_noise: float = 0.2
 
     # Lorenz96 (two-scale) fields
     NO: int = 8
@@ -162,10 +162,15 @@ class VanillaCFMConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -176,6 +181,11 @@ class JointCFMConfig:
     param_noise_max: float = 0.3
     param_flow_channels: Optional[List[int]] = None
     train_tau_0_only: bool = False
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -190,10 +200,15 @@ class PredictStateCFMConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -202,10 +217,15 @@ class TweedieCFMConfig:
     time_emb_dim: int = 64
     K_inner: int = 5
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -230,23 +250,21 @@ class ModelConfig:
 
 @dataclass
 class StageConfig:
-    epochs: int = 200
+    max_epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
-
-
-@dataclass
-class LossConfig:
-    use_gradient: bool = True
-    gradient_weight: float = 0.1
+    # EarlyStopping on val_loss: stop after `early_stopping_patience` epochs with no
+    # improvement greater than `early_stopping_min_delta`. Set patience to 0/null to
+    # disable early stopping for this stage (train the full `max_epochs`).
+    early_stopping_patience: Optional[int] = 300
+    early_stopping_min_delta: float = 1e-3
 
 
 @dataclass
 class TrainingConfig:
-    stage1: StageConfig = field(default_factory=lambda: StageConfig(epochs=200, lr=1e-3, gradient_clip_val=10.0))
-    stage2: StageConfig = field(default_factory=lambda: StageConfig(epochs=400, lr=1e-3, gradient_clip_val=1.0))
+    stage1: StageConfig = field(default_factory=lambda: StageConfig(max_epochs=200, lr=1e-3, gradient_clip_val=10.0))
+    stage2: StageConfig = field(default_factory=lambda: StageConfig(max_epochs=400, lr=1e-3, gradient_clip_val=1.0))
     batch_size: int = 32
-    loss: LossConfig = field(default_factory=LossConfig)
 
 
 @dataclass

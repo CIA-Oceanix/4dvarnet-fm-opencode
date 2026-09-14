@@ -204,13 +204,13 @@ def test_evaluate_model_joint_returns_param_rmse(l96_joint_dataset):
     device = torch.device("cpu")
     model = JointDirectUNet(state_dim=SD, param_dim=PD, hidden_channels=[8, 16])
     model.eval()
-    m, _, prmse = evaluate_model(model, l96_joint_dataset, device,
-                                 model_type="joint_direct_unet", return_params=True,
-                                 param_names=PARAM_NAMES, param_dim=PD,
-                                 obs_var_indices=make_obs_j_indices(8, 4, 2))
-    assert m.shape == (SD,)
-    assert prmse.shape == (PD,)
-    assert np.all(np.isfinite(prmse))
+    metrics = evaluate_model(model, l96_joint_dataset, device,
+                             model_type="joint_direct_unet", return_params=True,
+                             param_names=PARAM_NAMES, param_dim=PD,
+                             obs_var_indices=make_obs_j_indices(8, 4, 2))
+    assert metrics.mean.shape == (SD,)
+    assert metrics.param_rmse.shape == (PD,)
+    assert np.all(np.isfinite(metrics.param_rmse))
 
 
 def test_model_factory_joint_l96(l96_joint_cfg):

@@ -12,8 +12,6 @@ class LitModel(pl.LightningModule):
         stage: int = 1,
         lr: float = 1e-3,
         gradient_clip_val: float = 10.0,
-        use_gradient_loss: bool = True,
-        gradient_weight: float = 0.1,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -22,10 +20,7 @@ class LitModel(pl.LightningModule):
         self.stage = stage
         self.lr = lr
         self.gradient_clip_val = gradient_clip_val
-        self.loss_fn = StateMSELoss(
-            use_gradient_loss=use_gradient_loss,
-            gradient_weight=gradient_weight,
-        )
+        self.loss_fn = StateMSELoss()
         self._frozen = False
 
     def configure_optimizers(self):
@@ -39,6 +34,11 @@ class LitModel(pl.LightningModule):
                 params = self.model.mean_estimator.parameters()
             else:
                 params = self.model.velocity_unet.parameters()
+        elif self.model_type == "joint_tweedie_cfm":
+            if self.stage == 1:
+                params = self.model.mean_estimator.parameters()
+            else:
+                params = list(self.model.velocity_unet.parameters()) + list(self.model.param_flow.parameters())
         else:
             params = self.model.parameters()
         return torch.optim.Adam(params, lr=self.lr)
@@ -70,6 +70,23 @@ class LitModel(pl.LightningModule):
                 for p in self.model.velocity_unet.parameters():
                     p.requires_grad = True
                 self.model.set_stage(2)
+        elif self.model_type == "joint_tweedie_cfm":
+            if self.stage == 1:
+                for p in self.model.velocity_unet.parameters():
+                    p.requires_grad = False
+                for p in self.model.param_flow.parameters():
+                    p.requires_grad = False
+                for p in self.model.mean_estimator.parameters():
+                    p.requires_grad = True
+                self.model.set_stage(1)
+            else:
+                for p in self.model.mean_estimator.parameters():
+                    p.requires_grad = False
+                for p in self.model.velocity_unet.parameters():
+                    p.requires_grad = True
+                for p in self.model.param_flow.parameters():
+                    p.requires_grad = True
+                self.model.set_stage(2)
         self._frozen = True
 
     def _forward_and_loss(self, batch):
@@ -92,6 +109,8 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_loss(batch)
         elif self.model_type == "tweedie_cfm":
             loss = self.model.compute_loss(batch)
+        elif self.model_type == "joint_tweedie_cfm":
+            loss = self.model.compute_loss(batch)
         else:
             raise ValueError(f"Unknown model_type: {self.model_type}")
         return loss
@@ -111,7 +130,7 @@ class LitModel(pl.LightningModule):
             return self.model(batch)
         elif self.model_type == "predict_state_cfm":
             return self.model.sample(batch)
-        elif self.model_type == "tweedie_cfm":
+        elif self.model_type in ("tweedie_cfm", "joint_tweedie_cfm"):
             if self.stage == 1:
                 return self.model.estimate_mean(batch.obs)
             else:

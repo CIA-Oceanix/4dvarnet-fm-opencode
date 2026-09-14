@@ -1521,7 +1521,8 @@ class JointWeak4DVar(Weak4DVar):
                 J_q = torch.sum(q_ctrl ** 2) / self.Q_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                                 (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
-                diff = traj - win_obs
+                win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
+                diff = traj - win_obs_clean
                 masked_diff = diff * win_mask.unsqueeze(-1)
                 J_o = torch.sum(masked_diff ** 2) / self.R_var
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.5 * J_q + 0.1 * J_p
@@ -1715,7 +1716,8 @@ class JointStrong4DVar(Strong4DVar):
                 J_b = torch.sum((x_ctrl - x_bg_ref) ** 2) / self.B_var
                 J_p = torch.sum((ls - s_prior) ** 2 + (lr_ - r_prior) ** 2 +
                                 (lb - b_prior) ** 2 + (lc - c_prior) ** 2) / self.P_var
-                diff = traj - win_obs
+                win_obs_clean = torch.nan_to_num(win_obs, nan=0.0)
+                diff = traj - win_obs_clean
                 masked_diff = diff * win_mask.unsqueeze(-1)
                 J_o = torch.sum(masked_diff ** 2) / self.R_var
                 J_total = 0.5 * J_b + 0.5 * J_o + 0.1 * J_p

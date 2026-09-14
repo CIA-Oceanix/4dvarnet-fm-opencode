@@ -24,7 +24,11 @@ class TestForwardEquivalence:
         torch.manual_seed(99)
         obs = torch.randn(2, 50, 3)
         with torch.no_grad():
+            # estimate_mean's initial x0 ~ GaussSampler() (paper Algorithm 1),
+            # so each call must be seeded independently to be comparable.
+            torch.manual_seed(7)
             out1 = model1.estimate_mean(obs)
+            torch.manual_seed(7)
             out2 = model2.estimate_mean(obs)
         torch.testing.assert_close(out1, out2)
 
@@ -46,34 +50,20 @@ class TestForwardEquivalence:
 
 
 class TestLossEquivalence:
-    """StateMSELoss with gradient_weight should match old behavior."""
+    """StateMSELoss is pure MSE."""
 
-    def test_loss_identical_without_gradient(self):
-        """Loss without gradient is pure MSE."""
+    def test_loss_is_pure_mse(self):
         pred = torch.randn(4, 50, 3)
         target = torch.randn(4, 50, 3)
-        loss_fn = StateMSELoss(use_gradient_loss=False)
+        loss_fn = StateMSELoss()
         loss = loss_fn(pred, target)
         expected = torch.nn.MSELoss()(pred, target)
-        torch.testing.assert_close(loss, expected)
-
-    def test_loss_with_gradient(self):
-        """Gradient term adds weighted MSE of temporal differences."""
-        pred = torch.randn(4, 50, 3)
-        target = torch.randn(4, 50, 3)
-        loss_fn = StateMSELoss(use_gradient_loss=True, gradient_weight=0.1)
-        loss = loss_fn(pred, target)
-        mse = torch.nn.MSELoss()(pred, target)
-        pred_grad = pred[:, 1:] - pred[:, :-1]
-        target_grad = target[:, 1:] - target[:, :-1]
-        grad_mse = torch.nn.MSELoss()(pred_grad, target_grad)
-        expected = mse + 0.1 * grad_mse
         torch.testing.assert_close(loss, expected)
 
     def test_zero_loss_perfect_prediction(self):
         """Perfect prediction gives zero loss."""
         target = torch.randn(4, 50, 3)
-        loss_fn = StateMSELoss(use_gradient_loss=True)
+        loss_fn = StateMSELoss()
         loss = loss_fn(target, target)
         assert loss.item() == 0.0
 

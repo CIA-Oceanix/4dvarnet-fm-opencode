@@ -277,8 +277,10 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
                           num_val_windows: int,
                           num_test_windows: int,
                           param_noise: float,
-                          bias_range: Tuple[float, float],
+                          s0_param_bias: float, s0_forcing_state_bias: float,
+                          s1_param_bias: float, s1_forcing_state_bias: float,
                           train_seed: int, val_seed: int,
+                          train_seed_s1: int, val_seed_s1: int,
                           s0_seed: int, s1_seed: int) -> str:
     import hashlib
     key_data = {
@@ -286,8 +288,10 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
         "num_val_windows": num_val_windows,
         "num_test_windows": num_test_windows,
         "param_noise": param_noise,
-        "bias_range": bias_range,
+        "s0_param_bias": s0_param_bias, "s0_forcing_state_bias": s0_forcing_state_bias,
+        "s1_param_bias": s1_param_bias, "s1_forcing_state_bias": s1_forcing_state_bias,
         "train_seed": train_seed, "val_seed": val_seed,
+        "train_seed_s1": train_seed_s1, "val_seed_s1": val_seed_s1,
         "s0_seed": s0_seed, "s1_seed": s1_seed,
         "dt": cfg.dt, "T_max": cfg.T_max,
         "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
@@ -298,8 +302,6 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
         "c1": cfg.c1, "c2": cfg.c2,
         "sigma_0": cfg.sigma_0, "sigma_L": cfg.sigma_L,
         "coupling_exponent_truth": cfg.coupling_exponent_truth,
-        "param_bias": cfg.param_bias,
-        "forcing_state_bias": cfg.forcing_state_bias,
     }
     return hashlib.sha256(str(sorted(key_data.items())).encode()).hexdigest()
 
@@ -309,37 +311,56 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                         num_val_windows: int = 100,
                         num_test_windows: int = 200,
                         param_noise: float = 0.2,
-                        bias_range: Tuple[float, float] = (0.0, 0.2),
+                        s0_param_bias: float = 0.0, s0_forcing_state_bias: float = 0.0,
+                        s1_param_bias: float = 0.15, s1_forcing_state_bias: float = 0.1,
                         train_seed: int = None, val_seed: int = None,
+                        train_seed_s1: int = None, val_seed_s1: int = None,
                         s0_seed: int = None, s1_seed: int = None,
                         require_cache: bool = False) -> Dict[str, "Lorenz63Dataset"]:
+    """Build independent S0 (clean) and S1 (biased) train/val/test splits.
+
+    S0/S1 bias values default to the same `param_bias`/`forcing_state_bias`
+    documented under `cases.s0`/`cases.s1` in config/lorenz63.yaml (0.0/0.0
+    and 0.15/0.1) -- callers driven by Hydra should pass those in explicitly
+    (see data/build.py) so the yaml is the single source of truth.
+    All six splits (train/val/test x s0/s1) are generated together and cached
+    in a single file, so a model can be trained+evaluated on either case
+    (`data.train_case: s0` or `s1`) without regenerating data.
+    """
     import os
-    from data.random_param_dataset import RandomParamLorenz63Dataset
     from data.random_bias_dataset import RandomBiasLorenz63Dataset
     train_seed = 42 if train_seed is None else train_seed
     val_seed = 99 if val_seed is None else val_seed
+    # Large offsets keep the S1 train/val trajectory seeds from ever landing
+    # inside the per-window (seed + i*100) range used by the S0 splits.
+    train_seed_s1 = train_seed + 10_000_000 if train_seed_s1 is None else train_seed_s1
+    val_seed_s1 = val_seed + 10_000_000 if val_seed_s1 is None else val_seed_s1
     s0_seed = 123 if s0_seed is None else s0_seed
     s1_seed = 131 if s1_seed is None else s1_seed
     base = cfg.__dict__.copy()
 
-    train_cfg = Lorenz63Config(**{**base, "case": 1, "seed": train_seed,
-        "num_windows": num_train_windows, "param_bias": 0.0,
-        "forcing_state_bias": 0.0})
-    val_cfg = Lorenz63Config(**{**base, "case": 1, "seed": val_seed,
-        "num_windows": num_val_windows, "param_bias": 0.0,
-        "forcing_state_bias": 0.0})
-    test_s0_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.0,
-        "forcing_state_bias": 0.0, "seed": s0_seed, "num_windows": num_test_windows})
-    test_s1_cfg = Lorenz63Config(**{**base, "case": 1, "param_bias": 0.15,
-        "forcing_state_bias": 0.1, "seed": s1_seed, "num_windows": num_test_windows})
+    def _split_cfg(seed, num_windows, param_bias, forcing_state_bias):
+        return Lorenz63Config(**{**base, "case": 1, "seed": seed,
+            "num_windows": num_windows, "param_bias": param_bias,
+            "forcing_state_bias": forcing_state_bias})
+
+    train_s0_cfg = _split_cfg(train_seed, num_train_windows, s0_param_bias, s0_forcing_state_bias)
+    val_s0_cfg = _split_cfg(val_seed, num_val_windows, s0_param_bias, s0_forcing_state_bias)
+    test_s0_cfg = _split_cfg(s0_seed, num_test_windows, s0_param_bias, s0_forcing_state_bias)
+    train_s1_cfg = _split_cfg(train_seed_s1, num_train_windows, s1_param_bias, s1_forcing_state_bias)
+    val_s1_cfg = _split_cfg(val_seed_s1, num_val_windows, s1_param_bias, s1_forcing_state_bias)
+    test_s1_cfg = _split_cfg(s1_seed, num_test_windows, s1_param_bias, s1_forcing_state_bias)
 
     cache_dir = os.path.join(os.path.dirname(__file__), "..", "dataset_cache", "l63")
     os.makedirs(cache_dir, exist_ok=True)
     cache_key = _make_s0_s1_cache_key(
         cfg, num_train_windows=num_train_windows,
         num_val_windows=num_val_windows, num_test_windows=num_test_windows,
-        param_noise=param_noise, bias_range=bias_range,
+        param_noise=param_noise,
+        s0_param_bias=s0_param_bias, s0_forcing_state_bias=s0_forcing_state_bias,
+        s1_param_bias=s1_param_bias, s1_forcing_state_bias=s1_forcing_state_bias,
         train_seed=train_seed, val_seed=val_seed,
+        train_seed_s1=train_seed_s1, val_seed_s1=val_seed_s1,
         s0_seed=s0_seed, s1_seed=s1_seed)
     cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
 
@@ -355,28 +376,33 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
     if os.path.exists(cache_path):
         print(f"  Loading cached datasets ({cache_key[:12]}...)")
         cached = torch.load(cache_path)
-        train = RandomBiasLorenz63Dataset(
-            train_cfg, param_noise=param_noise, bias_mode='random',
-            bias_range=bias_range, cached_windows=cached["train_windows"])
-        val = RandomBiasLorenz63Dataset(
-            val_cfg, param_noise=param_noise, bias_mode='random',
-            bias_range=bias_range, cached_windows=cached["val_windows"])
-        test_s0 = RandomParamLorenz63Dataset(
-            test_s0_cfg, param_noise=param_noise,
-            cached_windows=cached["test_s0_windows"])
-        test_s1 = RandomBiasLorenz63Dataset(
-            test_s1_cfg, param_noise=param_noise, bias_mode='fixed',
-            cached_windows=cached["test_s1_windows"])
-        return {"train": train, "val": val,
-                "test_s0": test_s0, "test_s1": test_s1}
+        return {
+            "train_s0": RandomBiasLorenz63Dataset(
+                train_s0_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["train_s0_windows"]),
+            "val_s0": RandomBiasLorenz63Dataset(
+                val_s0_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["val_s0_windows"]),
+            "test_s0": RandomBiasLorenz63Dataset(
+                test_s0_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["test_s0_windows"]),
+            "train_s1": RandomBiasLorenz63Dataset(
+                train_s1_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["train_s1_windows"]),
+            "val_s1": RandomBiasLorenz63Dataset(
+                val_s1_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["val_s1_windows"]),
+            "test_s1": RandomBiasLorenz63Dataset(
+                test_s1_cfg, param_noise=param_noise, bias_mode='fixed',
+                cached_windows=cached["test_s1_windows"]),
+        }
 
-    train = RandomBiasLorenz63Dataset(
-        train_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
-    val = RandomBiasLorenz63Dataset(
-        val_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
-    test_s0 = RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise)
-    test_s1 = RandomBiasLorenz63Dataset(
-        test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
+    train_s0 = RandomBiasLorenz63Dataset(train_s0_cfg, param_noise=param_noise, bias_mode='fixed')
+    val_s0 = RandomBiasLorenz63Dataset(val_s0_cfg, param_noise=param_noise, bias_mode='fixed')
+    test_s0 = RandomBiasLorenz63Dataset(test_s0_cfg, param_noise=param_noise, bias_mode='fixed')
+    train_s1 = RandomBiasLorenz63Dataset(train_s1_cfg, param_noise=param_noise, bias_mode='fixed')
+    val_s1 = RandomBiasLorenz63Dataset(val_s1_cfg, param_noise=param_noise, bias_mode='fixed')
+    test_s1 = RandomBiasLorenz63Dataset(test_s1_cfg, param_noise=param_noise, bias_mode='fixed')
 
     def _strip_obs(w):
         w.pop("obs", None)
@@ -385,17 +411,17 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
 
     tmp_path = cache_path + ".tmp"
     torch.save({
-        "train_windows": [_strip_obs(w) for w in train.windows],
-        "val_windows": [_strip_obs(w) for w in val.windows],
+        "train_s0_windows": [_strip_obs(w) for w in train_s0.windows],
+        "val_s0_windows": [_strip_obs(w) for w in val_s0.windows],
         "test_s0_windows": [_strip_obs(w) for w in test_s0.windows],
+        "train_s1_windows": [_strip_obs(w) for w in train_s1.windows],
+        "val_s1_windows": [_strip_obs(w) for w in val_s1.windows],
         "test_s1_windows": [_strip_obs(w) for w in test_s1.windows],
     }, tmp_path)
     os.rename(tmp_path, cache_path)
     print(f"  Cached datasets ({cache_key[:12]}...)")
 
     return {
-        "train": train,
-        "val": val,
-        "test_s0": test_s0,
-        "test_s1": test_s1,
+        "train_s0": train_s0, "val_s0": val_s0, "test_s0": test_s0,
+        "train_s1": train_s1, "val_s1": val_s1, "test_s1": test_s1,
     }

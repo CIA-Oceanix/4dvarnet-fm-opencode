@@ -42,10 +42,9 @@ class TweedieSolver(nn.Module):
 
     def estimate_mean(self, obs: torch.Tensor) -> torch.Tensor:
         B, T, D = obs.shape
-        x = torch.zeros(B, D, T, device=obs.device)
-        for k in range(self.K_inner):
-            denom = 1 if self.K_inner == 1 else self.K_inner - 1
-            tau = torch.full((B,), k / denom, device=obs.device)
+        x = torch.randn(B, D, T, device=obs.device)
+        for k in range(1, self.K_inner + 1):
+            tau = torch.full((B,), k / self.K_inner, device=obs.device)
             residual = self.mean_estimator(x, obs.transpose(1, 2), tau)
             x = x + residual
         return x.transpose(1, 2)
@@ -115,21 +114,20 @@ class TweedieSolver(nn.Module):
 
             blended = (1 - K) * x_mean + K * x
 
-            for k in range(1, self.K_inner + 1):
-                tau_k = (n - 1 + k) / self.N_outer / self.K_inner
-                tau_k = torch.full((B,), tau_k, device=device)
+            ng_pre = self.interpolant.ng_prefactor(tau)
+            while ng_pre.dim() < x.dim():
+                ng_pre = ng_pre.unsqueeze(-1)
 
-                ng_pre = self.interpolant.ng_prefactor(tau_k)
-                while ng_pre.dim() < x.dim():
-                    ng_pre = ng_pre.unsqueeze(-1)
+            for k in range(1, self.K_inner + 1):
+                tau_tilde = tau + (k - 1) / self.K_inner * (1 - tau)
 
                 eps = self.energy_terms(
                     blended.transpose(1, 2), obs, x.transpose(1, 2),
-                    tau_k, obs_operator, prior_operator,
+                    tau, obs_operator, prior_operator,
                 )
                 residual = self.non_gaussian(
                     blended.transpose(1, 2), obs.transpose(1, 2), x.transpose(1, 2),
-                    tau_k, y_diff=eps[0], phi_diff=eps[1], bg_diff=eps[2],
+                    tau_tilde, y_diff=eps[0], phi_diff=eps[1], bg_diff=eps[2],
                 )
                 blended = blended + ng_pre * residual.transpose(1, 2)
 

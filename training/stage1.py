@@ -14,7 +14,7 @@ def train_stage1(
     device: torch.device = torch.device("cpu"),
     verbose: bool = True,
 ):
-    loss_fn = StateMSELoss(use_gradient_loss=True)
+    loss_fn = StateMSELoss()
     optimizer = optim.Adam(model.mean_estimator.parameters(), lr=lr)
 
     best_val_loss = float('inf')

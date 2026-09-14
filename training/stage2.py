@@ -14,7 +14,7 @@ def train_stage2(
     device: torch.device = torch.device("cpu"),
     verbose: bool = True,
 ):
-    loss_fn = StateMSELoss(use_gradient_loss=True)
+    loss_fn = StateMSELoss()
 
     best_val_loss = float('inf')
 

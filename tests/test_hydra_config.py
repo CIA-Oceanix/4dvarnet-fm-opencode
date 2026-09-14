@@ -14,8 +14,8 @@ def test_schema_imports():
     assert mc.hidden_channels == [64, 128, 256]
 
     tc = TrainingConfig()
-    assert tc.stage1.epochs == 200
-    assert tc.stage2.epochs == 400
+    assert tc.stage1.max_epochs == 200
+    assert tc.stage2.max_epochs == 400
 
     bc = BaselinesConfig()
     assert bc.da_window_steps == 300
@@ -30,7 +30,7 @@ def test_config_yaml_loads():
     assert cfg.data.dt == 0.01
     assert cfg.data.system == "lorenz63"
     assert cfg.model.state_dim == 3
-    assert cfg.training.stage1.epochs == 200
+    assert cfg.training.stage1.max_epochs == 200
     assert cfg.baselines.da_window_steps == 50
 
 
@@ -58,6 +58,7 @@ def test_data_section_keys():
     data_keys = {
         "system", "dt", "T_max", "obs_interval", "R_var", "B_var",
         "num_train_windows", "num_val_windows", "num_test_windows",
+        "param_noise",
         "window_spacing", "spinup_steps", "seed",
         "sigma_true", "rho_true", "beta_true", "gamma", "W_L_bar",
         "c1", "c2", "sigma_0", "sigma_L", "tau_eta", "sigma_eta",

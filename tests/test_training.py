@@ -42,6 +42,9 @@ def test_stage1_overfit(tmp_path):
 
     with torch.no_grad():
         batch = next(iter(loader))
+        # estimate_mean's initial x0 ~ GaussSampler() (paper Algorithm 1); pin
+        # the RNG so the before/after comparison isolates the training effect.
+        torch.manual_seed(123)
         pred = model.estimate_mean(batch.obs)
         initial_loss = nn.MSELoss()(pred, batch.states)
 
@@ -54,6 +57,7 @@ def test_stage1_overfit(tmp_path):
 
     with torch.no_grad():
         batch = next(iter(loader))
+        torch.manual_seed(123)
         pred = model.estimate_mean(batch.obs)
         final_loss = nn.MSELoss()(pred, batch.states)
 
@@ -68,6 +72,9 @@ def test_stage2_overfit(tmp_path):
 
     with torch.no_grad():
         batch = next(iter(loader))
+        # forward()'s x0 and estimate_mean's x0 are both ~ GaussSampler();
+        # pin the RNG so the before/after comparison isolates training.
+        torch.manual_seed(123)
         pred = model(batch.obs)
         initial_loss = nn.MSELoss()(pred, batch.states)
 
@@ -80,6 +87,7 @@ def test_stage2_overfit(tmp_path):
 
     with torch.no_grad():
         batch = next(iter(loader))
+        torch.manual_seed(123)
         pred = model(batch.obs)
         final_loss = nn.MSELoss()(pred, batch.states)
 
@@ -99,14 +107,6 @@ def test_state_mse_loss_value():
     target = torch.randn(4, 50, 3)
     loss = loss_fn(target, target)
     assert loss.item() == 0.0
-
-
-def test_state_mse_gradient_loss():
-    pred = torch.randn(4, 50, 3)
-    target = torch.randn(4, 50, 3)
-    loss_no_grad = StateMSELoss(use_gradient_loss=False)(pred, target)
-    loss_with_grad = StateMSELoss(use_gradient_loss=True, gradient_weight=0.1)(pred, target)
-    assert loss_with_grad > loss_no_grad
 
 
 def test_lit_module_creation():

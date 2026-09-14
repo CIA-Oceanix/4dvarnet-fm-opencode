@@ -14,8 +14,12 @@ from omegaconf import DictConfig
 logger = logging.getLogger(__name__)
 
 
-def build_datasets(cfg: DictConfig):
+def build_datasets(cfg: DictConfig, train_case: str = None):
     """Build train/val/test (S0/S1) datasets for the system in cfg.data.
+
+    `train_case` ('s0'/'s1') picks which Lorenz-63 regime to train+eval on
+    (train and test both come from that case); ignored for other systems.
+    Defaults to cfg.data.train_case, then 's0', when not given explicitly.
 
     Returns (datasets, test_keys, base_cfg, system, obs_var_indices).
     `obs_var_indices` is None for systems that don't use partial observation
@@ -78,7 +82,7 @@ def build_datasets(cfg: DictConfig):
                 num_train_windows=dc.get("num_train_windows", 1000),
                 num_val_windows=dc.get("num_val_windows", 100),
                 num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
+                param_noise=dc.get("param_noise", 0.2),
                 bias_range=(0.0, dc.get("bias_max", 0.2)),
                 cached_datasets=cached_test,
                 train_seed=dc.get("train_seed", None),
@@ -113,20 +117,37 @@ def build_datasets(cfg: DictConfig):
             logger.info(f"  train: {len(cached['train'])} windows, val: {len(cached['val'])} windows")
             test_keys = ["test_s0", "test_s1"]
         else:
-            bias_max = dc.get("bias_max", 0.2)
-            datasets = make_s0_s1_trainval(
+            if train_case is None:
+                train_case = dc.get("train_case", "s0")
+            if train_case not in ("s0", "s1"):
+                raise ValueError(f"train_case must be 's0' or 's1', got {train_case!r}")
+            cases_cfg = cfg.get("cases", {})
+            s0_case = cases_cfg.get("s0", {})
+            s1_case = cases_cfg.get("s1", {})
+            all_splits = make_s0_s1_trainval(
                 base_cfg,
                 num_train_windows=dc.get("num_train_windows", 1000),
                 num_val_windows=dc.get("num_val_windows", 100),
                 num_test_windows=dc.get("num_test_windows", 200),
-                param_noise=dc.get("test_param_noise", 0.2),
-                bias_range=(0.0, bias_max),
+                param_noise=dc.get("param_noise", 0.2),
+                s0_param_bias=s0_case.get("param_bias", 0.0),
+                s0_forcing_state_bias=s0_case.get("forcing_state_bias", 0.0),
+                s1_param_bias=s1_case.get("param_bias", 0.15),
+                s1_forcing_state_bias=s1_case.get("forcing_state_bias", 0.1),
                 train_seed=dc.get("train_seed", None),
                 val_seed=dc.get("val_seed", None),
+                train_seed_s1=dc.get("train_seed_s1", None),
+                val_seed_s1=dc.get("val_seed_s1", None),
                 s0_seed=dc.get("s0_seed", None),
                 s1_seed=dc.get("s1_seed", None),
                 require_cache=dc.get("require_cache", False),
             )
-            test_keys = ["test_s0", "test_s1"]
+            test_key = f"test_{train_case}"
+            datasets = {
+                "train": all_splits[f"train_{train_case}"],
+                "val": all_splits[f"val_{train_case}"],
+                test_key: all_splits[test_key],
+            }
+            test_keys = [test_key]
 
     return datasets, test_keys, base_cfg, system, obs_var_indices

@@ -49,6 +49,7 @@ Thumbs.db
 
 # Generated data & checkpoints
 experiments/
+experiments_0/
 checkpoint_stage*.pt
 checkpoints/
 *.pt

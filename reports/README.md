@@ -6,6 +6,8 @@
 
 [logit-normal τ: Scaling Rectified Flow Transformers for High-Resolution Image Synthesis](https://arxiv.org/pdf/2403.03206) paper
 
+[score-based: Rozet & Louppe, "Score-based Data Assimilation" (NeurIPS 2023)](https://proceedings.neurips.cc/paper_files/paper/2023/hash/7f7fa581cc8a1970a4332920cdf87395-Abstract-Conference.html), as formalized in Sec. 3.4 / Eq. (12)-(14) of `docs/preprint_4dvarnet_fm_2025.pdf` — samples p(x1|y) by guiding the **unconditional** VanillaCFM (beta τ) prior with a linear-Gaussian observation-score correction at each Euler step (`score_based_inference.py`), instead of training a model that sees y directly.
+
 ## State estimation 
 
 | Model | N_ens | s0 RMSE | s0 R² | s0 CRPS | s1 RMSE | s1 R² | s1 CRPS |
@@ -22,6 +24,7 @@
 | VanillaCFM (logit-normal τ) | 50 | 0.608 | 0.994 | 0.304 | 0.564 | 0.995 | 0.299 |
 | VanillaCFM (beta τ) | 50 | 0.588 | 0.995 | 0.320 | 0.545 | 0.996 | 0.302 |
 | VanillaCFM (beta τ, unconditional) | 50 | 4.047 | 0.760 | 2.380 | 1.732 | 0.936 | 0.931 |
+| VanillaCFM (score-based, unconditional prior) | 50 | 3.726 | 0.796 | 2.170 | 1.600 | 0.944 | 0.859 |
 
 ## Joint state + parameter estimation
 

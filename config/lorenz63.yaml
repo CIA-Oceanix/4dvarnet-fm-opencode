@@ -14,6 +14,7 @@ data:
   num_train_windows: 2000
   num_val_windows: 200
   num_test_windows: 200
+  param_noise: 0.2
   window_spacing: 2000
   spinup_steps: 10000
   seed: 42
