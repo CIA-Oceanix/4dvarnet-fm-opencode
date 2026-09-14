@@ -188,8 +188,8 @@ def _event_columns(cfg, window):
 
 def _event_column_groups(cfg, window):
     """Extract (possibly multi-)column lists per time for the
-    `col_points_per_day` random-column-point mode (`window["obs_columns"]`
-    is already a per-time list of x-index lists in this mode -- see
+    `cols_sampling="random"` mode (`window["obs_columns"]` is already a
+    per-time list of x-index lists in this mode -- see
     `data.qg._generate_random_column_point_observations` -- unlike
     `_event_columns`'s tensor-backed single-column-per-step contract)."""
     return window["obs_columns"]
@@ -325,12 +325,12 @@ def _combined_observations(window, cfg, device):
     matching `_psi_h_combined`'s concatenation order), `None` at unobserved
     steps.
 
-    `window["obs"]` is either a dense `(T, ny)` tensor (the plain
-    `cols_per_day` scheme) or already a per-time list of variable-width
-    tensors/`None` (the `col_points_per_day` scheme) -- `[t]` indexing works
+    `window["obs"]` is either a dense `(T, ny)` tensor (`cols_sampling=
+    "sequential"`, the default) or already a per-time list of variable-width
+    tensors/`None` (`cols_sampling="random"`) -- `[t]` indexing works
     identically either way, only the per-element `.to(device)` differs.
     `obs2`/`obs2_mask` (psi2 points) are optional -- absent when only
-    `col_points_per_day` (not `psi2_points_per_day`) is active.
+    `cols_sampling="random"` (not `psi2_points_per_day`) is active.
     """
     T = cfg.num_steps
     obs1, mask1 = window["obs"], window["obs_mask"]
@@ -468,8 +468,8 @@ def _make_obs_system(cfg, window, device, obs_var, loc_radius,
         # sampling, and/or lower-layer psi2 points) routes through the same
         # combined machinery; with neither active this is byte-identical to
         # the original single-column-per-step path below.
-        if cfg.col_points_per_day > 0 or "obs2_points" in window:
-            obs_cols = (_event_column_groups(cfg, window) if cfg.col_points_per_day > 0
+        if cfg.cols_sampling == "random" or "obs2_points" in window:
+            obs_cols = (_event_column_groups(cfg, window) if cfg.cols_sampling == "random"
                        else _event_columns(cfg, window))
             obs_points = _event_points(cfg, window)
             h = _psi_h_combined(dyn, obs_cols, obs_points, cfg.ny, cfg.nx, device)
@@ -1022,8 +1022,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
                 if loc_radius is not None and method_name in ("enkf", "etkf"):
-                    if cfg.col_points_per_day > 0 or "obs2_points" in w:
-                        cols_t = (_event_column_groups(cfg, w) if cfg.col_points_per_day > 0
+                    if cfg.cols_sampling == "random" or "obs2_points" in w:
+                        cols_t = (_event_column_groups(cfg, w) if cfg.cols_sampling == "random"
                                  else _event_columns(cfg, w))
                         points_t = _event_points(cfg, w)
                         Lx_t, Ly_t = _build_qg_col_point_loc_matrices(
@@ -1253,14 +1253,13 @@ def main():
     ap.add_argument("--init-lag-days", type=float, default=2.0)
     ap.add_argument("--band", dest="band_half", type=float, default=0.25)
     ap.add_argument("--cols-per-day", type=int, default=3)
-    ap.add_argument("--col-points-per-day", type=int, default=0,
-                     help="Upper-layer (psi1) obs as random (t, x) column-"
-                          "point draws across the whole day, allowing "
-                          "multiple columns per step -- overrides "
-                          "--cols-per-day when >0 (which is capped at "
-                          "steps_per_day/day by its no-collision policy; "
-                          "this mode has no such ceiling). Default 0 "
-                          "(disabled, --cols-per-day's behaviour).")
+    ap.add_argument("--cols-sampling", choices=["sequential", "random"], default="sequential",
+                     help="'sequential' (default): --cols-per-day distinct "
+                          "single-column steps/day, capped at steps_per_day "
+                          "by its no-collision policy. 'random': --cols-per-day "
+                          "random (t, x) column-point draws across the whole "
+                          "day, multiple columns per step allowed, no ceiling "
+                          "-- use this if --cols-per-day exceeds steps_per_day.")
     ap.add_argument("--psi2-points-per-day", type=int, default=0,
                      help="Independent lower-layer (psi2) random-point obs per "
                           "day, in ADDITION to the upper-layer (psi1) column "
@@ -1303,7 +1302,7 @@ def main():
     cfg_kwargs = dict(nx=args.nx, window_days=args.window_days,
                       spinup_years=args.spinup_years, num_windows=args.num_windows,
                       obs_geometry=args.geometry, cols_per_day=args.cols_per_day,
-                      col_points_per_day=args.col_points_per_day,
+                      cols_sampling=args.cols_sampling,
                       psi2_points_per_day=args.psi2_points_per_day,
                       seed=args.seed, init_lag_days=args.init_lag_days)
     if args.obs_noise_frac is not None:

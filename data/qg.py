@@ -61,7 +61,7 @@ class QGConfig:
     init_lag_days: float = 0.5
     init_seed: int = 7001
     psi2_points_per_day: int = 0
-    col_points_per_day: int = 0
+    cols_sampling: str = "sequential"
 
     @property
     def ny(self) -> int:
@@ -230,7 +230,7 @@ def _generate_random_column_observations(
             "step with no collisions, so more than steps_per_day columns/day "
             "can never be scheduled (the collision-avoidance loop below "
             "would spin forever searching for a free step that doesn't "
-            "exist). Use col_points_per_day instead (allows multiple "
+            "exist). Use cols_sampling='random' instead (allows multiple "
             "columns per step, no ceiling) if you need a higher density.")
     rng = torch.Generator().manual_seed(seed)
     obs = torch.full((T, ny), float("nan"))
@@ -303,18 +303,20 @@ def _generate_random_point_observations(
 
 def _generate_random_column_point_observations(
     dynamics, state: torch.Tensor, field: str, cfg: QGConfig,
-    points_per_day: int, seed: int,
+    cols_per_day: int, seed: int,
 ):
     """Upper-layer (psi1) obs, generalized beyond
-    `_generate_random_column_observations`'s ceiling: `points_per_day`
+    `_generate_random_column_observations`'s ceiling: `cols_per_day`
     independent (t, x) column-events per day, **t drawn uniformly across
-    the whole day** (not restricted to `points_per_day` distinct steps, and
+    the whole day** (not restricted to `cols_per_day` distinct steps, and
     no collision-avoidance) -- so multiple columns MAY be observed at the
-    same timestep. Lets `points_per_day` exceed `steps_per_day` (12 at the
+    same timestep. Lets `cols_per_day` exceed `steps_per_day` (12 at the
     reference dt=7200s), which the collision-avoiding column sampler cannot
     do (its "no two columns share a step" policy hangs forever once
     `cols_per_day > steps_per_day`, since it keeps searching for a free
-    step that no longer exists).
+    step that no longer exists). This is `cfg.cols_sampling == "random"`;
+    `"sequential"` (the default) uses `_generate_random_column_observations`
+    instead.
 
     Returns (obs_groups, mask, col_groups): both `obs_groups`/`col_groups`
     are Python lists of length `cfg.num_steps` (`None`, or a 1-D tensor /
@@ -324,7 +326,7 @@ def _generate_random_column_point_observations(
     just generated without the single-column-per-step constraint.
     """
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
-    K = max(1, int(points_per_day))
+    K = max(1, int(cols_per_day))
     f = _upper_field(dynamics, state, field)
     sigma = cfg.obs_noise_std_frac * float(f.std())
     steps_per_day = max(1, round(86400.0 / cfg.dt))
@@ -575,15 +577,14 @@ class QGS01Dataset:
             a = full_lead[lead - kk - 1]
             b = full_lead[lead - kk]
             init_state = (1.0 - alpha) * a + alpha * b
-            if cfg.col_points_per_day > 0:
-                # New opt-in mode, mutually exclusive with (takes priority
-                # over) the `cols_per_day` scheme below: `col_points_per_day`
-                # random (t, x) draws across the whole day (multiple columns
-                # per step allowed), rather than `cols_per_day` distinct
-                # single-column steps (capped at steps_per_day/day).
+            if cfg.cols_sampling == "random":
+                # `cols_per_day` random (t, x) draws across the whole day
+                # (multiple columns per step allowed, no steps_per_day
+                # ceiling), vs. the default "sequential" mode's `cols_per_day`
+                # distinct single-column steps (capped at steps_per_day/day).
                 obs, obs_mask, obs_cols = _generate_random_column_point_observations(
                     dyn, traj, cfg.obs_field, cfg,
-                    cfg.col_points_per_day, cfg.seed + 4000 + i * 101,
+                    cfg.cols_per_day, cfg.seed + 4000 + i * 101,
                 )
             elif cfg.obs_geometry == "random_columns":
                 obs, obs_mask, obs_cols = _generate_random_column_observations(

@@ -1092,7 +1092,7 @@ covariance-tuning gap the way ETKF's transform-regularization gap was.
 Data: `reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (N=5, 7
 files). Scratch driver (not committed): `qg_4dvar_sensitivity_sweep_scratch.py`.
 
-### ETKF obs-configuration sensitivity: cols_per_day=8/16 + new psi2 (lower-layer) point obs + new col_points_per_day mode (2026-09-13/14)
+### ETKF obs-configuration sensitivity: cols_per_day=8/16 + new psi2 (lower-layer) point obs + new cols_sampling="random" mode (2026-09-13/14)
 
 New obs-density experiment series: `cols_per_day=8/16` (vs. the reference
 4/day) plus a genuinely new capability -- observing the *lower* layer
@@ -1111,20 +1111,24 @@ their default-disabled value):
   randomly-sampled intra-day step, no two points of the same day collide)
   but generalized to an arbitrary layer and to single points instead of
   full columns (`data.qg._layer_field`/`_generate_random_point_observations`).
-- **`col_points_per_day`** (`QGConfig`): upper-layer (psi1) obs as `K`
-  random `(t, x)` column-point draws across the **whole day**, allowing
-  **multiple columns at the same timestep** -- overrides `cols_per_day`
-  when set. Motivated by discovering `cols_per_day=16` is infeasible: at
-  the reference `dt=7200s`, `steps_per_day=12`, and the existing
-  `cols_per_day` sampler enforces one column per step with **no** two
-  columns of the same day sharing a step -- so more than `steps_per_day`
-  columns/day can never be scheduled. This is a **pre-existing bug**
-  (nobody had tried `cols_per_day > steps_per_day` before): the
-  collision-avoidance loop just spins forever instead of failing cleanly --
-  confirmed via an isolated 15s-timeout call that hung (exit 124). Added a
-  clear `ValueError` guard to both the column and (analogous) point
-  samplers instead of leaving the silent hang, and added
-  `col_points_per_day` as the actual fix for wanting a higher density
+- **`cols_sampling="random"`** (`QGConfig`, default `"sequential"`):
+  upper-layer (psi1) obs as `cols_per_day` random `(t, x)` column-point
+  draws across the **whole day**, allowing **multiple columns at the same
+  timestep** -- an alternate sampling *mode* for the same `cols_per_day`
+  density knob, not a separate count (an earlier version of this work
+  briefly introduced a second `col_points_per_day` field before this
+  naming/design was cleaned up to keep `cols_per_day` the single density
+  parameter). Motivated by discovering `cols_per_day=16` is infeasible
+  under the default `"sequential"` mode: at the reference `dt=7200s`,
+  `steps_per_day=12`, and that sampler enforces one column per step with
+  **no** two columns of the same day sharing a step -- so more than
+  `steps_per_day` columns/day can never be scheduled. This is a
+  **pre-existing bug** (nobody had tried `cols_per_day > steps_per_day`
+  before): the collision-avoidance loop just spins forever instead of
+  failing cleanly -- confirmed via an isolated 15s-timeout call that hung
+  (exit 124). Added a clear `ValueError` guard to both the column and
+  (analogous) point samplers instead of leaving the silent hang, and added
+  `cols_sampling="random"` as the actual fix for wanting a higher density
   (removes the per-step ceiling entirely, no code changes needed elsewhere
   since the assimilation side already treats "list of columns per time" as
   its native contract, never actually restricted to length 1).
@@ -1144,18 +1148,27 @@ itself needed no further changes.
 
 | config | S0 q full | S0 q layer2 | S0 psi full | S1 q full | S1 q layer2 | S1 psi full |
 |---|---|---|---|---|---|---|
-| baseline (cols=4) | 0.467 | 0.399 | 0.907 | 0.328 | 0.231 | 0.829 |
-| cols=8 | 0.531 | 0.433 | 0.922 | 0.326 | 0.191 | 0.732 |
-| col_points=16 | 0.524 | 0.403 | 0.895 | **0.103** | **-0.100** | **-1.189** |
+| baseline (cols=4, sequential) | 0.467 | 0.399 | 0.907 | 0.328 | 0.231 | 0.829 |
+| cols=8 (sequential) | 0.531 | 0.433 | 0.922 | 0.326 | 0.191 | 0.732 |
+| cols=4, random (sanity check) | 0.466 | 0.397 | 0.908 | 0.339 | 0.242 | 0.835 |
+| cols=16, random | 0.524 | 0.403 | 0.895 | **0.103** | **-0.100** | **-1.189** |
 | **psi1(4)+psi2(10)** | **0.502** | **0.447** | **0.924** | **0.389** | **0.316** | **0.878** |
+
+**Sanity check requested and run (2026-09-14)**: does the new `"random"`
+sampling mode reproduce `"sequential"`'s performance at the *same* density
+(cols=4), where the two mechanisms should agree? Yes -- all four fields
+match within ~0.001-0.010 EV on both S0 and S1 (see the "cols=4, random"
+row above vs. the baseline row), well inside N=10 noise, and if anything
+marginally *better* on S1, not worse. This rules out the new sampler
+introducing some systematic artifact of its own at low density.
 
 **Key finding, directly confirms the original motivation**: on S1 (real
 model error), simply observing *more* of the same (biased) upper layer is
 not just unhelpful but actively **destabilizing** -- cols=8 already
 degrades psi (0.829→0.732) despite double the column density, and
-col_points=16 **collapses catastrophically** (psi=-1.19, worse than
+cols=16 (random) **collapses catastrophically** (psi=-1.19, worse than
 climatology; q layer2 goes negative). This is graded (baseline→cols8→
-col_points16 monotonically worse on S1), not a fluke at one setting,
+cols16-random monotonically worse on S1), not a fluke at one setting,
 consistent with more-frequent updates from an increasingly model-
 inconsistent obs stream reinforcing rather than correcting the S1 bias.
 **Adding independent psi2 observations, by contrast, is the best or
@@ -1164,22 +1177,52 @@ specifically, the only config that doesn't degrade relative to baseline.
 Genuinely new information about the previously-unobserved deep layer helps
 where more of the same upper-layer information hurts.
 
-Caveats: N=10 (screening scale, same convention as the ETKF/4DVar
-sensitivity work above); the col_points=16 collapse is dramatic enough to
-warrant an N=100 confirmation before treating it as definitive (though the
-graded cols8→col_points16 trend on S1 makes a pure-noise explanation
-unlikely); the psi1(4)+psi2(10) config's N=100 confirmation is the natural
-next step given how clean this result is.
+**Collapse investigated (2026-09-14), not a bug**: the cols=16 (random)
+S1 collapse looked dramatic enough to double-check. Per-window PV-q RMSE
+values are all finite and unremarkable (6e-6 to 2.4e-5, no NaN/blow-up),
+and the result reproduces across reruns -- so it isn't a numerical/coding
+fault. The mechanism: `psi rmse=13973` is *worse* than the free-forecast
+psi rmse (8064, improv=0.58x -- the DA analysis is worse than doing
+nothing in psi-space), while `q rmse=1.56e-5` still *beats* free forecast
+(improv=1.38x) -- the DA update genuinely helps q but the resulting
+analysis, once inverted to psi, is worse than no assimilation at all. PV
+inversion (`psi = ∇⁻²q`) amplifies *large-scale* (low-wavenumber) error
+(1/k² blows up as k→0) while smoothing small-scale error -- so a
+large-scale/low-wavenumber bias in the q-analysis (plausibly reinforced by
+frequent updates from an obs stream that's increasingly inconsistent with
+S1's biased model) can produce a large psi RMSE even while q's own score,
+dominated by better-constrained smaller scales, looks only mildly
+degraded. Confirmed this isn't specific to the new sampler: `cols=8`
+(the *old*, `"sequential"` mechanism) already shows the identical-direction
+degradation (psi 0.829→0.732), just less extreme -- cols=16(random) is a
+more extreme point on the same real trend, not an isolated artifact.
 
-Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 8 files).
-New tests: `tests/test_qg_psi2_points.py` (15), `tests/test_qg_col_points.py`
-(10) -- both new obs streams, the combined H-function/localization
-machinery, the `cols_per_day` hang guard, and end-to-end ETKF smoke runs.
-Scratch driver (not committed): `qg_obs_density_sweep_scratch.py`. sbatch:
+Caveats: N=10 (screening scale, same convention as the ETKF/4DVar
+sensitivity work above); an N=100 confirmation of both the psi1+psi2 win
+and the cols=16 collapse magnitude is still the natural next step (the
+qualitative direction of both findings is now well-supported, but exact
+N=100 numbers aren't in yet).
+
+Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 10 files,
+including the cols=4/random sanity-check pair). New tests:
+`tests/test_qg_psi2_points.py` (15), `tests/test_qg_cols_sampling.py` (10,
+renamed from `test_qg_col_points.py` in the naming cleanup) -- both new obs
+streams, the combined H-function/localization machinery, the
+`cols_per_day` hang guard, and end-to-end ETKF smoke runs. Scratch driver
+(not committed): `qg_obs_density_sweep_scratch.py`. sbatch:
 `batch/run_qg_obs_density_sweep.sbatch` (interactive runs in this session
 repeatedly died silently around large `torch.load` calls -- same
 established fix as the ETKF-ridge N=100 confirmation and the 4DVar
 sensitivity work: real sbatch job instead).
+
+**Naming cleanup (2026-09-14)**: the first version of this work introduced
+a separate `col_points_per_day` field, but "points" was misleading (it
+counts *columns*, same physical quantity as `cols_per_day`, just sampled
+differently) and having two competing "columns per day" knobs was
+confusing. Refactored to a single density parameter (`cols_per_day`,
+unchanged) plus a `cols_sampling` mode selector (`"sequential"` default /
+`"random"` new) -- one meaningfully-named field per concept, not two
+overlapping ones.
 
 **Tooling gotcha**: adding a new `QGConfig` field (even at a neutral
 default) changes `_truth_cache_path`'s hash (it hashes the *entire*
