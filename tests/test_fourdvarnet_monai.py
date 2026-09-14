@@ -229,3 +229,66 @@ class TestMonaiBackboneForwardFDV2GradsplitState:
     def test_monai_prior_unet_built(self):
         model = _make_monai_model(update_input="gradsplit+state")
         assert isinstance(model.prior_unet, MonaiUNet1D)
+
+
+class TestPriorOutputInitStd:
+    """prior_output_init_std (default 0.0, no-op -- MONAI's own
+    zero_module() init on prior_unet's final output conv unchanged).
+    Nonzero overrides that exact-zero init with N(0, std) instead -- only
+    meaningful alongside prior_residual=True, where exact zero-init is a
+    provable permanent dead end (see MonaiUNet1D.__init__'s docstring):
+    prior_cost/g_prior are both proportional to this layer's own output, so
+    a zero-valued output can never receive a nonzero gradient there,
+    confirmed empirically on a real trained checkpoint (job 53509,
+    2026-09-14 -- 300+ epochs, final conv weight norm still bit-for-bit
+    0.0)."""
+
+    def _final_conv_weight(self, prior_unet):
+        final_conv = prior_unet.backbone.out[-1]
+        return final_conv.conv.weight if hasattr(final_conv, "conv") else final_conv.weight
+
+    def test_default_preserves_zero_module_init(self):
+        model = _make_monai_model(update_input="grad+state", prior_residual=True)
+        w = self._final_conv_weight(model.prior_unet)
+        assert torch.equal(w, torch.zeros_like(w))
+        x = torch.randn(2, 10, 3)
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        assert torch.equal(raw, torch.zeros_like(raw))
+
+    def test_nonzero_std_breaks_zero_init(self):
+        torch.manual_seed(0)
+        model = _make_monai_model(update_input="grad+state", prior_residual=True,
+                                   prior_output_init_std=0.1)
+        w = self._final_conv_weight(model.prior_unet)
+        assert not torch.equal(w, torch.zeros_like(w))
+        empirical_std = w.std().item()
+        assert abs(empirical_std - 0.1) < 0.05
+        x = torch.randn(2, 10, 3)
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        assert not torch.equal(raw, torch.zeros_like(raw))
+        assert torch.isfinite(raw).all()
+
+    def test_nonzero_std_gives_prior_cost_a_real_gradient(self):
+        """The whole point: with prior_residual=True, prior_cost=||f(x)||^2
+        -- its gradient w.r.t. the final conv's weight is 2*f(x)*(upstream
+        activation), exactly zero when f(x)=0 (default zero-init) but
+        genuinely nonzero once f(x) is nonzero (prior_output_init_std>0)."""
+        torch.manual_seed(0)
+        model = _make_monai_model(update_input="grad+state", prior_residual=True,
+                                   prior_output_init_std=0.1, aux_var_cost_weight=0.1,
+                                   dropout=0.0)
+        batch = _MockBatch(B=2, T=10, D=3)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        w = self._final_conv_weight(model.prior_unet)
+        assert w.grad is not None
+        assert w.grad.abs().sum().item() > 0
+
+    def test_unet1d_backbone_ignores_the_flag(self):
+        """prior_output_init_std is monai-only -- unet1d backbone (no
+        zero_module convention at all) must not raise or otherwise react to
+        it being set."""
+        model = FourDVarNetSolver(state_dim=3, hidden_channels=[4, 8], N_outer=3,
+                                   update_input="grad+state", prior_residual=True,
+                                   prior_output_init_std=0.1)
+        assert isinstance(model.prior_unet, UNet1D)

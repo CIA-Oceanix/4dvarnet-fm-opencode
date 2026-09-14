@@ -336,6 +336,15 @@ class FourDVarNetConfig:
     # grad-only/grad+state/gradsplit+state, so dropout there adds fresh mask
     # noise into that higher-order computation at every unrolled iteration).
     prior_dropout: Optional[float] = None
+    # 0.0 (default, no-op): overrides prior_unet's (monai backbone only)
+    # final output conv's zero_module init with N(0, prior_output_init_std)
+    # instead of exact zero. Only meaningful alongside prior_residual=true --
+    # exact zero-init is a provable permanent dead end there (both prior_cost
+    # and the per-iteration g_prior signal are proportional to this layer's
+    # output, which is why the layer can never receive a nonzero gradient
+    # once it starts at exactly zero -- see models/monai_unet_adapter.py's
+    # MonaiUNet1D.__init__ docstring for the full derivation).
+    prior_output_init_std: float = 0.0
 
 
 @dataclass

@@ -28,7 +28,7 @@ def _validate_unet_backbone(unet_backbone):
 
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
                           dropout, output_dim, monai_norm_num_groups=32,
-                          monai_num_res_blocks=2):
+                          monai_num_res_blocks=2, monai_output_init_std=0.0):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -60,6 +60,16 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
     (1,055,544 params); the same width with ``monai_num_res_blocks=2`` is
     "S+" (1,482,264 params) instead. Ignored for ``unet_backbone="unet1d"``
     (that backbone has no such knob).
+
+    ``monai_output_init_std`` (default 0.0, no-op -- MonaiUNet1D's own
+    default, MONAI's standard ``zero_module()`` init unchanged): overrides
+    the final output conv's zero-init with ``N(0, monai_output_init_std)``
+    instead. Only meaningful (and only ever passed nonzero by
+    ``FourDVarNetSolver``) for a ``prior_unet`` built with
+    ``prior_residual=True`` -- see ``MonaiUNet1D.__init__``'s docstring for
+    why zero-init is a permanent dead end there specifically (not for the
+    main solver ``self.unet``, which never sets this). Ignored for
+    ``unet_backbone="unet1d"``.
     """
     _validate_unet_backbone(unet_backbone)
     if unet_backbone == "unet1d":
@@ -85,6 +95,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
         dropout=dropout,
         norm_num_groups=monai_norm_num_groups,
         num_res_blocks=monai_num_res_blocks,
+        output_init_std=monai_output_init_std,
     )
 
 # Recognized update_input tokens (mirrors the config-string taxonomy explored on
@@ -533,7 +544,8 @@ class FourDVarNetSolver(nn.Module):
                  init_state_var=0.0,
                  gradsplit_prior_scale=1.0,
                  prior_residual=False,
-                 prior_dropout=None):
+                 prior_dropout=None,
+                 prior_output_init_std=0.0):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -612,6 +624,12 @@ class FourDVarNetSolver(nn.Module):
         # unlike the main solver unet, whose own forward is always a single,
         # ordinary (first-order) backward.
         self.prior_dropout = dropout if prior_dropout is None else prior_dropout
+        # 0.0 (default, no-op): overrides prior_unet's (monai backbone only)
+        # final output conv's zero_module init with N(0, prior_output_init_std)
+        # instead. See MonaiUNet1D.__init__'s docstring -- only meaningful
+        # (and only intended to be set) alongside prior_residual=True, where
+        # exact zero-init is a provable permanent dead end for this layer.
+        self.prior_output_init_std = prior_output_init_std
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -680,6 +698,7 @@ class FourDVarNetSolver(nn.Module):
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
                 monai_num_res_blocks=monai_num_res_blocks,
+                monai_output_init_std=self.prior_output_init_std,
             )
 
     @property
