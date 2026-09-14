@@ -926,6 +926,25 @@ def test_q6_fourdvarnet_yaml_config():
         assert c % groups == 0, f"{c} not divisible by monai_norm_num_groups={groups}"
 
 
+def test_q7_direct_unet_tchannels_yaml_config():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(
+        base, "config", "experiment", "Q7_direct_unet_tchannels_s0.yaml"))
+    assert cfg.model_type == "direct_unet_tchannels"
+    assert int(cfg.model.param_dim) == 0
+    assert int(cfg.model.cond_extra_dim) == 0
+    assert list(cfg.model.hidden_channels) == [64, 128, 256]
+    # MONAI requires every channel count -- including this backbone's
+    # internal T*channels_per_day totals (120 in / 60 out at T=30,
+    # nlayers=2, hardcoded in train_qg_neural.py's build_model()) --
+    # divisible by the hardcoded norm_num_groups=4 there.
+    for c in list(cfg.model.hidden_channels) + [60, 120]:
+        assert c % 4 == 0, f"{c} not divisible by build_model()'s hardcoded norm_num_groups=4"
+
+
 def test_normalized_forcing_is_order_one_not_raw_scale():
     """Regression test for the training-collapse bug: raw wind_curl is
     ~1e-13-1e-12 (see data/qg_neural.py's module docstring), ~12-13 orders

@@ -3,7 +3,11 @@ import torch
 
 monai = pytest.importorskip("monai")
 
-from models.monai_unet_qg2d import MonaiDirectUNetQG, MonaiUNet2DQGSolver  # noqa: E402
+from models.monai_unet_qg2d import (  # noqa: E402
+    MonaiDirectUNetQG,
+    MonaiDirectUNetQGChannelTime,
+    MonaiUNet2DQGSolver,
+)
 
 
 class _FakeBatch:
@@ -185,3 +189,49 @@ def test_monai2d_qg_solver_wrong_t_raises():
 def test_monai2d_qg_solver_state_dim_not_multiple_of_grid_raises():
     with pytest.raises(ValueError, match="whole multiple"):
         MonaiUNet2DQGSolver(state_dim=10, T=5, ny=4, nx=4, hidden_channels=[8, 16])
+
+
+def test_direct_unet_channeltime_forward_shape_and_grad():
+    """MonaiDirectUNetQGChannelTime (Q7): DirectUNet-style single-pass
+    regression, but merges T into channels (via MonaiUNet2DQGSolver)
+    instead of MonaiDirectUNetQG's batch-folding. Obs-only forward(batch)
+    contract, same shape convention as MonaiDirectUNetQG."""
+    ny = nx = 8
+    T = 5
+    nlayers = 2
+    D = nlayers * ny * nx
+    model = MonaiDirectUNetQGChannelTime(ny=ny, nx=nx, T=T, nlayers=nlayers,
+                                         hidden_channels=[8, 16], num_res_blocks=1,
+                                         norm_num_groups=4)
+    b = _FakeBatch()
+    b.obs = torch.randn(2, T, D)
+    out = model(b)
+    assert out.shape == (2, T, D)
+    assert torch.isfinite(out).all()
+    out.pow(2).sum().backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert len(grads) > 0
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+def test_direct_unet_channeltime_nan_obs_handled():
+    ny = nx = 8
+    T = 5
+    model = MonaiDirectUNetQGChannelTime(ny=ny, nx=nx, T=T, nlayers=2,
+                                         hidden_channels=[8, 16], num_res_blocks=1,
+                                         norm_num_groups=4)
+    b = _FakeBatch()
+    b.obs = torch.randn(1, T, 2 * ny * nx)
+    b.obs[0, 0, 0] = float("nan")
+    out = model(b)
+    assert torch.isfinite(out).all()
+
+
+def test_direct_unet_channeltime_wrong_t_raises():
+    model = MonaiDirectUNetQGChannelTime(ny=8, nx=8, T=5, nlayers=2,
+                                         hidden_channels=[8, 16], num_res_blocks=1,
+                                         norm_num_groups=4)
+    b = _FakeBatch()
+    b.obs = torch.randn(1, 3, 2 * 8 * 8)  # T=3, but model expects T=5
+    with pytest.raises(ValueError, match="expected T"):
+        model(b)

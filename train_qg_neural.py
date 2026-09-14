@@ -110,6 +110,22 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
                                  cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
                                  hidden_channels=[64, 128, 256])
+    if model_type == "direct_unet_tchannels":
+        # Q7: same M-tier capacity as Q1 (hidden_channels=[64,128,256]) and
+        # same single-pass DirectUNet role, but merges T (days) into the
+        # *channel* axis (via MonaiUNet2DQGSolver, Q6's own backbone) rather
+        # than MonaiDirectUNetQG's per-day-independent batch-folding --
+        # isolates whether cross-day channel mixing helps the simple
+        # single-pass scheme too. Obs-only (no param_dim/cond_extra_dim/
+        # ic_dim -- MonaiDirectUNetQGChannelTime has no such hooks, matching
+        # Q1's own cond_mode="none"). norm_num_groups=4 (not Q1's 8): MONAI
+        # requires every channel count -- including this backbone's internal
+        # T*channels_per_day totals (2*T*nlayers=120 in, T*nlayers=60 out at
+        # T=30) -- divisible by it; 4 is the largest value dividing all of
+        # {64,128,256,60,120}.
+        from models.monai_unet_qg2d import MonaiDirectUNetQGChannelTime
+        return MonaiDirectUNetQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                           hidden_channels=[64, 128, 256], norm_num_groups=4)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
@@ -205,7 +221,7 @@ def _plain_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
 
 
 def epochs_for(model_type: str) -> int:
-    return 200 if model_type == "direct_unet" else 400
+    return 200 if model_type in ("direct_unet", "direct_unet_tchannels") else 400
 
 
 class QGNeuralLightning(pl.LightningModule):
@@ -237,7 +253,7 @@ class QGNeuralLightning(pl.LightningModule):
         return optimizer
 
     def _estimate_and_psi_loss(self, batch):
-        if self.model_type == "direct_unet":
+        if self.model_type in ("direct_unet", "direct_unet_tchannels"):
             est = self.model(batch)
             loss_psi = F.mse_loss(est, batch.states)
             return est, loss_psi
@@ -350,7 +366,7 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            if model_type == "direct_unet":
+            if model_type in ("direct_unet", "direct_unet_tchannels"):
                 pred = model(batch)
             elif model_type == "fourdvarnet":
                 T = batch.states.shape[1]
@@ -392,7 +408,8 @@ def layer_summary(rmse_dim, ev_dim, cfg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-type", choices=["direct_unet", "vanilla_cfm", "fourdvarnet"],
+    ap.add_argument("--model-type",
+                    choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels"],
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)

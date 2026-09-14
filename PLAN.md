@@ -1282,6 +1282,41 @@ reasonable for the 2D-conv-per-day-times-T-channels architecture). Full
 `experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
 training completes.
 
+**Speed comparison (same node/GPU, `sl-mee-br-208` L40S, precise
+`train_time_seconds` from each `results.json`)**: the new true-2D backbone
+is actually ~13% slower per epoch than the old flattened-1D one (251.2s
+vs. 222.7s/epoch, 2-epoch smoke tests) despite fewer total parameters
+(5.16M vs. 6.0M) -- it does real 2D convolutions over the full 64x64 grid
+at every layer, more compute per layer than the old approach's large-
+channel-count-but-only-30-long 1D convolutions. Clearly worth the ~13%
+cost given the old backbone was flat/dead from epoch 0 and this one learns.
+
+### Q7: DirectUNet + `monai2d`'s T-merged-into-channels backbone (2026-09-14,
+### `feature/qg-q6-fourdvarnet`)
+
+Follow-up question after Q6's redesign: does merging T into channels help
+the simple single-pass DirectUNet scheme too, not just the unrolled
+solver? New `models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime`: same
+role as Q1 (single-pass, obs-only, M-tier `hidden_channels=[64,128,256]`),
+built on Q6's own `MonaiUNet2DQGSolver` backbone (T merged into channels)
+instead of `MonaiDirectUNetQG`'s per-day-independent batch-folding. New
+`model_type="direct_unet_tchannels"` in `train_qg_neural.py` (mirrors
+`direct_unet`'s dispatch everywhere: `build_model()`, `epochs_for()` (200,
+same as Q1), `QGNeuralLightning._estimate_and_psi_loss`,
+`estimate_windows`). `norm_num_groups=4` (not Q1's 8, same MONAI-channel-
+divisibility reasoning as Q6's S-tier). Config:
+`config/experiment/Q7_direct_unet_tchannels_s0.yaml`.
+
+**2-epoch smoke test (job 53481) result -- strong, clean**:
+`train_time_seconds`≈101s (~50.7s/epoch, much faster than Q1's own
+~222s/epoch -- no unrolling, a single 2D pass per window, unlike Q6's
+10-iteration solve) and S0 psi EV=0.837 / q EV=0.032 already after 2
+epochs (Q1's own eventual 200-epoch-converged psi EV is ~0.90 for
+reference) -- no crashes, no NaN, finite loss decreasing sensibly both
+epochs. Full 200-epoch training launched (job 53483), `experiments/
+Q7_direct_unet_tchannels_s0/`. Not yet evaluated against Q1 -- open
+follow-up once training completes.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

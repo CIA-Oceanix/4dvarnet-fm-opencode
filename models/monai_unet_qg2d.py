@@ -242,3 +242,54 @@ class MonaiDirectUNetQG(nn.Module):
         tau = torch.zeros(B * T, device=obs.device)
         out = self.unet(x, obs=cond, tau=tau)  # (B*T, nlayers, ny, nx)
         return out.reshape(B, T, D)
+
+
+class MonaiDirectUNetQGChannelTime(nn.Module):
+    """DirectUNet-style single-pass QG estimator (like `MonaiDirectUNetQG`),
+    but merges the T (days) axis into the *channel* dimension via
+    `MonaiUNet2DQGSolver` instead of folding it into the *batch* dimension.
+    `MonaiDirectUNetQG` processes every day fully independently (no
+    cross-day coupling at all); this variant lets the single-pass
+    regression see cross-day context through the 2D backbone's ordinary
+    channel mixing, at the cost of a *fixed* `T` (the window length must
+    match what the model was constructed with -- unlike `MonaiDirectUNetQG`,
+    which tolerates any `T` since it never appears in a conv axis at all).
+
+    Obs-only: no forcing/param/IC conditioning support (matching Q1's own
+    `cond_mode="none"`) -- this variant isolates "does merging T into
+    channels help the DirectUNet scheme too", not conditioning composition
+    with cross-day coupling. `forward(batch) -> (B, T, D)`, same external
+    contract as `MonaiDirectUNetQG` (`batch.obs` only; `batch.forcing`/
+    `batch.params`/`batch.ic`, if non-trivial, are ignored -- same as
+    passing `cond_extra_dim=param_dim=ic_dim=0` to `MonaiDirectUNetQG`).
+    """
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None,
+                 num_res_blocks: int = 2, norm_num_groups: int = 8,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.ny = ny
+        self.nx = nx
+        self.T = T
+        self.nlayers = nlayers
+        self.state_dim = nlayers * ny * nx
+        # Zeroed "state" input placeholder + obs conditioning, matching
+        # MonaiDirectUNetQG's own convention -- concatenated along the
+        # per-day channel block (2*nlayers total) before T is merged in.
+        self.unet = MonaiUNet2DQGSolver(
+            state_dim=2 * self.state_dim, T=T, ny=ny, nx=nx,
+            hidden_channels=hidden_channels, output_dim=self.state_dim,
+            dropout=dropout, norm_num_groups=norm_num_groups,
+            num_res_blocks=num_res_blocks)
+
+    def forward(self, batch) -> torch.Tensor:
+        obs = batch.obs
+        B, T, D = obs.shape
+        if T != self.T:
+            raise ValueError(f"expected T={self.T} (days), got {T}")
+        obs_clean = torch.nan_to_num(obs, nan=0.0)
+        x = torch.zeros_like(obs_clean)
+        inp = torch.cat([x, obs_clean], dim=-1).transpose(1, 2)  # (B, 2D, T)
+        out = self.unet(inp)  # (B, D, T)
+        return out.transpose(1, 2)  # (B, T, D)
