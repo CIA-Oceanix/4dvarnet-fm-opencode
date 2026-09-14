@@ -105,6 +105,20 @@ SCHEMES = {
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
         "model_type": "direct_unet_tchannels",
     },
+    # Q9 (2026-09-14): T-channels retrain of Q4 (noisy-trained forcing+param
+    # conditioning), trained directly at this script's own current default.
+    "Q9": {
+        "ckpt": "experiments/Q9_direct_unet_tchannels_s1_noisy_cond/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "model_type": "direct_unet_tchannels",
+    },
+    # Q10 (2026-09-14): T-channels retrain of Q5 (noisy-trained conditioning
+    # + IC), trained directly at this script's own current default.
+    "Q10": {
+        "ckpt": "experiments/Q10_direct_unet_tchannels_s1_noisy_ic_cond/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "model_type": "direct_unet_tchannels", "include_ic": True, "ic_dim": 2,
+    },
     "Q4": {
         "ckpt": "experiments/Q4_direct_unet_s1_noisy_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
