@@ -1,0 +1,93 @@
+# @package _global_
+# Same base as FDV2_grad_state_monai_l96_Stier.yaml (S-tier MonaiUNet1D,
+# init_state_var=0.1, aux_var_cost_weight=0.01, trainable_prior_weight=true),
+# full N_outer=10 (no truncated BPTT -- isolating this run's one new
+# variable from the separate, inconclusive tbptt2x5 ablation), plus THREE
+# additions:
+#
+#   1. prior_residual=true -- Phi(x) = x + prior_unet(x, tau) instead of the
+#      bare backbone output (see FDV2_grad_state_monai_l96_Stier_priorresidual_N5
+#      .yaml's header for the original Jacobian-decomposition motivation).
+#
+#   2. prior_output_init_std=0.1 -- overrides prior_unet's final output
+#      conv's MONAI zero_module() init (exact 0) with N(0, 0.1) instead.
+#      Found necessary AFTER prior_residual alone: a checkpoint diagnostic
+#      on job 53509 (FDV2_grad_state_monai_l96_Stier_priorresidual_tbptt2x5,
+#      300+ epochs trained) showed the final output conv's weight was STILL
+#      bit-for-bit 0.0 -- i.e. f(x) (prior_unet's raw correction) was
+#      identically zero for every input, the whole time. Root cause: under
+#      prior_residual=true, prior_cost(x) = ||x-Phi(x)||^2 = ||f(x)||^2 (the
+#      x cancels algebraically) -- a pure self-penalty on the network's own
+#      output with an exact critical point at f(x)=0. Since f(x) and its
+#      Jacobian J=d(f)/dx both start at exactly 0 (zero_module), EVERY
+#      gradient path that could move the final layer's weight away from 0
+#      is provably also 0 there (the aux prior_cost loss, the per-iteration
+#      g_prior=2*J^T@f(x) signal, and the deep double-backward path from the
+#      outer supervised loss through g_prior's own weight-dependence -- see
+#      models/monai_unet_adapter.py::MonaiUNet1D.__init__'s docstring for
+#      the full derivation) -- a permanent, structural fixed point, not a
+#      slow-training issue. prior_output_init_std=0.1 breaks it: f(x) is
+#      then small-but-nonzero from step 1, so d(prior_cost)/d(f(x))=2*f(x)
+#      is genuinely nonzero, the same mechanism that makes MONAI's ordinary
+#      zero-init safe for a real (externally-targeted) diffusion loss.
+#
+#   3. prior_dropout=0.0 (decoupled from the main solver's dropout=0.1) --
+#      carried over from the earlier prior_residual configs: prior_unet's
+#      forward is repeatedly re-run inside grad+state's create_graph=True
+#      double-backward, so dropout there adds mask noise on top of whatever
+#      the double-backward itself contributes.
+#
+# Confirmed NOT the same issue for subgrad+state-Stier(monai) (checked
+# directly: its own prior_unet's final conv weight norm is 5.30, clearly
+# nonzero/trained) -- that mode's prior_residual=false by default, so
+# prior_cost never collapses this way, and its own g_prior=x-Phi(x) proxy
+# is LINEAR in Phi(x) (constant slope -1), never structurally vanishing
+# regardless of Phi(x)'s magnitude. See
+# FDV2_subgrad_state_monai_l96_Stier_priorresidual_nonzeroinit.yaml for the
+# sibling run testing whether prior_residual+nonzero-init helps subgrad+state
+# too (an ablation, not a fix for a known subgrad+state problem).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    prior_dropout: 0.0
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: true
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    prior_residual: true
+    prior_output_init_std: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

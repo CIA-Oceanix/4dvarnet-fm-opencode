@@ -1,0 +1,66 @@
+# @package _global_
+# FDV2 grad+state on the S-tier MonaiUNet1D (hidden_channels=[32,64,128],
+# monai_num_res_blocks=1, 1,055,544 params -- vs the M tier's
+# hidden_channels=[64,128,256], monai_num_res_blocks=2, 5,889,048 params
+# every earlier FDV2 attempt used), plus the two fixes/settings that turned
+# out to matter for FDV1 at this same tier:
+#   - init_state_var=0.1 (random x_0 ~ N(0,0.1) instead of x_0=0) -- confirmed
+#     harmless (often beneficial) for FDV1 at every tier tried.
+#   - aux_var_cost_weight=0.01 (not 0.1) -- the corrected pure
+#     prior_cost(x_final)+prior_cost(states) auxiliary loss (no prior_weight/
+#     obs_cost mixed in, 2026-09-11 fix), at the SAME weight that let
+#     FDV1-Stier reach a new best RMSE. At M-tier, aux_var_cost_weight=0.01
+#     already showed a severe, permanent val_loss degradation for FDV1's own
+#     obs+state architecture (job 53289, ~0.38 vs ~0.20-0.29 for aux-loss-
+#     free variants) that vanished entirely once the same weight was tried
+#     at S-tier (job 53315, no degradation vs its own clean control). This
+#     run tests whether that same tier-dependence holds for grad+state's
+#     gradient-conditioned update rule, which never got a clean run under
+#     BOTH the normalization/soft-clip fix AND the corrected aux loss AND
+#     a capacity small enough to plausibly tolerate it -- every earlier
+#     grad+state attempt this session was at M-tier only.
+# grad_clip_range=5.0 (tanh soft-clip on the autograd gradient term) and
+# clip_range=50.0 (hard clamp on the raw state branch) both carried over
+# unchanged from the earlier grad+state fix.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: true
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

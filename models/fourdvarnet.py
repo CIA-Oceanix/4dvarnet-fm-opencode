@@ -28,7 +28,7 @@ def _validate_unet_backbone(unet_backbone):
 
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
                           dropout, output_dim, monai_norm_num_groups=32,
-                          monai_num_res_blocks=2):
+                          monai_num_res_blocks=2, monai_output_init_std=0.0):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -60,6 +60,16 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
     (1,055,544 params); the same width with ``monai_num_res_blocks=2`` is
     "S+" (1,482,264 params) instead. Ignored for ``unet_backbone="unet1d"``
     (that backbone has no such knob).
+
+    ``monai_output_init_std`` (default 0.0, no-op -- MonaiUNet1D's own
+    default, MONAI's standard ``zero_module()`` init unchanged): overrides
+    the final output conv's zero-init with ``N(0, monai_output_init_std)``
+    instead. Only meaningful (and only ever passed nonzero by
+    ``FourDVarNetSolver``) for a ``prior_unet`` built with
+    ``prior_residual=True`` -- see ``MonaiUNet1D.__init__``'s docstring for
+    why zero-init is a permanent dead end there specifically (not for the
+    main solver ``self.unet``, which never sets this). Ignored for
+    ``unet_backbone="unet1d"``.
     """
     _validate_unet_backbone(unet_backbone)
     if unet_backbone == "unet1d":
@@ -85,24 +95,32 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
         dropout=dropout,
         norm_num_groups=monai_norm_num_groups,
         num_res_blocks=monai_num_res_blocks,
+        output_init_std=monai_output_init_std,
     )
 
 # Recognized update_input tokens (mirrors the config-string taxonomy explored on
 # CIA-Oceanix/4dvarnet-global-mapping's ronan_devs branch, contrib/4dvarnet_latent/
 # models.py::GradSolver_withStep). "obs+state"/"obs-only" are gradient-free
 # (the per-iteration UNet is fed the raw state/obs, no cost function at all).
-# "grad-only"/"grad+state"/"subgrad+state" ("FDV2") are gradient-conditioned:
-# a variational cost prior_cost(state) + obs_weight*obs_cost(state, obs) is
-# built each iteration, and either its real autograd gradient ("grad-only"/
-# "grad+state", ported from ocean4dvarnet's GradSolver -- see _build_update_input)
-# or a cheap two-residual proxy that never calls autograd ("subgrad+state",
-# ported from ronan_devs' GradSolver_withStep) is fed to the update UNet.
-_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state", "subgrad+state")
+# "grad-only"/"grad+state"/"subgrad+state"/"gradsplit+state" ("FDV2") are
+# gradient-conditioned: a variational cost prior_cost(state) +
+# obs_weight*obs_cost(state, obs) is built each iteration, and one of three
+# things is fed to the update UNet: its real autograd gradient as ONE
+# combined tensor ("grad-only"/"grad+state", ported from ocean4dvarnet's
+# GradSolver -- see _build_update_input); a cheap two-residual proxy that
+# never calls autograd ("subgrad+state", ported from ronan_devs'
+# GradSolver_withStep); or the two terms' real autograd gradients kept
+# SEPARATE ("gradsplit+state" -- same two-channel input shape as
+# "subgrad+state", but each channel is a true gradient via its own
+# torch.autograd.grad call instead of a cheap proxy).
+_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
+                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau")
 
 # Modes needing a real torch.autograd.grad call each iteration.
-_AUTOGRAD_MODES = ("grad-only", "grad+state")
+_AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
 # Modes needing the trainable prior operator (prior_unet).
-_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state")
+_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
+                "subgrad+state+xtau")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
 # per mode -- drives in_state_dim at construction time.
 _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
@@ -111,7 +129,14 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
+    "gradsplit+state": 3,
+    "subgrad+state+xtau": 4,
 }
+# "subgrad+state+xtau" needs an outer flow-time conditioning value (x_tau,
+# beta_tau) that only exists for FourDVarNetPredictStateCFM's CFM
+# formulation (see its own docstring) -- structurally undefined for
+# FourDVarNetSolver, which has no outer flow-time at all.
+_CFM_ONLY_UPDATE_INPUTS = ("subgrad+state+xtau",)
 
 
 def _validate_update_input(update_input):
@@ -157,7 +182,7 @@ def _masked_obs_cost(state, obs_clean, obs_mask, R_var):
     return diff.pow(2).sum() / R_var
 
 
-def _prior_ae(prior_unet, state, tau=None):
+def _prior_ae(prior_unet, state, tau=None, residual=False):
     """The trainable prior operator Phi(state), applied channel-last -> UNet1D's
     channel-first convention and back. ``tau=None`` (the default) applies no
     time-conditioning at all (``UNet1D.forward`` skips its time-embedding
@@ -166,17 +191,32 @@ def _prior_ae(prior_unet, state, tau=None):
     only: the prior is meant as a fixed background/regularization operator,
     not one that behaves differently per unrolled iteration. Passing a real
     ``tau`` (``FourDVarNetPredictStateCFM``'s own usage, unchanged) applies
-    the same per-iteration tau embedding as the main update UNet."""
-    return prior_unet(state.transpose(1, 2), tau=tau).transpose(1, 2)
+    the same per-iteration tau embedding as the main update UNet.
+
+    ``residual`` (default False, backward-compatible): when True, returns
+    ``state + prior_unet(state, tau)`` -- an explicit architectural identity
+    anchor around the whole backbone -- instead of the bare network output.
+    Diagnostic knob added after a Jacobian decomposition of "gradsplit+state"
+    ``prior_cost``'s true gradient (2026-09-14) found the Jacobian term
+    ``-2*J^T@r`` dominates the residual term ``2*r`` by 11-53x and is nearly
+    orthogonal to it (cos~0.04-0.13) on a plateaued MonaiUNet1D checkpoint --
+    i.e. Phi's Jacobian, once training moves the backbone's zero-initialized
+    output layers away from zero, has nothing architecturally anchoring it
+    near identity. ``residual=True`` bakes that anchor in explicitly
+    (``d(state + f(state))/d(state) = I + df/d(state)``, permanently, not
+    just at init), matching what a residual/denoising-style prior wrapper
+    (``Phi(x) = x - CNN(x)`` or similar) would give structurally for free."""
+    raw = prior_unet(state.transpose(1, 2), tau=tau).transpose(1, 2)
+    return state + raw if residual else raw
 
 
-def _prior_cost(prior_unet, state, tau=None):
+def _prior_cost(prior_unet, state, tau=None, residual=False):
     """sum((state - Phi(state))^2) -- MSE(state, Phi(state)) with
     reduction="sum", matching _masked_obs_cost's sum-based (not
     count-normalized) convention, so the two terms combine consistently in
     var_cost. Phi = prior_unet (ocean4dvarnet's BilinAEPriorCost/ronan_devs'
-    GenericAEPriorCost formula). See ``_prior_ae`` re: ``tau=None``."""
-    return F.mse_loss(state, _prior_ae(prior_unet, state, tau), reduction="sum")
+    GenericAEPriorCost formula). See ``_prior_ae`` re: ``tau=None``/``residual``."""
+    return F.mse_loss(state, _prior_ae(prior_unet, state, tau, residual=residual), reduction="sum")
 
 
 def _soft_clip(t, clip_range):
@@ -257,7 +297,9 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
 
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
-                         grad_norm_cache=None, clip_range=50.0):
+                         grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
+                         prior_residual=False, detach_var_cost_grad=False,
+                         x_tau=None, beta_tau=None):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -315,11 +357,108 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     whenever the Python substring check ``'grad' in input_grad_update`` is
     true -- which (read literally) also matches ``"subgrad+state"`` (since
     ``"subgrad"`` contains ``"grad"``), a likely-unintentional legacy quirk.
-    This port keeps the three gradient-conditioned modes fully separate (no
+    This port keeps the four gradient-conditioned modes fully separate (no
     such cross-talk) and does not add any extra outer-loop term at all --
     only what feeds the main UNet changes per mode; the existing
     ``x - (1/N)*gmod`` update rule (shared with "obs+state"/"obs-only") is
     unchanged.
+
+    "subgrad+state+xtau" (``FourDVarNetPredictStateCFM`` only -- see
+    ``_CFM_ONLY_UPDATE_INPUTS``) extends "subgrad+state" with a fourth
+    channel for the CFM outer flow-time's own conditioning value ``x_tau``,
+    per ``reports/notes_4dvarnet_fm.pdf``'s "energy-informed parameterization"
+    (Sec. 3.3): the paper's third residual term is
+    ``(alpha_tau^2*sigma_0^2)^-1 * (beta_tau*x^(k) - beta_tau^2*x_tau)``,
+    which is ill-conditioned as ``alpha_tau -> 0`` (``tau -> 1``, dividing by
+    a vanishing squared term). This mode instead feeds the un-prefactored
+    core residual ``g_flow = x - beta_tau*x_tau`` (dropping the
+    ``(alpha_tau^2*sigma_0^2)^-1`` scaling entirely) -- bounded, well-
+    conditioned everywhere on ``tau in [0,1]`` since ``x``/``x_tau`` are both
+    state-scale and ``beta_tau in [0,1]``. ``x_tau`` is the CFM's outer
+    conditioning value (``FourDVarNetPredictStateCFM.forward``'s own ``x_t``
+    argument, held fixed across the whole ``K_inner`` unroll -- distinct
+    from ``x``, which is this same quantity's evolving *estimate* at inner
+    iteration ``k``); ``beta_tau = self.interpolant.beta(tau)`` (the OUTER
+    CFM flow-time's own beta, not the inner-iteration ``tau``/``prior_tau_k``
+    this function's own ``tau`` parameter already carries for
+    ``prior_unet``'s conditioning -- two different time variables).
+
+    "gradsplit+state" is the real-autograd counterpart to "subgrad+state":
+    same two-residual-plus-state input shape, but ``g_obs``/``g_prior`` are
+    each a true ``torch.autograd.grad`` of their own cost term
+    (``obs_weight*obs_cost(x, obs)`` / ``prior_weight*prior_cost(x)``) taken
+    SEPARATELY, instead of "grad-only"/"grad+state"'s single combined
+    gradient of the summed ``var_cost``, and instead of "subgrad+state"'s
+    cheap proxy residuals. ``g_prior`` is normalized/soft-clipped exactly
+    like "grad-only"/"grad+state"'s combined ``grad`` tensor -- it is a real
+    gradient of an unbounded cost term (``prior_cost``, dense: nonzero
+    everywhere), the same reason that tensor needs it. ``g_obs`` is
+    deliberately NOT normalized, even though it IS a real gradient here (not
+    a proxy) -- ``obs_cost``'s gradient w.r.t. ``x`` is
+    ``2*mask*(x-obs)/R_var``, architecturally masked to exactly zero outside
+    observation times exactly like "subgrad+state"'s own ``g_obs`` proxy, so
+    it inherits that mode's normalization-dilution vulnerability (see the
+    2026-09-11 fix) identically -- being a true gradient rather than a proxy
+    doesn't change its sparsity, and the same global whole-tensor RMS norm
+    would dilute/inflate it exactly the same way. Whether a channel needs
+    normalization is decided by its sparsity/boundedness, not by whether it
+    came from ``torch.autograd.grad`` or a hand-written proxy formula.
+
+    ``gradsplit_prior_scale`` (default 1.0, no-op): multiplies ``g_prior``
+    AFTER normalization/soft-clipping, for "gradsplit+state" only. Added as
+    a diagnostic knob -- forcing it near 0 (e.g. 1e-4) makes the fed tensor
+    ``cat([g_obs, ~0, x])``, functionally close to "obs+state"'s own
+    ``cat([x, obs_clean])`` (``g_obs`` is proportional to ``x-obs`` at
+    observed times, the same information "obs+state" gets directly), to
+    check whether a persistent training plateau traces back to the
+    ``g_prior`` channel's contribution specifically, by comparing against
+    a config where it's been silenced almost entirely.
+
+    ``prior_residual`` (default False, backward-compatible): forwarded
+    unchanged to every ``_prior_ae``/``_prior_cost`` call below -- see
+    ``_prior_ae`` for what it does and why. Affects "subgrad+state"'s
+    ``g_prior`` proxy and "gradsplit+state"/"grad-only"/"grad+state"'s real
+    ``torch.autograd.grad``-computed ``g_prior``/``grad`` alike, all of which
+    differentiate through ``Phi`` w.r.t. ``x`` (directly or via
+    ``_prior_cost``) and are therefore all sensitive to whether ``Phi``'s
+    Jacobian carries an explicit identity anchor.
+
+    ``detach_var_cost_grad`` (default False, backward-compatible;
+    "grad-only"/"grad+state" only): passed straight through as
+    ``create_graph=not detach_var_cost_grad`` to the combined
+    ``torch.autograd.grad(var_cost, x, ...)`` call below. Does NOT change
+    what gets fed to the main solver UNet at all -- ``grad`` is still the
+    real ``2*(x-Phi(x)) - 2*J^T@(x-Phi(x))`` (Jacobian term included, full
+    backward through ``prior_unet``, same cost as always for THIS forward
+    pass). What changes is purely downstream: with ``create_graph=False``,
+    this tensor carries no graph, so the OUTER supervised loss's own
+    ``.backward()`` can no longer differentiate through it at all -- neither
+    into ``prior_unet``'s weights (and ``prior_weight``, used inside the
+    same ``var_cost`` expression) NOR into ``x``'s own upstream dependency
+    on earlier unrolled iterations via this channel (the plain ``x``
+    channel, concatenated alongside ``grad``, still carries a normal graph
+    and is unaffected). ``prior_unet``/``prior_weight`` then train ONLY via
+    the aux ``prior_cost`` loss (``aux_var_cost_weight>0``), not via the
+    per-iteration double-backward. Added specifically to let a genuinely
+    differentiated prior's TRUE gradient still reach the solver every
+    iteration while decoupling "does the solver benefit from consuming that
+    true gradient" from "does jointly training the prior through the
+    per-iteration double-backward help" -- two questions this mode
+    otherwise conflates. Distinct from (and strictly less destructive than)
+    detaching ``Phi(x)`` inside ``_prior_cost`` itself, which would instead
+    discard the Jacobian term entirely and collapse the fed signal to
+    "subgrad+state"'s own proxy.
+
+    CAVEAT: ``prior_weight`` (when ``trainable_prior_weight=True``) has NO
+    OTHER gradient source than this same per-iteration pathway --
+    ``compute_loss``'s aux ``prior_cost`` term deliberately never
+    references ``self.prior_weight`` (see its docstring: the 2026-09-11
+    ``prior_weight``-collapse-to-zero bugfix). So
+    ``detach_var_cost_grad=True`` with ``trainable_prior_weight=True``
+    makes ``prior_weight`` permanently untrainable -- stuck at its init
+    value, receiving literally no gradient from any loss term. Set
+    ``trainable_prior_weight=False`` alongside ``detach_var_cost_grad=True``
+    to avoid carrying a dead parameter.
     """
     if update_input == "obs-only":
         return obs_clean
@@ -327,14 +466,32 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         return torch.cat([x, obs_clean], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
-        g_prior = x - _prior_ae(prior_unet, x, tau)
+        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        return torch.cat([g_obs, g_prior, x], dim=-1)
+    if update_input == "subgrad+state+xtau":
+        assert x_tau is not None and beta_tau is not None, (
+            "subgrad+state+xtau requires x_tau/beta_tau (FourDVarNetPredictStateCFM "
+            "only -- see _CFM_ONLY_UPDATE_INPUTS)"
+        )
+        g_obs = (obs_clean - x) * obs_mask
+        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        g_flow = x - beta_tau * x_tau
+        return torch.cat([g_obs, g_prior, g_flow, x], dim=-1)
+    if update_input == "gradsplit+state":
+        with torch.enable_grad():
+            prior_cost_val = prior_weight * _prior_cost(prior_unet, x, tau, residual=prior_residual)
+            g_prior = torch.autograd.grad(prior_cost_val, x, create_graph=True)[0]
+            obs_cost_val = obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
+            g_obs = torch.autograd.grad(obs_cost_val, x, create_graph=True)[0]
+        g_prior = gradsplit_prior_scale * _normalize_channels(
+            g_prior, cache=grad_norm_cache, key="g_prior_gradsplit", clip_range=clip_range)
         return torch.cat([g_obs, g_prior, x], dim=-1)
     # grad-only / grad+state
     with torch.enable_grad():
-        var_cost = prior_weight * _prior_cost(prior_unet, x, tau) \
+        var_cost = prior_weight * _prior_cost(prior_unet, x, tau, residual=prior_residual) \
             + obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
-        grad = _normalize_channels(torch.autograd.grad(var_cost, x, create_graph=True)[0],
-                                    cache=grad_norm_cache, key="grad", clip_range=clip_range)
+        raw_grad = torch.autograd.grad(var_cost, x, create_graph=not detach_var_cost_grad)[0]
+        grad = _normalize_channels(raw_grad, cache=grad_norm_cache, key="grad", clip_range=clip_range)
     if update_input == "grad-only":
         return grad
     return torch.cat([grad, x], dim=-1)
@@ -342,7 +499,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
 
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
-                       clip_range=50.0):
+                       clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
+                       detach_var_cost_grad=False, x_tau=None, beta_tau=None):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -356,7 +514,10 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     reentrant checkpoint implementation -- because "grad-only"/"grad+state"
     call ``torch.autograd.grad(..., create_graph=True)`` inside
     ``_build_update_input``, and only the non-reentrant checkpoint supports
-    nested/higher-order autograd correctly.
+    nested/higher-order autograd correctly. (``detach_var_cost_grad=True``
+    makes that specific call ``create_graph=False`` instead -- still safe
+    under ``use_reentrant=False`` either way, just no longer exercising the
+    nested-autograd path for this term.)
 
     Safe to checkpoint unconditionally (no config flag): under
     ``torch.no_grad()`` (eval/sampling), ``checkpoint`` just runs the
@@ -368,11 +529,20 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     iteration during backward always hits the already-cached branch in
     ``_normalize_channels`` and reproduces the exact same norm -- no stale-
     cache risk despite the forward code re-running.
+
+    ``x_tau``/``beta_tau`` (both default None): forwarded unchanged to
+    ``_build_update_input``, only actually used by "subgrad+state+xtau"
+    (``FourDVarNetPredictStateCFM`` only -- see ``_CFM_ONLY_UPDATE_INPUTS``).
+    ``FourDVarNetSolver`` never passes these (defaults apply).
     """
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
                                prior_unet=prior_unet, R_var=R_var,
                                obs_weight=obs_weight, prior_weight=prior_weight,
-                               grad_norm_cache=grad_norm_cache, clip_range=clip_range).transpose(1, 2)
+                               grad_norm_cache=grad_norm_cache, clip_range=clip_range,
+                               gradsplit_prior_scale=gradsplit_prior_scale,
+                               prior_residual=prior_residual,
+                               detach_var_cost_grad=detach_var_cost_grad,
+                               x_tau=x_tau, beta_tau=beta_tau).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -396,6 +566,10 @@ class FourDVarNetSolver(nn.Module):
       with state. See ``_build_update_input``.
     - ``"subgrad+state"``: a cheap two-residual proxy gradient (obs residual +
       prior-autoencoder residual), concatenated with state, no autograd call.
+    - ``"gradsplit+state"``: like "subgrad+state"'s two-residual-plus-state
+      shape, but each residual is a real, SEPARATE autograd gradient
+      (``torch.autograd.grad`` of ``obs_cost``/``prior_cost`` individually,
+      not the combined ``var_cost`` "grad-only"/"grad+state" differentiate).
 
     ``unet_backbone`` ("unet1d" default, or "monai") selects the nn.Module
     class backing ``self.unet``/``self.prior_unet`` -- ``models.unet.UNet1D``
@@ -413,7 +587,9 @@ class FourDVarNetSolver(nn.Module):
     ``TweedieCFM``'s ``mean_estimator``/``velocity_unet`` hyperparameter
     sharing), constructed only when ``update_input`` needs it so
     ``"obs+state"``/``"obs-only"`` checkpoints stay exactly as before (no
-    dead weights).
+    dead weights). ``dropout`` sharing is the default, not forced: pass
+    ``prior_dropout`` to decouple it (e.g. dropout for the main solver unet
+    only, ``prior_dropout=0.0`` -- see ``self.prior_dropout``'s docstring).
 
     Unlike ``"obs+state"``/``"obs-only"`` (a bounded-by-construction update,
     empirically stable throughout FDV1's own training -- no clamp was ever
@@ -450,9 +626,21 @@ class FourDVarNetSolver(nn.Module):
                  tbptt_n_blocks=1,
                  tbptt_block_size=None,
                  grad_clip_range=None,
-                 init_state_var=0.0):
+                 init_state_var=0.0,
+                 gradsplit_prior_scale=1.0,
+                 prior_residual=False,
+                 prior_dropout=None,
+                 prior_output_init_std=0.0,
+                 detach_var_cost_grad=False):
         super().__init__()
         _validate_update_input(update_input)
+        if update_input in _CFM_ONLY_UPDATE_INPUTS:
+            raise ValueError(
+                f"update_input={update_input!r} needs an outer flow-time "
+                "conditioning value (x_tau/beta_tau) that only exists for "
+                "FourDVarNetPredictStateCFM's CFM formulation -- structurally "
+                "undefined for FourDVarNetSolver (see _CFM_ONLY_UPDATE_INPUTS)."
+            )
         _validate_unet_backbone(unet_backbone)
         if unet_backbone == "monai" and prior_tau_conditioning:
             raise ValueError(
@@ -503,6 +691,54 @@ class FourDVarNetSolver(nn.Module):
         # random init changes FDV1's ("obs+state") own healthy fast-Y
         # reconstruction at all, as a sanity/robustness check.
         self.init_state_var = init_state_var
+        # Diagnostic knob, "gradsplit+state" only (see _build_update_input):
+        # multiplies g_prior AFTER normalization/soft-clipping. Default 1.0
+        # is a no-op; forcing it near 0 (e.g. 1e-4) makes the fed tensor
+        # cat([g_obs, ~0, x]), functionally close to "obs+state"'s own
+        # cat([x, obs_clean]) -- used to check whether a persistent training
+        # plateau traces back to g_prior's contribution specifically.
+        self.gradsplit_prior_scale = gradsplit_prior_scale
+        # Diagnostic knob (default False, backward-compatible): forwarded to
+        # every _prior_ae/_prior_cost call this solver makes (per-iteration
+        # update-input construction AND the aux prior-consistency loss term
+        # in compute_loss below) -- see _prior_ae's docstring for the
+        # Jacobian-decomposition finding that motivated it.
+        self.prior_residual = prior_residual
+        # None (default): prior_unet uses the same `dropout` as the main
+        # solver unet -- today's behavior, backward-compatible. Set to
+        # decouple the two, e.g. to add dropout as a regularizer for the
+        # main solver unet only while keeping prior_unet's dropout unchanged
+        # (or 0.0) -- relevant for grad-only/grad+state/gradsplit+state,
+        # whose prior_unet forward is the one repeatedly re-run inside
+        # torch.autograd.grad(..., create_graph=True): any dropout there
+        # injects a fresh random mask into that higher-order (double-
+        # backward) computation at every unrolled iteration, on top of
+        # whatever noise the double-backward itself already contributes --
+        # unlike the main solver unet, whose own forward is always a single,
+        # ordinary (first-order) backward.
+        self.prior_dropout = dropout if prior_dropout is None else prior_dropout
+        # 0.0 (default, no-op): overrides prior_unet's (monai backbone only)
+        # final output conv's zero_module init with N(0, prior_output_init_std)
+        # instead. See MonaiUNet1D.__init__'s docstring -- only meaningful
+        # (and only intended to be set) alongside prior_residual=True, where
+        # exact zero-init is a provable permanent dead end for this layer.
+        self.prior_output_init_std = prior_output_init_std
+        # False (default, backward-compatible; "grad-only"/"grad+state"
+        # only): create_graph=not detach_var_cost_grad for the per-iteration
+        # combined torch.autograd.grad(var_cost, x, ...) call. Does NOT
+        # change what's fed to the solver UNet (still the real, Jacobian-
+        # including gradient) -- only whether the OUTER supervised loss can
+        # later differentiate through that computation into prior_unet's
+        # weights (and prior_weight) / x's upstream dependency on earlier
+        # iterations via this channel. True decouples "does the solver
+        # benefit from consuming the true differentiated-prior gradient"
+        # from "does jointly training the prior through the per-iteration
+        # double-backward help" -- prior_unet then trains only via the aux
+        # prior_cost loss. See _build_update_input's docstring for the full
+        # derivation and how this differs from detaching Phi(x) itself
+        # (which would instead collapse the fed signal to subgrad+state's
+        # own proxy).
+        self.detach_var_cost_grad = detach_var_cost_grad
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -567,10 +803,11 @@ class FourDVarNetSolver(nn.Module):
                 hidden_channels=(prior_hidden_channels if prior_hidden_channels is not None
                                   else hidden_channels),
                 time_emb_dim=(time_emb_dim if prior_tau_conditioning else 0),
-                dropout=dropout,
+                dropout=self.prior_dropout,
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
                 monai_num_res_blocks=monai_num_res_blocks,
+                monai_output_init_std=self.prior_output_init_std,
             )
 
     @property
@@ -640,7 +877,9 @@ class FourDVarNetSolver(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
-                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
+                self.prior_residual, self.detach_var_cost_grad,
+                use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
@@ -730,8 +969,8 @@ class FourDVarNetSolver(nn.Module):
             loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
             numel = x_final.numel()
-            prior_cost_pred = _prior_cost(self.prior_unet, x_final) / numel
-            prior_cost_true = _prior_cost(self.prior_unet, batch.states) / numel
+            prior_cost_pred = _prior_cost(self.prior_unet, x_final, residual=self.prior_residual) / numel
+            prior_cost_true = _prior_cost(self.prior_unet, batch.states, residual=self.prior_residual) / numel
             loss = loss + self.aux_var_cost_weight * (prior_cost_pred + prior_cost_true)
         return loss
 
@@ -845,6 +1084,20 @@ class FourDVarNetPredictStateCFM(nn.Module):
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
         obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
         x = x_t
+        # x_tau/beta_tau: "subgrad+state+xtau"'s own outer-flow-time inputs
+        # (see _build_update_input's docstring) -- x_tau_const is the outer
+        # conditioning value held FIXED across the whole K_inner unroll,
+        # deliberately never reassigned to x (which evolves every inner
+        # iteration as the current estimate of E[x1|x_tau,y]). beta_tau uses
+        # the OUTER tau (this forward() call's own tau argument), not the
+        # inner-iteration tau_k below -- two different time variables.
+        # Computed unconditionally (cheap) regardless of update_input, same
+        # convention as every other always-computed-but-only-sometimes-used
+        # quantity in this module.
+        x_tau_const = x_t
+        beta_tau = self.interpolant.beta(tau)
+        while beta_tau.dim() < x_t.dim():
+            beta_tau = beta_tau.unsqueeze(-1)
         if self.update_input in _AUTOGRAD_MODES and not x.requires_grad:
             x = x.detach().requires_grad_(True)
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled (inner) solve
@@ -854,7 +1107,8 @@ class FourDVarNetPredictStateCFM(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, tau_k, self.prior_unet, self.R_var, 1.0, self.obs_weight,
-                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range,
+                x_tau=x_tau_const, beta_tau=beta_tau, use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / self.K_inner) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:

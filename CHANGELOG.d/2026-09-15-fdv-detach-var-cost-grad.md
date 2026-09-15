@@ -1,0 +1,16 @@
+## 2026-09-15: FourDVarNetSolver detach_var_cost_grad -- isolate the fed-gradient benefit from double-backward training
+
+**Summary:** Added `detach_var_cost_grad` (default `False`, backward-compatible; `grad-only`/`grad+state` only) to `FourDVarNetSolver`: passes `create_graph=not detach_var_cost_grad` to the per-iteration combined `torch.autograd.grad(var_cost, x, ...)` call.
+
+**Files modified:**
+- `models/fourdvarnet.py` -- `_build_update_input`/`_solver_iteration`/`FourDVarNetSolver.__init__` gain `detach_var_cost_grad=False`, threaded through to the `checkpoint(_solver_iteration, ...)` call. `FourDVarNetPredictStateCFM` untouched (its own call site omits the new trailing arg, stays at the default).
+- `conf/schema.py` -- `FourDVarNetConfig.detach_var_cost_grad: bool = False`.
+- `train.py` -- `model_factory` threads `fdv.get("detach_var_cost_grad", False)`.
+- `tests/test_fourdvarnet.py` -- new `TestDetachVarCostGrad` class (6 tests): default preserves existing behavior, the fed tensor's *value* is identical with/without detaching, `prior_unet` gets no gradient through the unroll when detached (with `aux_var_cost_weight=0`) but a real one when attached, `prior_unet` still trains via the aux loss when detached (with `aux_var_cost_weight>0`), a trainable `prior_weight` is left with literally no gradient source when detached (documented caveat), `grad-only` mode also works.
+- `config/experiment/FDV2_grad_state_monai_l96_Stier_priorresidual_detachvarcost.yaml`, `batch/run_l96_fdv2_grad_state_monai_Stier_priorresidual_detachvarcost_train.sbatch` -- new diagnostic config/launcher.
+
+**Rationale:** `grad+state`'s existing `create_graph=True` conflates two questions: does the solver benefit from consuming the *true* differentiated-prior gradient (Jacobian term included), and does jointly training the prior through the per-iteration double-backward help. `detach_var_cost_grad=True` decouples them: the tensor fed to the solver UNet is byte-for-byte unchanged (still the real `2*(x-Phi(x)) - 2*J^T@(x-Phi(x))`, full backward through `prior_unet` every iteration -- same forward cost as always), but the *outer* supervised loss can no longer differentiate through that computation afterward, so `prior_unet`'s weights (and `prior_weight`, used inside the same `var_cost` expression) train only via the separate aux `prior_cost` loss instead of the deep double-backward through all `N_outer` iterations. This is strictly less destructive than detaching `Phi(x)` inside `_prior_cost` itself (an alternative considered and rejected), which would instead discard the Jacobian term entirely and collapse the fed signal to `subgrad+state`'s own proxy -- exactly the comparison this knob is meant to keep intact.
+
+CAVEAT (documented in `_build_update_input`'s docstring and directly tested): a trainable `prior_weight` has no other gradient source than this same per-iteration pathway, so `detach_var_cost_grad=True` with `trainable_prior_weight=True` leaves `prior_weight` permanently stuck at its init value. The new config sets `trainable_prior_weight: false` accordingly.
+
+**Verification:** `pytest tests/test_fourdvarnet.py -q` (104 passed, default env) and `pytest tests/test_fourdvarnet_monai.py tests/test_lightning_module.py -q` (44 passed, monai env).
