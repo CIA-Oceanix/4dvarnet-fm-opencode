@@ -651,15 +651,94 @@ def main() -> None:
         "(e.g. cols~54+psi2=10 vs cols=64, both individually "
         "`loc_radius`-tuned)? Not yet tested.")
     add("")
-    add("Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 45 "
+    add("### N=100 confirmation (2026-09-14)")
+    add("")
+    add("Both loc_radius-tuned high-density configs (cols=16 loc=2.0, "
+        "cols=64 loc=1.0), for **both** ETKF and EnKF, run at full N=100 -- "
+        "closing the \"N=100 confirmation is the natural next step\" "
+        "caveat from the correction above. EnKF's own `loc_radius` optimum "
+        "was checked separately at N=10 first (`qg_enkf_loc_check_scratch.py`) "
+        "rather than assumed to match ETKF's, since the untuned (loc=6.0) "
+        "EnKF cross-check collapsed *more* severely than ETKF at the same "
+        "density -- it turned out to match ETKF's exactly at both "
+        "densities.")
+    add("")
+    obsd_n100_dir = "qg_obs_density_sweep_n100"
+    n100_density_rows = []
+    for method in ("etkf", "enkf"):
+        base_s0 = metrics(load_json(root / f"qg_repro_validation/{method}.json"), "test_s0")
+        base_s1 = metrics(load_json(root / f"qg_repro_validation_s1/{method}.json"), "test_s1")
+        method_label = "ETKF" if method == "etkf" else "EnKF"
+        n100_density_rows.append((f"{method_label} baseline (cols=4, loc=6.0)",
+                                   {"s0_psi": base_s0["psi_ev"] if base_s0 else None,
+                                    "s0_q": base_s0["q_ev"] if base_s0 else None,
+                                    "s0_ql2": base_s0["q_ev_layer2"] if base_s0 else None,
+                                    "s1_psi": base_s1["psi_ev"] if base_s1 else None,
+                                    "s1_q": base_s1["q_ev"] if base_s1 else None,
+                                    "s1_ql2": base_s1["q_ev_layer2"] if base_s1 else None}))
+        for density, loc in (("colpts16", "2.0"), ("colpts64", "1.0")):
+            m0 = metrics(load_json(root / f"{obsd_n100_dir}/s0_{method}_{density}_n100.json"), "test_s0")
+            m1 = metrics(load_json(root / f"{obsd_n100_dir}/s1_{method}_{density}_n100.json"), "test_s1")
+            label = f"{method_label} {density.replace('colpts', 'cols=')} (loc={loc})"
+            n100_density_rows.append((label,
+                                       {"s0_psi": m0["psi_ev"] if m0 else None,
+                                        "s0_q": m0["q_ev"] if m0 else None,
+                                        "s0_ql2": m0["q_ev_layer2"] if m0 else None,
+                                        "s1_psi": m1["psi_ev"] if m1 else None,
+                                        "s1_q": m1["q_ev"] if m1 else None,
+                                        "s1_ql2": m1["q_ev_layer2"] if m1 else None}))
+    render_metric_table(
+        add, "config (N=100)", n100_density_rows,
+        [("S0 psi", "s0_psi"), ("S0 q", "s0_q"), ("S0 q-layer2", "s0_ql2"),
+         ("S1 psi", "s1_psi"), ("S1 q", "s1_q"), ("S1 q-layer2", "s1_ql2")])
+    add("**Fully confirmed at N=100**: both tuned high-density configs "
+        "decisively beat the canonical cols=4/loc=6.0 baseline, for both "
+        "methods, on every field and both scenarios -- including the "
+        "previously-collapsing unobserved deep layer (q layer2), which "
+        "roughly **doubles** at cols=64 despite psi1 columns never "
+        "directly observing it (S1: ETKF 0.266->0.480, EnKF 0.221->0.489). "
+        "cols=64 beats cols=16 throughout, consistent with \"more density, "
+        "properly localized, is unambiguously better\" holding at full "
+        "scale too, not just N=10.")
+    add("")
+    add("**One new wrinkle**: at these higher densities, **EnKF edges out "
+        "ETKF+ridge=1.0** on both fields (cols=64 S1: EnKF q=0.600 vs ETKF "
+        "q=0.585; cols=16 S1: EnKF q=0.539 vs ETKF q=0.526) -- a partial "
+        "reversal of ETKF's advantage at the cols=4 baseline (where "
+        "`etkf_ridge=1.0` was specifically tuned and promoted). The margin "
+        "is modest (~0.01-0.02) so not necessarily decisive, but it means "
+        "\"ETKF+ridge=1.0 beats EnKF\" is a cols=4-specific finding, not a "
+        "universal one -- whether ETKF's own ridge/inflation should be "
+        "re-tuned at higher density, rather than reusing the cols=4-tuned "
+        "value, is untested.")
+    add("")
+    add("**Not yet decided**: whether to promote one of these configs "
+        "(most plausibly cols=64/loc=1.0) into the canonical S0/S1 "
+        "benchmark, the way `etkf_ridge=1.0` was promoted after its own "
+        "N=100 confirmation. Unlike that promotion, this one changes the "
+        "*observation configuration* itself (16x the column density), not "
+        "just a DA hyperparameter -- a benchmark-design decision, not a "
+        "pure tuning one, so left open here rather than actioned.")
+    add("")
+    add(f"Data: `reports/qg/outputs/{obsd_n100_dir}/*.json` (N=100, 8 "
+        "files: ETKF/EnKF x cols={16,64} x S0/S1). Scratch drivers (not "
+        "committed): `qg_obs_density_n100_scratch.py`, "
+        "`qg_enkf_loc_check_scratch.py` (the EnKF loc_radius check). "
+        "Batch: `batch/run_qg_obs_density_n100.sbatch` (jobs 53537 [ETKF, "
+        "1h50m], 53538 [EnKF, 2h36m]).")
+    add("")
+    add("Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 57 "
         "files: the original ETKF/EnKF density sweep, the cols=4/random "
-        "sanity check, the EnKF cross-check, the inflation and "
-        "`loc_radius` sweeps at cols=16/64, and the psi1+psi2 `loc_radius` "
-        "sweep). Tests: `tests/test_qg_psi2_points.py` (15), "
-        "`tests/test_qg_cols_sampling.py` (10) -- mechanical correctness "
-        "only (shapes, determinism, no-hang, H-function/localization "
-        "correctness), no scientific claim baked in. Scratch driver (not "
-        "committed): `qg_obs_density_sweep_scratch.py`.")
+        "sanity check, the EnKF cross-check, the ETKF inflation and "
+        "`loc_radius` sweeps at cols=16/64, the psi1+psi2 `loc_radius` "
+        "sweep, and EnKF's own `loc_radius` check at cols=16/64 -- used to "
+        "confirm EnKF's optimum before the N=100 run below rather than "
+        "assume it matched ETKF's). Tests: `tests/test_qg_psi2_points.py` "
+        "(15), `tests/test_qg_cols_sampling.py` (10) -- mechanical "
+        "correctness only (shapes, determinism, no-hang, H-function/"
+        "localization correctness), no scientific claim baked in. Scratch "
+        "drivers (not committed): `qg_obs_density_sweep_scratch.py`, "
+        "`qg_enkf_loc_check_scratch.py`.")
     add("")
 
     add("## Synthesis")
@@ -716,9 +795,19 @@ def main() -> None:
         "and becomes an ensemble-conditioning bottleneck at higher "
         "density with a fixed small ensemble (N=80) -- shrinking it fully "
         "recovers and then exceeds the original baseline at both cols=16 "
-        "and cols=64, on both S0 and S1. Whether psi2 information adds "
-        "value *at matched total density* against a properly-tuned "
-        "pure-psi1 config remains genuinely open.")
+        "and cols=64, on both S0 and S1. **Fully confirmed at N=100** for "
+        "both ETKF and EnKF (EnKF's own `loc_radius` optimum checked "
+        "separately, matched ETKF's exactly): both tuned high-density "
+        "configs decisively beat the cols=4 baseline on every field, "
+        "including the previously-collapsing q layer2 (roughly doubles at "
+        "cols=64). One new wrinkle: EnKF edges out ETKF+ridge=1.0 at these "
+        "higher densities (modest margin, ~0.01-0.02) -- \"ETKF+ridge=1.0 "
+        "beats EnKF\" is a cols=4-specific finding, not universal. Whether "
+        "psi2 information adds value *at matched total density* against a "
+        "properly-tuned pure-psi1 config remains genuinely open; whether "
+        "to promote a high-density config into the canonical benchmark is "
+        "also not yet decided (unlike ridge, this changes the observation "
+        "configuration itself, a benchmark-design call).")
     add("- **Still open**: `N_ensemble` has never been varied (hardcoded 80 "
         "everywhere) in any of the three studies above.")
     add("")
@@ -730,12 +819,15 @@ def main() -> None:
         "`reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (4DVar "
         "covariance-scale sweep, N=5) + "
         "`reports/qg/outputs/qg_obs_density_sweep/*.json` (obs-density/"
-        "configuration sweep with correction, N=10). Scratch drivers "
+        "configuration sweep with correction, N=10) + "
+        "`reports/qg/outputs/qg_obs_density_sweep_n100/*.json` (N=100 "
+        "confirmation). Scratch drivers "
         "(not committed): `qg_da_s1_scratch.py`, "
         "`qg_da_sensitivity_sweep_scratch.py`, "
         "`qg_n100_ridge_confirm_scratch.py`, "
         "`qg_4dvar_sensitivity_sweep_scratch.py`, "
-        "`qg_obs_density_sweep_scratch.py`.")
+        "`qg_obs_density_sweep_scratch.py`, "
+        "`qg_obs_density_n100_scratch.py`, `qg_enkf_loc_check_scratch.py`.")
     add("")
 
     out_path = Path(args.out)

@@ -1344,6 +1344,56 @@ well-localized-but-mixed data," not "psi1 alone beats psi1+psi2 at equal
 density." A fair head-to-head at matched density is the natural next step
 if this question matters going forward.
 
+**N=100 confirmation (2026-09-14, later same day)**: the loc_radius-tuned
+cols=16 (loc=2.0) and cols=64 (loc=1.0) configs, for **both** ETKF and
+EnKF, run at full N=100 (jobs 53537 [ETKF, 1h50m], 53538 [EnKF, 2h36m],
+`qg_obs_density_n100_scratch.py`, `batch/run_qg_obs_density_n100.sbatch`).
+EnKF's own `loc_radius` optimum was checked separately first at N=10
+(`qg_enkf_loc_check_scratch.py`, {1,2,3} @ cols=16 and {0.5,1,2} @
+cols=64) rather than assumed to match ETKF's -- it turned out to match
+exactly at both densities (cols=16: loc=2.0 best for both S0/S1 on both
+fields; cols=64: loc=1.0 best for both).
+
+| config (N=100) | S0 psi | S0 q | S0 q-layer2 | S1 psi | S1 q | S1 q-layer2 |
+|---|---|---|---|---|---|---|
+| ETKF baseline (cols=4, loc=6.0) | 0.957 | 0.476 | 0.410 | 0.926 | 0.357 | 0.266 |
+| ETKF cols=16 (loc=2.0) | 0.982 | 0.644 | 0.555 | 0.974 | 0.526 | 0.428 |
+| ETKF cols=64 (loc=1.0) | 0.990 | 0.738 | 0.630 | 0.983 | 0.585 | 0.480 |
+| EnKF baseline (cols=4, loc=6.0) | 0.947 | 0.481 | 0.394 | 0.896 | 0.331 | 0.221 |
+| EnKF cols=16 (loc=2.0) | 0.983 | 0.684 | 0.585 | 0.971 | 0.539 | 0.435 |
+| **EnKF cols=64 (loc=1.0)** | **0.992** | **0.768** | **0.655** | **0.984** | **0.600** | **0.489** |
+
+**Fully confirmed**: both tuned high-density configs decisively beat the
+canonical cols=4/loc=6.0 baseline, for both methods, on every field and
+both scenarios -- including the previously-collapsing unobserved deep
+layer (q layer2), which roughly **doubles** at cols=64 despite psi1
+columns never directly observing it (S1: ETKF 0.266->0.480, EnKF
+0.221->0.489). cols=64 beats cols=16 throughout, and the N=10 correction's
+qualitative claim ("more density, properly localized, is unambiguously
+better") holds at full scale, not just N=10.
+
+**New wrinkle, not previously visible at N=10**: at these higher
+densities, **EnKF edges out ETKF+ridge=1.0** on both fields (cols=64 S1:
+EnKF q=0.600 vs ETKF q=0.585; cols=16 S1: EnKF q=0.539 vs ETKF q=0.526) --
+a partial reversal of ETKF's advantage at the cols=4 baseline (where
+`etkf_ridge=1.0` was specifically tuned and promoted, see the
+"ETKF/EnKF sensitivity" sections above). The margin is modest
+(~0.01-0.02), so not necessarily decisive, but "ETKF+ridge=1.0 beats
+EnKF" is now known to be a **cols=4-specific finding**, not universal --
+whether ETKF's own ridge/inflation should be re-tuned at higher density
+(rather than reusing the cols=4-tuned value) is untested.
+
+**Not yet decided**: whether to promote one of these configs (most
+plausibly cols=64/loc=1.0) into the canonical S0/S1 benchmark, the way
+`etkf_ridge=1.0` was promoted after its own N=100 confirmation. Unlike
+that promotion, this one changes the *observation configuration* itself
+(16x the column density), not just a DA hyperparameter -- a
+benchmark-design decision, not a pure tuning one, left open pending
+discussion rather than actioned unilaterally.
+
+Data: `reports/qg/outputs/qg_obs_density_sweep_n100/*.json` (N=100, 8
+files: ETKF/EnKF x cols={16,64} x S0/S1).
+
 **Practical implication for this codebase**: `loc_radius` should be swept
 per obs-density config, not held at one project-wide default (6.0), for
 any future high-density obs-config experiment (this generalizes beyond
