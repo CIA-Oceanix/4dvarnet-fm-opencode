@@ -19,14 +19,23 @@ _ALL_UPDATE_INPUT_MODES = ("obs+state", "obs-only", "grad-only", "grad+state",
                            "subgrad+state", "gradsplit+state")
 
 
-def _bypass_checkpoint(fn, *args, **kwargs):
+def _bypass_checkpoint(fn, *args, use_reentrant=None, **kwargs):
     """Drop-in stand-in for ``torch.utils.checkpoint.checkpoint`` that just
     calls the wrapped function directly -- no activation discarding, no
     recomputation. Patched into ``models.fourdvarnet.checkpoint`` to produce
     a "no checkpointing" reference run for TestGradientCheckpointing, so the
     same forward()/backward() code path is exercised either way and only the
-    checkpoint mechanics differ."""
-    return fn(*args)
+    checkpoint mechanics differ. Forwards **kwargs too (not just *args) --
+    real torch.utils.checkpoint.checkpoint(function, *args, **kwargs) also
+    passes kwargs through to `function`; dropping them here would silently
+    diverge from the checkpointed path for any call site that uses them
+    (e.g. FourDVarNetPredictStateCFM.forward's x_tau=.../beta_tau=...).
+    ``use_reentrant`` explicitly intercepted (mirroring real checkpoint()'s
+    own signature) -- it's a checkpoint-mechanics-only argument, never meant
+    for `fn` itself; every real call site passes it, so without this it gets
+    silently scooped into **kwargs and forwarded to `fn`, which doesn't
+    accept it."""
+    return fn(*args, **kwargs)
 
 
 def _forward_backward_grads(model, forward_fn, seed):
@@ -1242,6 +1251,115 @@ class TestFourDVarNetPredictStateCFM:
             a = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
             b = model.sample(batch, mean_estimate=mean_estimate, tau0=0.5)
         assert not torch.allclose(a, b)
+
+
+class TestSubgradStateXTau:
+    """update_input="subgrad+state+xtau" (FourDVarNetPredictStateCFM only --
+    see _CFM_ONLY_UPDATE_INPUTS): extends "subgrad+state" with a fourth
+    channel g_flow = x - beta_tau*x_tau, per reports/notes_4dvarnet_fm.pdf's
+    "energy-informed parameterization" (Sec. 3.3) -- the un-prefactored core
+    of that paper's third residual term (dropping its (alpha_tau^2*sigma_0^2)
+    ^-1 scaling, ill-conditioned as alpha_tau->0, in favor of a term that's
+    bounded/well-conditioned on the whole tau in [0,1] range)."""
+
+    def test_fourdvarnet_solver_rejects_it(self):
+        """x_tau/beta_tau are structurally undefined for FourDVarNetSolver
+        (no outer flow-time at all) -- must raise, not silently misbehave."""
+        with pytest.raises(ValueError):
+            _make_model(update_input="subgrad+state+xtau")
+
+    def test_channel_multiplier_is_four(self):
+        model = _make_cfm_model(update_input="subgrad+state+xtau")
+        from models.fourdvarnet import _UPDATE_INPUT_CHANNEL_MULTIPLIER
+        assert _UPDATE_INPUT_CHANNEL_MULTIPLIER["subgrad+state+xtau"] == 4
+        assert model.prior_unet is not None
+
+    def test_forward_shape_and_finite(self):
+        model = _make_cfm_model(update_input="subgrad+state+xtau", K_inner=4)
+        batch = _MockBatch(B=2, T=20, D=3)
+        x_tau = torch.randn(2, 20, 3)
+        tau = torch.rand(2)
+        mu = model(x_tau, batch, tau)
+        assert mu.shape == (2, 20, 3)
+        assert torch.isfinite(mu).all()
+
+    def test_gradients_flow_through_inner_unroll(self):
+        model = _make_cfm_model(update_input="subgrad+state+xtau", K_inner=4)
+        batch = _MockBatch(B=2, T=20, D=3)
+        loss = model.compute_loss(batch)
+        loss.backward()
+        for name, p in model.named_parameters():
+            assert p.grad is not None, f"no gradient reached {name}"
+            assert torch.isfinite(p.grad).all(), f"non-finite gradient at {name}"
+
+    def test_build_update_input_g_flow_matches_closed_form(self):
+        """g_flow = x - beta_tau*x_tau exactly, no prefactor -- and the
+        other three channels (g_obs, g_prior, x) are unchanged from plain
+        "subgrad+state"."""
+        model = _make_cfm_model(update_input="subgrad+state+xtau", dropout=0.0)
+        model.prior_unet.eval()
+        B, T, D = 2, 10, 3
+        x = torch.randn(B, T, D)
+        obs_clean = torch.randn(B, T, D)
+        obs_mask = torch.ones(B, T, 1)
+        x_tau = torch.randn(B, T, D)
+        beta_tau = torch.rand(B, 1, 1)
+        out = _build_update_input("subgrad+state+xtau", x, obs_clean, obs_mask, None,
+                                   prior_unet=model.prior_unet, x_tau=x_tau, beta_tau=beta_tau)
+        g_obs, g_prior, g_flow, x_ch = (
+            out[..., :D], out[..., D:2 * D], out[..., 2 * D:3 * D], out[..., 3 * D:])
+        expected_g_obs = obs_clean - x
+        raw = model.prior_unet(x.transpose(1, 2), tau=None).transpose(1, 2)
+        expected_g_prior = x - raw
+        expected_g_flow = x - beta_tau * x_tau
+        assert torch.allclose(g_obs, expected_g_obs, atol=1e-6)
+        assert torch.allclose(g_prior, expected_g_prior, atol=1e-6)
+        assert torch.allclose(g_flow, expected_g_flow, atol=1e-6)
+        assert torch.equal(x_ch, x)
+
+    def test_build_update_input_requires_x_tau_and_beta_tau(self):
+        B, T, D = 2, 5, 3
+        x = torch.randn(B, T, D)
+        obs_clean = torch.randn(B, T, D)
+        obs_mask = torch.ones(B, T, 1)
+        model = _make_cfm_model(update_input="subgrad+state+xtau")
+        with pytest.raises(AssertionError):
+            _build_update_input("subgrad+state+xtau", x, obs_clean, obs_mask, None,
+                                 prior_unet=model.prior_unet)
+
+    def test_x_tau_held_fixed_across_inner_unroll(self):
+        """x_tau_const must be forward()'s x_t argument, unaffected by x's
+        own reassignment across K_inner iterations -- checked indirectly:
+        K_inner=1 (no compounding) must match _build_update_input called
+        directly with x=x_tau=x_t (the very first, and only, iteration)."""
+        model = _make_cfm_model(update_input="subgrad+state+xtau", K_inner=1, dropout=0.0)
+        model.eval()
+        batch = _MockBatch(B=2, T=20, D=3)
+        x_t = torch.randn(2, 20, 3)
+        tau = torch.rand(2)
+        with torch.no_grad():
+            mu = model(x_t, batch, tau)
+            obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
+            obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+            beta_tau = model.interpolant.beta(tau)
+            while beta_tau.dim() < x_t.dim():
+                beta_tau = beta_tau.unsqueeze(-1)
+            tau_k = torch.full((2,), 0.0)
+            inp = _build_update_input("subgrad+state+xtau", x_t, obs_clean, obs_mask, tau_k,
+                                       prior_unet=model.prior_unet,
+                                       x_tau=x_t, beta_tau=beta_tau).transpose(1, 2)
+            expected = model.unet(inp, tau=tau_k).transpose(1, 2)
+            expected = torch.clamp(x_t - 1.0 * expected, -model.clip_range, model.clip_range)
+        assert torch.allclose(mu, expected)
+
+    def test_checkpoint_matches_uncheckpointed(self):
+        model = _make_cfm_model(update_input="subgrad+state+xtau", K_inner=4, dropout=0.1)
+        model.train()
+        batch = _MockBatch(B=2, T=20, D=3, seed=0)
+        x_tau = torch.randn(2, 20, 3)
+        tau = torch.rand(2)
+        TestGradientCheckpointing()._assert_checkpoint_matches_reference(
+            model, lambda model=model, x_tau=x_tau, batch=batch, tau=tau: model(x_tau, batch, tau))
 
 
 class TestGradientCheckpointing:

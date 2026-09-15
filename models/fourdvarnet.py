@@ -114,12 +114,13 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # "subgrad+state", but each channel is a true gradient via its own
 # torch.autograd.grad call instead of a cheap proxy).
 _IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
-                              "subgrad+state", "gradsplit+state")
+                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau")
 
 # Modes needing a real torch.autograd.grad call each iteration.
 _AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
 # Modes needing the trainable prior operator (prior_unet).
-_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state")
+_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
+                "subgrad+state+xtau")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
 # per mode -- drives in_state_dim at construction time.
 _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
@@ -129,7 +130,13 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "grad+state": 2,
     "subgrad+state": 3,
     "gradsplit+state": 3,
+    "subgrad+state+xtau": 4,
 }
+# "subgrad+state+xtau" needs an outer flow-time conditioning value (x_tau,
+# beta_tau) that only exists for FourDVarNetPredictStateCFM's CFM
+# formulation (see its own docstring) -- structurally undefined for
+# FourDVarNetSolver, which has no outer flow-time at all.
+_CFM_ONLY_UPDATE_INPUTS = ("subgrad+state+xtau",)
 
 
 def _validate_update_input(update_input):
@@ -291,7 +298,8 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
                          grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
-                         prior_residual=False, detach_var_cost_grad=False):
+                         prior_residual=False, detach_var_cost_grad=False,
+                         x_tau=None, beta_tau=None):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -354,6 +362,26 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     only what feeds the main UNet changes per mode; the existing
     ``x - (1/N)*gmod`` update rule (shared with "obs+state"/"obs-only") is
     unchanged.
+
+    "subgrad+state+xtau" (``FourDVarNetPredictStateCFM`` only -- see
+    ``_CFM_ONLY_UPDATE_INPUTS``) extends "subgrad+state" with a fourth
+    channel for the CFM outer flow-time's own conditioning value ``x_tau``,
+    per ``reports/notes_4dvarnet_fm.pdf``'s "energy-informed parameterization"
+    (Sec. 3.3): the paper's third residual term is
+    ``(alpha_tau^2*sigma_0^2)^-1 * (beta_tau*x^(k) - beta_tau^2*x_tau)``,
+    which is ill-conditioned as ``alpha_tau -> 0`` (``tau -> 1``, dividing by
+    a vanishing squared term). This mode instead feeds the un-prefactored
+    core residual ``g_flow = x - beta_tau*x_tau`` (dropping the
+    ``(alpha_tau^2*sigma_0^2)^-1`` scaling entirely) -- bounded, well-
+    conditioned everywhere on ``tau in [0,1]`` since ``x``/``x_tau`` are both
+    state-scale and ``beta_tau in [0,1]``. ``x_tau`` is the CFM's outer
+    conditioning value (``FourDVarNetPredictStateCFM.forward``'s own ``x_t``
+    argument, held fixed across the whole ``K_inner`` unroll -- distinct
+    from ``x``, which is this same quantity's evolving *estimate* at inner
+    iteration ``k``); ``beta_tau = self.interpolant.beta(tau)`` (the OUTER
+    CFM flow-time's own beta, not the inner-iteration ``tau``/``prior_tau_k``
+    this function's own ``tau`` parameter already carries for
+    ``prior_unet``'s conditioning -- two different time variables).
 
     "gradsplit+state" is the real-autograd counterpart to "subgrad+state":
     same two-residual-plus-state input shape, but ``g_obs``/``g_prior`` are
@@ -440,6 +468,15 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         g_obs = (obs_clean - x) * obs_mask
         g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
         return torch.cat([g_obs, g_prior, x], dim=-1)
+    if update_input == "subgrad+state+xtau":
+        assert x_tau is not None and beta_tau is not None, (
+            "subgrad+state+xtau requires x_tau/beta_tau (FourDVarNetPredictStateCFM "
+            "only -- see _CFM_ONLY_UPDATE_INPUTS)"
+        )
+        g_obs = (obs_clean - x) * obs_mask
+        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        g_flow = x - beta_tau * x_tau
+        return torch.cat([g_obs, g_prior, g_flow, x], dim=-1)
     if update_input == "gradsplit+state":
         with torch.enable_grad():
             prior_cost_val = prior_weight * _prior_cost(prior_unet, x, tau, residual=prior_residual)
@@ -463,7 +500,7 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
-                       detach_var_cost_grad=False):
+                       detach_var_cost_grad=False, x_tau=None, beta_tau=None):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -492,6 +529,11 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     iteration during backward always hits the already-cached branch in
     ``_normalize_channels`` and reproduces the exact same norm -- no stale-
     cache risk despite the forward code re-running.
+
+    ``x_tau``/``beta_tau`` (both default None): forwarded unchanged to
+    ``_build_update_input``, only actually used by "subgrad+state+xtau"
+    (``FourDVarNetPredictStateCFM`` only -- see ``_CFM_ONLY_UPDATE_INPUTS``).
+    ``FourDVarNetSolver`` never passes these (defaults apply).
     """
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
                                prior_unet=prior_unet, R_var=R_var,
@@ -499,7 +541,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                grad_norm_cache=grad_norm_cache, clip_range=clip_range,
                                gradsplit_prior_scale=gradsplit_prior_scale,
                                prior_residual=prior_residual,
-                               detach_var_cost_grad=detach_var_cost_grad).transpose(1, 2)
+                               detach_var_cost_grad=detach_var_cost_grad,
+                               x_tau=x_tau, beta_tau=beta_tau).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -591,6 +634,13 @@ class FourDVarNetSolver(nn.Module):
                  detach_var_cost_grad=False):
         super().__init__()
         _validate_update_input(update_input)
+        if update_input in _CFM_ONLY_UPDATE_INPUTS:
+            raise ValueError(
+                f"update_input={update_input!r} needs an outer flow-time "
+                "conditioning value (x_tau/beta_tau) that only exists for "
+                "FourDVarNetPredictStateCFM's CFM formulation -- structurally "
+                "undefined for FourDVarNetSolver (see _CFM_ONLY_UPDATE_INPUTS)."
+            )
         _validate_unet_backbone(unet_backbone)
         if unet_backbone == "monai" and prior_tau_conditioning:
             raise ValueError(
@@ -1034,6 +1084,20 @@ class FourDVarNetPredictStateCFM(nn.Module):
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
         obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
         x = x_t
+        # x_tau/beta_tau: "subgrad+state+xtau"'s own outer-flow-time inputs
+        # (see _build_update_input's docstring) -- x_tau_const is the outer
+        # conditioning value held FIXED across the whole K_inner unroll,
+        # deliberately never reassigned to x (which evolves every inner
+        # iteration as the current estimate of E[x1|x_tau,y]). beta_tau uses
+        # the OUTER tau (this forward() call's own tau argument), not the
+        # inner-iteration tau_k below -- two different time variables.
+        # Computed unconditionally (cheap) regardless of update_input, same
+        # convention as every other always-computed-but-only-sometimes-used
+        # quantity in this module.
+        x_tau_const = x_t
+        beta_tau = self.interpolant.beta(tau)
+        while beta_tau.dim() < x_t.dim():
+            beta_tau = beta_tau.unsqueeze(-1)
         if self.update_input in _AUTOGRAD_MODES and not x.requires_grad:
             x = x.detach().requires_grad_(True)
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled (inner) solve
@@ -1043,7 +1107,8 @@ class FourDVarNetPredictStateCFM(nn.Module):
             gmod = checkpoint(
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, tau_k, self.prior_unet, self.R_var, 1.0, self.obs_weight,
-                grad_norm_cache, self.grad_clip_range, use_reentrant=False,
+                grad_norm_cache, self.grad_clip_range,
+                x_tau=x_tau_const, beta_tau=beta_tau, use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / self.K_inner) * gmod, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
