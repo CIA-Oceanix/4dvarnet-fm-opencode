@@ -1,0 +1,87 @@
+# @package _global_
+# "subgrad+trueprior" (FDV2_subgrad_trueprior_monai_l96_perfectmodel.yaml)
+# trained with a genuinely different LOSS: a weak-constraint-4DVar-style
+# variational cost (loss_type="var_cost", models/fourdvarnet.py) instead of
+# MSE against the ground truth. The model architecture/update_input are
+# unchanged (same cat([g_obs, g_prior]) input, no raw-state channel);
+# only what compute_loss trains against differs.
+#
+# loss = obs_cost/R_var + prior_cost/var_cost_Q_var, evaluated on the
+# solver's OWN final (and, during training, every tbptt-block) output --
+# NO direct ground-truth supervision at all. obs_cost is the usual masked
+# (state-obs)^2 sum; prior_cost is the SAME _true_ode_prior_residual
+# dynamical-consistency term already used as the update-input's own
+# g_prior channel (x[t]-Phi_ode(x[t-1])). This makes training itself a
+# genuinely self-supervised, 4DVar-cost-minimization objective -- the
+# network is trained to BE an efficient var-cost minimizer, rather than to
+# directly regress the true state.
+#
+# R_var/var_cost_Q_var (0.5/0.05) are NOT arbitrary: they are
+# evaluation/baselines.py's Weak4DVar class's own defaults (also matching
+# this project's data.R_var=0.5/data.B_var=2.0 convention already used
+# everywhere else in this codebase). Weak4DVar's own cost is
+# J_total = 0.5*J_b + 0.5*J_o + 0.5*J_q, with J_o = sum(((H(x)-obs)*mask)^2)/R_var
+# (the obs term) and J_q = sum(q^2)/Q_var where q[t] = x[t]-dynamics.step(x[t-1])
+# -- EXACTLY the same quantity our g_prior/prior_cost term measures, just
+# accumulated over the whole window here instead of optimized as a free
+# per-step control variable. R_var=0.5, Q_var=0.05 means Weak4DVar trusts
+# the known dynamics 10x more tightly than the raw observations per unit
+# squared error (1/Q_var=20 vs 1/R_var=2) -- this config reuses that exact,
+# already-established ratio rather than introducing an unjustified new one.
+# No B_var-analog term is included: unlike Weak4DVar's per-window free x0
+# control variable, this solver has no comparable free background state to
+# anchor (its own x_0 initialization/init_state_var plays that role
+# implicitly through the unroll).
+#
+# lr/gradient_clip_val kept identical to the sibling MSE-trained config --
+# _var_cost_training_loss is normalized by numel to stay on the same ~1.0
+# scale as the default MSE loss (matching compute_loss's existing
+# aux_var_cost_weight convention), so these should be a reasonable
+# starting point, but they were NOT independently re-tuned for this loss.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 40
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+trueprior
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+    full_state_target: true
+    loss_type: var_cost
+    var_cost_Q_var: 0.05
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  full_state_target: true
+  with_params: true
+  with_true_forcing: true
+  param_names: ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]

@@ -306,6 +306,42 @@ def _true_ode_prior_residual(x, forcing, params, dynamics):
     return torch.cat([pad, resid], dim=1)
 
 
+def _var_cost_training_loss(block_state, obs_clean, obs_mask, forcing, params, dynamics, R_var, Q_var):
+    """Weak-constraint-4DVar-style self-supervised training loss:
+    ``obs_cost/R_var + prior_cost/Q_var``, evaluated on the SOLVER'S OWN
+    output -- no direct ground-truth supervision at all (only indirectly,
+    via ``obs``, as always). ``loss_type="var_cost"``'s alternative to the
+    default MSE-against-truth objective (see ``FourDVarNetSolver.compute_loss``).
+
+    Mirrors ``evaluation/baselines.py``'s ``Weak4DVar.assimilate_batch``
+    exactly: its ``J_o = sum(((H(x)-obs)*mask)^2) / R_var`` is this
+    function's ``obs_cost`` (via ``_masked_obs_cost``, same sum/R_var
+    convention); its ``J_q = sum(q^2) / Q_var`` -- where ``q[t] =
+    x[t] - dynamics.step(x[t-1])``, the per-step weak-constraint model-error
+    control variable -- is EXACTLY this function's ``prior_cost`` on
+    ``_true_ode_prior_residual``'s own ``g_prior`` (the identical residual,
+    just computed on the whole window at once rather than as an optimized
+    control variable). ``R_var``/``Q_var`` default to Weak4DVar's own class
+    defaults (0.5/0.05) -- reusing an already-established, physically-
+    motivated weighting (observation-noise variance vs. model-error
+    variance) rather than introducing a fresh unjustified ratio: Q_var
+    being 10x tighter than R_var means the classical weak-4DVar formulation
+    trusts the known dynamics an order of magnitude more than the raw
+    observations, per unit squared error.
+
+    Normalized by ``numel`` (matching ``compute_loss``'s existing
+    ``aux_var_cost_weight`` term's own convention) so the loss magnitude
+    stays comparable to the default MSE objective's scale (~1.0), instead
+    of the raw unnormalized sum's ~1e4-1e5 -- avoids needing a fresh
+    lr/gradient_clip_val retune just from switching ``loss_type``.
+    """
+    numel = block_state.numel()
+    obs_cost = _masked_obs_cost(block_state, obs_clean, obs_mask, R_var) / numel
+    g_prior = _true_ode_prior_residual(block_state, forcing, params, dynamics)
+    prior_cost = g_prior.pow(2).sum() / Q_var / numel
+    return obs_cost + prior_cost
+
+
 def _embed_obs_to_full_state(obs, obs_mask, obs_var_indices, full_dim):
     """Scatters a (B,T,len(obs_var_indices))-shaped observed-subspace obs/
     mask into a (B,T,full_dim)-shaped tensor at the given channel indices
@@ -783,9 +819,19 @@ class FourDVarNetSolver(nn.Module):
                  true_dynamics_NO=8,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
-                 true_dynamics_coupling_exponent=1.6):
+                 true_dynamics_coupling_exponent=1.6,
+                 loss_type="mse",
+                 var_cost_Q_var=0.05):
         super().__init__()
         _validate_update_input(update_input)
+        if loss_type not in ("mse", "var_cost"):
+            raise ValueError(f"Unknown loss_type={loss_type!r}; expected 'mse' or 'var_cost'")
+        if loss_type == "var_cost" and update_input not in _FULL_STATE_UPDATE_INPUTS:
+            raise ValueError(
+                f"loss_type='var_cost' needs the true ODE prior "
+                f"(_true_ode_prior_residual/self.true_dynamics), only available "
+                f"for the _FULL_STATE_UPDATE_INPUTS modes -- not update_input={update_input!r}."
+            )
         if update_input in _CFM_ONLY_UPDATE_INPUTS:
             raise ValueError(
                 f"update_input={update_input!r} needs an outer flow-time "
@@ -839,6 +885,18 @@ class FourDVarNetSolver(nn.Module):
         self.state_dim = state_dim
         self.N_outer = N_outer
         self.R_var = R_var
+        # loss_type="var_cost" (default "mse", backward-compatible): compute_loss
+        # trains on a weak-constraint-4DVar-style variational cost
+        # (obs_cost/R_var + prior_cost/var_cost_Q_var, evaluated on the solver's
+        # OWN output) instead of MSE against the ground truth -- see
+        # compute_loss's docstring. var_cost_Q_var (0.05 default, matching
+        # evaluation/baselines.py's Weak4DVar class default, itself matching
+        # this project's data.R_var=0.5/data.B_var=2.0 convention) is the
+        # model-error-term variance normalizer -- self.R_var (already 0.5 by
+        # every _FULL_STATE_UPDATE_INPUTS config in this codebase) is reused
+        # for the obs term, the SAME quantity Weak4DVar's own J_o/R_var uses.
+        self.loss_type = loss_type
+        self.var_cost_Q_var = var_cost_Q_var
         self.clip_range = clip_range
         # grad_clip_range (None default -> falls back to clip_range, today's
         # behavior): bounds ONLY the grad-only/grad+state autograd gradient
@@ -1159,6 +1217,19 @@ class FourDVarNetSolver(nn.Module):
         and the eval-time model-selection metric are deliberately different
         functions of the same unroll.
 
+        ``self.loss_type=="var_cost"`` (default ``"mse"``, only allowed for
+        the ``_FULL_STATE_UPDATE_INPUTS`` modes): replaces every
+        ``F.mse_loss(block_state, states)``/``F.mse_loss(x_final, states)``
+        call above with ``_var_cost_training_loss(block_state, ...)`` --
+        the same deep-supervision/eval-only structure, just a different
+        per-state scalar function, evaluated with NO ground-truth
+        supervision at all (a genuinely self-supervised, weak-constraint-
+        4DVar-style objective -- see that function's docstring). ``val_loss``
+        under this mode is therefore the var_cost itself, not an RMSE-like
+        quantity -- still directly comparable across checkpoints/epochs for
+        ``stage1_best.ckpt`` selection, just on a different scale than the
+        default MSE mode's val_loss.
+
         Both cases add -- only when ``prior_unet`` exists (built whenever
         ``update_input in _PRIOR_MODES`` OR ``aux_var_cost_weight>0``, so
         even ``"obs+state"`` gets one if the latter is set -- see
@@ -1202,7 +1273,25 @@ class FourDVarNetSolver(nn.Module):
         """
         block_states = self._unrolled_blocks(batch)
         x_final = block_states[-1]
-        if self.training:
+        if self.loss_type == "var_cost":
+            raw_mask = batch.obs_mask.to(batch.obs.dtype).unsqueeze(-1)
+            if self.obs_var_indices is not None:
+                obs_full, obs_mask = _embed_obs_to_full_state(
+                    batch.obs, raw_mask, self.obs_var_indices, self.state_dim)
+                obs_clean = torch.nan_to_num(obs_full, nan=0.0)
+            else:
+                obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
+                obs_mask = raw_mask
+
+            def _vc(s):
+                return _var_cost_training_loss(
+                    s, obs_clean, obs_mask, batch.true_forcing, batch.true_params,
+                    self.true_dynamics, self.R_var, self.var_cost_Q_var)
+            if self.training:
+                loss = sum(_vc(s) for s in block_states) / len(block_states)
+            else:
+                loss = _vc(x_final)
+        elif self.training:
             loss = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
         else:
             loss = F.mse_loss(x_final, batch.states)
