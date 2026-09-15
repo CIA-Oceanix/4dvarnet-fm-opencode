@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Cross-scenario (S0/S1) evaluation of the QG neural schemes: Q1 (obs-only),
-Q3 (oracle forcing+params), Q4 (noisy-trained forcing+params).
+"""Cross-scenario (S0/S1) evaluation of the QG neural schemes: the canonical
+T-channels DirectUNet family -- Q1 (obs-only), Q2 (oracle forcing+param
+cond.), Q3 (noisy-trained forcing+param cond.), Q4 (noisy cond. + IC).
 
 Generalizes the earlier scratch `eval_qg_q1_s0_s1.py` (which only checked
 Q1's scenario-agnostic sanity property) to the full comparison this was built
-for -- see PLAN.md's 2026-09-10 QG Q3/Q4 evaluation-plan section.
+for -- see PLAN.md's 2026-09-10 QG Q3/Q4 evaluation-plan section (original
+batch-folding-backbone family) and 2026-09-14 "T-channels bench refresh"
+section (current family, promoted from Q7-noise05/Q8/Q9/Q10).
 
-Q3/Q4 are evaluated with `cond_mode="scenario"` (data/qg_neural.py's
+Q2/Q3/Q4 are evaluated with `cond_mode="scenario"` (data/qg_neural.py's
 `_scenario_forcing_and_params`), NOT the `"true"`/`"noisy"` modes they were
 *trained* with -- those always ignore the scenario label (appropriate for
 training diversity), which would make an "S1 eval" scientifically meaningless
@@ -14,28 +17,29 @@ here. `cond_mode="scenario"` is deterministic and reads whatever the window's
 own S0/S1 scenario wrapper designates as believed (`wind_state_corrupted`/
 `da_params`, equal to the true values exactly on an S0-scenario window) --
 the same biased forcing/params a DA method's dynamical model sees under S1,
-giving a genuine apples-to-apples test of whether Q3/Q4 degrade under model
-error the way DA baselines do.
+giving a genuine apples-to-apples test of whether Q2/Q3/Q4 degrade under
+model error the way DA baselines do.
 
-`--lag-days`/`--noise-frac` default to 1.0/0.01 (train_qg_neural.py's own
-training defaults, all 3 models' native distribution). Pass 5.0/0.05 to
-match the DA baselines' reference case instead -- still an out-of-training-
-distribution eval for the neural models (same caveat as
-`eval_qg_q1_lag5_noise05.py`'s Q1-only precedent), but needed for a true
-apples-to-apples comparison against DA. Mirrors that script's cache-reuse
-trick: the cached truth (`_truth_cache_path`) is keyed by the *whole*
-QGConfig including obs_noise_std_frac/init_lag_days, so naively building
+`--lag-days`/`--noise-frac` default to 5.0/0.05 (the DA baselines' own
+reference case, matching train_qg_neural.py's own current fallback default).
+All four current SCHEMES entries (Q1-Q4) were trained directly at this exact
+config, so the defaults evaluate every one of them in-distribution -- no
+override needed. Mirrors `eval_qg_q1_lag5_noise05.py`'s cache-reuse trick:
+the cached truth (`_truth_cache_path`) is keyed by the *whole* QGConfig
+including obs_noise_std_frac/init_lag_days, so naively building
 `QGConfig(..., obs_noise_std_frac=0.05, init_lag_days=5.0)` and calling
 `make_qg_s0_s1_datasets` directly would MISS the cache and trigger a full
 from-scratch truth rollout (~hours for 100 windows). Instead, the cached
-truth is loaded once at its original (0.01, 1.0) key, then obs/init-state
-are cheaply redrawn in-process at the requested lag/noise via
-`QGS01Dataset._generate_obs_ic` (truth generation is independent of the
-obs/IC protocol -- see `data/qg.py`'s docstring).
+truth is loaded once at its original (0.01, 1.0) key (see `CACHE_KW` --
+unrelated to any scheme's own training config, just the pre-generated truth
+cache's fixed lookup key), then obs/init-state are cheaply redrawn in-process
+at the requested lag/noise via `QGS01Dataset._generate_obs_ic` (truth
+generation is independent of the obs/IC protocol -- see `data/qg.py`'s
+docstring).
 
 Usage:
     python eval_qg_neural_s0_s1.py --cache-dir <path/to/qg_windows_1000_100_100/cache>
-    python eval_qg_neural_s0_s1.py --lag-days 5.0 --noise-frac 0.05
+    python eval_qg_neural_s0_s1.py --schemes Q1 Q2 Q3 Q4 --s1-param-bias 0.1 --s1-amp-bias 0.1
 """
 import argparse
 import json
@@ -58,45 +62,51 @@ DEFAULT_CACHE_DIR = ("/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/
 CACHE_KW = dict(nx=64, seed=20_042, num_windows=100, obs_geometry="random_columns",
                cols_per_day=4, obs_noise_std_frac=0.01, init_lag_days=1.0)
 
+# Canonical T-channels benchmark family (2026-09-14, promoted from
+# Q7-noise05/Q8/Q9/Q10 -- see PLAN.md's "T-channels bench refresh" section
+# for the full backbone-evolution history). All four share
+# model_type="direct_unet_tchannels" (models.monai_unet_qg2d.
+# MonaiDirectUNetQGChannelTime) and were trained directly at this script's
+# own current default (lag=5.0d/noise=0.05, the DA reference case), so
+# they're all genuinely apples-to-apples with the DA baselines -- no
+# --lag-days/--noise-frac override needed. The older batch-folding-backbone
+# family (Q1/Q3/Q4/Q3-noise0.05/Q5, config/experiment/Q{1,3,4,5}_direct_unet_*.yaml)
+# is retired from this eval script -- those config files/checkpoints still
+# exist on disk as historical experiments, just no longer wired into SCHEMES.
 SCHEMES = {
     "Q1": {
-        "ckpt": "experiments/Q1_direct_unet_s0_monai2d/stage1_best.pt",
+        "ckpt": "experiments/Q1_direct_unet_tchannels_s0/stage1_best.pt",
         "param_dim": 0, "cond_extra_dim": 0, "cond_mode": "none",
+        "model_type": "direct_unet_tchannels",
+    },
+    "Q2": {
+        "ckpt": "experiments/Q2_direct_unet_tchannels_s0_oracle_cond/stage1_best.pt",
+        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "model_type": "direct_unet_tchannels",
     },
     "Q3": {
-        "ckpt": "experiments/Q3_direct_unet_s0_oracle_cond/stage1_best.pt",
+        "ckpt": "experiments/Q3_direct_unet_tchannels_s1_noisy_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
+        "model_type": "direct_unet_tchannels",
     },
     "Q4": {
-        "ckpt": "experiments/Q4_direct_unet_s1_noisy_cond/stage1_best.pt",
+        "ckpt": "experiments/Q4_direct_unet_tchannels_s1_noisy_ic_cond/stage1_best.pt",
         "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-    },
-    # Q3-noise0.05/Q5 below use the "_gradclip1" checkpoints (trained with
-    # --gradient-clip-val 1.0), now the config's standing default -- see
-    # CHANGELOG.d/2026-09-12-qg-q3-noise05-collapse-ablations.md. Q3-noise0.05's
-    # default-clip run collapsed and was never usable; Q5 trained cleanly at
-    # both clip values (numbers within noise of each other) so the gradclip1
-    # checkpoint is kept as the canonical one for consistency.
-    "Q3-noise0.05": {
-        "ckpt": "experiments/Q3_direct_unet_s0_oracle_cond_noise05_gradclip1/stage1_best.pt",
-        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-    },
-    "Q5": {
-        "ckpt": "experiments/Q5_direct_unet_s1_noisy_ic_cond_gradclip1/stage1_best.pt",
-        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-        "include_ic": True, "ic_dim": 2,
+        "model_type": "direct_unet_tchannels", "include_ic": True, "ic_dim": 2,
     },
 }
 
 
 def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Module:
-    model = build_model("direct_unet", cfg, param_dim=spec["param_dim"],
+    model_type = spec.get("model_type", "direct_unet")
+    model = build_model(model_type, cfg, param_dim=spec["param_dim"],
                         cond_extra_dim=spec["cond_extra_dim"],
                         ic_dim=spec.get("ic_dim", 0))
     loaded = torch.load(spec["ckpt"], map_location="cpu")
     # Accepts both a bare state_dict (train_qg_neural.py's final stage1_best.pt)
     # and a full Lightning checkpoint (keys prefixed "model." for the
-    # LightningModule's `self.model` submodule).
+    # LightningModule's `self.model` submodule) -- e.g. a mid-training
+    # checkpoints/stage1_best.ckpt for a run not yet finished.
     state_dict = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
     state_dict = {(k[6:] if k.startswith("model.") else k): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict)
@@ -104,9 +114,9 @@ def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Mod
 
 
 def _eval_one(model, windows, cfg, device, norm, param_norm, forcing_norm, cond_mode,
-             include_ic=False):
+             include_ic=False, model_type="direct_unet"):
     est_psi, est_rd = estimate_windows(
-        model, windows, cfg, "direct_unet", device, norm=norm,
+        model, windows, cfg, model_type, device, norm=norm,
         cond_mode=cond_mode, param_norm_stats=param_norm, noisy_max=1.5,
         forcing_norm_stats=forcing_norm, include_ic=include_ic)
     truth_psi = np.stack([psi_daily(w, cfg).numpy() for w in windows])
@@ -128,13 +138,20 @@ def main():
     ap.add_argument("--nx", type=int, default=64)
     ap.add_argument("--test-seed", type=int, default=20_042)
     ap.add_argument("--num-test", type=int, default=100)
-    ap.add_argument("--lag-days", type=float, default=1.0,
-                    help="Obs/init-state lag redrawn at eval time (default 1.0, "
-                         "the models' own training distribution). Pass 5.0 to "
-                         "match the DA baselines' reference case.")
-    ap.add_argument("--noise-frac", type=float, default=0.01,
+    ap.add_argument("--lag-days", type=float, default=5.0,
+                    help="Obs/init-state lag redrawn at eval time (default 5.0, "
+                         "the DA baselines' reference case -- also the training "
+                         "default for any new config that doesn't override it, "
+                         "see train_qg_neural.py). All of SCHEMES' current "
+                         "Q1-Q4 entries were trained at this exact value; only "
+                         "pass 1.0 to instead evaluate the retired batch-"
+                         "folding-backbone family (config/experiment/"
+                         "Q{1,3,4,5}_direct_unet_*.yaml, not wired into "
+                         "SCHEMES) in-distribution.")
+    ap.add_argument("--noise-frac", type=float, default=0.05,
                     help="Obs noise std fraction redrawn at eval time (default "
-                         "0.01, training distribution). Pass 0.05 to match DA.")
+                         "0.05, DA reference case / new training default). Pass "
+                         "0.01 for schemes still trained at the old default.")
     ap.add_argument("--s1-param-bias", type=float, default=None,
                     help="S1 rd/rek bias fraction for the 'scenario' cond_mode's "
                          "da_params (default: QGConfig's own default, 0.15). The "
@@ -204,7 +221,8 @@ def main():
         for label, scenario in [("S0", "test_s0"), ("S1", "test_s1")]:
             windows = ds[scenario]
             summ = _eval_one(model, windows, eval_cfg, device, norm, param_norm, forcing_norm,
-                             spec["cond_mode"], include_ic=spec.get("include_ic", False))
+                             spec["cond_mode"], include_ic=spec.get("include_ic", False),
+                             model_type=spec.get("model_type", "direct_unet"))
             results[name][label] = summ
             print(f"  {name} {label}: PSI EV={summ['psi']['pooled_ev']:.4f}  "
                   f"PV-q EV={summ['q']['pooled_ev']:.4f}", flush=True)

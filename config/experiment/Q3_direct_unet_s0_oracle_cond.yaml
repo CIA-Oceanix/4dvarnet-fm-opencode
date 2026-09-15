@@ -61,3 +61,10 @@ data:
   # real 200-epoch training run at epoch 28 (see data/qg_neural.py's
   # module docstring). Global scalar mean/std, not per-grid-cell.
   forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # Pinned explicitly (2026-09-14, see Q1_direct_unet_s0.yaml's fuller
+  # comment / PLAN.md): train_qg_neural.py's fallback default changed to
+  # the DA reference case (0.05/5.0) -- this preserves this config's
+  # actual trained-at values unchanged (Q3-noise0.05 is the separate,
+  # already-existing variant at the new values).
+  obs_noise_std_frac: 0.01
+  init_lag_days: 1.0

@@ -46,11 +46,21 @@ Both share `model_type=direct_unet` with Q1, so `--exp-id` picks the config:
         --exp-dir experiments/Q3_direct_unet_s0_oracle_cond --cache-dir ...
     python train_qg_neural.py --model-type direct_unet --exp-id Q4_direct_unet_s1_noisy_cond \
         --exp-dir experiments/Q4_direct_unet_s1_noisy_cond --cache-dir ...
+
+Q1-obsdensity (obs-density-augmented Q1) -- same obs-only architecture as
+Q1, but `--cols-per-day-min`/`--cols-per-day-max` resample `cols_per_day`
+per training draw instead of a single fixed value (train split only; val/
+test stay at the fixed `--cols-per-day` reference density), so one
+checkpoint generalizes across observing-network densities. Mirrors L96's
+obs-density-augmented training; see `data/qg_neural.py`'s
+`cols_per_day_range` docstring and
+`config/experiment/Q1_direct_unet_s0_obsdensity_aug.yaml`.
 """
 import argparse
 import json
 import os
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytorch_lightning as pl
@@ -67,6 +77,7 @@ from data.qg_neural import (
     ensure_truth_cache,
     ensure_truth_cache_redrawn,
     layer_split,
+    num_days,
     psi_daily,
     psi_to_q,
     q_daily,
@@ -85,7 +96,8 @@ def build_cfg(**overrides) -> QGConfig:
 
 
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
-                cond_extra_dim: int = 0, ic_dim: int = 0) -> torch.nn.Module:
+                cond_extra_dim: int = 0, ic_dim: int = 0,
+                fdv_kwargs: dict | None = None) -> torch.nn.Module:
     if model_type == "direct_unet":
         # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
@@ -98,17 +110,123 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
                                  cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
                                  hidden_channels=[64, 128, 256])
+    if model_type == "direct_unet_tchannels":
+        # Q7: same M-tier capacity as Q1 (hidden_channels=[64,128,256]) and
+        # same single-pass DirectUNet role, but merges T (days) into the
+        # *channel* axis (via MonaiUNet2DQGSolver, Q6's own backbone) rather
+        # than MonaiDirectUNetQG's per-day-independent batch-folding --
+        # isolates whether cross-day channel mixing helps the simple
+        # single-pass scheme too. Obs-only by default (param_dim=
+        # cond_extra_dim=ic_dim=0, matching Q1's own cond_mode="none"), but
+        # (2026-09-14) MonaiDirectUNetQGChannelTime now supports the same
+        # forcing/param/IC conditioning hooks as MonaiDirectUNetQG, so Q8/
+        # Q9/Q10 (T-channels retrains of Q3/Q4/Q5's conditioning ablations)
+        # pass non-zero values here too. norm_num_groups=4 (not Q1's 8):
+        # MONAI requires every channel count -- including this backbone's
+        # internal T*channels_per_day totals -- divisible by it; 4 divides
+        # {64,128,256} and every totals this config combines (60 obs-only
+        # out, up to 300 in for Q10's param_dim=3+cond_extra_dim=1+ic_dim=2).
+        from models.monai_unet_qg2d import MonaiDirectUNetQGChannelTime
+        return MonaiDirectUNetQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                           hidden_channels=[64, 128, 256], norm_num_groups=4,
+                                           param_dim=param_dim, cond_extra_dim=cond_extra_dim,
+                                           ic_dim=ic_dim)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
                           hidden_channels=[64, 128, 256], time_emb_dim=64,
                           N_outer=10, sigma_prior=0.5, dropout=0.1,
                           train_tau_0_only=True)
+    if model_type == "fourdvarnet":
+        # No conditioning hooks at all (no param_dim/cond_extra_dim/ic_dim --
+        # models.fourdvarnet.FourDVarNetSolver has none, unlike DirectUNet/
+        # VanillaCFM): a QG fourdvarnet scheme is necessarily obs-only,
+        # matching Q1 not Q3/Q4/Q5. `fdv_kwargs` mirrors L96's `cfg.model.fdv`
+        # block (train.py's own "fourdvarnet" dispatch) -- read from the
+        # experiment YAML's `model.fdv.*` in main(), not from CLI flags (too
+        # many knobs to justify individual CLI args, same reasoning as
+        # param_dim/cond_extra_dim already being YAML-only).
+        from models.fourdvarnet import FourDVarNetSolver
+        # qg_T/qg_ny/qg_nx are only actually used by unet_backbone="monai2d"
+        # (models.monai_unet_qg2d.MonaiUNet2DQGSolver) -- harmless to always
+        # pass them (ignored otherwise), avoids needing to special-case the
+        # call based on which backbone the YAML picked.
+        return FourDVarNetSolver(state_dim=cfg.state_dim, qg_T=num_days(cfg),
+                                 qg_ny=cfg.ny, qg_nx=cfg.nx, **(fdv_kwargs or {}))
     raise ValueError(f"unknown model_type {model_type!r}")
 
 
+# `unet_backbone="monai"` (MonaiUNet1D, DiffusionModelUNet) treats the T
+# (days) axis as its own downsampled "spatial" dimension, requiring T
+# divisible by 2**(len(hidden_channels)-1) (4 for the 3-level S-tier
+# [32,64,128] config) -- QG's 30-day windows aren't (confirmed: crashed a
+# real GPU job twice, "Sizes of tensors must match... Expected size 16 but
+# got size 15", jobs 53462/53467 -- the main solve, then separately the
+# prior_unet consistency term, both being fed unpadded T=30 tensors). 8
+# covers up to a 4-level backbone (the S-tier config only needs 4). A
+# convolutional U-Net's receptive field means the last real day or two's
+# estimate can pick up a small edge effect from the adjacent zero-padding --
+# an accepted, minor v1 limitation, not a correctness bug (same
+# padding-boundary tradeoff any CNN makes).
+_MONAI1D_PAD_TO = 8
+
+
+def _pad_time_axis(x: torch.Tensor, pad_to: int = _MONAI1D_PAD_TO) -> tuple:
+    """Pads a (B, T, ...) tensor's T axis (dim=1) up to the next multiple of
+    `pad_to` with zeros (`new_zeros` preserves dtype, so a bool mask pads
+    with False). Returns `(x, 0)` unchanged when already aligned."""
+    T = x.shape[1]
+    pad_T = -(-T // pad_to) * pad_to
+    n_pad = pad_T - T
+    if n_pad == 0:
+        return x, 0
+    pad_shape = (x.shape[0], n_pad) + tuple(x.shape[2:])
+    return torch.cat([x, x.new_zeros(pad_shape)], dim=1), n_pad
+
+
+def _pad_batch_for_monai1d(batch, T: int):
+    """Pads `batch.obs`/`batch.obs_mask` (see `_pad_time_axis`) into a
+    lightweight shim object exposing only what `FourDVarNetSolver.forward`/
+    `.sample` read (zero obs / all-False obs_mask on the padded region
+    contributes nothing to any obs-cost term, and "obs+state" -- Q6's own
+    config -- doesn't reference obs_mask at all). Returns
+    `(shim_or_batch, n_pad)` -- `n_pad=0` (batch returned unchanged) when
+    already aligned. Caller must crop the model's output back to `[:T]`
+    whenever `n_pad>0`."""
+    padded_obs, n_pad = _pad_time_axis(batch.obs)
+    if n_pad == 0:
+        return batch, 0
+    padded_mask, _ = _pad_time_axis(batch.obs_mask)
+    return SimpleNamespace(obs=padded_obs, obs_mask=padded_mask), n_pad
+
+
+def _padded_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
+    """`models.fourdvarnet._prior_cost`, but pads `state`'s T axis before
+    feeding `prior_unet` (needed whenever `unet_backbone="monai"`, same
+    constraint as `_pad_batch_for_monai1d`) and crops the *reconstruction*
+    back to the real T before computing the sum-of-squares -- so the
+    fabricated zero-padded region never contaminates the loss value itself
+    (unlike a plain crop-the-input approach would, since `_prior_cost` is a
+    scalar sum over all positions, not a per-position tensor you could crop
+    after the fact)."""
+    from models.fourdvarnet import _prior_ae
+    T = state.shape[1]
+    padded, n_pad = _pad_time_axis(state)
+    recon = _prior_ae(prior_unet, padded)
+    if n_pad:
+        recon = recon[:, :T]
+    return F.mse_loss(state, recon, reduction="sum")
+
+
+def _plain_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
+    """`models.fourdvarnet._prior_cost`, unpadded -- for backbones with no
+    T-axis divisibility constraint (`unet_backbone` "unet1d"/"monai2d")."""
+    from models.fourdvarnet import _prior_cost
+    return _prior_cost(prior_unet, state)
+
+
 def epochs_for(model_type: str) -> int:
-    return 200 if model_type == "direct_unet" else 400
+    return 200 if model_type in ("direct_unet", "direct_unet_tchannels") else 400
 
 
 class QGNeuralLightning(pl.LightningModule):
@@ -140,7 +258,7 @@ class QGNeuralLightning(pl.LightningModule):
         return optimizer
 
     def _estimate_and_psi_loss(self, batch):
-        if self.model_type == "direct_unet":
+        if self.model_type in ("direct_unet", "direct_unet_tchannels"):
             est = self.model(batch)
             loss_psi = F.mse_loss(est, batch.states)
             return est, loss_psi
@@ -154,6 +272,38 @@ class QGNeuralLightning(pl.LightningModule):
             v = self.model(x0, batch, tau)
             loss_psi = F.mse_loss(v, batch.states - x0)
             est = x0 + v
+            return est, loss_psi
+        if self.model_type == "fourdvarnet":
+            # Calls forward() directly (matching direct_unet's convention)
+            # rather than the model's own compute_loss() -- QG's psi loss
+            # needs to feed into _q_loss()'s auxiliary PV-q term below, which
+            # compute_loss() knows nothing about. With the default
+            # tbptt_n_blocks=1 (unchanged by any QG config so far) this is
+            # exactly equivalent to compute_loss()'s own main MSE term (see
+            # FourDVarNetSolver.compute_loss's docstring) -- only its
+            # optional prior-consistency term needs replicating by hand here.
+            #
+            # T-axis padding (_pad_batch_for_monai1d/_padded_prior_cost) is
+            # only needed for unet_backbone="monai" (MonaiUNet1D treats T as
+            # its own downsampled 1D-sequence axis). unet_backbone="monai2d"
+            # (models.monai_unet_qg2d.MonaiUNet2DQGSolver, Q6's actual
+            # backbone) merges T into the channel axis instead -- no
+            # divisibility constraint on T at all, so padding here would
+            # only waste compute and introduce a spurious edge effect for
+            # no reason.
+            T = batch.states.shape[1]
+            needs_pad = self.model.unet_backbone == "monai"
+            shim, n_pad = _pad_batch_for_monai1d(batch, T) if needs_pad else (batch, 0)
+            est = self.model(shim)
+            if n_pad:
+                est = est[:, :T]
+            loss_psi = F.mse_loss(est, batch.states)
+            if self.model.prior_unet is not None and self.model.aux_var_cost_weight > 0:
+                numel = est.numel()
+                prior_cost_fn = _padded_prior_cost if needs_pad else _plain_prior_cost
+                loss_psi = loss_psi + self.model.aux_var_cost_weight * (
+                    prior_cost_fn(self.model.prior_unet, est) / numel
+                    + prior_cost_fn(self.model.prior_unet, batch.states) / numel)
             return est, loss_psi
         raise ValueError(f"unsupported model_type {self.model_type!r}")
 
@@ -221,8 +371,18 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            if model_type == "direct_unet":
+            if model_type in ("direct_unet", "direct_unet_tchannels"):
                 pred = model(batch)
+            elif model_type == "fourdvarnet":
+                T = batch.states.shape[1]
+                needs_pad = model.unet_backbone == "monai"
+                shim, n_pad = _pad_batch_for_monai1d(batch, T) if needs_pad else (batch, 0)
+                pred = model.sample(shim, N_outer=10)
+                if n_members > 1:
+                    members = [model.sample(shim, N_outer=10) for _ in range(n_members)]
+                    pred = torch.stack(members).mean(dim=0)
+                if n_pad:
+                    pred = pred[:, :T]
             else:
                 pred = model.sample(batch, N_outer=10)
                 if n_members > 1:
@@ -253,7 +413,9 @@ def layer_summary(rmse_dim, ev_dim, cfg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-type", choices=["direct_unet", "vanilla_cfm"], default="direct_unet")
+    ap.add_argument("--model-type",
+                    choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels"],
+                    default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -334,6 +496,18 @@ def main():
                     help="Use one fixed obs/init-state draw for train/val "
                          "(legacy behavior) instead of regenerating them on "
                          "the fly from the cached truth each epoch.")
+    ap.add_argument("--cols-per-day-min", type=int, default=None,
+                    help="Obs-density-augmented training: TRAIN split only "
+                         "resamples cols_per_day ~ Uniform{min,...,max} on every "
+                         "draw (requires on-the-fly obs, i.e. NOT --fixed-split-obs) "
+                         "instead of a single fixed value, so the checkpoint "
+                         "generalizes across observing-network densities. Val/test "
+                         "stay at the fixed --cols-per-day reference value. Falls "
+                         "back to the experiment YAML's data.cols_per_day_min if not "
+                         "given; default None (no augmentation, original behavior).")
+    ap.add_argument("--cols-per-day-max", type=int, default=None,
+                    help="See --cols-per-day-min. Both must be given (CLI or YAML) "
+                         "to enable augmentation.")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--num-workers", type=int, default=4,
@@ -359,10 +533,11 @@ def main():
     # every split, so train/val's on-the-fly obs follow the same protocol.
     ap.add_argument("--obs-geometry", default="random_columns")
     ap.add_argument("--cols-per-day", type=int, default=4)
-    # default=None (not 0.01/1.0) so the experiment YAML's data.* values (if
-    # any) aren't silently overridden -- Q5 needs obs_noise_std_frac=0.05/
-    # init_lag_days=5.0 to actually take effect from its config alone,
-    # without requiring the launcher to also pass these on the CLI.
+    # default=None (not 0.05/5.0) so the experiment YAML's data.* values (if
+    # any) aren't silently overridden -- e.g. Q1/Q1-obsdensity/Q2/Q3/Q4 pin
+    # obs_noise_std_frac=0.01/init_lag_days=1.0 explicitly in their own YAML
+    # to preserve their historical trained-at values now that the code
+    # fallback below has changed (2026-09-14, see PLAN.md).
     ap.add_argument("--obs-noise-std-frac", type=float, default=None)
     ap.add_argument("--init-lag-days", type=float, default=None)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
@@ -383,10 +558,18 @@ def main():
     # `model.param_dim`/`model.cond_extra_dim`/`data.cond_mode` -- CLI flags
     # below only override it when explicitly given.
     exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    # Fallback default (2026-09-14): the DA-baseline reference case's own
+    # eval config (0.05/5.0, see eval_qg_neural_s0_s1.py and PLAN.md) --
+    # deliberately changed from the earlier 0.01/1.0 so a NEW config that
+    # doesn't override these fields trains apples-to-apples with the DA
+    # baselines by default, same precedent as the cosine-LR-scheduler
+    # default flip. Existing configs trained at 0.01/1.0 pin that value
+    # explicitly in their own YAML so this change doesn't silently alter
+    # them (see Q1_direct_unet_s0.yaml's comment).
     obs_noise_std_frac = (args.obs_noise_std_frac if args.obs_noise_std_frac is not None
-                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.01)))
+                          else float(exp_cfg.data.get("obs_noise_std_frac", 0.05)))
     init_lag_days = (args.init_lag_days if args.init_lag_days is not None
-                     else float(exp_cfg.data.get("init_lag_days", 1.0)))
+                     else float(exp_cfg.data.get("init_lag_days", 5.0)))
     gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
                         else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
     q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
@@ -398,6 +581,11 @@ def main():
     norm = load_norm_stats(norm_stats_path) if do_normalize else None
     param_dim = int(exp_cfg.model.get("param_dim", 0))
     cond_extra_dim = int(exp_cfg.model.get("cond_extra_dim", 0))
+    # model.fdv.* mirrors L96's train.py "fourdvarnet" dispatch (cfg.model.fdv)
+    # -- OmegaConf DictConfig -> plain dict, since FourDVarNetSolver.__init__
+    # takes plain Python kwargs, not OmegaConf nodes.
+    fdv_kwargs = (OmegaConf.to_container(exp_cfg.model.fdv, resolve=True)
+                 if model_type == "fourdvarnet" else None)
     include_ic = bool(args.include_ic or exp_cfg.data.get("include_ic", False))
     ic_dim = 2 if include_ic else 0
     cond_mode = args.cond_mode or exp_cfg.data.get("cond_mode", "none")
@@ -421,6 +609,15 @@ def main():
                      else exp_cfg.data.get("s1_param_bias", None))
     s1_amp_bias = (args.s1_amp_bias if args.s1_amp_bias is not None
                   else exp_cfg.data.get("s1_amp_bias", None))
+    cols_per_day_min = (args.cols_per_day_min if args.cols_per_day_min is not None
+                       else exp_cfg.data.get("cols_per_day_min", None))
+    cols_per_day_max = (args.cols_per_day_max if args.cols_per_day_max is not None
+                       else exp_cfg.data.get("cols_per_day_max", None))
+    if (cols_per_day_min is None) != (cols_per_day_max is None):
+        raise ValueError("--cols-per-day-min/--cols-per-day-max must both be given "
+                         "(or both omitted) to enable obs-density-augmented training")
+    cols_per_day_range = ((int(cols_per_day_min), int(cols_per_day_max))
+                         if cols_per_day_min is not None else None)
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -477,7 +674,8 @@ def main():
         train_ds = QGNeuralDataset(train_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
-                                   include_ic=include_ic)
+                                   include_ic=include_ic,
+                                   cols_per_day_range=cols_per_day_range)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
@@ -500,7 +698,8 @@ def main():
         print("normalization disabled (--no-normalize)")
 
     model = build_model(model_type, test_cfg, param_dim=param_dim,
-                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim).to(device)
+                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
+                       fdv_kwargs=fdv_kwargs).to(device)
 
     total_train = 0.0
     if args.eval_only is None:
@@ -571,7 +770,9 @@ def main():
                    "s1_param_bias": test_cfg.s1_param_bias,
                    "s1_amp_bias": test_cfg.s1_amp_bias,
                    "include_ic": include_ic, "ic_dim": ic_dim,
-                   "gradient_clip_val": gradient_clip_val, "seed": args.seed},
+                   "gradient_clip_val": gradient_clip_val, "seed": args.seed,
+                   "cols_per_day_min": cols_per_day_min,
+                   "cols_per_day_max": cols_per_day_max},
         "norm": ({"psi1_mean": norm["mean"][0].item(), "psi1_std": norm["std"][0].item(),
                   "psi2_mean": norm["mean"][1].item(), "psi2_std": norm["std"][1].item()}
                  if norm is not None else None),

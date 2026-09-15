@@ -1,0 +1,65 @@
+# Q1 (2026-09-14, promoted from "Q7-noise05"): DirectUNet on QG S0, obs-only,
+# T-merged-into-channels backbone (models.monai_unet_qg2d.
+# MonaiDirectUNetQGChannelTime, built on MonaiUNet2DQGSolver) -- the
+# canonical obs-only baseline for the T-channels benchmark family
+# (Q1=obs-only, Q2=oracle cond., Q3=noisy cond., Q4=noisy cond.+IC),
+# superseding the older batch-folding-backbone Q1/Q3/Q4/Q3-noise0.05/Q5
+# family (config/experiment/Q1_direct_unet_s0.yaml etc. -- kept on disk as
+# historical/reproducible experiments, just no longer the benchmark
+# headline). Trained directly at the DA reference case's own
+# lag=5.0d/noise=0.05 (train_qg_neural.py's own current fallback default),
+# so it and its Q2/Q3/Q4 siblings are all genuinely apples-to-apples with
+# the DA baselines -- no per-row caveat needed, unlike the retired family.
+#
+# See PLAN.md's 2026-09-13/14 Q6/Q7/T-channels-bench-refresh sections for
+# the full backbone-evolution history (this scheme went through several
+# names during development: Q7 -> Q7-noise05 -> Q1) and
+# reports/qg/outputs/qg_neural_report.md for the current benchmark table.
+#
+# gradient_clip_val: 1.0 (not the 10.0 default), precautionary: Q3-noise0.05
+# (the older-backbone equivalent) hit a reproducible training collapse at
+# this same noise level with the default clip.
+#
+# Shares model_type=direct_unet_tchannels with Q2/Q3/Q4 -- pass --exp-id
+# explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet_tchannels \
+#     --exp-id Q1_direct_unet_tchannels_s0 \
+#     --exp-dir experiments/Q1_direct_unet_tchannels_s0 \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# experiments/qg_psi_norm_stats.pt must exist first
+# (batch/run_qg_param_stats.sbatch).
+
+experiment_id: Q1_direct_unet_tchannels_s0
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  # = 1/Var(q_raw) over the 1000-window train split (nx=64, train-seed=42)
+  # -- unrelated to the model architecture, same value used throughout.
+  q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt

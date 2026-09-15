@@ -1,0 +1,77 @@
+# Q7: DirectUNet neural baseline on QG S0, same M-tier capacity and
+# single-pass obs-only role as Q1, but merges the T (days) axis into the
+# *channel* dimension (`models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime`,
+# built on `MonaiUNet2DQGSolver`, Q6's own backbone) instead of Q1's own
+# `MonaiDirectUNetQG` convention of folding T into the *batch* dimension
+# (every day processed fully independently, no cross-day coupling at all).
+# Isolates whether cross-day channel mixing helps the simple single-pass
+# DirectUNet scheme too, following the same redesign that fixed Q6's
+# flat-loss run (2026-09-14) -- see PLAN.md's Q6 sections for the full
+# rationale/backbone comparison.
+#
+# Obs-only (param_dim=0/cond_extra_dim=0, matching Q1's own
+# cond_mode="none"). MonaiDirectUNetQGChannelTime gained the same
+# forcing/param/IC conditioning hooks as MonaiDirectUNetQG on 2026-09-14
+# (see Q8/Q9/Q10, the T-channels retrains of Q3/Q4/Q5) -- Q7 itself stays
+# obs-only, isolating the backbone question in isolation from conditioning.
+#
+# norm_num_groups=4 (not Q1's 8, hardcoded in train_qg_neural.py's
+# build_model() alongside hidden_channels=[64,128,256] -- both dead YAML
+# fields here, same as Q1's own model.hidden_channels/param_dim/
+# cond_extra_dim documentation-only convention for direct_unet): MONAI
+# requires every channel count -- including this backbone's internal
+# T*channels_per_day totals (120 in / 60 out at T=30, nlayers=2) --
+# divisible by it; 4 is the largest value dividing all of
+# {64,128,256,60,120}.
+#
+# Same production 1000/100/100 cache/split-seed convention, same
+# q_loss_weight derivation as Q1 (unrelated to architecture).
+#
+# Shares no model_type with Q1/Q3/Q4/Q5/Q1-obsdensity (all direct_unet) or
+# Q6 (fourdvarnet) -- pass --exp-id explicitly anyway, for consistency:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet_tchannels --exp-id Q7_direct_unet_tchannels_s0 \
+#     --exp-dir experiments/Q7_direct_unet_tchannels_s0 \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# experiments/qg_psi_norm_stats.pt must exist first
+# (batch/run_qg_param_stats.sbatch) -- reused unchanged from Q1.
+
+experiment_id: Q7_direct_unet_tchannels_s0
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  # Same derivation as Q1 (1/Var(q_raw) over the 1000-window train split,
+  # nx=64, train-seed=42) -- unrelated to the model architecture, so Q1's
+  # own precomputed value applies unchanged.
+  q_loss_weight: 2.5415e9
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  # Pinned explicitly (2026-09-14, see Q1_direct_unet_s0.yaml's fuller
+  # comment / PLAN.md): train_qg_neural.py's fallback default changed to
+  # the DA reference case (0.05/5.0) -- this preserves this config's
+  # actual trained-at values unchanged.
+  obs_noise_std_frac: 0.01
+  init_lag_days: 1.0

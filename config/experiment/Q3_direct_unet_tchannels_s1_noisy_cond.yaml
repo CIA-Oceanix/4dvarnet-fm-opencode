@@ -1,0 +1,74 @@
+# Q3 (2026-09-14, promoted from "Q9"): DirectUNet on QG S0, noisy-trained
+# forcing+param conditioning on the T-merged-into-channels backbone
+# (Q1/Q2's own `MonaiDirectUNetQGChannelTime`) -- part of the canonical
+# T-channels benchmark family (Q1=obs-only, Q2=oracle cond., Q3=noisy
+# cond., Q4=noisy cond.+IC), superseding the older batch-folding-backbone
+# Q4 (config/experiment/Q4_direct_unet_s1_noisy_cond.yaml -- kept on disk
+# as a historical experiment, no longer the benchmark headline). Every
+# training draw resamples a fresh corruption severity in [0, noisy_max]
+# of the wind corruption (s1_amp_bias/s1_loc_sigma_frac/s1_sigma_eta_frac)
+# and the rd/rek param bias (s1_param_bias), cond_mode="noisy" (see
+# `data/qg_neural.py`'s cond_mode docstring).
+#
+# No obs_noise_std_frac/init_lag_days override -- picks up
+# train_qg_neural.py's current fallback default (lag=5.0d/noise=0.05, the
+# DA-baseline reference case) directly, so it's genuinely apples-to-apples
+# with the DA baselines from the start.
+#
+# See PLAN.md's 2026-09-14 T-channels-bench-refresh section for the full
+# history (this scheme was originally trained as "Q9") and
+# reports/qg/outputs/qg_neural_report.md for the current benchmark table.
+#
+# gradient_clip_val: 1.0 (not the 10.0 default), precautionary: Q3-noise0.05
+# (the older-backbone equivalent, see Q3_direct_unet_s0_oracle_cond_noise05.yaml)
+# hit a reproducible training collapse at this same noise level with the
+# default clip.
+#
+# Shares model_type=direct_unet_tchannels with Q1/Q2/Q4 -- pass --exp-id
+# explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet_tchannels \
+#     --exp-id Q3_direct_unet_tchannels_s1_noisy_cond \
+#     --exp-dir experiments/Q3_direct_unet_tchannels_s1_noisy_cond \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# experiments/qg_{psi,param,forcing}_norm_stats.pt must exist first
+# (batch/run_qg_param_stats.sbatch).
+
+experiment_id: Q3_direct_unet_tchannels_s1_noisy_cond
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  # [U1, rd, rek] -- beta excluded, see data/qg_neural.py's PARAM_KEYS comment.
+  param_dim: 3
+  cond_extra_dim: 1
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+  gradient_clip_val: 1.0
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cond_mode: noisy
+  param_norm_stats_path: experiments/qg_param_norm_stats.pt
+  forcing_norm_stats_path: experiments/qg_forcing_norm_stats.pt
+  # Per-draw corruption-severity fraction resampled in [0, noisy_max]
+  # (matches Q4/the L96 SDA3 noisy_da_max convention).
+  noisy_max: 1.5

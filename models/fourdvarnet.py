@@ -15,8 +15,14 @@ except ImportError:
     # without monai installed.
     class MonaiUNet1D:
         pass
+try:
+    from models.monai_unet_qg2d import MonaiUNet2DQGSolver
+except ImportError:
+    # Same optional-dependency guard as MonaiUNet1D above.
+    class MonaiUNet2DQGSolver:
+        pass
 
-_VALID_UNET_BACKBONES = ("unet1d", "monai")
+_VALID_UNET_BACKBONES = ("unet1d", "monai", "monai2d")
 
 
 def _validate_unet_backbone(unet_backbone):
@@ -28,7 +34,7 @@ def _validate_unet_backbone(unet_backbone):
 
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
                           dropout, output_dim, monai_norm_num_groups=32,
-                          monai_num_res_blocks=2):
+                          monai_num_res_blocks=2, qg_T=None, qg_ny=None, qg_nx=None):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -71,6 +77,23 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
             use_energy=False,
             dropout=dropout,
             output_dim=output_dim,
+        )
+    if unet_backbone == "monai2d":
+        if MonaiUNet2DQGSolver.__module__ == __name__:
+            raise ImportError(
+                "unet_backbone='monai2d' requires the optional 'monai' package "
+                "(not installed in this environment) -- see models/monai_unet_qg2d.py"
+            )
+        if qg_T is None or qg_ny is None or qg_nx is None:
+            raise ValueError(
+                "unet_backbone='monai2d' requires qg_T/qg_ny/qg_nx (QG's window "
+                "day-count and grid shape) -- see FourDVarNetSolver's own "
+                "qg_T/qg_ny/qg_nx constructor args")
+        return MonaiUNet2DQGSolver(
+            state_dim=state_dim, T=qg_T, ny=qg_ny, nx=qg_nx,
+            hidden_channels=hidden_channels, output_dim=output_dim,
+            dropout=dropout, norm_num_groups=monai_norm_num_groups,
+            num_res_blocks=monai_num_res_blocks,
         )
     if MonaiUNet1D.__module__ == __name__:
         raise ImportError(
@@ -397,15 +420,20 @@ class FourDVarNetSolver(nn.Module):
     - ``"subgrad+state"``: a cheap two-residual proxy gradient (obs residual +
       prior-autoencoder residual), concatenated with state, no autograd call.
 
-    ``unet_backbone`` ("unet1d" default, or "monai") selects the nn.Module
-    class backing ``self.unet``/``self.prior_unet`` -- ``models.unet.UNet1D``
-    or ``models.monai_unet_adapter.MonaiUNet1D`` (MONAI's DiffusionModelUNet,
-    already validated as a drop-in backbone for DirectUNet, see
-    reports/l96/outputs/l96_normalization_ablation.md). Both are built with
-    ``use_obs=False`` and have the identical ``forward(x, tau=...)`` call
-    signature, so this is a pure backbone swap -- no other FDV logic changes.
-    See ``_build_backbone_unet`` for the one known semantic gap (no true
-    tau-conditioning omission for the Monai-backed ``prior_unet``).
+    ``unet_backbone`` ("unet1d" default, "monai", or "monai2d") selects the
+    nn.Module class backing ``self.unet``/``self.prior_unet`` --
+    ``models.unet.UNet1D``, ``models.monai_unet_adapter.MonaiUNet1D``
+    (MONAI's DiffusionModelUNet treating the T axis as a downsampled 1D
+    sequence, already validated as a drop-in backbone for DirectUNet, see
+    reports/l96/outputs/l96_normalization_ablation.md), or
+    ``models.monai_unet_qg2d.MonaiUNet2DQGSolver`` (QG-only: true 2D
+    circular convs over ``(ny, nx)``, with the T axis merged into the
+    channel dimension instead -- requires ``qg_T``/``qg_ny``/``qg_nx``).
+    All three are built with ``use_obs=False`` and have the identical
+    ``forward(x, tau=...)`` call signature, so this is a pure backbone swap
+    -- no other FDV logic changes. See ``_build_backbone_unet`` for the one
+    known semantic gap (no true tau-conditioning omission for the
+    Monai-backed ``prior_unet``, either 1D or 2D flavor).
 
     The gradient-conditioned modes need a trainable prior operator
     (``self.prior_unet``, a second ``UNet1D`` sharing the main UNet's
@@ -450,17 +478,22 @@ class FourDVarNetSolver(nn.Module):
                  tbptt_n_blocks=1,
                  tbptt_block_size=None,
                  grad_clip_range=None,
-                 init_state_var=0.0):
+                 init_state_var=0.0,
+                 qg_T=None, qg_ny=None, qg_nx=None):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
-        if unet_backbone == "monai" and prior_tau_conditioning:
+        if unet_backbone in ("monai", "monai2d") and prior_tau_conditioning:
             raise ValueError(
                 "prior_tau_conditioning=True exists only to reproduce legacy "
                 "UNet1D checkpoints trained with a tau-conditioned prior_unet -- "
-                "no such MonaiUNet1D checkpoint exists, so this combination is "
-                "not supported (see _build_backbone_unet)."
+                "no such MonaiUNet1D/MonaiUNet2DQGSolver checkpoint exists, so "
+                "this combination is not supported (see _build_backbone_unet)."
             )
+        if unet_backbone == "monai2d" and (qg_ny is None or qg_nx is None or qg_T is None):
+            raise ValueError(
+                "unet_backbone='monai2d' requires qg_T/qg_ny/qg_nx (QG's window "
+                "day-count and grid shape) to be given.")
         if tbptt_block_size is None:
             if tbptt_n_blocks != 1:
                 raise ValueError(
@@ -518,6 +551,7 @@ class FourDVarNetSolver(nn.Module):
             output_dim=state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
             monai_num_res_blocks=monai_num_res_blocks,
+            qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
         )
         self.prior_unet = None
         if update_input in _PRIOR_MODES or aux_var_cost_weight > 0:
@@ -571,6 +605,7 @@ class FourDVarNetSolver(nn.Module):
                 output_dim=state_dim,
                 monai_norm_num_groups=monai_norm_num_groups,
                 monai_num_res_blocks=monai_num_res_blocks,
+                qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
             )
 
     @property
@@ -617,7 +652,19 @@ class FourDVarNetSolver(nn.Module):
         """
         N = self.N_outer if N_outer is None else N_outer
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
-        obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+        # `batch.obs_mask` is either (B, T) -- one mask value per timestep,
+        # broadcast across the whole D-dim state (L96's convention: which
+        # channels are observable is fixed over time, so only the *time*
+        # axis needs masking) -- or already (B, T, D) -- a genuine per-cell
+        # mask (QG's convention: which grid cells are observed varies both
+        # per day *and* per cell within an observed day, e.g.
+        # `cols_per_day` sparse columns; collapsing to a per-timestep-only
+        # mask would silently treat every unobserved cell's zero-fill as a
+        # real obs=0 measurement). Only unsqueeze the 2D case -- the 3D case
+        # is used as-is.
+        obs_mask = batch.obs_mask.to(obs_clean.dtype)
+        if obs_mask.dim() == obs_clean.dim() - 1:
+            obs_mask = obs_mask.unsqueeze(-1)
         B, T, D = obs_clean.shape
         if self.init_state_var > 0:
             x = torch.randn(B, T, D, device=obs_clean.device) * (self.init_state_var ** 0.5)

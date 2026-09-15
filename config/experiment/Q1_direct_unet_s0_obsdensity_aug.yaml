@@ -1,0 +1,78 @@
+# Q1-obsdensity: same obs-only DirectUNet architecture as Q1_direct_unet_s0.yaml
+# (no forcing/param/IC conditioning -- param_dim=0, cond_extra_dim=0), but the
+# TRAIN split resamples `cols_per_day` uniformly in [4, 24] on every draw
+# instead of a single fixed value, mirroring the L96 obs-density-augmented
+# training study (`data/obs_density.py`) -- the goal is a single checkpoint
+# that generalizes across observing-network densities instead of only the
+# one density it happened to train at.
+#
+# 4 is the S0 DA-baseline reference case's own value (see PLAN.md). The
+# upper bound is capped at 12, NOT the originally-requested 24: at
+# dt=7200s, steps_per_day=round(86400/dt)=12 -- each of the cols_per_day
+# distinct columns needs its own distinct intra-day time slot
+# (_generate_random_column_observations), so a value above steps_per_day
+# can never be satisfied and its collision-avoidance loop spins forever
+# (confirmed: hung a real GPU job, job 53434, before this cap + the new
+# defensive ValueError in data/qg.py/data/qg_neural.py were added). 12 is
+# effectively full intra-day coverage (an observed column at every step of
+# every day) -- the widest range this config can physically support.
+#
+# Val/test are NOT augmented -- they stay at the fixed --cols-per-day=4
+# reference density (train_qg_neural.py only wires cols_per_day_range into
+# the TRAIN dataset; val/test share `test_cfg`'s single fixed value), so
+# eval numbers remain comparable to Q1/Q3/Q4/Q5's own S0 reference-case
+# results. A dedicated multi-density eval sweep (matching L96's
+# keep_k-generalization protocol) is a separate follow-up, not part of this
+# config.
+#
+# Requires on-the-fly train/val obs (the default; do NOT pass
+# --fixed-split-obs, which would make cols_per_day_range have no effect and
+# raise a ValueError from QGNeuralDataset).
+#
+# Shares model_type=direct_unet with Q1/Q3/Q4/Q5 -- pass --exp-id explicitly:
+#
+#   python train_qg_neural.py \
+#     --model-type direct_unet --exp-id Q1_direct_unet_s0_obsdensity_aug \
+#     --exp-dir experiments/Q1_direct_unet_s0_obsdensity_aug \
+#     --nx 64 --epochs 200 \
+#     --num-train 1000 --num-val 100 --num-test 100 \
+#     --batch-size 2 --cache-dir reports/qg_cache
+#
+# experiments/qg_psi_norm_stats.pt must exist first
+# (batch/run_qg_param_stats.sbatch) -- reused unchanged from Q1 (psi
+# normalization stats don't depend on cols_per_day).
+
+experiment_id: Q1_direct_unet_s0_obsdensity_aug
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  q_loss_weight: 2.5415e9
+data:
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 100
+  on_the_fly_split_obs: true
+  cache_dir: reports/qg_cache
+  normalize: true
+  norm_stats_path: experiments/qg_psi_norm_stats.pt
+  cols_per_day_min: 4
+  cols_per_day_max: 12
+  # Pinned explicitly (2026-09-14, see Q1_direct_unet_s0.yaml's fuller
+  # comment / PLAN.md): train_qg_neural.py's fallback default changed to
+  # the DA reference case (0.05/5.0) -- this preserves this config's
+  # actual trained-at values unchanged.
+  obs_noise_std_frac: 0.01
+  init_lag_days: 1.0

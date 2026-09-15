@@ -1092,6 +1092,426 @@ covariance-tuning gap the way ETKF's transform-regularization gap was.
 Data: `reports/qg/outputs/qg_4dvar_sensitivity_sweep/*.json` (N=5, 7
 files). Scratch driver (not committed): `qg_4dvar_sensitivity_sweep_scratch.py`.
 
+### Q1-obsdensity: obs-density-augmented training (2026-09-13,
+### `feature/qg-q1-obsdensity-augmented-training`)
+
+Same obs-only DirectUNet as Q1, but the TRAIN split resamples
+`cols_per_day` uniformly on every draw instead of a single fixed value
+(`data/qg_neural.py`'s new `QGNeuralDataset(cols_per_day_range=(lo, hi))`),
+mirroring L96's obs-density-augmented training (`data/obs_density.py`) --
+one checkpoint should generalize across observing-network densities
+instead of only the one it happened to train at. Val/test are left
+unaugmented (fixed `cols_per_day=4`, the S0 reference case's own value) so
+eval numbers stay comparable to Q1/Q3/Q4/Q5's own S0 results. New
+`--cols-per-day-min`/`--cols-per-day-max` CLI flags on `train_qg_neural.py`
+(YAML-fallback pattern, wired into the train dataset only). Config:
+`config/experiment/Q1_direct_unet_s0_obsdensity_aug.yaml`.
+
+**Real bug found before wasting GPU time**: the originally-requested range
+was `[4, 24]`. A 2-epoch smoke test (job 53434) hung indefinitely -- not
+slow, an actual infinite loop, confirmed via SLURM's own low-memory kill
+notification on an earlier local (non-SLURM) attempt at the same range,
+then reproduced cleanly on a dedicated GPU node. Root cause:
+`_generate_random_column_observations` (`data/qg.py`) assigns each of
+`cols_per_day` distinct columns to its own distinct *intra-day* time slot
+via a collision-avoidance loop (`while t in taken: ...`); at the production
+config's `dt=7200s`, `steps_per_day=round(86400/dt)=12`, so any sampled
+value above 12 can never find a free slot once all 12 fill up -- the loop
+spins forever. Values in `[13, 24]` are exactly half of the requested
+range, so roughly half of all training draws would hang.
+
+**Fixed with defense in depth**: (1) a hard `ValueError` in
+`_generate_random_column_observations` itself if `cols_per_day >
+steps_per_day`, so this can never hang again regardless of caller; (2) the
+same check at `QGNeuralDataset.__init__` time (fails fast at dataset
+construction, before any training even starts) when `cols_per_day_range`'s
+max exceeds `steps_per_day(cfg)`. (3) The config's range was capped at
+`[4, 12]` -- 12 is the widest this config can physically support at
+dt=7200s (an observed column at every single intra-day step). Confirmed
+fixed via a re-run of the same 2-epoch smoke test at `[4, 12]`: completed
+cleanly in ~217s/epoch (in line with Q1's own historical per-epoch cost --
+the obs-density resampling itself adds no meaningful overhead), full
+`results.json` written. 3 new regression tests (2 reproducing the exact
+hang condition as a fast `pytest.raises(ValueError)` instead) --
+`tests/test_qg_neural.py`/`tests/test_qg_random_columns.py`.
+
+Full 200-epoch training launched (job 53444),
+`experiments/Q1_direct_unet_s0_obsdensity_aug/`. Not yet evaluated against
+the DA baselines or Q1/Q3/Q4/Q5 -- open follow-up once training completes.
+
+### Q6: FourDVarNetSolver (FDV1) on QG S0 (2026-09-13/14,
+### `feature/qg-q6-fourdvarnet`)
+
+New `model_type="fourdvarnet"` for `train_qg_neural.py` -- QG's first
+unrolled-variational-solver scheme (vs. Q1/Q3/Q4/Q5's single-pass
+DirectUNet or Q2's CFM), same obs-only role as Q1 (no forcing/param/IC
+conditioning at all: `FourDVarNetSolver` has no such hooks, unlike
+DirectUNet). Hyperparameters mirror L96's current winning "S"-tier config
+(`FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01.yaml`,
+`aux_var_cost_weight=0.01`) adapted to QG's `state_dim=8192` (vs. L96's
+24). Config: `config/experiment/Q6_fourdvarnet_s0.yaml`.
+
+**Real correctness bug found and fixed as a prerequisite**: `FourDVarNetSolver`'s
+obs cost only supported a per-*timestep* mask (`(B,T)`, uniform across the
+whole state vector) -- correct for L96 (fixed observable-channel subset)
+but wrong for QG (`cols_per_day` sparse columns vary both per day *and*
+per cell within an observed day). Feeding it QG's old day-level any-obs
+mask would have silently treated every unobserved cell's zero-fill as a
+real obs=0 measurement. Fixed: `QGBatch.obs_mask` is now a genuine
+per-cell mask (shape matches `obs`/`states` exactly) -- unused by
+direct_unet/vanilla_cfm, which never read it; `models/fourdvarnet.py`'s
+`_unrolled_blocks` only `.unsqueeze(-1)`s a 2D `(B,T)` mask now, using an
+already-3D `(B,T,D)` mask as-is -- backward-compatible with L96's own
+convention (verified: L96's full `test_fourdvarnet.py` suite, 85 tests,
+still passes unchanged). **Caveat discovered while testing the fix**: Q6's
+own config uses `update_input="obs+state"` (matching L96's proven choice),
+which never references `obs_mask` at all in its computation (confirmed by
+a dedicated test) -- so this correctness fix has no effect on Q6's actual
+training, only on any future QG config using a grad-conditioned
+`update_input` (`grad-only`/`grad+state`/`subgrad+state`). This also
+surfaces a more fundamental open question for "obs+state" on QG
+specifically: unlike L96's fixed observable-channel subset (which the
+network can learn as a static pattern), QG's `on_the_fly_obs` redraws
+*which* grid columns are observed on every single draw, so the network
+has no explicit per-iteration signal for which cells are real
+observations vs. zero-fill -- not addressed here (would need a larger,
+riskier change to `_build_update_input`'s channel-concat convention),
+flagged as an open caveat on Q6's results.
+
+**Two more real bugs found via smoke testing** (both fixed before the
+first successful smoke test, jobs 53460→53462→53467→53470):
+1. `--model-type`'s argparse `choices` list was never updated to include
+   `"fourdvarnet"` when the `build_model()` branch was added -- caught
+   only at job-launch time ("invalid choice"), not by any test. Added
+   `test_model_type_choices_include_every_build_model_branch`, which
+   parses `train_qg_neural.py`'s own AST to keep the two lists in sync
+   mechanically instead of by memory.
+2. `unet_backbone="monai"` (`MonaiUNet1D`/`DiffusionModelUNet`) treats the
+   T (days) axis as its own downsampled "spatial" dimension, requiring T
+   divisible by `2**(len(hidden_channels)-1)` (4 for the 3-level S-tier
+   config) -- QG's 30-day windows aren't. Crashed twice: first in the main
+   unrolled solve (job 53462, fixed by `_pad_batch_for_monai1d`), then
+   separately in the `aux_var_cost_weight` prior-consistency term (job
+   53467, which also builds a `prior_unet` under `unet_backbone="monai"`
+   -- fixed by `_padded_prior_cost`, which pads-then-crops the *reconstruction*
+   before computing the loss, so the fabricated padded region never
+   contaminates the loss value itself). Both pad the T axis to the next
+   multiple of 8 with zero obs/all-False mask; a convolutional U-Net's
+   receptive field means the last real day or two's estimate can pick up
+   a small edge effect from the adjacent padding -- an accepted, minor v1
+   limitation.
+
+Confirmed fixed via a clean 2-epoch smoke test (job 53470, `train_time_seconds`
+≈445s ≈222s/epoch, in line with Q1's own per-epoch cost -- the unrolled
+solver adds no meaningful overhead at this N_outer=10/S-tier size). Full
+400-epoch training launched (job 53473),
+`experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
+training completes.
+
+**Killed at epoch 126/400 (2026-09-14) -- flat/non-learning loss, not a
+crash**: `train_loss`/`val_loss` sat at ≈91.5 essentially unchanged from
+epoch 0 through 126 (~6h), `val_loss_psi` suspiciously flat at
+0.8413-0.8420 the whole time, `train_loss_psi` noisy with no trend
+(0.17-3.08). Back-of-envelope: with `q_loss_weight=2.5415e9`, the ≈91.5
+total implies a raw q-loss ≈3.5e-8 -- **~90x worse** than the zero-mean-
+prediction baseline (`Var(q)≈3.93e-10`, which alone would contribute ≈1.0
+to the total). Not investigated further before the redesign below (root
+cause not confirmed to be a bug vs. a genuine architecture mismatch) --
+job 53474 killed rather than let it keep running.
+
+### Q6 redesign: `monai2d` backbone -- true 2D circular convs, T merged into
+### channels (2026-09-14)
+
+User feedback on the flat-loss run: `unet_backbone="monai"` (`MonaiUNet1D`)
+is architecturally a poor fit for QG regardless of the padding fix above --
+it flattens the whole `state_dim` vector into a 1D sequence with no 2D
+locality/periodicity prior at all (unlike Q1's own `MonaiDirectUNetQG`).
+Proposed instead: reuse `MonaiDirectUNetQG`'s real 2D circular-conv
+backbone, but merge the T (days) axis into the *channel* dimension
+(`(B, T*channels_per_day, ny, nx)`) rather than `MonaiDirectUNetQG`'s own
+convention of folding T into the *batch* dimension (`(B*T, channels, ny,
+nx)`, fully independent per-day processing, no cross-day coupling at all --
+confirmed by re-reading `MonaiDirectUNetQG.forward`). Channel-merging lets
+the network mix information across days via ordinary conv channel-mixing,
+and -- as a side benefit -- completely eliminates the T-divisibility
+constraint that needed the pad/crop workaround above (only `ny`/`nx` need
+to divide the backbone's downsampling depth, and QG's 64x64 grid already
+does).
+
+**New `models.monai_unet_qg2d.MonaiUNet2DQGSolver`**: a drop-in backbone
+for `FourDVarNetSolver` (`unet_backbone="monai2d"`) -- `forward(x, tau=...)`
+matches `MonaiUNet1D`'s exact `(B, C, T)` in/out convention (so *zero*
+changes were needed to `_solver_iteration`/`_prior_ae`/`FourDVarNetSolver.
+forward()`, all shared with L96), internally reshaping `(B, C, T) -> (B, T,
+C) -> (B, T*channels_per_day, ny, nx)` (`channels_per_day = C //
+(ny*nx)`, exact by construction since `C` is always a whole multiple of
+`ny*nx` -- `_UPDATE_INPUT_CHANNEL_MULTIPLIER`-scaled `state_dim`), runs
+`MonaiUNet2DCircular`, reshapes back. `FourDVarNetSolver.__init__` gained
+`qg_T`/`qg_ny`/`qg_nx` (only required/used for `unet_backbone="monai2d"`,
+threaded through both `self.unet` and `self.prior_unet` construction);
+`train_qg_neural.py`'s `build_model()` passes them automatically from the
+`QGConfig` (`qg_T=num_days(cfg), qg_ny=cfg.ny, qg_nx=cfg.nx`) whenever
+`model_type="fourdvarnet"`, regardless of which backbone the YAML picks.
+`QGNeuralLightning`'s padding wrapper (`_pad_batch_for_monai1d`/
+`_padded_prior_cost`) is now only invoked when `unet_backbone=="monai"`
+specifically (a plain, unpadded `_plain_prior_cost` otherwise) -- padding
+`monai2d` would only waste compute and introduce a spurious edge effect
+for no reason, since it has no T-constraint to work around.
+
+Q6's config switched to `unet_backbone: monai2d`, "S"-tier
+(`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`,
+`monai_norm_num_groups=4` -- MONAI requires every channel count divisible
+by this, including the backbone's internal `T*channels_per_day` totals:
+120 for the main solver's `obs+state` concatenation, 60 for `prior_unet`;
+4 is the largest value dividing {32,64,128,60,120} all at once). Verified
+end-to-end at full production scale (nx=64, `state_dim=8192`, T=30,
+batch=2) on CPU: 5,157,432 params, finite forward/`compute_loss`/backward,
+no padding needed at all. 9 new tests (`tests/test_monai_unet_qg2d.py`,
+`tests/test_qg_neural.py`) cover the new backbone's construction/forward/
+backward, its two `ValueError` guards, the full Q6 YAML config, and that
+`QGNeuralLightning` correctly skips the (now-inapplicable) padding wrapper
+for this backbone.
+
+**Smoke test (job 53476) confirms real learning, unlike the flat "monai"
+run**: `train_loss_psi` 0.213→0.092 and `val_loss_psi` 0.429→0.260 from
+epoch 0 to 1 (both clearly decreasing, not flat), and S0 psi EV=0.679
+after just 2 epochs (vs. the old backbone's -0.12 at the same point) --
+`train_time_seconds`≈502s (~251s/epoch, a bit slower than Q1 but
+reasonable for the 2D-conv-per-day-times-T-channels architecture). Full
+400-epoch training relaunched under the new backbone (job 53477),
+`experiments/Q6_fourdvarnet_s0/`. Not yet evaluated -- open follow-up once
+training completes.
+
+**Speed comparison (same node/GPU, `sl-mee-br-208` L40S, precise
+`train_time_seconds` from each `results.json`)**: the new true-2D backbone
+is actually ~13% slower per epoch than the old flattened-1D one (251.2s
+vs. 222.7s/epoch, 2-epoch smoke tests) despite fewer total parameters
+(5.16M vs. 6.0M) -- it does real 2D convolutions over the full 64x64 grid
+at every layer, more compute per layer than the old approach's large-
+channel-count-but-only-30-long 1D convolutions. Clearly worth the ~13%
+cost given the old backbone was flat/dead from epoch 0 and this one learns.
+
+**Killed at epoch 44/400 (2026-09-14, job 53477)**: psi fit is genuinely
+healthy (`val_loss_psi` fell from 0.31 at epoch 0 to ~0.10-0.14, plateaued
+there since roughly epoch 20), but the PV-q term never meaningfully moved
+the whole time (`train_loss_q`, the raw-unit q MSE, sits at ~1.28-1.29e-8
+from early on through epoch 44 -- essentially flat, not just slow) --
+q-state metrics this bad indicate the unrolled solver genuinely struggles
+to recover PV/q, not merely "needs more epochs." Contrast with Q7 (single-
+pass, T-merged-into-channels DirectUNet, same q_loss_weight/data): S0 q
+EV=0.441 at convergence vs. Q6's psi-comparable-but-q-starved trajectory
+here. Decision: park FourDVarNetSolver/unrolled-solver work on QG for now
+-- worth revisiting (e.g. does the unrolled solver need q in its own state
+representation, not just as an auxiliary loss, to ever recover PV well?)
+but not blocking the current T-channels-backbone benchmark refresh below.
+
+### Q7: DirectUNet + `monai2d`'s T-merged-into-channels backbone (2026-09-14,
+### `feature/qg-q6-fourdvarnet`)
+
+Follow-up question after Q6's redesign: does merging T into channels help
+the simple single-pass DirectUNet scheme too, not just the unrolled
+solver? New `models.monai_unet_qg2d.MonaiDirectUNetQGChannelTime`: same
+role as Q1 (single-pass, obs-only, M-tier `hidden_channels=[64,128,256]`),
+built on Q6's own `MonaiUNet2DQGSolver` backbone (T merged into channels)
+instead of `MonaiDirectUNetQG`'s per-day-independent batch-folding. New
+`model_type="direct_unet_tchannels"` in `train_qg_neural.py` (mirrors
+`direct_unet`'s dispatch everywhere: `build_model()`, `epochs_for()` (200,
+same as Q1), `QGNeuralLightning._estimate_and_psi_loss`,
+`estimate_windows`). `norm_num_groups=4` (not Q1's 8, same MONAI-channel-
+divisibility reasoning as Q6's S-tier). Config:
+`config/experiment/Q7_direct_unet_tchannels_s0.yaml`.
+
+**2-epoch smoke test (job 53481) result -- strong, clean**:
+`train_time_seconds`≈101s (~50.7s/epoch, much faster than Q1's own
+~222s/epoch -- no unrolling, a single 2D pass per window, unlike Q6's
+10-iteration solve) and S0 psi EV=0.837 / q EV=0.032 already after 2
+epochs (Q1's own eventual 200-epoch-converged psi EV is ~0.90 for
+reference) -- no crashes, no NaN, finite loss decreasing sensibly both
+epochs. Full 200-epoch training launched (job 53483), `experiments/
+Q7_direct_unet_tchannels_s0/`. Not yet evaluated against Q1 -- open
+follow-up once training completes.
+
+### Training default now matches the DA eval default (2026-09-14,
+### `feature/qg-q6-fourdvarnet`)
+
+`train_qg_neural.py`'s `obs_noise_std_frac`/`init_lag_days` CLI args
+default to `None`, falling back to whatever the experiment YAML's
+`data.*` says, or a hardcoded literal if the YAML doesn't say either.
+That hardcoded literal used to be `0.01`/`1.0` -- NOT the DA-baseline
+reference case's own value (`0.05`/`5.0`, see `eval_qg_neural_s0_s1.py`
+and the DA benchmark reports), so any new config that forgot to set these
+fields explicitly would silently train out-of-distribution relative to
+the DA comparison, producing a recurring "not apples-to-apples" caveat on
+every eval report. Fixed once for all, per the same precedent as the
+2026-09-10 cosine-LR-scheduler default flip (see `AGENTS.md`): the
+hardcoded fallback in `train_qg_neural.py` is now `0.05`/`5.0`, and every
+config that actually relied on the old implicit `0.01`/`1.0` fallback
+was pinned to that value explicitly first, so this change alters nothing
+about what any existing/in-flight run trains at:
+`Q1_direct_unet_s0.yaml`, `Q1_direct_unet_s0_obsdensity_aug.yaml`,
+`Q2_vanilla_cfm_s0.yaml`, `Q3_direct_unet_s0_oracle_cond.yaml`,
+`Q4_direct_unet_s1_noisy_cond.yaml`, `Q6_fourdvarnet_s0.yaml`,
+`Q7_direct_unet_tchannels_s0.yaml`. (`Q3_direct_unet_s0_oracle_cond_
+noise05.yaml` and `Q5_direct_unet_s1_noisy_ic_cond.yaml` already set
+`0.05`/`5.0` explicitly and needed no change.) Only a genuinely NEW
+config that omits both fields would pick up the new default.
+
+`eval_qg_neural_s0_s1.py`'s own `--lag-days`/`--noise-frac` CLI defaults
+were flipped the same way, `1.0`/`0.01` -> `5.0`/`0.05`, so running the
+eval script with no flags now matches the DA reference case by default;
+pass `--lag-days 1.0 --noise-frac 0.01` explicitly to evaluate the
+still-old-default schemes above in-distribution instead. Note this is
+purely a CLI-default change -- the cached-truth lookup key (`CACHE_KW`,
+`obs_noise_std_frac=0.01, init_lag_days=1.0`) is unrelated and was left
+untouched: it identifies a specific pre-generated truth cache on disk,
+not a training/eval default, and changing it would just miss the cache.
+
+### T-channels bench refresh: Q8/Q9/Q10, conditioning ported onto Q7's
+### backbone (2026-09-14, `feature/qg-q6-fourdvarnet`)
+
+Q7 (T-merged-into-channels DirectUNet) beat Q1 outright on both psi and q
+(S0 psi EV 0.9613 vs 0.9091, q EV 0.4413 vs 0.1968 -- see Q7's own
+section above). Since Q7 plays exactly Q1's obs-only role and is strictly
+better, the user asked to replace the whole DirectUNet family in the
+benchmark (Q1/Q3/Q4/Q3-noise0.05/Q5) with T-channels retrains rather than
+just swapping the one obs-only row -- offered as an explicit choice
+(swap-Q1-only / drop-all-five / retrain-the-whole-family-on-the-new-
+backbone) and the user picked the last, biggest option.
+
+**`MonaiDirectUNetQGChannelTime` gained the same conditioning hooks as
+`MonaiDirectUNetQG`** (`models/monai_unet_qg2d.py`): `param_dim`/
+`cond_extra_dim`/`ic_dim` constructor args (all 0 by default -- Q7 itself
+is unaffected, still obs-only). Every conditioning field is folded into
+the same per-day channel block as the state placeholder + obs (order:
+state, obs, forcing, params, ic) *before* T is merged into channels --
+`in_ch_per_day = 2*nlayers + cond_extra_dim + param_dim + ic_dim`, backbone
+constructed with `state_dim = in_ch_per_day * ny * nx`. `forcing` (varies
+per day) is reshaped directly per day; `params` (one vector per window) is
+broadcast across T and tiled spatially per param, matching
+`MonaiDirectUNetQG`'s own `params_t` convention; `ic` (one static field per
+window, Q5) is broadcast identically across all T days. A structural
+difference from `MonaiDirectUNetQG` worth noting: because conditioning
+now lives in the same channel block that gets merged across days, the
+backbone's ordinary channel mixing can relate one day's conditioning
+(e.g. that day's forcing) to another day's state/obs -- `MonaiDirectUNetQG`
+processes each day fully independently, so a day's conditioning only ever
+informs that same day's own forward pass.
+
+`train_qg_neural.py`'s `build_model()` now passes `param_dim`/
+`cond_extra_dim`/`ic_dim` through for `model_type="direct_unet_tchannels"`
+(previously hardcoded to obs-only). `norm_num_groups=4` still works for
+every combination used here (T*in_ch_per_day up to 300 for Q10's
+param_dim=3+cond_extra_dim=1+ic_dim=2, all divisible by 4).
+
+6 new tests (`tests/test_monai_unet_qg2d.py`): forcing+params conditioning
+changes the output (not just accepted-and-ignored), IC conditioning
+changes the output, and the full Q10-style combination (forcing+params+ic
+at once) constructs/forwards/backwards cleanly. Plus 3 new YAML config
+sanity tests (`tests/test_qg_neural.py`).
+
+**New configs** (all genuinely new, so -- unlike Q3/Q4/Q5 -- they rely on
+`train_qg_neural.py`'s current fallback default directly: lag=5.0d/
+noise=0.05, no explicit override needed, apples-to-apples with the DA
+comparison from the start):
+- `Q8_direct_unet_tchannels_s0_oracle_cond.yaml` -- T-channels retrain of
+  Q3 (oracle forcing+param conditioning, `cond_mode="true"`).
+- `Q9_direct_unet_tchannels_s1_noisy_cond.yaml` -- T-channels retrain of
+  Q4 (noisy-trained conditioning, `cond_mode="noisy"`, `noisy_max=1.5`).
+- `Q10_direct_unet_tchannels_s1_noisy_ic_cond.yaml` -- T-channels retrain
+  of Q5 (noisy conditioning + IC, `noisy_max=2.0`, `s1_param_bias=
+  s1_amp_bias=0.1`, `include_ic=true`).
+All three set `gradient_clip_val: 1.0` proactively (not the 10.0 default):
+Q3-noise0.05 hit a reproducible training collapse at this same noise
+level with the default clip, confirmed independent of seed -- applying
+the fix up front avoids re-running that ablation for a new architecture
+at the same noise level.
+
+Verified end-to-end on CPU before launching (construction + forward +
+backward at full production scale, nx=64/T=30, plus the actual
+YAML-load -> `build_model()` path for all three configs) -- all clean,
+finite loss/gradients, correct param_dim/cond_extra_dim/ic_dim wiring.
+14.58-14.61M params (Q8/Q9: 14,575,932; Q10: 14,610,492, the extra
+ic_dim=2 channels). Full 200-epoch training launched for all three
+(see `batch/run_qg_q{8,9,10}_direct_unet_tchannels_*_train.sbatch`).
+
+Once all three finish: replace Q1/Q3/Q4/Q3-noise0.05/Q5 in
+`reports/qg/outputs/qg_neural_report.md`'s benchmark table with Q7/Q8/Q9/
+Q10 (per the user's explicit choice) -- open follow-up, not done yet.
+
+**Mid-training check (2026-09-14, epoch ~25-85 of 200 for all three)**:
+val `loss_psi` (the normalized-psi-only component, directly comparable
+across schemes) is substantially lower for Q8/Q9/Q10 than for Q7 at
+matching epochs (e.g. epoch 20: Q7 0.128 vs Q8 0.044/Q9 0.054/Q10 0.053)
+-- expected, conditioning is doing real work. **But this comparison is
+confounded**: Q7 was trained at the OLD easy default (lag=1.0d/
+noise=0.01), while Q8/Q9/Q10 train at the NEW DA-matched default
+(lag=5.0d/noise=0.05, harder observations) -- so Q7 is the wrong obs-only
+reference point for the final table now, carrying the same "not
+apples-to-apples" caveat marker Q1 has in the current published table.
+
+**`Q7_direct_unet_tchannels_s0_noise05.yaml`** (new): Q7 retrained at
+lag=5.0d/noise=0.05 to match Q8/Q9/Q10's obs difficulty exactly, mirroring
+the Q3/Q3-noise0.05 precedent -- isolates the conditioning comparison at
+matched observation difficulty. Same `gradient_clip_val=1.0` precaution.
+1 new YAML config sanity test. Full 200-epoch training launched
+(`batch/run_qg_q7_direct_unet_tchannels_noise05_train.sbatch`). The final
+T-channels bench table will use this retrain, not the original Q7, as its
+obs-only reference row.
+
+**Final S0/S1 comparison (2026-09-14, all four fully trained)**:
+
+| scheme | S0 ψ EV | S0 q EV | S1 ψ EV | S1 q EV |
+|---|---|---|---|---|
+| Q7-noise05 (obs-only) | 0.9805 | 0.6238 | 0.9805 | 0.6238 |
+| Q8 (oracle cond.) | 0.9827 | 0.6093 | 0.9490 | 0.5571 |
+| Q9 (noisy cond.) | 0.9798 | 0.5978 | 0.9763 | 0.5959 |
+| Q10 (noisy cond.+IC) | 0.9824 | 0.6745 | 0.9808 | 0.6744 |
+
+Genuinely surprising finding: forcing/param conditioning alone (Q8
+oracle, Q9 noisy) buys almost nothing over the plain obs-only Q7-noise05
+on S0, and Q8 actively degrades the most under S1 model error (it has a
+conditioning channel that becomes wrong; Q7-noise05 has none to be
+wrong). **IC conditioning (Q10) is the one addition that clearly pays
+off** -- best or tied-best on 3 of 4 columns, barely degrading S0->S1.
+Every T-channels scheme beats every DA baseline on both ψ and q,
+mirroring the L96 SDA finding that background/IC information matters
+more than forcing/param conditioning.
+
+### Promoted to the canonical Q1-Q4 (2026-09-14)
+
+Per the user's explicit direction, Q7-noise05/Q8/Q9/Q10 were promoted to
+be the new canonical `Q1`/`Q2`/`Q3`/`Q4` in `reports/qg/outputs/
+qg_neural_report.md`'s benchmark table, retiring the older
+batch-folding-backbone family (Q1/Q3/Q4/Q3-noise0.05/Q5) from that
+report. Renaming map:
+
+| old | new config | role |
+|---|---|---|
+| Q7-noise05 | `Q1_direct_unet_tchannels_s0.yaml` | obs-only |
+| Q8 | `Q2_direct_unet_tchannels_s0_oracle_cond.yaml` | oracle cond. |
+| Q9 | `Q3_direct_unet_tchannels_s1_noisy_cond.yaml` | noisy cond. |
+| Q10 | `Q4_direct_unet_tchannels_s1_noisy_ic_cond.yaml` | noisy cond.+IC |
+
+The older `Q1_direct_unet_s0.yaml`/`Q2_vanilla_cfm_s0.yaml` (untouched,
+different scheme)/`Q3_direct_unet_s0_oracle_cond*.yaml`/
+`Q4_direct_unet_s1_noisy_cond.yaml`/`Q5_direct_unet_s1_noisy_ic_cond*.yaml`
+config files are kept on disk unchanged (still valid, reproducible
+historical experiments) -- the new files use distinct "tchannels"
+filenames to avoid any collision, matching the same `Qn_` prefix as
+their new benchmark position. This branch's own local (gitignored)
+checkpoint directories for the retired schemes were deleted (freeing
+disk); the winning checkpoints were moved to the master worktree's
+`experiments/qg/{Q1,Q2,Q3,Q4}/` (mirroring L96's `experiments/l96/`
+archive convention, each with a `config.yaml` copy alongside), symlinked
+back into this worktree's own `experiments/` under the new names.
+`eval_qg_neural_s0_s1.py`'s `SCHEMES` was rebuilt with just the 4 new
+entries (old Q1/Q3/Q4/Q3-noise0.05/Q5/Q7/Q7-noise05/Q8/Q9/Q10 entries
+removed); re-running it at the identical config reproduced the exact
+same EV numbers as before the migration (regression check). The report
+generator (`reports/qg/generate_qg_neural_report.py`) was updated to
+describe the 4 new schemes; since all four were trained directly at the
+DA-matched config, the table's † "not apples-to-apples" marker no longer
+applies to any row.
 ### ETKF obs-configuration sensitivity: cols_per_day=8/16 + new psi2 (lower-layer) point obs + new cols_sampling="random" mode (2026-09-13/14)
 
 New obs-density experiment series: `cols_per_day=8/16` (vs. the reference

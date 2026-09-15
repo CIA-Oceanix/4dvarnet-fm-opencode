@@ -4,32 +4,35 @@
 JSON-only generator (no QG/neural code imports). Two sections:
 
 1. **Benchmarked schemes** -- a description table covering the 4 DA
-   baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus 5 neural DirectUNet
-   variants (Q1 obs-only, Q3 oracle forcing+param conditioning, Q4
-   noisy-trained forcing+param conditioning, Q3-noise0.05 (Q3 retrained at
-   the DA reference case's own noise level), Q5 (Q4's noisy conditioning
-   plus a raw initial-condition input)): type, key hyperparameters, one-line
-   description. Full DA-method detail (reference-case config, sensitivity
-   analysis, reconstruction figures) lives in ``qg_da_report.md`` (see
-   ``generate_qg_da_report.py``); this section only summarizes enough to
-   compare schemes side by side.
+   baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus 4 neural DirectUNet
+   variants on the T-merged-into-channels backbone (``models.
+   monai_unet_qg2d.MonaiDirectUNetQGChannelTime``): Q1 obs-only, Q2 oracle
+   forcing+param conditioning, Q3 noisy-trained forcing+param conditioning,
+   Q4 (Q3's noisy conditioning plus a raw initial-condition input): type,
+   key hyperparameters, one-line description. Full DA-method detail
+   (reference-case config, sensitivity analysis, reconstruction figures)
+   lives in ``qg_da_report.md`` (see ``generate_qg_da_report.py``); this
+   section only summarizes enough to compare schemes side by side.
 2. **Summary metrics** -- S0 (no model error) and S1 (combined model-error:
    param bias + corrupted wind + resolution mismatch) pooled EV table, all
-   9 schemes at the identical lag=5.0d/noise_frac=0.05/s1_param_bias=
+   8 schemes at the identical lag=5.0d/noise_frac=0.05/s1_param_bias=
    s1_amp_bias=0.1 configuration (the DA baselines' own reference case).
    DA numbers from ``qg_repro_validation{,_s1}/*.json``; neural numbers from
    ``qg_neural_s0_s1_cross_scenario/results_lag5_noise0.05_bias0.1.json``
    (``eval_qg_neural_s0_s1.py``).
 
-**Apples-to-apples caveat (2026-09-10, narrowed 2026-09-13):** Q1/Q3/Q4 were
-*trained* at ``train_qg_neural.py``'s old defaults (lag=1.0d, noise_frac=
-0.01) and only *re-evaluated* (not retrained) at this lag=5.0d/noise=0.05
-config, so they're being tested outside their training distribution.
-Q3-noise0.05 and Q5 were *trained* at this exact lag/noise (Q5 additionally
-at the matching s1_param_bias/s1_amp_bias=0.1), so their numbers are a
-genuinely fair, matched-distribution comparison against the DA baselines.
-The table flags this per-row rather than presenting every neural row as
-equally fair.
+**Apples-to-apples (2026-09-14):** all four current neural schemes (Q1-Q4,
+promoted from the T-channels bench refresh's Q7-noise05/Q8/Q9/Q10) were
+*trained* directly at this exact lag=5.0d/noise=0.05/s1_param_bias=
+s1_amp_bias=0.1 config -- train_qg_neural.py's own current fallback
+default -- so every row is a genuinely fair, matched-distribution
+comparison against the DA baselines; no per-row caveat marker is needed.
+This table previously covered an older batch-folding-backbone family
+(Q1/Q3/Q4/Q3-noise0.05/Q5, three of which were only re-evaluated, not
+retrained, at this config) -- see PLAN.md's 2026-09-14 "T-channels bench
+refresh" section for the full history; those older configs/checkpoints
+still exist on disk as historical experiments, just retired from this
+report.
 
 Run from the repository root::
 
@@ -44,15 +47,17 @@ ROOT = Path(__file__).resolve().parents[2]
 DA_METHODS = [("EnKF", "enkf"), ("ETKF", "etkf"),
               ("Weak-4DVar", "weak4dvar"), ("Strong-4DVar", "strong4dvar")]
 
-# Neural schemes in cross-scenario results_lag5_noise0.05_bias0.1.json,
-# paired with whether their training distribution matches this eval config
-# (see the apples-to-apples caveat above).
+# Neural schemes in cross-scenario results_lag5_noise0.05_bias0.1.json --
+# the canonical T-channels DirectUNet family (2026-09-14). All four were
+# trained directly at this exact config (see the apples-to-apples note
+# above), so the third element (whether training distribution matches
+# this eval config) is always True now -- kept for the marker mechanism's
+# sake rather than dropping it outright.
 NEURAL_SCHEMES = [
-    ("Q1", "Q1 (DirectUNet, obs-only)", False),
-    ("Q3", "Q3 (oracle forcing+param cond.)", False),
-    ("Q4", "Q4 (noisy-trained forcing+param cond.)", False),
-    ("Q3-noise0.05", "Q3-noise0.05 (oracle cond., matched noise)", True),
-    ("Q5", "Q5 (noisy cond. + IC, matched lag/noise/bias)", True),
+    ("Q1", "Q1 (DirectUNet, T-channels, obs-only)", True),
+    ("Q2", "Q2 (oracle forcing+param cond.)", True),
+    ("Q3", "Q3 (noisy-trained forcing+param cond.)", True),
+    ("Q4", "Q4 (noisy cond. + IC)", True),
 ]
 
 SCHEMES = [
@@ -90,58 +95,46 @@ SCHEMES = [
                 "the cost of a larger control space.",
     },
     {
-        "name": "Q1 (DirectUNet)",
+        "name": "Q1 (DirectUNet, T-channels)",
         "type": "Neural (deterministic, single-pass, supervised)",
-        "config": "MONAI circular 2D U-Net, hidden=[64,128,256] (M tier), obs-only, "
-                  "cosine LR, 200 epochs",
+        "config": "MonaiDirectUNetQGChannelTime, hidden=[64,128,256] (M tier), obs-only, "
+                  "lag=5.0d/noise=0.05 training, gradient_clip_val=1.0, 200 epochs",
         "desc": "Direct single forward-pass estimator mapping observations to the full "
                 "state (no iterative assimilation cycle, no dynamical model at inference "
-                "time). Circular-padded Conv2d over the doubly-periodic (ny,nx) grid; "
-                "trained via supervised regression on a combined psi + weighted PV-q loss.",
+                "time). Merges the T (days) axis into the *channel* dimension (`models."
+                "monai_unet_qg2d.MonaiUNet2DQGSolver`) so the 2D circular-conv backbone's "
+                "ordinary channel mixing can relate one day to another, unlike the older "
+                "batch-folding backbone (every day processed fully independently). "
+                "Trained via supervised regression on a combined psi + weighted PV-q loss.",
     },
     {
-        "name": "Q3 (oracle cond.)",
+        "name": "Q2 (oracle cond.)",
         "type": "Neural (deterministic, single-pass, oracle-conditioned)",
         "config": "Q1 arch + true wind_curl field + true [U1,rd,rek] params "
-                  "(cond_mode=\"true\"), lag=1.0d/noise=0.01 training",
+                  "(cond_mode=\"true\"), lag=5.0d/noise=0.05 training",
         "desc": "Q1 plus exact (unjittered) forcing/parameter conditioning, mirroring the "
-                "L96 SDA CFM oracle-conditioning study. Trained and tested at "
-                "train_qg_neural.py's own lag=1.0d/noise=0.01 default.",
+                "L96 SDA CFM oracle-conditioning study.",
     },
     {
-        "name": "Q4 (noisy cond.)",
+        "name": "Q3 (noisy cond.)",
         "type": "Neural (deterministic, single-pass, robustly-conditioned)",
         "config": "Q1 arch + resampled-severity corrupted forcing/params "
-                  "(cond_mode=\"noisy\", noisy_max=1.5), lag=1.0d/noise=0.01 training",
+                  "(cond_mode=\"noisy\", noisy_max=1.5), lag=5.0d/noise=0.05 training",
         "desc": "Q1 plus forcing/parameter conditioning where every training draw samples "
                 "a fresh random corruption severity in [0, noisy_max] (mirroring the L96 "
-                "SDA3 CFM study), instead of Q3's always-exact conditioning -- intended to "
+                "SDA3 CFM study), instead of Q2's always-exact conditioning -- intended to "
                 "be more robust to conditioning-input error at inference time.",
     },
     {
-        "name": "Q3-noise0.05",
-        "type": "Neural (deterministic, single-pass, oracle-conditioned)",
-        "config": "Same as Q3, retrained at lag=5.0d/noise=0.05 (the DA reference case's "
-                  "own values), gradient_clip_val=1.0",
-        "desc": "Q3 retrained at the DA baselines' own obs-noise level instead of "
-                "train_qg_neural.py's easier 0.01 default, for a genuinely matched "
-                "comparison. `gradient_clip_val=1.0` (was the 10.0 default) is required "
-                "at this noise level -- the default clip caused a reproducible training "
-                "collapse, confirmed via a seed ablation to be independent of random "
-                "seed; see PLAN.md's 2026-09-12/13 collapse-ablation notes.",
-    },
-    {
-        "name": "Q5 (noisy+IC)",
+        "name": "Q4 (noisy cond. + IC)",
         "type": "Neural (deterministic, single-pass, robustly-conditioned + IC)",
-        "config": "Q4-style noisy cond. (noisy_max=2.0, s1_param_bias=s1_amp_bias=0.1) "
+        "config": "Q3-style noisy cond. (noisy_max=2.0, s1_param_bias=s1_amp_bias=0.1) "
                   "plus the raw initial-condition snapshot as a 4th input; lag=5.0d/"
                   "noise=0.05 training, gradient_clip_val=1.0",
         "desc": "Adds the same background information a DA method's own init_state "
                 "gives it for free -- the raw IC (inverted to psi, broadcast identically "
                 "across the window, a third conditioning class distinct from the "
-                "per-day forcing field and the per-window param vector). Trained at the "
-                "DA reference case's own lag/noise so the IC is actually informative "
-                "(a lag=1.0d snapshot is barely decorrelated).",
+                "per-day forcing field and the per-window param vector).",
     },
 ]
 
@@ -224,10 +217,11 @@ def main() -> None:
     add("# QG Case Study: Benchmarked Schemes Overview")
     add("")
     add("Two-layer quasi-geostrophic (QG) Phillips-channel case study -- the four DA "
-        "baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus five neural DirectUNet "
-        "variants (Q1 obs-only, Q3 oracle forcing+param conditioning, Q4 noisy-trained "
-        "conditioning, Q3-noise0.05, Q5 noisy conditioning + IC), on both the S0 "
-        "(no model error) reference case and the S1 (combined model-error) case.")
+        "baselines (ETKF, EnKF, Strong-4DVar, Weak-4DVar) plus four neural DirectUNet "
+        "variants on the T-merged-into-channels backbone (Q1 obs-only, Q2 oracle "
+        "forcing+param conditioning, Q3 noisy-trained conditioning, Q4 noisy "
+        "conditioning + IC), on both the S0 (no model error) reference case and the S1 "
+        "(combined model-error) case.")
     add("")
 
     add("## 1. Benchmarked schemes")
@@ -246,7 +240,7 @@ def main() -> None:
         "s1_param_bias=s1_amp_bias=0.1)")
     add("")
     add("Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q "
-        "(both layers). All 9 rows evaluated at the identical config above.")
+        "(both layers). All 8 rows evaluated at the identical config above.")
     add("")
     add("| scheme | S0 ψ EV | S0 PV-q EV | S1 ψ EV | S1 PV-q EV |")
     add("|---|---|---|---|---|")
@@ -287,13 +281,16 @@ def main() -> None:
             f"{mark(fmt(s1_q[i]), q1_marks.get(i))} |")
     add("")
     add("(Best per column **bolded**, second-best *italicized*, ranked across all "
-        "9 rows.)")
+        "8 rows.)")
     add("")
-    add("† **Not apples-to-apples**: trained at lag=1.0d/noise_frac=0.01 "
-        "(train_qg_neural.py's easier defaults) and only re-evaluated -- not "
-        "retrained -- at this lag=5.0d/noise=0.05 config, so it's being tested "
-        "outside its training distribution. Q3-noise0.05 and Q5 (no marker) were "
-        "trained at this exact config and are a genuinely fair comparison.")
+    add("All four neural rows (Q1-Q4) were trained directly at this exact "
+        "lag=5.0d/noise=0.05/s1_param_bias=s1_amp_bias=0.1 config -- a genuinely "
+        "fair, matched-distribution comparison against the DA baselines for every "
+        "row, no per-row caveat needed. (An earlier version of this table covered "
+        "an older batch-folding-backbone DirectUNet family where three of five "
+        "rows were only re-evaluated, not retrained, at this config and needed a "
+        "† marker -- see PLAN.md's 2026-09-14 \"T-channels bench refresh\" "
+        "section for the full history.)")
     add("")
 
     out_path = Path(args.out)

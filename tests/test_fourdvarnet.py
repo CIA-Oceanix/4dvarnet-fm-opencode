@@ -60,6 +60,64 @@ def _make_model(**kwargs):
     return FourDVarNetSolver(**defaults)
 
 
+class _RawBatch:
+    """Minimal batch stand-in exposing only what `forward()` reads
+    (`.obs`/`.obs_mask`) -- for testing `obs_mask`'s dim-dependent
+    broadcast behavior directly, without `_MockBatch`'s fixed (B,T) mask
+    convention."""
+
+
+def test_obs_mask_2d_still_broadcasts_uniformly_per_timestep():
+    """Backward-compat regression test: a (B,T) mask (L96's own convention,
+    `_MockBatch`'s shape) must still get `.unsqueeze(-1)`-ed and broadcast
+    uniformly across every D-channel, exactly as before QG's per-cell mask
+    support was added."""
+    model = _make_model(unet_backbone="unet1d")
+    batch = _MockBatch(B=2, T=10, D=3, obs_every=2, seed=0)
+    out = model(batch)
+    assert out.shape == batch.states.shape
+    assert torch.isfinite(out).all()
+
+
+def test_obs_mask_3d_per_cell_not_broadcast_uniformly():
+    """A genuine (B,T,D) mask (QG's convention -- `cols_per_day` varies
+    which cells are observed within a day, not just whether the day has any
+    obs at all) is used as-is, not silently collapsed to a per-timestep-only
+    signal. Masking out one cell that a (B,T)-only convention could never
+    distinguish must change the forward output.
+
+    Uses update_input="subgrad+state": obs_mask only ever enters the
+    computation via `_masked_obs_cost`/the subgrad residual
+    (`(obs_clean - x) * obs_mask`) -- "obs+state" (Q6's own config, matching
+    L96's own proven choice) feeds raw obs_clean straight into the update
+    UNet and never references obs_mask at all, so it can't distinguish these
+    two masks and would be the wrong mode to test this with."""
+    B, T, D = 2, 6, 4
+    torch.manual_seed(0)
+    states = torch.randn(B, T, D)
+    obs = torch.randn(B, T, D)
+    uniform_mask = torch.zeros(B, T, dtype=torch.bool)
+    uniform_mask[:, ::2] = True
+    cell_mask = uniform_mask.unsqueeze(-1).expand(B, T, D).clone()
+    cell_mask[0, 0, 0] = False  # one cell off; impossible to express in (B,T)
+
+    b_uniform = _RawBatch()
+    b_uniform.states, b_uniform.obs, b_uniform.obs_mask = states, obs, uniform_mask
+    b_cell = _RawBatch()
+    b_cell.states, b_cell.obs, b_cell.obs_mask = states, obs, cell_mask
+
+    model = _make_model(state_dim=D, unet_backbone="unet1d", N_outer=2,
+                        update_input="subgrad+state")
+    torch.manual_seed(42)
+    out_uniform = model(b_uniform)
+    torch.manual_seed(42)
+    out_cell = model(b_cell)
+    assert not torch.equal(out_uniform, out_cell), (
+        "a per-cell mask that differs from its per-timestep-broadcast "
+        "equivalent must change the forward output -- otherwise the mask's "
+        "extra per-cell resolution is being silently discarded")
+
+
 class TestFourDVarNetSolver:
     def test_forward_shape(self):
         model = _make_model()
