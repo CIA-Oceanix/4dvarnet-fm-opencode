@@ -26,3 +26,21 @@
 | VanillaCFM (beta τ, unconditional) | 50 | 4.047 | 0.760 | 2.380 | 1.732 | 0.936 | 0.931 |
 | Score-based CFM (unconditional prior) | 50 | 1.958 | 0.941 | 0.874 | 1.647 | 0.958 | 0.761 |
 
+## State estimation (Monai backbone)
+
+Same models/configs as above, swapping the custom `UNet1D` (`models/unet.py`) for the
+MONAI `UNet1D`/`MonaiUNet1D` backbone (`models/monai_unet_adapter.py`,
+`config/models/monai_*.yaml`, `monai_*` `model_type`s) — otherwise identical
+architecture size, training config, and S0/S1 protocol.
+
+| Model | N_ens | s0 RMSE | s0 R² | s0 CRPS | s1 RMSE | s1 R² | s1 CRPS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| DirectUNet (Monai) | 1 | 0.629 | 0.994 | 0.469 | 0.610 | 0.995 | 0.463 |
+| TweedieCFM (K=5) (Monai) | 50 | 0.607 | 0.994 | 0.334 | 0.656 | 0.994 | 0.430 |
+| TweedieCFM (K=1) (Monai) | 50 | 0.681 | 0.993 | 0.468 | 0.695 | 0.993 | 0.460 |
+| VanillaCFM (Monai) | 50 | 0.573 | 0.995 | 0.312 | 0.563 | 0.995 | 0.312 |
+| VanillaCFM (τ=0 only) (Monai) | 50 | 0.623 | 0.994 | 0.433 | 0.587 | 0.995 | 0.415 |
+| VanillaCFM (logit-normal τ) (Monai) | 50 | 0.774 | 0.989 | 0.364 | 0.689 | 0.993 | 0.348 |
+| VanillaCFM (beta τ) (Monai) | 50 | 0.631 | 0.994 | 0.346 | 0.606 | 0.995 | 0.348 |
+| VanillaCFM (beta τ, unconditional) (Monai) | 50 | 3.347 | 0.827 | 1.986 | 1.070 | 0.982 | 0.602 |
+
