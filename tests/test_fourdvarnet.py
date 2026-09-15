@@ -1656,31 +1656,90 @@ class TestVarCostTrainingLoss:
 
     def test_compute_loss_finite_and_gradients_flow(self):
         model = self._make_model(N_outer=3)
+        model.train()
         batch = _FullStateMockBatch(B=2, T=10, seed=0)
         loss = model.compute_loss(batch)
         assert torch.isfinite(loss)
         loss.backward()
         assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.unet.parameters())
 
-    def test_compute_loss_ignores_batch_states(self):
-        """The var_cost objective is self-supervised -- it must not read
-        batch.states at all. Corrupting states with NaN must not change the
-        (finite) loss value."""
-        model = self._make_model(N_outer=3)
-        model.eval()
+    def test_training_loss_ignores_batch_states(self):
+        """The var_cost objective is self-supervised and is only ever used
+        in TRAINING mode -- it must not read batch.states at all.
+        Corrupting states with NaN must not change the (finite) training
+        loss value."""
+        # dropout=0.0 alone does not make the forward pass deterministic
+        # across two separate calls -- UNet1D's Down/Up blocks never
+        # receive the outer `dropout` constructor arg at all (a pre-
+        # existing, unrelated bug: only ConvBlock's own hardcoded default
+        # applies there), so re-seed before each call as well.
+        model = self._make_model(N_outer=3, dropout=0.0)
+        model.train()
         batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        torch.manual_seed(0)
         with torch.no_grad():
             loss_orig = model.compute_loss(batch)
         batch.states = torch.full_like(batch.states, float("nan"))
+        torch.manual_seed(0)
         with torch.no_grad():
             loss_after = model.compute_loss(batch)
         assert torch.isfinite(loss_orig)
         assert torch.isfinite(loss_after)
         assert torch.allclose(loss_orig, loss_after)
 
+    def test_eval_loss_is_always_mse_regardless_of_loss_type(self):
+        """Validation/eval must ALWAYS use the supervised MSE criterion,
+        even under loss_type="var_cost" -- so val_loss/checkpoint selection
+        stays on the same scale/meaning as every other config. Corrupting
+        states DOES change the eval-mode loss here, unlike training mode."""
+        model = self._make_model(N_outer=3)
+        model.eval()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        with torch.no_grad():
+            loss_orig = model.compute_loss(batch)
+            x_final = model(batch)
+        assert torch.allclose(loss_orig, F.mse_loss(x_final, batch.states))
+        batch.states = torch.full_like(batch.states, 5.0)
+        with torch.no_grad():
+            loss_after = model.compute_loss(batch)
+        assert not torch.allclose(loss_orig, loss_after)
+
+    def test_train_mse_proxy_stashed_and_matches_mse(self):
+        """Training under loss_type="var_cost" must stash
+        _last_train_mse_proxy = F.mse_loss(x_final, states).detach() --
+        used only for monitoring/logging (train_mse_proxy), never for the
+        backward pass."""
+        # See test_training_loss_ignores_batch_states's comment: re-seed
+        # before each forward call so UNet1D's Down/Up dropout (unaffected
+        # by dropout=0.0, a pre-existing unrelated bug) doesn't make the two
+        # separate forward passes diverge.
+        model = self._make_model(N_outer=3, dropout=0.0)
+        model.train()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        assert model._last_train_mse_proxy is None
+        torch.manual_seed(1)
+        loss = model.compute_loss(batch)
+        assert model._last_train_mse_proxy is not None
+        assert torch.isfinite(model._last_train_mse_proxy)
+        assert not model._last_train_mse_proxy.requires_grad
+        torch.manual_seed(1)
+        with torch.no_grad():
+            x_final = model(batch)
+        assert torch.allclose(model._last_train_mse_proxy, F.mse_loss(x_final, batch.states))
+        # And it must be a genuinely different value from the actual
+        # training loss (var_cost), not an accidental alias.
+        assert not torch.allclose(loss.detach(), model._last_train_mse_proxy)
+
+    def test_mse_mode_never_sets_train_mse_proxy(self):
+        model = _make_full_state_model(update_input="subgrad+trueprior")
+        model.train()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        model.compute_loss(batch)
+        assert model._last_train_mse_proxy is None
+
     def test_mse_mode_still_uses_states_unaffected(self):
         """Sanity: the default loss_type="mse" mode is untouched by this
-        feature -- corrupting states DOES change its loss."""
+        feature -- corrupting states DOES change its loss (train or eval)."""
         model = _make_full_state_model(update_input="subgrad+trueprior")
         model.eval()
         batch = _FullStateMockBatch(B=2, T=10, seed=0)

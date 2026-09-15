@@ -188,6 +188,14 @@ class LitModel(pl.LightningModule):
             self.log("obs_weight", self.model.obs_weight, on_step=False, on_epoch=True, batch_size=batch.batch_size)
         if getattr(self.model, "_prior_weight_raw", None) is not None:
             self.log("prior_weight", self.model.prior_weight, on_step=False, on_epoch=True, batch_size=batch.batch_size)
+        # loss_type="var_cost" (FourDVarNetSolver only): compute_loss also
+        # stashes the supervised MSE it did NOT train on, purely so we can
+        # log it here and compare epoch-by-epoch how well the
+        # self-supervised var_cost objective actually being optimized
+        # tracks the true MSE criterion.
+        if getattr(self.model, "_last_train_mse_proxy", None) is not None:
+            self.log("train_mse_proxy", self.model._last_train_mse_proxy,
+                     on_step=False, on_epoch=True, batch_size=batch.batch_size)
         return loss
 
     def validation_step(self, batch, batch_idx):
