@@ -56,6 +56,15 @@ def main():
                              "obs is z-score normalized before each model call and predictions "
                              "are denormalized back to raw physical units before scoring. "
                              "Omitting this flag is a true no-op (identical to not passing it).")
+    parser.add_argument("--trueprior-phi-source-s1", default="true", choices=["true", "biased"],
+                        help="Only meaningful for update_input='subgrad+state+trueprior' "
+                             "(a true no-op for every other model): 'true' (default) feeds "
+                             "the S1 window's own genuinely-true forcing/params into the ODE "
+                             "prior Phi, matching how the 'perfect-model' checkpoints were "
+                             "trained; 'biased' feeds the DA-biased forcing/params instead, "
+                             "stress-testing how the trained solver degrades when Phi's own "
+                             "inputs are wrong (the S0-true/S1-noisy evaluation plan). S0 "
+                             "always uses the true values regardless of this flag.")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -67,6 +76,18 @@ def main():
     logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
     if hasattr(model, "train_tau_0_only"):
         logger.info(f"train_tau_0_only={model.train_tau_0_only}")
+    # subgrad+state+trueprior: state_dim IS the full physical state (e.g. 40D
+    # for NO=8,J=4), not the 24D observed subspace every other config uses --
+    # model.obs_var_indices (set only for this mode) bridges the two. Needs
+    # the window's true forcing/params fed to the ODE prior at inference too.
+    needs_true_forcing = getattr(model, "obs_var_indices", None) is not None
+    if needs_true_forcing:
+        logger.info(
+            f"Detected subgrad+state+trueprior (full_state_target): state_dim="
+            f"{model.state_dim}, scoring restricted to obs_var_indices "
+            f"({len(model.obs_var_indices)} dims); S1 Phi source="
+            f"{args.trueprior_phi_source_s1}"
+        )
 
     # Prepare dataset
     dataset_path = args.dataset
@@ -98,7 +119,18 @@ def main():
     dataset, dataloaders, obs_var_indices = prepare_dataset(
         cfg, dataset_path, args.num_windows, args.obs_interval,
         obs_j=args.obs_j, norm_stats=norm_stats, batch_size=args.batch_size,
+        needs_true_forcing=needs_true_forcing,
     )
+    if needs_true_forcing:
+        # model.obs_var_indices is the SAME formula (data.NO/J/obs_j) as
+        # prepare_dataset's own resolved obs_var_indices when obs_j<J -- assert
+        # rather than silently trusting two independently-derived index lists
+        # to agree, since a mismatch here would silently score the wrong
+        # channels against each other.
+        assert tuple(model.obs_var_indices) == tuple(obs_var_indices), (
+            f"model.obs_var_indices {tuple(model.obs_var_indices)} != "
+            f"prepare_dataset's obs_var_indices {tuple(obs_var_indices)}"
+        )
     logger.info(f"Dataset: {len(dataset)} windows, batch={args.batch_size}")
     logger.info(f"obs_var_indices ({len(obs_var_indices)} dims): {list(obs_var_indices)}")
 
@@ -111,6 +143,7 @@ def main():
     estimates = run_inference(
         model, dataloaders, device, obs_var_indices,
         n_members=args.n_members, n_outer=args.n_outer,
+        trueprior_phi_source_s1=args.trueprior_phi_source_s1,
     )
 
     if norm_stats is not None:

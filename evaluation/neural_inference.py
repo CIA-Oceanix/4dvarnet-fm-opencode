@@ -792,8 +792,15 @@ def prepare_dataset(
 
     # Create dataloaders for both the S0 and S1 test splits
     is_joint = bool(kwargs.get("is_joint", False))
+    # needs_true_forcing (default False, backward-compatible): FourDVarNetSolver's
+    # "subgrad+state+trueprior" mode differentiates through the actual L96 ODE at
+    # inference too, which needs the window's forcing_true/true_params/params --
+    # collate_joint_eval already extracts exactly these fields (it's a strict
+    # superset of collate_eval's), even though this model is not a "joint"
+    # param-estimating model in the JointCFM/JointDirectUNet sense.
+    needs_true_forcing = bool(kwargs.get("needs_true_forcing", False))
     norm_stats = kwargs.get("norm_stats")
-    collate = (make_collate_joint_eval(norm_stats) if is_joint
+    collate = (make_collate_joint_eval(norm_stats) if (is_joint or needs_true_forcing)
                else make_collate_eval(norm_stats))
     dataloaders = {}
     for key, case in (("test_s0", "s0"), ("test_s1", "s1")):
@@ -821,6 +828,7 @@ def _run_case_inference(
     guidance_weight: float = 1.0,
     obs_indices=None,
     obs_density_keep_k: int | None = None,
+    trueprior_phi_source: str = "true",
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -849,6 +857,24 @@ def _run_case_inference(
     cost directly -- no zero-imputation ambiguity there. Uses the caller's
     global torch RNG state (``torch.manual_seed`` before calling), matching
     every other stochastic knob in this module.
+
+    ``trueprior_phi_source`` (default ``"true"``): only meaningful for a
+    ``FourDVarNetSolver`` built with ``update_input="subgrad+state+trueprior"``
+    (identified by ``model.obs_var_indices is not None`` -- every other
+    ``FourDVarNetSolver``/``FourDVarNetPredictStateCFM`` config leaves that
+    ``None``, so this is a true no-op for them). That mode differentiates
+    through the actual L96 ODE at every inner iteration, reading
+    ``batch.true_forcing``/``batch.true_params`` as Phi's inputs --
+    ``"true"`` feeds the window's own genuinely-true values
+    (``forcing_true``/``true_params``, matching how the "perfect-model"
+    training variant was trained: Phi always sees the truth); ``"biased"``
+    instead feeds the DA-biased ones (``forcing``/``params``, i.e.
+    ``forcing_corrupted``/``params_da``) -- a stress test of how the trained
+    solver degrades when Phi's own inputs are wrong, per the original
+    S0-true/S1-noisy evaluation plan. ``run_inference`` passes ``"true"`` for
+    the S0 case and a caller-chosen source for S1 (default also ``"true"``,
+    matching what this checkpoint was actually trained on -- the "biased"
+    stress test is opt-in, not yet the default for any trained checkpoint).
     """
     if obs_density_keep_k is not None and obs_indices is not None:
         raise ValueError("obs_density_keep_k and obs_indices are mutually exclusive")
@@ -886,6 +912,17 @@ def _run_case_inference(
                     batch["obs"] = apply_density_mask_to_obs(batch["obs"], obs_channel_mask)
 
             batch_obj = BatchDict(batch)
+            is_trueprior = (isinstance(model, FourDVarNetSolver)
+                            and getattr(model, "obs_var_indices", None) is not None)
+            if is_trueprior:
+                if trueprior_phi_source == "true":
+                    batch_obj.true_forcing = batch["forcing_true"]
+                    # batch["true_params"] already set by collate_joint_eval.
+                elif trueprior_phi_source == "biased":
+                    batch_obj.true_forcing = batch["forcing"]
+                    batch_obj.true_params = batch["params"]
+                else:
+                    raise ValueError(f"unknown trueprior_phi_source: {trueprior_phi_source!r}")
 
             for m in range(n_members):
                 if isinstance(model, (JointCFM, JointCFMCoupled)):
@@ -918,6 +955,14 @@ def _run_case_inference(
                                                 obs_channel_mask=obs_channel_mask)
                 elif isinstance(model, (FourDVarNetSolver, FourDVarNetPredictStateCFM)):
                     pred = model.sample(batch_obj, N_outer=n_outer)
+                    if is_trueprior:
+                        # pred is the FULL 40D physical state (state_dim was
+                        # expanded for this mode) -- restrict to the same 24D
+                        # observed subspace every other benchmark row is
+                        # scored on, so the truth-subsampling logic below
+                        # (d_pred == len(obs_var_indices)) engages exactly as
+                        # it does for every other model.
+                        pred = pred[..., list(model.obs_var_indices)]
                 else:
                     raise ValueError(f"Unknown model type: {type(model)}")
                 member_preds[m].append(pred.detach().float().cpu())
@@ -996,6 +1041,8 @@ def run_inference(
     guidance_weight: float = 1.0,
     obs_indices=None,
     obs_density_keep_k: int | None = None,
+    trueprior_phi_source_s0: str = "true",
+    trueprior_phi_source_s1: str = "true",
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -1020,11 +1067,20 @@ def run_inference(
     the dropped fast-Y channels NaN'd out of ``obs`` itself, while the SDA
     priors get the keep-mask forwarded to the guidance cost. ``None``
     (default) is a true no-op.
+
+    ``trueprior_phi_source_s0``/``trueprior_phi_source_s1`` (both default
+    ``"true"``): only meaningful for ``subgrad+state+trueprior`` (see
+    ``_run_case_inference``'s ``trueprior_phi_source`` docstring) -- a true
+    no-op for every other model. Split per case so the S0-true/S1-noisy
+    evaluation plan can be run as ``trueprior_phi_source_s1="biased"``
+    without affecting S0.
     """
+    phi_source_by_case = {"s0": trueprior_phi_source_s0, "s1": trueprior_phi_source_s1}
     return {
         case: _run_case_inference(model, dl, device, obs_var_indices, n_members, n_outer,
                                   ens_then_head=ens_then_head, r_var=r_var,
                                   guidance_weight=guidance_weight, obs_indices=obs_indices,
-                                  obs_density_keep_k=obs_density_keep_k)
+                                  obs_density_keep_k=obs_density_keep_k,
+                                  trueprior_phi_source=phi_source_by_case.get(case, "true"))
         for case, dl in dataloaders.items()
     }
