@@ -14,6 +14,7 @@ from models.fourdvarnet import (
     _prior_cost,
     _soft_clip,
     _true_ode_prior_residual,
+    _var_cost_training_loss,
 )
 from models.lorenz96_dynamics import Lorenz96Dynamics
 
@@ -1609,6 +1610,86 @@ class TestFourDVarNetSolverSubgradTrueprior:
         batch = _FullStateMockBatch(B=2, T=10, seed=0)
         TestGradientCheckpointing()._assert_checkpoint_matches_reference(
             model, lambda model=model, batch=batch: model(batch))
+
+
+class TestVarCostTrainingLoss:
+    """``loss_type="var_cost"``: compute_loss trains on a weak-constraint-
+    4DVar-style ``obs_cost/R_var + prior_cost/Q_var`` self-supervised
+    objective instead of MSE against the ground truth. Only allowed for
+    the ``_FULL_STATE_UPDATE_INPUTS`` modes (needs ``self.true_dynamics``).
+    Same NO=2,J=4/state_dim=10/obs_var_indices=(0,1,2,6) convention as
+    ``TestFourDVarNetSolverTrueprior``."""
+
+    def test_rejected_for_non_full_state_modes(self):
+        with pytest.raises(ValueError):
+            FourDVarNetSolver(state_dim=10, hidden_channels=[4, 8], N_outer=2,
+                               update_input="obs+state", loss_type="var_cost")
+
+    def test_unknown_loss_type_raises(self):
+        with pytest.raises(ValueError):
+            FourDVarNetSolver(state_dim=10, hidden_channels=[4, 8], N_outer=2,
+                               update_input="obs+state", loss_type="bogus")
+
+    def test_var_cost_training_loss_matches_hand_computed_value(self):
+        """Direct check of the helper against a hand-computed obs_cost/R_var
+        + prior_cost/Q_var, independent of FourDVarNetSolver entirely."""
+        dynamics = Lorenz96Dynamics(dt=0.001, NO=2, J=4, h=1.0, clip_range=50.0)
+        B, T, D = 2, 5, 10
+        torch.manual_seed(0)
+        x = torch.randn(B, T, D)
+        obs_clean = torch.randn(B, T, D)
+        obs_mask = torch.ones(B, T, 1)
+        forcing = torch.randn(B, T)
+        params = torch.tensor([[8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]] * B)
+        R_var, Q_var = 0.5, 0.05
+        loss = _var_cost_training_loss(x, obs_clean, obs_mask, forcing, params,
+                                       dynamics, R_var, Q_var)
+        numel = x.numel()
+        expected_obs = ((x - obs_clean) * obs_mask).pow(2).sum() / R_var / numel
+        g_prior = _true_ode_prior_residual(x, forcing, params, dynamics)
+        expected_prior = g_prior.pow(2).sum() / Q_var / numel
+        assert torch.allclose(loss, expected_obs + expected_prior)
+
+    def _make_model(self, **kwargs):
+        return _make_full_state_model(update_input="subgrad+trueprior",
+                                      loss_type="var_cost", **kwargs)
+
+    def test_compute_loss_finite_and_gradients_flow(self):
+        model = self._make_model(N_outer=3)
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.unet.parameters())
+
+    def test_compute_loss_ignores_batch_states(self):
+        """The var_cost objective is self-supervised -- it must not read
+        batch.states at all. Corrupting states with NaN must not change the
+        (finite) loss value."""
+        model = self._make_model(N_outer=3)
+        model.eval()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        with torch.no_grad():
+            loss_orig = model.compute_loss(batch)
+        batch.states = torch.full_like(batch.states, float("nan"))
+        with torch.no_grad():
+            loss_after = model.compute_loss(batch)
+        assert torch.isfinite(loss_orig)
+        assert torch.isfinite(loss_after)
+        assert torch.allclose(loss_orig, loss_after)
+
+    def test_mse_mode_still_uses_states_unaffected(self):
+        """Sanity: the default loss_type="mse" mode is untouched by this
+        feature -- corrupting states DOES change its loss."""
+        model = _make_full_state_model(update_input="subgrad+trueprior")
+        model.eval()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        with torch.no_grad():
+            loss_orig = model.compute_loss(batch)
+        batch.states = torch.full_like(batch.states, 5.0)
+        with torch.no_grad():
+            loss_after = model.compute_loss(batch)
+        assert not torch.allclose(loss_orig, loss_after)
 
 
 class TestGradientCheckpointing:
