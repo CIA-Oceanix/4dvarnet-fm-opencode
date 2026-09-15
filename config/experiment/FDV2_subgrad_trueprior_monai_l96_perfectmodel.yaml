@@ -1,0 +1,64 @@
+# @package _global_
+# "subgrad+trueprior" (2026-09-15, models/fourdvarnet.py): identical to
+# "subgrad+state+trueprior" (FDV2_subgrad_state_monai_l96_trueprior_perfectmodel.yaml
+# -- see that config's header for the full true-ODE-prior rationale) EXCEPT
+# the raw state x is dropped from the update UNet's input -- fed
+# cat([g_obs, g_prior]) only, not cat([g_obs, g_prior, x]).
+#
+# Rationale: an ablation mirroring the existing "grad-only" (no state) vs
+# "grad+state" (with state) pair for the real-autograd-gradient family.
+# g_obs = (obs-x)*mask and g_prior = x[t+1]-Phi_ode(x[t]) both already
+# implicitly carry x (g_obs directly at observed times; g_prior via the ODE
+# residual), so this tests whether the explicit raw-state channel actually
+# helps the solver or is redundant information the network could in
+# principle recover from the two residuals alone.
+#
+# Same state_dim=40 (full physical state), obs_var_indices bridging, and
+# "perfect-model" convention (Phi always reads batch.true_forcing/
+# batch.true_params) as the sibling config -- see its header for the full
+# derivation of those points, not repeated here.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 40
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+trueprior
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+    full_state_target: true
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  full_state_target: true
+  with_params: true
+  with_true_forcing: true
+  param_names: ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]
