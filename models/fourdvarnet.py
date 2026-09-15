@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from models.interpolant import LinearInterpolant
+from models.lorenz96_dynamics import Lorenz96Dynamics
 from models.unet import UNet1D
 try:
     from models.monai_unet_adapter import MonaiUNet1D
@@ -138,11 +139,14 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # "subgrad+state", but each channel is a true gradient via its own
 # torch.autograd.grad call instead of a cheap proxy).
 _IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
-                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau")
+                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
+                              "subgrad+state+trueprior")
 
 # Modes needing a real torch.autograd.grad call each iteration.
 _AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
-# Modes needing the trainable prior operator (prior_unet).
+# Modes needing the trainable prior operator (prior_unet). "subgrad+state+trueprior"
+# deliberately excluded -- its "prior" is the KNOWN true ODE (zero trainable
+# parameters), not a learned network; see _true_ode_prior_residual.
 _PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
                 "subgrad+state+xtau")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
@@ -155,12 +159,21 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "subgrad+state": 3,
     "gradsplit+state": 3,
     "subgrad+state+xtau": 4,
+    "subgrad+state+trueprior": 3,
 }
 # "subgrad+state+xtau" needs an outer flow-time conditioning value (x_tau,
 # beta_tau) that only exists for FourDVarNetPredictStateCFM's CFM
 # formulation (see its own docstring) -- structurally undefined for
 # FourDVarNetSolver, which has no outer flow-time at all.
 _CFM_ONLY_UPDATE_INPUTS = ("subgrad+state+xtau",)
+# "subgrad+state+trueprior" needs the FULL physical state (see
+# _true_ode_prior_residual's docstring -- the true dynamics is undefined on
+# a partially-observed subspace), i.e. state_dim == the model's own
+# obs_var_indices-implied full dimension, not the usual 24D observed
+# subspace every other mode operates in. Enforced in FourDVarNetSolver's
+# own __init__ (obs_var_indices/true_dynamics_dt required together with
+# this mode).
+_FULL_STATE_UPDATE_INPUTS = ("subgrad+state+trueprior",)
 
 
 def _validate_update_input(update_input):
@@ -243,6 +256,82 @@ def _prior_cost(prior_unet, state, tau=None, residual=False):
     return F.mse_loss(state, _prior_ae(prior_unet, state, tau, residual=residual), reduction="sum")
 
 
+def _true_ode_prior_residual(x, forcing, params, dynamics):
+    """"subgrad+state+trueprior"'s g_prior: a time-shifted dynamical-
+    consistency residual against the KNOWN, true L96 ODE (not a learned
+    Phi) -- ``g_prior[:, t, :] = x[:, t, :] - dynamics.step(x[:, t-1, :],
+    forcing[:, t-1])`` for ``t=1..T-1`` (does the trajectory's actual step
+    from ``t-1`` to ``t`` match what the true dynamics predicts from
+    ``x[t-1]``), zero-padded at ``t=0`` (no valid predecessor within the
+    window). This is the real weak-constraint-4DVar-style model-error term,
+    deliberately NOT the pointwise ``x - Phi(x)`` used elsewhere in this
+    module: unlike a LEARNED, autoencoder-like ``prior_unet`` (trained so
+    ``Phi(x) ~= x`` for real trajectories), the true ODE is a genuine
+    evolution operator -- ``dynamics.step(x) != x`` almost everywhere even
+    for a perfectly correct trajectory, so a pointwise ``x - dynamics.step
+    (x)`` would mostly just feed the local tendency/velocity at x, not a
+    "is x correct" signal the way subgrad+state's own residual is.
+
+    ``x``: (B, T, D) -- the FULL physical state (D = NO + NO*J, e.g. 40 for
+    NO=8,J=4 -- NOT the partially-observed subspace every other update_input
+    mode operates in; the true dynamics needs every fast-Y component to be
+    well-defined at all, see FourDVarNetSolver's own docstring). ``forcing``:
+    (B, T) -- one scalar per (batch, timestep), matching x's own T
+    resolution (data/lorenz96.py stores forcing at the same per-dt
+    resolution as the state trajectory, confirmed against
+    Lorenz96Dynamics.generate_full_trajectory: no downsampling, x[:,t,:] ->
+    x[:,t+1,:] is exactly one dynamics.step() call at the same dt).
+    ``params``: (B, 8) = [F, c1, hx, eps, w1, w2, w3, w4] (L96_JOINT_PARAM_NAMES
+    order, matching evaluation/neural_inference.py's own convention).
+    Never detached -- Lorenz96Dynamics.step is plain differentiable tensor
+    ops (RK4 of elementwise arithmetic, no deep network), cheap to
+    backprop through unlike a learned prior_unet, so there's no
+    computational reason to give up the real local sensitivity information
+    (see the 2026-09-15 detach_var_cost_grad discussion for the analogous
+    but much more expensive learned-network case)."""
+    x_prev = x[:, :-1, :]
+    forcing_prev = forcing[:, :-1]
+    phi_pred = dynamics.step(
+        x_prev, forcing_prev,
+        F=params[:, 0], c1=params[:, 1], hx=params[:, 2], eps=params[:, 3],
+        fast_weights=params[:, 4:8],
+    )
+    resid = x[:, 1:, :] - phi_pred
+    pad = torch.zeros_like(x[:, :1, :])
+    return torch.cat([pad, resid], dim=1)
+
+
+def _embed_obs_to_full_state(obs, obs_mask, obs_var_indices, full_dim):
+    """Scatters a (B,T,len(obs_var_indices))-shaped observed-subspace obs/
+    mask into a (B,T,full_dim)-shaped tensor at the given channel indices
+    (NaN/0 elsewhere) -- needed when the solver's own state_dim is the FULL
+    physical state (see _true_ode_prior_residual) while obs/obs_mask, as
+    always, only ever cover the actually-observed subspace.
+
+    Unlike every other update_input mode's obs_mask (purely TEMPORAL,
+    shape (B,T,1), broadcasting uniformly across every state_dim channel --
+    correct there because every observed channel is sampled together at an
+    observation time or not at all), the returned mask here is genuinely
+    per-CHANNEL as well: the ``full_dim - len(obs_var_indices)`` unobserved
+    physical channels are masked out at EVERY timestep, permanently, AND-ed
+    with the existing temporal pattern for the channels that ARE observed.
+
+    ``obs``: (B,T,D_obs) raw (NaN-at-unobserved-TIMES) obs tensor.
+    ``obs_mask``: (B,T,1) boolean/float temporal mask (pre-unsqueeze, same
+    convention as every other call site in this module).
+    ``obs_var_indices``: sequence of ``D_obs`` distinct ints in
+    ``[0, full_dim)`` -- the physical channels observation-covers.
+    Returns ``(obs_full, obs_mask_full)``, both (B,T,full_dim)."""
+    B, T, _ = obs.shape
+    idx = torch.as_tensor(obs_var_indices, device=obs.device, dtype=torch.long)
+    obs_full = obs.new_full((B, T, full_dim), float("nan"))
+    obs_full[..., idx] = obs
+    channel_mask = torch.zeros(full_dim, device=obs.device, dtype=obs_mask.dtype)
+    channel_mask[idx] = 1
+    obs_mask_full = obs_mask * channel_mask.view(1, 1, full_dim)
+    return obs_full, obs_mask_full
+
+
 def _soft_clip(t, clip_range):
     """``clip_range * tanh(t / clip_range)`` -- a smooth, everywhere-
     differentiable alternative to ``torch.clamp(t, -clip_range, clip_range)``.
@@ -323,7 +412,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
                          grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
                          prior_residual=False, detach_var_cost_grad=False,
-                         x_tau=None, beta_tau=None):
+                         x_tau=None, beta_tau=None,
+                         prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -501,6 +591,15 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
         g_flow = x - beta_tau * x_tau
         return torch.cat([g_obs, g_prior, g_flow, x], dim=-1)
+    if update_input == "subgrad+state+trueprior":
+        assert prior_ode_forcing is not None and prior_ode_params is not None and true_dynamics is not None, (
+            "subgrad+state+trueprior requires prior_ode_forcing/prior_ode_params/true_dynamics "
+            "(FourDVarNetSolver constructed with obs_var_indices+true_dynamics_dt -- see "
+            "_FULL_STATE_UPDATE_INPUTS)"
+        )
+        g_obs = (obs_clean - x) * obs_mask
+        g_prior = _true_ode_prior_residual(x, prior_ode_forcing, prior_ode_params, true_dynamics)
+        return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "gradsplit+state":
         with torch.enable_grad():
             prior_cost_val = prior_weight * _prior_cost(prior_unet, x, tau, residual=prior_residual)
@@ -524,7 +623,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
-                       detach_var_cost_grad=False, x_tau=None, beta_tau=None):
+                       detach_var_cost_grad=False, x_tau=None, beta_tau=None,
+                       prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -558,6 +658,12 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     ``_build_update_input``, only actually used by "subgrad+state+xtau"
     (``FourDVarNetPredictStateCFM`` only -- see ``_CFM_ONLY_UPDATE_INPUTS``).
     ``FourDVarNetSolver`` never passes these (defaults apply).
+
+    ``prior_ode_forcing``/``prior_ode_params``/``true_dynamics`` (all
+    default None): forwarded unchanged to ``_build_update_input``, only
+    actually used by "subgrad+state+trueprior" (see
+    ``_FULL_STATE_UPDATE_INPUTS``) -- constant across the whole unroll
+    (unlike ``x``), so the caller computes them once per ``forward()`` call.
     """
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
                                prior_unet=prior_unet, R_var=R_var,
@@ -566,7 +672,10 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                gradsplit_prior_scale=gradsplit_prior_scale,
                                prior_residual=prior_residual,
                                detach_var_cost_grad=detach_var_cost_grad,
-                               x_tau=x_tau, beta_tau=beta_tau).transpose(1, 2)
+                               x_tau=x_tau, beta_tau=beta_tau,
+                               prior_ode_forcing=prior_ode_forcing,
+                               prior_ode_params=prior_ode_params,
+                               true_dynamics=true_dynamics).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -661,7 +770,12 @@ class FourDVarNetSolver(nn.Module):
                  prior_residual=False,
                  prior_dropout=None,
                  prior_output_init_std=0.0,
-                 detach_var_cost_grad=False):
+                 detach_var_cost_grad=False,
+                 obs_var_indices=None,
+                 true_dynamics_dt=None,
+                 true_dynamics_NO=8,
+                 true_dynamics_J=4,
+                 true_dynamics_h=1.0):
         super().__init__()
         _validate_update_input(update_input)
         if update_input in _CFM_ONLY_UPDATE_INPUTS:
@@ -670,6 +784,23 @@ class FourDVarNetSolver(nn.Module):
                 "conditioning value (x_tau/beta_tau) that only exists for "
                 "FourDVarNetPredictStateCFM's CFM formulation -- structurally "
                 "undefined for FourDVarNetSolver (see _CFM_ONLY_UPDATE_INPUTS)."
+            )
+        if update_input in _FULL_STATE_UPDATE_INPUTS:
+            if obs_var_indices is None or true_dynamics_dt is None:
+                raise ValueError(
+                    f"update_input={update_input!r} needs the FULL physical "
+                    "L96 state (the true dynamics is undefined on a partially-"
+                    "observed subspace) -- obs_var_indices (which of "
+                    "state_dim's channels observation actually covers) and "
+                    "true_dynamics_dt (matching data.dt) must both be given "
+                    "(see _FULL_STATE_UPDATE_INPUTS)."
+                )
+        elif obs_var_indices is not None:
+            raise ValueError(
+                f"obs_var_indices is only meaningful for "
+                f"_FULL_STATE_UPDATE_INPUTS modes, not update_input={update_input!r} "
+                "-- every other mode's obs already lives in the same state_dim "
+                "space as x (no embedding needed)."
             )
         _validate_unet_backbone(unet_backbone)
         if unet_backbone in ("monai", "monai2d") and prior_tau_conditioning:
@@ -773,6 +904,22 @@ class FourDVarNetSolver(nn.Module):
         # (which would instead collapse the fed signal to subgrad+state's
         # own proxy).
         self.detach_var_cost_grad = detach_var_cost_grad
+        # obs_var_indices/true_dynamics_*: "subgrad+state+trueprior" only
+        # (see _FULL_STATE_UPDATE_INPUTS's validation above -- both None for
+        # every other mode). obs_var_indices: which of state_dim's channels
+        # observation actually covers (state_dim itself is the FULL
+        # physical state for this mode, e.g. 40 for NO=8,J=4 -- see
+        # _true_ode_prior_residual). true_dynamics: a real, non-trainable
+        # Lorenz96Dynamics instance (zero nn.Parameters -- not registered as
+        # a submodule, just a plain attribute) used to compute the true
+        # one-step-ahead prediction every iteration.
+        self.obs_var_indices = obs_var_indices
+        self.true_dynamics = None
+        if update_input in _FULL_STATE_UPDATE_INPUTS:
+            self.true_dynamics = Lorenz96Dynamics(
+                dt=true_dynamics_dt, NO=true_dynamics_NO, J=true_dynamics_J,
+                h=true_dynamics_h, clip_range=clip_range,
+            )
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -889,7 +1036,6 @@ class FourDVarNetSolver(nn.Module):
         reproduces the pre-existing single-block behavior exactly.
         """
         N = self.N_outer if N_outer is None else N_outer
-        obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
         # `batch.obs_mask` is either (B, T) -- one mask value per timestep,
         # broadcast across the whole D-dim state (L96's convention: which
         # channels are observable is fixed over time, so only the *time*
@@ -900,10 +1046,31 @@ class FourDVarNetSolver(nn.Module):
         # mask would silently treat every unobserved cell's zero-fill as a
         # real obs=0 measurement). Only unsqueeze the 2D case -- the 3D case
         # is used as-is.
-        obs_mask = batch.obs_mask.to(obs_clean.dtype)
-        if obs_mask.dim() == obs_clean.dim() - 1:
-            obs_mask = obs_mask.unsqueeze(-1)
+        raw_mask = batch.obs_mask.to(batch.obs.dtype)
+        if raw_mask.dim() == batch.obs.dim() - 1:
+            raw_mask = raw_mask.unsqueeze(-1)
+        if self.obs_var_indices is not None:
+            # "subgrad+state+trueprior" only: state_dim is the FULL physical
+            # state (see _true_ode_prior_residual), but obs/obs_mask only
+            # ever cover the actually-observed subspace -- embed both into
+            # state_dim-shaped tensors (NaN/0 at the state_dim-obs_var_indices
+            # never-observed channels, at every timestep, unlike every other
+            # mode's purely-temporal mask) before anything else touches them.
+            obs_full, obs_mask = _embed_obs_to_full_state(
+                batch.obs, raw_mask, self.obs_var_indices, self.state_dim)
+            obs_clean = torch.nan_to_num(obs_full, nan=0.0)
+        else:
+            obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
+            obs_mask = raw_mask
         B, T, D = obs_clean.shape
+        prior_ode_forcing = prior_ode_params = None
+        if self.update_input in _FULL_STATE_UPDATE_INPUTS:
+            # Constant across the whole unroll (unlike x) -- computed once
+            # per forward() call, same convention as obs_clean/obs_mask
+            # above. See _true_ode_prior_residual's docstring for the
+            # exact (B,T)/(B,8) shapes expected.
+            prior_ode_forcing = batch.true_forcing
+            prior_ode_params = batch.true_params
         if self.init_state_var > 0:
             x = torch.randn(B, T, D, device=obs_clean.device) * (self.init_state_var ** 0.5)
         else:
@@ -927,6 +1094,8 @@ class FourDVarNetSolver(nn.Module):
                 tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
                 grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
                 self.prior_residual, self.detach_var_cost_grad,
+                prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
+                true_dynamics=self.true_dynamics,
                 use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)

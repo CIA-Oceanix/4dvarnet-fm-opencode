@@ -8,11 +8,14 @@ from models.fourdvarnet import (
     FourDVarNetPredictStateCFM,
     FourDVarNetSolver,
     _build_update_input,
+    _embed_obs_to_full_state,
     _normalize_channels,
     _prior_ae,
     _prior_cost,
     _soft_clip,
+    _true_ode_prior_residual,
 )
+from models.lorenz96_dynamics import Lorenz96Dynamics
 
 _GRAD_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state")
 _ALL_UPDATE_INPUT_MODES = ("obs+state", "obs-only", "grad-only", "grad+state",
@@ -1418,6 +1421,196 @@ class TestSubgradStateXTau:
         tau = torch.rand(2)
         TestGradientCheckpointing()._assert_checkpoint_matches_reference(
             model, lambda model=model, x_tau=x_tau, batch=batch, tau=tau: model(x_tau, batch, tau))
+
+
+class TestTrueOdePriorResidual:
+    """_true_ode_prior_residual: "subgrad+state+trueprior"'s g_prior, a
+    time-shifted dynamical-consistency residual against the KNOWN true L96
+    ODE (g_prior[:,t,:] = x[:,t,:] - dynamics.step(x[:,t-1,:], forcing[:,t-1]),
+    zero-padded at t=0). The correctness-critical claim under test: calling
+    dynamics.step ONCE on the whole (B,T-1,D) "source" slice (vectorized
+    across the extra time dim) must give bit-identical results to calling it
+    T-1 separate times in a loop, one timestep at a time (how
+    Lorenz96Dynamics is normally used, e.g. generate_full_trajectory) --
+    Lorenz96Dynamics._derivative's own F/c1/hx/eps/fast_weights reshaping
+    logic was written for a single leading batch dim, not an extra middle
+    time dim, so this is the one place a silent broadcasting bug could hide."""
+
+    def _dynamics(self):
+        # J must stay 4 -- fast_weights (params[:,4:8]) is always 4 values,
+        # matching L96_JOINT_PARAM_NAMES' fixed w1..w4 convention.
+        return Lorenz96Dynamics(dt=0.001, NO=2, J=4, h=1.0, clip_range=50.0)
+
+    def test_shape_and_zero_padding_at_t0(self):
+        dynamics = self._dynamics()
+        B, T, D = 2, 5, 10  # NO=2, J=4 -> D = NO + NO*J = 10
+        torch.manual_seed(0)
+        x = torch.randn(B, T, D)
+        forcing = torch.randn(B, T)
+        params = torch.rand(B, 8) * 0.1 + torch.tensor([8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1])
+        g_prior = _true_ode_prior_residual(x, forcing, params, dynamics)
+        assert g_prior.shape == (B, T, D)
+        assert torch.equal(g_prior[:, 0, :], torch.zeros(B, D))
+
+    def test_matches_per_timestep_reference_loop(self):
+        """The vectorized (B,T-1,D) call must exactly match calling
+        dynamics.step() one timestep at a time in a loop."""
+        dynamics = self._dynamics()
+        B, T, D = 3, 6, 10
+        torch.manual_seed(1)
+        x = torch.randn(B, T, D)
+        forcing = torch.randn(B, T)
+        F = torch.rand(B) * 2 + 7.0
+        c1 = torch.rand(B) * 0.2 + 0.9
+        hx = torch.rand(B) * 0.2 + 0.9
+        eps = torch.rand(B) * 0.05 + 0.08
+        fast_weights = torch.rand(B, 4) * 0.2 + 0.9
+        params = torch.cat([F[:, None], c1[:, None], hx[:, None], eps[:, None], fast_weights], dim=-1)
+
+        g_prior = _true_ode_prior_residual(x, forcing, params, dynamics)
+
+        expected = torch.zeros(B, T, D)
+        for t in range(T - 1):
+            step_pred = dynamics.step(
+                x[:, t, :], forcing[:, t],
+                F=F, c1=c1, hx=hx, eps=eps, fast_weights=fast_weights,
+            )
+            expected[:, t + 1, :] = x[:, t + 1, :] - step_pred
+        assert torch.allclose(g_prior, expected, atol=1e-6)
+
+    def test_never_detached_gradient_flows_to_x(self):
+        dynamics = self._dynamics()
+        B, T, D = 2, 4, 10
+        x = torch.randn(B, T, D, requires_grad=True)
+        forcing = torch.randn(B, T)
+        params = torch.tensor([[8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]] * B)
+        g_prior = _true_ode_prior_residual(x, forcing, params, dynamics)
+        assert g_prior.requires_grad
+        g_prior.pow(2).sum().backward()
+        assert x.grad is not None
+        assert torch.isfinite(x.grad).all()
+        # t=0's own x contributes only via the padding row (constant zero,
+        # no dependence on x) -- but x[:,0,:] IS used as a "source" for
+        # predicting t=1, so x.grad[:,0,:] should still be nonzero overall.
+        assert x.grad.abs().sum() > 0
+
+
+class TestEmbedObsToFullState:
+    """_embed_obs_to_full_state: scatters a (B,T,D_obs) obs/mask pair into a
+    (B,T,full_dim) tensor at obs_var_indices -- needed when state_dim is the
+    FULL physical state (see TestTrueOdePriorResidual) while obs/obs_mask
+    only ever cover the actually-observed subspace. Unlike every other
+    update_input mode's purely-temporal (B,T,1) mask, the returned mask here
+    is genuinely per-channel too."""
+
+    def test_scatter_and_channel_mask(self):
+        B, T, D_obs, full_dim = 2, 3, 2, 5
+        obs_var_indices = (0, 3)
+        obs = torch.arange(B * T * D_obs, dtype=torch.float32).reshape(B, T, D_obs)
+        obs_mask = torch.ones(B, T, 1)
+        obs_full, mask_full = _embed_obs_to_full_state(obs, obs_mask, obs_var_indices, full_dim)
+        assert obs_full.shape == (B, T, full_dim)
+        assert mask_full.shape == (B, T, full_dim)
+        assert torch.equal(obs_full[..., 0], obs[..., 0])
+        assert torch.equal(obs_full[..., 3], obs[..., 1])
+        for c in (1, 2, 4):
+            assert torch.isnan(obs_full[..., c]).all()
+            assert torch.equal(mask_full[..., c], torch.zeros(B, T))
+        assert torch.equal(mask_full[..., 0], torch.ones(B, T))
+        assert torch.equal(mask_full[..., 3], torch.ones(B, T))
+
+    def test_temporal_mask_still_applies_at_observed_channels(self):
+        """The existing per-time sparsity (obs_mask=0 at unobserved times)
+        must still zero out the observed channels there too -- the new
+        per-channel restriction is AND-ed with it, not a replacement."""
+        B, T, D_obs, full_dim = 1, 4, 2, 3
+        obs_var_indices = (0, 2)
+        obs = torch.randn(B, T, D_obs)
+        obs_mask = torch.tensor([[[1.0], [0.0], [1.0], [0.0]]])
+        _, mask_full = _embed_obs_to_full_state(obs, obs_mask, obs_var_indices, full_dim)
+        assert torch.equal(mask_full[0, :, 0], torch.tensor([1.0, 0.0, 1.0, 0.0]))
+        assert torch.equal(mask_full[0, :, 2], torch.tensor([1.0, 0.0, 1.0, 0.0]))
+        assert torch.equal(mask_full[0, :, 1], torch.zeros(T))
+
+
+def _make_full_state_model(**kwargs):
+    """NO=2,J=4 (state_dim=10), obs_j=1 (obs_var_indices=(0,1,2,6), obs_dim=4)
+    -- the smallest scenario that actually exercises
+    "subgrad+state+trueprior"'s full-state machinery (>=2 slow nodes so the
+    periodic-shift terms in Lorenz96Dynamics aren't degenerate). J is fixed
+    at 4 (not shrinkable) since fast_weights (params[:,4:8]) always has 4
+    entries, matching L96_JOINT_PARAM_NAMES' fixed w1..w4 convention."""
+    defaults = dict(
+        state_dim=10, hidden_channels=[4, 8], N_outer=3,
+        update_input="subgrad+state+trueprior",
+        obs_var_indices=(0, 1, 2, 6), true_dynamics_dt=0.001,
+        true_dynamics_NO=2, true_dynamics_J=4,
+    )
+    defaults.update(kwargs)
+    return FourDVarNetSolver(**defaults)
+
+
+class _FullStateMockBatch:
+    def __init__(self, B=2, T=10, D_obs=4, seed=None):
+        if seed is not None:
+            torch.manual_seed(seed)
+        self.states = torch.randn(B, T, 10)
+        obs = torch.randn(B, T, D_obs)
+        mask = torch.zeros(B, T, dtype=torch.bool)
+        mask[:, ::3] = True
+        self.obs = torch.where(mask.unsqueeze(-1), obs, torch.full_like(obs, float("nan")))
+        self.obs_mask = mask
+        self.batch_size = B
+        self.true_forcing = torch.randn(B, T)
+        self.true_params = torch.tensor([[8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]] * B)
+
+
+class TestFourDVarNetSolverTrueprior:
+    def test_requires_obs_var_indices_and_dt(self):
+        with pytest.raises(ValueError):
+            FourDVarNetSolver(state_dim=10, hidden_channels=[4, 8], N_outer=2,
+                               update_input="subgrad+state+trueprior")
+
+    def test_obs_var_indices_rejected_for_other_modes(self):
+        with pytest.raises(ValueError):
+            FourDVarNetSolver(state_dim=10, hidden_channels=[4, 8], N_outer=2,
+                               update_input="obs+state", obs_var_indices=(0, 1, 2, 6))
+
+    def test_channel_multiplier_is_three_and_no_prior_unet(self):
+        model = _make_full_state_model()
+        assert model.prior_unet is None
+        assert model.true_dynamics is not None
+
+    def test_forward_shape_and_finite(self):
+        model = _make_full_state_model()
+        batch = _FullStateMockBatch(B=2, T=10)
+        out = model(batch)
+        assert out.shape == (2, 10, 10)
+        assert torch.isfinite(out).all()
+
+    def test_gradients_flow_to_unet(self):
+        model = _make_full_state_model(N_outer=3)
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.unet.parameters())
+
+    def test_true_dynamics_has_no_trainable_parameters(self):
+        """Lorenz96Dynamics is a plain (non-nn.Module) helper -- confirm it
+        contributes nothing to model.parameters() (no accidental
+        double-registration as a submodule)."""
+        model = _make_full_state_model()
+        n_params_solver = sum(p.numel() for p in model.parameters())
+        n_params_unet_only = sum(p.numel() for p in model.unet.parameters())
+        assert n_params_solver == n_params_unet_only
+
+    def test_checkpoint_matches_uncheckpointed(self):
+        model = _make_full_state_model(N_outer=3, dropout=0.1)
+        model.train()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        TestGradientCheckpointing()._assert_checkpoint_matches_reference(
+            model, lambda model=model, batch=batch: model(batch))
 
 
 class TestGradientCheckpointing:
