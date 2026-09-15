@@ -897,6 +897,11 @@ class FourDVarNetSolver(nn.Module):
         # for the obs term, the SAME quantity Weak4DVar's own J_o/R_var uses.
         self.loss_type = loss_type
         self.var_cost_Q_var = var_cost_Q_var
+        # Set only inside compute_loss, during training, under
+        # loss_type="var_cost" -- see that method's docstring. Initialized
+        # to None here so LitModel.training_step's getattr check is always
+        # well-defined, even before the first training step.
+        self._last_train_mse_proxy = None
         self.clip_range = clip_range
         # grad_clip_range (None default -> falls back to clip_range, today's
         # behavior): bounds ONLY the grad-only/grad+state autograd gradient
@@ -1218,17 +1223,25 @@ class FourDVarNetSolver(nn.Module):
         functions of the same unroll.
 
         ``self.loss_type=="var_cost"`` (default ``"mse"``, only allowed for
-        the ``_FULL_STATE_UPDATE_INPUTS`` modes): replaces every
-        ``F.mse_loss(block_state, states)``/``F.mse_loss(x_final, states)``
-        call above with ``_var_cost_training_loss(block_state, ...)`` --
-        the same deep-supervision/eval-only structure, just a different
-        per-state scalar function, evaluated with NO ground-truth
-        supervision at all (a genuinely self-supervised, weak-constraint-
-        4DVar-style objective -- see that function's docstring). ``val_loss``
-        under this mode is therefore the var_cost itself, not an RMSE-like
-        quantity -- still directly comparable across checkpoints/epochs for
-        ``stage1_best.ckpt`` selection, just on a different scale than the
-        default MSE mode's val_loss.
+        the ``_FULL_STATE_UPDATE_INPUTS`` modes): replaces ONLY the
+        **training**-time deep-supervision sum above with
+        ``_var_cost_training_loss(block_state, ...)`` -- a genuinely
+        self-supervised, weak-constraint-4DVar-style objective with NO
+        ground-truth supervision at all (see that function's docstring).
+        **Validation/eval stays ``F.mse_loss(x_final, states)`` regardless
+        of ``loss_type``** -- deliberately NOT var_cost, even under
+        ``loss_type="var_cost"`` -- so ``val_loss``/``stage1_best.ckpt``
+        selection is always on the exact same scale/meaning as every other
+        config (MSE-trained or var_cost-trained alike), which is also what
+        lets us directly measure how well the self-supervised var_cost
+        proxy tracks the true supervised MSE objective it's meant to
+        approximate. When ``self.training`` and ``loss_type=="var_cost"``,
+        this method also stashes ``self._last_train_mse_proxy =
+        F.mse_loss(x_final, states).detach()`` -- a monitoring-only value
+        (never entering the backward graph) that ``LitModel.training_step``
+        additionally logs as ``train_mse_proxy`` alongside the real
+        ``train_loss`` (the var_cost value actually optimized), purely to
+        compare the two objectives' trajectories epoch-by-epoch.
 
         Both cases add -- only when ``prior_unet`` exists (built whenever
         ``update_input in _PRIOR_MODES`` OR ``aux_var_cost_weight>0``, so
@@ -1273,7 +1286,7 @@ class FourDVarNetSolver(nn.Module):
         """
         block_states = self._unrolled_blocks(batch)
         x_final = block_states[-1]
-        if self.loss_type == "var_cost":
+        if self.loss_type == "var_cost" and self.training:
             raw_mask = batch.obs_mask.to(batch.obs.dtype).unsqueeze(-1)
             if self.obs_var_indices is not None:
                 obs_full, obs_mask = _embed_obs_to_full_state(
@@ -1287,13 +1300,13 @@ class FourDVarNetSolver(nn.Module):
                 return _var_cost_training_loss(
                     s, obs_clean, obs_mask, batch.true_forcing, batch.true_params,
                     self.true_dynamics, self.R_var, self.var_cost_Q_var)
-            if self.training:
-                loss = sum(_vc(s) for s in block_states) / len(block_states)
-            else:
-                loss = _vc(x_final)
+            loss = sum(_vc(s) for s in block_states) / len(block_states)
+            self._last_train_mse_proxy = F.mse_loss(x_final, batch.states).detach()
         elif self.training:
             loss = sum(F.mse_loss(s, batch.states) for s in block_states) / len(block_states)
         else:
+            # Validation/eval: always the supervised MSE criterion,
+            # regardless of loss_type -- see this method's docstring.
             loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
             numel = x_final.numel()

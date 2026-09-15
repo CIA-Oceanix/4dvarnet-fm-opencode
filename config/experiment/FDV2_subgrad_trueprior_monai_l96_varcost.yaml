@@ -38,6 +38,18 @@
 # scale as the default MSE loss (matching compute_loss's existing
 # aux_var_cost_weight convention), so these should be a reasonable
 # starting point, but they were NOT independently re-tuned for this loss.
+#
+# IMPORTANT (2026-09-15 correction, after the first attempt at this job --
+# see CHANGELOG.d/2026-09-15-fdv-varcost-val-mse-decoupling.md): val_loss
+# (and therefore stage1_best.ckpt selection) is ALWAYS the supervised
+# F.mse_loss(x_final, states) criterion, regardless of loss_type -- var_cost
+# only replaces the TRAINING objective, never validation. This keeps
+# checkpoint selection and cross-config comparison on the same scale as
+# every other config. compute_loss also logs train_mse_proxy (the
+# supervised MSE the training-mode var_cost was NOT optimized against,
+# stashed purely for monitoring) alongside the real train_loss (var_cost),
+# so training curves can show directly how well the self-supervised
+# var_cost proxy tracks the true MSE criterion epoch-by-epoch.
 defaults:
   - /lorenz96_default
   - _self_
