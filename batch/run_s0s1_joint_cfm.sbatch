@@ -21,8 +21,8 @@ export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 mkdir -p "$MPLCONFIGDIR" sbatch_logs experiments
 
 EXPERIMENTS=(
-  S5_joint_cfm_s0s1
-  S6_joint_cfm_s0s1_tau0
+  joint_cfm
+  joint_direct_unet
 )
 EXP=${EXPERIMENTS[$SLURM_ARRAY_TASK_ID]}
 
@@ -34,7 +34,7 @@ echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv -i 0 2>/dev/null | tail 
 echo ""
 
 python train.py \
-  --config-name experiment/${EXP} \
+  --config-name models/${EXP} \
   hydra.run.dir=. \
   hydra.output_subdir=null
 

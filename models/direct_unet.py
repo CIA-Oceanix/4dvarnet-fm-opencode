@@ -2,22 +2,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.unet import AttentionPool1D, ConvBlock, Down, Up, UNet1D
+from models.unet import AttentionPool1D, ConvBlock, Down, Up, UNet1D, make_cond, cond_extra_width
 
 
 class DirectUNet(nn.Module):
     def __init__(self, state_dim=3, hidden_channels=None, dropout=0.1, param_dim=4,
-                 cond_extra_dim=0):
+                 use_obs=True, use_forcing=False, use_params=False, cond_extra_dim=None):
         super().__init__()
         self.state_dim = state_dim
         self.param_dim = param_dim
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            # Legacy API: a single cond_extra_dim>0 bundles forcing+params together.
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
         self.cond_extra_dim = cond_extra_dim
         if hidden_channels is None:
             hidden_channels = [64, 128, 256]
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=state_dim,
-            cond_extra_dim=cond_extra_dim,
+            cond_extra_dim=self.cond_extra_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
@@ -30,14 +39,8 @@ class DirectUNet(nn.Module):
         forcing = batch.forcing
         params = batch.params
         B, T, D = obs.shape
-        obs_clean = torch.nan_to_num(obs, nan=0.0)
-        if self.cond_extra_dim > 0:
-            cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
-            if self.param_dim > 0:
-                params_t = params.unsqueeze(1).expand(B, T, -1)
-                cond = torch.cat([cond, params_t], dim=-1)
-        else:
-            cond = obs_clean
+        cond = make_cond(obs, forcing, params, self.param_dim,
+                         self.use_obs, self.use_forcing, self.use_params)
         x = torch.zeros(B, D, T, device=obs.device)
         tau = torch.zeros(B, device=obs.device)
         out = self.unet(x, cond.transpose(1, 2), tau=tau)

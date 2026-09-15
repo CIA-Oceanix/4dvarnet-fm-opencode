@@ -2,8 +2,17 @@ import torch
 
 
 class LinearInterpolant:
-    def __init__(self, nu: float = 1.0):
+    def __init__(self, nu: float = 1.0, tau_sampling: str = "uniform",
+                 logit_normal_loc: float = 0.0, logit_normal_scale: float = 1.0,
+                 beta_alpha: float = 2.5, beta_beta: float = 1.0):
         self.nu = nu
+        if tau_sampling not in ("uniform", "logit_normal", "beta"):
+            raise ValueError(f"Unknown tau_sampling: {tau_sampling!r}")
+        self.tau_sampling = tau_sampling
+        self.logit_normal_loc = logit_normal_loc
+        self.logit_normal_scale = logit_normal_scale
+        self.beta_alpha = beta_alpha
+        self.beta_beta = beta_beta
 
     def alpha(self, tau: torch.Tensor) -> torch.Tensor:
         return 1.0 - tau
@@ -48,7 +57,20 @@ class LinearInterpolant:
         return self.alpha(tau) * self.beta(tau)
 
     def sample_tau(self, shape, device: torch.device = torch.device("cpu")) -> torch.Tensor:
-        return torch.rand(shape, device=device)
+        if self.tau_sampling == "uniform":
+            return torch.rand(shape, device=device)
+        if self.tau_sampling == "logit_normal":
+            # tau = sigmoid(loc + scale * z), z ~ N(0, 1)  (Stable Diffusion 3 style)
+            z = torch.randn(shape, device=device)
+            return torch.sigmoid(self.logit_normal_loc + self.logit_normal_scale * z)
+        # beta: tau ~ Beta(beta_alpha, beta_beta) (Zheng et al., "Beta-Tuned Timestep
+        # Diffusion Model", ECCV 2024). alpha<beta skews toward tau=0 -- in this
+        # interpolant that's x0 (noise), the harder/high-corruption end the Euler
+        # sampler starts from; alpha>beta skews toward tau=1 (x1, data, easier).
+        # alpha=beta<1 gives a U-shaped density biased toward both ends.
+        concentration1 = torch.full(shape, self.beta_alpha, device=device)
+        concentration0 = torch.full(shape, self.beta_beta, device=device)
+        return torch.distributions.Beta(concentration1, concentration0).sample()
 
     def compute_drift(self, x: torch.Tensor, x_cond_mean: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
         a = self.alpha(tau)

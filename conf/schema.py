@@ -15,7 +15,7 @@ class DataConfig:
     system: str = "lorenz63"
     dt: float = 0.01
     T_max: float = 3.0
-    obs_interval: int = 20
+    obs_interval: int = 30
     R_var: float = 0.5
     B_var: float = 2.0
     num_windows: int = 2000
@@ -40,11 +40,8 @@ class DataConfig:
     forcing_coupling: str = "linear"
     param_bias: float = 0.0
     case: int = 1
-    train_mix: str = "cs1+cs2"
-    randomize_params: bool = False
-    param_noise: float = 0.2
     test_randparam: bool = True
-    test_param_noise: float = 0.2
+    param_noise: float = 0.2
 
     # Lorenz96 (two-scale) fields
     NO: int = 8
@@ -69,6 +66,14 @@ class DataConfig:
     obs_density_augment: bool = False
     obs_density_full_prob: float = 0.4
     obs_density_min_keep: int = 0
+
+    # s0/s1 dataset-cache seeding (None falls back to the historical
+    # hardcoded defaults: train=42, val=99, s0=123, s1=131)
+    train_seed: Optional[int] = None
+    val_seed: Optional[int] = None
+    s0_seed: Optional[int] = None
+    s1_seed: Optional[int] = None
+    require_cache: bool = False
 
     # Device
     device: str = "cpu"
@@ -113,7 +118,6 @@ class DataConfig:
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
             coupling_exponent_truth=self.coupling_exponent_truth,
-            coupling_exponent_da=self.coupling_exponent_da,
             fast_weights=list(self.fast_weights),
             randomize={k: {"randomized": v.randomized, "noise": v.noise,
                            "biased": v.biased, "bias": v.bias}
@@ -150,6 +154,7 @@ class DataConfig:
             tau_eta=self.tau_eta, sigma_eta=self.sigma_eta,
             forcing_state_bias=self.forcing_state_bias,
             forcing_coupling=self.forcing_coupling,
+            coupling_exponent_truth=self.coupling_exponent_truth,
         )
 
 
@@ -165,10 +170,15 @@ class VanillaCFMConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -179,6 +189,11 @@ class JointCFMConfig:
     param_noise_max: float = 0.3
     param_flow_channels: Optional[List[int]] = None
     train_tau_0_only: bool = False
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
     param_ref: Optional[List[float]] = None
     param_flow_pool: str = "mean"
 
@@ -234,10 +249,15 @@ class PredictStateCFMConfig:
     hidden_channels: List[int] = field(default_factory=lambda: [64, 128, 256])
     time_emb_dim: int = 64
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -246,10 +266,15 @@ class TweedieCFMConfig:
     time_emb_dim: int = 64
     K_inner: int = 5
     N_outer: int = 10
-    sigma_prior: float = 0.5
+    sigma_prior: float = 1.0
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    tau_sampling: str = "uniform"  # "uniform" | "logit_normal" | "beta"
+    logit_normal_loc: float = 0.0
+    logit_normal_scale: float = 1.0
+    beta_alpha: float = 2.5
+    beta_beta: float = 1.0
 
 
 @dataclass
@@ -364,6 +389,11 @@ class StageConfig:
     epochs: int = 200
     lr: float = 1e-3
     gradient_clip_val: float = 10.0
+    # EarlyStopping on val_loss: stop after `early_stopping_patience` epochs with no
+    # improvement greater than `early_stopping_min_delta`. Set patience to 0/null to
+    # disable early stopping for this stage (train the full `max_epochs`).
+    early_stopping_patience: Optional[int] = 300
+    early_stopping_min_delta: float = 1e-3
     use_cosine_scheduler: bool = True  # deliberate default since 2026-09-10, see CHANGELOG.md
     obs_weight_lr_scale: float = 1.0
     prior_unet_lr_scale: float = 1.0
@@ -405,12 +435,14 @@ class Strong4DVarConfig:
 
 @dataclass
 class EnKFConfig:
+    N_ensemble: int = 50
     inflation: float = 1.0
     loc_radius: float = -1.0
 
 
 @dataclass
 class ETKFConfig:
+    N_ensemble: int = 50
     inflation: float = 1.0
     loc_radius: float = -1.0
     loc_mode: str = "square_root"
@@ -419,32 +451,11 @@ class ETKFConfig:
 @dataclass
 class BaselinesConfig:
     da_window_steps: int = 300
-    N_ensemble: int = 30
     batch_size: int = 128
     weak4dvar: Weak4DVarConfig = field(default_factory=Weak4DVarConfig)
     strong4dvar: Strong4DVarConfig = field(default_factory=Strong4DVarConfig)
     enkf: EnKFConfig = field(default_factory=EnKFConfig)
     etkf: ETKFConfig = field(default_factory=ETKFConfig)
-
-
-@dataclass
-class CaseStudyConfig:
-    param_bias: float = 0.0
-    forcing_state_bias: float = 0.0
-    forcing_coupling: str = "linear"
-
-
-@dataclass
-class CS1Config:
-    param_bias: float = 0.0
-    forcing_coupling: str = "linear"
-
-
-@dataclass
-class CS2Config:
-    param_bias: float = 0.15
-    forcing_state_bias: float = 0.15
-    forcing_coupling: str = "quartic"
 
 
 @dataclass
@@ -454,5 +465,3 @@ class ExperimentConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     baselines: BaselinesConfig = field(default_factory=BaselinesConfig)
-    cs1: CS1Config = field(default_factory=CS1Config)
-    cs2: CS2Config = field(default_factory=CS2Config)

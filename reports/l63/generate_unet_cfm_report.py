@@ -72,7 +72,7 @@ def experiment_config_table(exp_data):
     lines += [
         "-" * 130,
         "",
-        "Shared settings (from lorenz63_default.yaml):",
+        "Shared settings (from lorenz63.yaml):",
         "  dt=0.01, T_max=3.0s, obs_interval=20, R_var=0.5, B_var=2.0",
         "  num_windows=2000, spinup_steps=10000, batch_size=32",
         "  lr=0.001, gradient_clip_val=10.0 (stage1), stage2 disabled",

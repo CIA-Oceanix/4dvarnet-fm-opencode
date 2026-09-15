@@ -1,6 +1,21 @@
-torch>=2.0.0
-numpy>=1.24.0
+# Core dependencies. torch/torchvision are pinned to the cu126 build (not
+# just >=2.0.0) because monai==1.6.0 hard-requires torch>=2.8.0 and this
+# project's single `intern` env now installs monai directly rather than
+# keeping it in a separate env -- see the 2026-09-07 CHANGELOG entry and
+# models/monai_unet_adapter.py's module docstring for the history (an
+# earlier attempt at this broke CUDA via a torchvision/torch mismatch;
+# torchvision must stay in lockstep with torch, not just satisfy >=).
+# Install with:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.8.0+cu126
+torchvision==0.23.0+cu126
+monai==1.6.0
+einops>=0.8.0
+numpy>=1.24.0,<3.0
 matplotlib>=3.8.0
 pytest>=7.4.0
 pytest-cov>=4.1.0
 pyyaml>=6.0
+hydra-core==1.3.4
+omegaconf==2.3.1
+pytorch-lightning==2.6.5

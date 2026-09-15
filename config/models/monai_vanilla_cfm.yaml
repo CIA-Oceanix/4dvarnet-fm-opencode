@@ -1,0 +1,51 @@
+# @package _global_
+# MonaiUNet1D-backed analogue of vanilla_cfm.yaml: identical CFM training/
+# sampling contract, only the backbone changes (models.unet.UNet1D ->
+# models.monai_unet_adapter.MonaiVanillaCFM).
+#
+# M tier (hidden [64,128,256], num_res_blocks=2) -- the default here -- is
+# the best-performing monai tier for the CFM contract in the L96 benchmark
+# (reports/l96/outputs/l96_consolidated_benchmark.md: CFM-M(monai) S0 RMSE
+# 0.481 vs CFM-S+(monai) 0.533 -- a clean, uncomplicated win, unlike
+# DirectUNet's tier story). cond_extra_dim mirrors vanilla_cfm.yaml's
+# effective obs+forcing+params conditioning (param_dim=4 default -> 1
+# forcing + 4 params = 5). Note: MonaiVanillaCFM doesn't expose the plain
+# VanillaCFM's tau_sampling/logit_normal/beta options -- model_factory's
+# monai_vanilla_cfm branch always uses uniform tau sampling.
+#
+# NOT verified end-to-end in this repo: `monai` isn't in the project's
+# standard env (torch/CUDA conflict -- see requirements-monai.txt / the
+# 2026-09-07 CHANGELOG entry); needs a separate env with
+# torch==2.8.0+cu126 + monai==1.6.0 to actually train this.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  monai_vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

@@ -1,21 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.unet import AttentionPool1D, ConvBlock, Down, Up, SinusoidalEmbedding, UNet1D
+from models.unet import (AttentionPool1D, ConvBlock, Down, Up, SinusoidalEmbedding, UNet1D,
+                         make_cond, cond_extra_width)
 from models.interpolant import LinearInterpolant
-
-
-def _make_cond(obs, forcing, params, param_dim=0, cond_extra_dim=0):
-    obs_clean = torch.nan_to_num(obs, nan=0.0)
-    if cond_extra_dim > 0:
-        B, T, D = obs.shape
-        cond = torch.cat([obs_clean, forcing.unsqueeze(-1)], dim=-1)
-        if param_dim > 0:
-            params_t = params.unsqueeze(1).expand(B, T, -1)
-            cond = torch.cat([cond, params_t], dim=-1)
-    else:
-        cond = obs_clean
-    return cond
 
 
 class ParamFlowCNN(nn.Module):
@@ -140,35 +128,51 @@ class ParamFlowUNet(nn.Module):
 
 
 class VanillaCFM(nn.Module):
-    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4, cond_extra_dim=0):
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=1.0, dropout=0.1, train_tau_0_only=False, param_dim=4,
+                 use_obs=True, use_forcing=False, use_params=False, cond_extra_dim=None,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
         super().__init__()
-        self.cond_extra_dim = cond_extra_dim
         self.param_dim = param_dim
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            # Legacy API: a single cond_extra_dim>0 bundles forcing+params together.
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
+        self.cond_extra_dim = cond_extra_dim
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=state_dim,
-            cond_extra_dim=cond_extra_dim,
+            cond_extra_dim=self.cond_extra_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
             time_emb_dim=time_emb_dim,
             dropout=dropout,
         )
-        self.interpolant = LinearInterpolant(nu=1.0)
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
         self.N_outer = N_outer
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
         self.train_tau_0_only = train_tau_0_only
 
     def forward(self, x_t, batch, tau):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params, self.param_dim, self.cond_extra_dim)
+        cond = make_cond(batch.obs, batch.forcing, batch.params, self.param_dim,
+                         self.use_obs, self.use_forcing, self.use_params)
         v = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return v.transpose(1, 2)
 
     def compute_cfm_loss(self, batch):
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else self.interpolant.sample_tau((B,), device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         v_target = batch.states - x0
@@ -218,16 +222,21 @@ class JointCFM(VanillaCFM):
     def __init__(self, state_dim=3, param_dim=4, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1, param_loss_weight=0.1,
                  param_flow_channels=None, train_tau_0_only=False, param_ref=None,
-                 param_flow_pool="mean"):
+                 param_flow_pool="mean",
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
         super().__init__(state_dim=state_dim, param_dim=param_dim,
                          hidden_channels=hidden_channels,
                          time_emb_dim=time_emb_dim, N_outer=N_outer,
                          sigma_prior=sigma_prior, dropout=dropout,
-                         cond_extra_dim=1)
+                         use_obs=True, use_forcing=True, use_params=False,
+                         tau_sampling=tau_sampling, logit_normal_loc=logit_normal_loc,
+                         logit_normal_scale=logit_normal_scale,
+                         beta_alpha=beta_alpha, beta_beta=beta_beta)
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=state_dim,
-            cond_extra_dim=1,
+            cond_extra_dim=self.cond_extra_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
@@ -265,7 +274,8 @@ class JointCFM(VanillaCFM):
         return param_norm * self.param_scale + self.param_ref
 
     def forward(self, x_t, batch, tau, param_tau=None):
-        cond = _make_cond(batch.obs, batch.forcing, batch.params, 0, 1)
+        cond = make_cond(batch.obs, batch.forcing, batch.params,
+                         use_obs=True, use_forcing=True, use_params=False)
         v_state = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         v_state = v_state.transpose(1, 2)
         x_hat_1 = x_t + (1.0 - tau).view(-1, 1, 1) * v_state
@@ -284,7 +294,7 @@ class JointCFM(VanillaCFM):
     def compute_cfm_loss(self, batch):
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else self.interpolant.sample_tau((B,), device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         v_target = batch.states - x0
@@ -465,7 +475,8 @@ class JointCFMCoupled(nn.Module):
         return param_norm * self.param_scale + self.param_ref
 
     def forward(self, x_tau, batch, tau, theta_tau):
-        cond = _make_cond(batch.obs, batch.forcing, theta_tau, self.param_dim, 1 + self.param_dim)
+        cond = make_cond(batch.obs, batch.forcing, theta_tau, self.param_dim,
+                         use_obs=True, use_forcing=True, use_params=True)
         v_state = self.unet(x_tau.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         v_state = v_state.transpose(1, 2)
         v_param = self.param_flow(batch.obs, batch.forcing, x_tau, theta_tau, tau)
@@ -535,17 +546,29 @@ class PredictStateCFM(nn.Module):
     the predicted final state.
     """
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
-                 N_outer=10, sigma_prior=0.5, dropout=0.1,
-                 train_tau_0_only=False, param_dim=4, cond_extra_dim=0):
+                 N_outer=10, sigma_prior=1.0, dropout=0.1,
+                 train_tau_0_only=False, param_dim=4,
+                 use_obs=True, use_forcing=False, use_params=False, cond_extra_dim=None,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
         super().__init__()
         self.param_dim = param_dim
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            # Legacy API: a single cond_extra_dim>0 bundles forcing+params together.
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
         self.cond_extra_dim = cond_extra_dim
         self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
         self.time_emb_dim = time_emb_dim
         self.unet = UNet1D(
             state_dim=state_dim,
             obs_dim=state_dim,
-            cond_extra_dim=cond_extra_dim,
+            cond_extra_dim=self.cond_extra_dim,
             hidden_channels=hidden_channels,
             use_obs=True,
             use_energy=False,
@@ -553,7 +576,10 @@ class PredictStateCFM(nn.Module):
             dropout=dropout,
             output_dim=state_dim,
         )
-        self.interpolant = LinearInterpolant(nu=1.0)
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
         self.N_outer = N_outer
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
@@ -561,8 +587,8 @@ class PredictStateCFM(nn.Module):
 
     def forward(self, x_t, batch, tau):
         """Forward pass: predict final state mean μ = E[x1|xt,y]."""
-        cond = _make_cond(batch.obs, batch.forcing, batch.params,
-                          self.param_dim, self.cond_extra_dim)
+        cond = make_cond(batch.obs, batch.forcing, batch.params,
+                         self.param_dim, self.use_obs, self.use_forcing, self.use_params)
         μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return μ.transpose(1, 2)
 
@@ -570,7 +596,7 @@ class PredictStateCFM(nn.Module):
         """Compute CFM loss: MSE(μ, x1) where μ = network prediction."""
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else self.interpolant.sample_tau((B,), device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         μ_pred = self.forward(x_tau, batch, tau)
@@ -625,10 +651,19 @@ class TweedieCFM(nn.Module):
         time_emb_dim: int = 64,
         K_inner: int = 5,
         N_outer: int = 10,
-        sigma_prior: float = 0.5,
+        sigma_prior: float = 1.0,
         dropout: float = 0.1,
         train_tau_0_only: bool = False,
-        cond_extra_dim: int = 0,
+        param_dim: int = 4,
+        use_obs: bool = True,
+        use_forcing: bool = False,
+        use_params: bool = False,
+        cond_extra_dim: int = None,
+        tau_sampling: str = "uniform",
+        logit_normal_loc: float = 0.0,
+        logit_normal_scale: float = 1.0,
+        beta_alpha: float = 2.5,
+        beta_beta: float = 1.0,
     ):
         super().__init__()
         self.state_dim = state_dim
@@ -636,6 +671,17 @@ class TweedieCFM(nn.Module):
         self.N_outer = N_outer
         self.sigma_prior = sigma_prior
         self.train_tau_0_only = train_tau_0_only
+        self.param_dim = param_dim
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            # Legacy API: a single cond_extra_dim>0 bundles forcing+params together.
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
+        self.cond_extra_dim = cond_extra_dim
 
         from models.residual import MeanEstimatorCell
         self.mean_estimator = MeanEstimatorCell(
@@ -648,14 +694,17 @@ class TweedieCFM(nn.Module):
         self.velocity_unet = UNet1D(
             state_dim=state_dim,
             hidden_channels=hidden_channels,
-            obs_dim=2 * state_dim,
-            cond_extra_dim=cond_extra_dim,
+            obs_dim=2 * state_dim,  # [obs, mean], obs zeroed when use_obs=False
+            cond_extra_dim=self.cond_extra_dim,
             time_emb_dim=time_emb_dim,
             use_obs=True,
             use_energy=False,
             dropout=dropout,
         )
-        self.interpolant = LinearInterpolant(nu=1.0)
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
         self._stage = 1
 
     def estimate_mean(self, obs: torch.Tensor) -> torch.Tensor:
@@ -670,21 +719,27 @@ class TweedieCFM(nn.Module):
             x = x + residual
         return x.transpose(1, 2)
 
-    def forward(self, x_t, obs, mean, tau):
+    def forward(self, x_t, batch, mean, tau):
         """Predict velocity in residual space.
 
         Args:
             x_t: Noised residual state (B, T, D)
-            obs: Observations (B, T, D)
-            mean: Mean estimate (B, T, D)
+            batch: FlowMatchingBatch (obs/forcing/params -- gated by use_obs/use_forcing/use_params)
+            mean: Mean estimate (B, T, D), always concatenated
             tau: Time points (B,) default τ=0 when train_tau_0_only
 
         Returns:
             v: Predicted velocity (B, T, D)
         """
         if self.train_tau_0_only:
-            tau = torch.zeros(obs.shape[0], device=obs.device)
-        cond = torch.cat([torch.nan_to_num(obs, nan=0.0), mean], dim=-1)
+            tau = torch.zeros(batch.obs.shape[0], device=batch.obs.device)
+        obs_clean = torch.nan_to_num(batch.obs, nan=0.0) if self.use_obs else torch.zeros_like(batch.obs)
+        cond = torch.cat([obs_clean, mean], dim=-1)
+        if self.use_forcing:
+            cond = torch.cat([cond, batch.forcing.unsqueeze(-1)], dim=-1)
+        if self.use_params and self.param_dim > 0:
+            B, T, _ = batch.obs.shape
+            cond = torch.cat([cond, batch.params.unsqueeze(1).expand(B, T, -1)], dim=-1)
         v = self.velocity_unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return v.transpose(1, 2)
 
@@ -696,7 +751,7 @@ class TweedieCFM(nn.Module):
         """
         B = batch.obs.shape[0]
         device = batch.obs.device
-        tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else self.interpolant.sample_tau((B,), device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         mean = self.estimate_mean(batch.obs)
 
@@ -704,7 +759,7 @@ class TweedieCFM(nn.Module):
             x_residue = batch.states - mean
             x_tau_residue = self.interpolant.mix(x0, x_residue, tau)
             v_target = x_residue - x0
-            v_pred = self.forward(x_tau_residue, batch.obs, mean, tau)
+            v_pred = self.forward(x_tau_residue, batch, mean, tau)
             return F.mse_loss(v_pred, v_target)
         return F.mse_loss(mean, batch.states)
 
@@ -723,13 +778,13 @@ class TweedieCFM(nn.Module):
         x = torch.randn_like(obs) * self.sigma_prior
 
         if self.train_tau_0_only:
-            v = self.forward(x, obs, mean, tau=torch.zeros(B, device=device))
+            v = self.forward(x, batch, mean, tau=torch.zeros(B, device=device))
             x = x + v
         else:
             dt = 1.0 / N_outer
             for step in range(N_outer):
                 tau = torch.full((B,), step / N_outer, device=device)
-                v = self.forward(x, obs, mean, tau)
+                v = self.forward(x, batch, mean, tau)
                 x = x + dt * v
 
         return mean + x
@@ -737,3 +792,118 @@ class TweedieCFM(nn.Module):
     def set_stage(self, stage: int):
         """Set the current training stage for compute_loss."""
         self._stage = stage
+
+
+class JointTweedieCFM(TweedieCFM):
+    """TweedieCFM extended with a coupled parameter flow, exactly as JointCFM
+    extends VanillaCFM.
+
+    Stage 1 (mean estimator) is unchanged from TweedieCFM: E[x1 | obs], no
+    parameter estimation yet -- the param flow needs a state estimate to
+    couple to, which only exists from stage 2 onward.
+
+    Stage 2 jointly trains the residual velocity CFM (state) and a separate
+    ParamFlowCNN (params), coupled the same way as JointCFM: the param flow
+    reads the model's own analytic instant full-state estimate
+    x_hat_1 = mean + (1 - tau) * v_residual (stop-grad), never the true
+    parameters, so there is no oracle leak at inference. true_param appears
+    only as the CFM target in training.
+    """
+
+    def __init__(self, state_dim=3, param_dim=4, hidden_channels=None, time_emb_dim=64,
+                 K_inner=5, N_outer=10, sigma_prior=1.0, dropout=0.1, param_loss_weight=0.1,
+                 param_flow_channels=None, train_tau_0_only=False,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
+        super().__init__(state_dim=state_dim, param_dim=param_dim,
+                         hidden_channels=hidden_channels, time_emb_dim=time_emb_dim,
+                         K_inner=K_inner, N_outer=N_outer, sigma_prior=sigma_prior,
+                         dropout=dropout, train_tau_0_only=train_tau_0_only,
+                         use_obs=True, use_forcing=True, use_params=False,
+                         tau_sampling=tau_sampling, logit_normal_loc=logit_normal_loc,
+                         logit_normal_scale=logit_normal_scale,
+                         beta_alpha=beta_alpha, beta_beta=beta_beta)
+        self.param_loss_weight = param_loss_weight
+        self.param_flow = ParamFlowCNN(
+            param_dim=param_dim,
+            state_dim=state_dim,
+            hidden_channels=param_flow_channels,
+            time_emb_dim=time_emb_dim,
+            dropout=dropout,
+        )
+
+    def forward(self, x_t, batch, mean, tau, param_0=None):
+        """Predict (state velocity, param velocity_or_None) in residual space."""
+        v_state = super().forward(x_t, batch, mean, tau)
+        v_param = None
+        if param_0 is not None:
+            x_hat_1 = mean + x_t + (1.0 - tau).view(-1, 1, 1) * v_state
+            Bp, Tp, _ = x_t.shape
+            param_tau = ((1.0 - tau).view(-1, 1, 1) * param_0.unsqueeze(1)
+                         + tau.view(-1, 1, 1) * batch.true_params.unsqueeze(1))
+            param_tau = param_tau.expand(Bp, Tp, -1)
+            v_param = self.param_flow(batch.obs, batch.forcing,
+                                      x_hat_1.detach(), param_tau, tau)
+        return v_state, v_param
+
+    def _param_target(self, batch, param_0, tau):
+        return batch.true_params - param_0
+
+    def compute_loss(self, batch):
+        """Stage 1: unchanged mean-estimator MSE (no param loss, see class
+        docstring). Stage 2: residual CFM loss + param CFM loss."""
+        if self._stage != 2:
+            return super().compute_loss(batch)
+
+        B = batch.obs.shape[0]
+        device = batch.obs.device
+        tau = torch.zeros(B, device=device) if self.train_tau_0_only else self.interpolant.sample_tau((B,), device=device)
+        x0 = torch.randn_like(batch.states) * self.sigma_prior
+        mean = self.estimate_mean(batch.obs)
+        x_residue = batch.states - mean
+        x_tau_residue = self.interpolant.mix(x0, x_residue, tau)
+        v_target = x_residue - x0
+
+        param_0 = torch.randn(B, self.param_dim, device=device)
+        v_pred_state, v_pred_param = self.forward(x_tau_residue, batch, mean, tau, param_0)
+        loss_cfm = F.mse_loss(v_pred_state, v_target)
+        if batch.true_params is not None and self.param_loss_weight > 0:
+            param_target = self._param_target(batch, param_0, tau)
+            loss_param = F.mse_loss(v_pred_param, param_target)
+            return loss_cfm + self.param_loss_weight * loss_param
+        return loss_cfm
+
+    def sample(self, batch, N_outer=None, return_params=False):
+        if N_outer is None:
+            N_outer = self.N_outer
+        obs = batch.obs
+        B = obs.shape[0]
+        device = obs.device
+        mean = self.estimate_mean(obs)
+        x = torch.randn_like(obs) * self.sigma_prior
+
+        if not return_params:
+            if self.train_tau_0_only:
+                v_state, _ = self.forward(x, batch, mean, tau=torch.zeros(B, device=device))
+                return mean + x + v_state
+            dt = 1.0 / N_outer
+            for step in range(N_outer):
+                tau = torch.full((B,), step / N_outer, device=device)
+                v_state, _ = self.forward(x, batch, mean, tau)
+                x = x + dt * v_state
+            return mean + x
+
+        param = torch.randn(B, self.param_dim, device=device)
+        if self.train_tau_0_only:
+            tau = torch.zeros(B, device=device)
+            v_state, v_param = self.forward(x, batch, mean, tau, param)
+            x = x + v_state
+            param = param + v_param
+        else:
+            dt = 1.0 / N_outer
+            for step in range(N_outer):
+                tau = torch.full((B,), step / N_outer, device=device)
+                v_state, v_param = self.forward(x, batch, mean, tau, param)
+                x = x + dt * v_state
+                param = param + dt * v_param
+        return mean + x, param

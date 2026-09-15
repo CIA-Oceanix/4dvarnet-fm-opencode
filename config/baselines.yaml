@@ -1,0 +1,16 @@
+# @package _global_
+baselines:
+  da_window_steps: 50
+  batch_size: 128
+  weak4dvar:
+    opt_steps: 150
+    lr: 0.02
+  strong4dvar:
+    max_iter: 40
+    lr: 0.1
+  enkf:
+    N_ensemble: 50
+    inflation: 2.0
+  etkf:
+    N_ensemble: 50
+    inflation: 2.0

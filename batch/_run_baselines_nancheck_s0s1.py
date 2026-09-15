@@ -18,7 +18,6 @@ datasets = make_s0_s1_trainval(
     num_val_windows=1,
     num_test_windows=10,
     param_noise=0.2,
-    bias_range=(0.0, 0.2),
 )
 print(f"test_s0: {len(datasets['test_s0'])} windows")
 print(f"test_s1: {len(datasets['test_s1'])} windows")

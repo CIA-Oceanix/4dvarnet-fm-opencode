@@ -3,6 +3,31 @@ import torch.nn as nn
 import math
 
 
+def make_cond(obs, forcing, params, param_dim=0,
+              use_obs=True, use_forcing=True, use_params=True):
+    """Assemble a model's conditioning tensor from the toggleable input signals.
+
+    The obs block always occupies its channel slot (zeroed when use_obs is
+    False) so the output width only ever depends on use_forcing/use_params
+    -- matching `cond_extra_dim`'s original meaning ("extra" beyond obs) and
+    keeping the UNet1D's `obs_dim` slot (and any checkpoint shapes built on
+    it) unchanged regardless of use_obs.
+    """
+    obs_clean = torch.nan_to_num(obs, nan=0.0) if use_obs else torch.zeros_like(obs)
+    parts = [obs_clean]
+    if use_forcing:
+        parts.append(forcing.unsqueeze(-1))
+    if use_params and param_dim > 0:
+        B, T, _ = obs.shape
+        parts.append(params.unsqueeze(1).expand(B, T, -1))
+    return torch.cat(parts, dim=-1)
+
+
+def cond_extra_width(param_dim=0, use_forcing=True, use_params=True):
+    """`cond_extra_dim` (beyond the always-present obs block) for the given flags."""
+    return (1 if use_forcing else 0) + (param_dim if use_params and param_dim > 0 else 0)
+
+
 class SinusoidalEmbedding(nn.Module):
     def __init__(self, dim: int):
         super().__init__()

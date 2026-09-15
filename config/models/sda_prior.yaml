@@ -1,0 +1,50 @@
+# @package _global_
+defaults:
+  - /lorenz63
+  - _self_
+
+# Score-based DA (Rozet & Louppe, NeurIPS 2023) unconditional prior: a pure
+# x -> v(x, tau) flow-matching velocity field that never sees obs, forcing,
+# or params (models/sda.py::UnconditionalPriorCFM). Trained here exactly
+# like any other stage-1-only CFM; the observation-guided DPS-style sampler
+# (evaluation/sda_sampler.py::sda_guided_sample) is applied at inference
+# time only, via eval_sda_l63.py -- see that file's docstring.
+model:
+  model_type: sda_prior
+  state_dim: 3
+  param_dim: 0
+  N_ensemble: 50
+  sda_prior:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    # DPS-style normalized-gradient guidance step size used only at
+    # inference time by eval_sda_l63.py (evaluation/sda_sampler.py); has no
+    # effect on training. Picked by a guidance_weight in
+    # {0,1,3,10,20,40,80,150} sweep on the s0 checkpoint (N_ensemble=5, 40
+    # test windows): R2 peaks at 20 (0.940, RMSE 1.99) and falls off on
+    # both sides (1.0 -> R2 0.10, essentially no correction; 150 -> R2 0.19,
+    # guidance overshoots and destabilizes the trajectory) -- same
+    # bell-shaped guidance_weight/RMSE curve as the L96 SDA1 sweep
+    # (reports/l96/outputs/l96_consolidated_benchmark.md), just a different
+    # optimal magnitude (L96 landed at 40). Re-sweep if state_dim, R_var, or
+    # N_outer change.
+    guidance_weight: 20.0
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  stage2:
+    epochs: 0
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

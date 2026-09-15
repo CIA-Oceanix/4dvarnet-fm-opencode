@@ -18,11 +18,16 @@ def test_estimate_mean_shape():
 
 
 def test_estimate_mean_deterministic():
+    # estimate_mean's initial x0 ~ GaussSampler() (paper Algorithm 1), so
+    # reproducibility requires pinning the RNG before each call, not just
+    # eval() -- eval only removes dropout stochasticity.
     model = TweedieSolver(state_dim=3, hidden_channels=[4, 8], K_inner=2, N_outer=2)
     model.eval()
     obs = torch.randn(2, 50, 3)
     with torch.no_grad():
+        torch.manual_seed(0)
         out1 = model.estimate_mean(obs)
+        torch.manual_seed(0)
         out2 = model.estimate_mean(obs)
     torch.testing.assert_close(out1, out2)
 
