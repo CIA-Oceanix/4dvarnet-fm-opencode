@@ -1512,6 +1512,342 @@ generator (`reports/qg/generate_qg_neural_report.py`) was updated to
 describe the 4 new schemes; since all four were trained directly at the
 DA-matched config, the table's † "not apples-to-apples" marker no longer
 applies to any row.
+### ETKF obs-configuration sensitivity: cols_per_day=8/16 + new psi2 (lower-layer) point obs + new cols_sampling="random" mode (2026-09-13/14)
+
+New obs-density experiment series: `cols_per_day=8/16` (vs. the reference
+4/day) plus a genuinely new capability -- observing the *lower* layer
+(psi2), never directly observed before this -- at 10 random points/day
+alongside the existing psi1 columns. Motivated by the same q-layer2/unobserved-
+deep-layer weakness the ETKF-ridge and 4DVar sensitivity work above kept
+running into: does giving the DA method *any* direct information about the
+deep layer help, versus just adding more of the same (biased, upper-layer-
+only) observation?
+
+**Two new capabilities implemented** (both opt-in, zero behavior change at
+their default-disabled value):
+
+- **`psi2_points_per_day`** (`QGConfig`): independent lower-layer (psi2)
+  random-point obs, `P`/day, drawn like the existing column sampler (own
+  randomly-sampled intra-day step, no two points of the same day collide)
+  but generalized to an arbitrary layer and to single points instead of
+  full columns (`data.qg._layer_field`/`_generate_random_point_observations`).
+- **`cols_sampling="random"`** (`QGConfig`, default `"sequential"`):
+  upper-layer (psi1) obs as `cols_per_day` random `(t, x)` column-point
+  draws across the **whole day**, allowing **multiple columns at the same
+  timestep** -- an alternate sampling *mode* for the same `cols_per_day`
+  density knob, not a separate count (an earlier version of this work
+  briefly introduced a second `col_points_per_day` field before this
+  naming/design was cleaned up to keep `cols_per_day` the single density
+  parameter). Motivated by discovering `cols_per_day=16` is infeasible
+  under the default `"sequential"` mode: at the reference `dt=7200s`,
+  `steps_per_day=12`, and that sampler enforces one column per step with
+  **no** two columns of the same day sharing a step -- so more than
+  `steps_per_day` columns/day can never be scheduled. This is a
+  **pre-existing bug** (nobody had tried `cols_per_day > steps_per_day`
+  before): the collision-avoidance loop just spins forever instead of
+  failing cleanly -- confirmed via an isolated 15s-timeout call that hung
+  (exit 124). Added a clear `ValueError` guard to both the column and
+  (analogous) point samplers instead of leaving the silent hang, and added
+  `cols_sampling="random"` as the actual fix for wanting a higher density
+  (removes the per-step ceiling entirely, no code changes needed elsewhere
+  since the assimilation side already treats "list of columns per time" as
+  its native contract, never actually restricted to length 1).
+
+**Machinery reused, not rebuilt**: both new streams route through the
+combined-observation machinery built for this exact purpose during the
+`etkf_ridge` sensitivity work (`_psi_h_combined`, `_combined_index_at`,
+`_build_qg_col_point_loc_matrices`, and `ETKF._per_time`'s `idx.numel()`-
+based per-time-varying observation width) -- that machinery was already
+general enough to handle multiple columns per step and an optional extra
+point per step; only the *generation* functions and a `_make_obs_system`
+routing check were new. `evaluation/baselines.py`'s shared `ETKF` class
+itself needed no further changes.
+
+**N=10 results, ETKF (etkf_ridge=1.0 default), S0 (reference) + S1
+(revised model-error case)**:
+
+| config | S0 q full | S0 q layer2 | S0 psi full | S1 q full | S1 q layer2 | S1 psi full |
+|---|---|---|---|---|---|---|
+| baseline (cols=4, sequential) | 0.467 | 0.399 | 0.907 | 0.328 | 0.231 | 0.829 |
+| cols=8 (sequential) | 0.531 | 0.433 | 0.922 | 0.326 | 0.191 | 0.732 |
+| cols=4, random (sanity check) | 0.466 | 0.397 | 0.908 | 0.339 | 0.242 | 0.835 |
+| cols=16, random | 0.524 | 0.403 | 0.895 | **0.103** | **-0.100** | **-1.189** |
+| **psi1(4)+psi2(10)** | **0.502** | **0.447** | **0.924** | **0.389** | **0.316** | **0.878** |
+
+**Sanity check requested and run (2026-09-14)**: does the new `"random"`
+sampling mode reproduce `"sequential"`'s performance at the *same* density
+(cols=4), where the two mechanisms should agree? Yes -- all four fields
+match within ~0.001-0.010 EV on both S0 and S1 (see the "cols=4, random"
+row above vs. the baseline row), well inside N=10 noise, and if anything
+marginally *better* on S1, not worse. This rules out the new sampler
+introducing some systematic artifact of its own at low density.
+
+> **RETRACTED below ("MAJOR CORRECTION" section further down) -- both of
+> the next two callouts turned out to be a `loc_radius`-mismatch artifact,
+> not a real finding. Read the correction before citing either claim.**
+
+**Key finding, directly confirms the original motivation**: on S1 (real
+model error), simply observing *more* of the same (biased) upper layer is
+not just unhelpful but actively **destabilizing** -- cols=8 already
+degrades psi (0.829→0.732) despite double the column density, and
+cols=16 (random) **collapses catastrophically** (psi=-1.19, worse than
+climatology; q layer2 goes negative). This is graded (baseline→cols8→
+cols16-random monotonically worse on S1), not a fluke at one setting,
+consistent with more-frequent updates from an increasingly model-
+inconsistent obs stream reinforcing rather than correcting the S1 bias.
+**Adding independent psi2 observations, by contrast, is the best or
+tied-best config on both S0 and S1** -- and by a wide margin on S1
+specifically, the only config that doesn't degrade relative to baseline.
+Genuinely new information about the previously-unobserved deep layer helps
+where more of the same upper-layer information hurts.
+
+**Collapse investigated (2026-09-14), not a bug -- correctly ruled out
+coding errors, but the "reinforces S1's bias" framing below is superseded
+by the "MAJOR CORRECTION" section further down: the root cause is
+`loc_radius`/ensemble-size mismatch, not model-error reinforcement (the
+PV-inversion amplification mechanism described here is still an accurate
+description of *why* the symptom shows up as psi collapsing worse than q,
+just not of what actually triggers it)**: the cols=16 (random)
+S1 collapse looked dramatic enough to double-check. Per-window PV-q RMSE
+values are all finite and unremarkable (6e-6 to 2.4e-5, no NaN/blow-up),
+and the result reproduces across reruns -- so it isn't a numerical/coding
+fault. The mechanism: `psi rmse=13973` is *worse* than the free-forecast
+psi rmse (8064, improv=0.58x -- the DA analysis is worse than doing
+nothing in psi-space), while `q rmse=1.56e-5` still *beats* free forecast
+(improv=1.38x) -- the DA update genuinely helps q but the resulting
+analysis, once inverted to psi, is worse than no assimilation at all. PV
+inversion (`psi = ∇⁻²q`) amplifies *large-scale* (low-wavenumber) error
+(1/k² blows up as k→0) while smoothing small-scale error -- so a
+large-scale/low-wavenumber bias in the q-analysis (plausibly reinforced by
+frequent updates from an obs stream that's increasingly inconsistent with
+S1's biased model) can produce a large psi RMSE even while q's own score,
+dominated by better-constrained smaller scales, looks only mildly
+degraded. Confirmed this isn't specific to the new sampler: `cols=8`
+(the *old*, `"sequential"` mechanism) already shows the identical-direction
+degradation (psi 0.829→0.732), just less extreme -- cols=16(random) is a
+more extreme point on the same real trend, not an isolated artifact.
+
+**EnKF cross-check (2026-09-14) -- collapse is method-agnostic, not
+ETKF-specific**: repeated `baseline`/`cols=8`/`cols=16-random` on EnKF, same
+N=10 windows. Found the *same* graded destabilization on S1, if anything
+**more severe** at the extreme:
+
+| config | method | S1 q full | S1 q layer2 | S1 psi full |
+|---|---|---|---|---|
+| baseline (cols=4) | ETKF | 0.328 | 0.231 | 0.829 |
+| baseline (cols=4) | EnKF | 0.280 | 0.155 | 0.737 |
+| cols=8 | ETKF | 0.326 | 0.191 | 0.732 |
+| cols=8 | EnKF | 0.190 | 0.004 | 0.163 |
+| cols=16, random | ETKF | 0.103 | -0.100 | -1.189 |
+| cols=16, random | EnKF | **-0.236** | **-0.586** | **-4.945** |
+
+This required extending the earlier `ETKF`-only variable-observation-width
+fix (see the `etkf_ridge` sensitivity PR) to `EnKF` too -- `EnKF.assimilate()`
+still had the old `num_steps = observations.shape[0]` (crashes on a list-
+based combined observation) and `EnKF._per_time`'s un-unified h-mode/
+index-mode `od_t` derivation; applied the identical two-line fix (`idx.
+numel()`-based width, `obs_mask.shape[0]`-based `num_steps`) used for ETKF.
+Same caveat as before: only the dead (never exercised with `init="lagged"`)
+`init_ensemble is None` branch still references the old constant `od`, left
+alone. Confirms the S1 obs-density collapse is a property of the
+observation configuration under model error, not an artifact of ETKF's
+particular (deterministic, ridge-regularized) update mechanism -- both the
+deterministic and stochastic ensemble filters share it, consistent with
+the earlier inflation-collapse finding also being shared across methods.
+
+Caveats: N=10 (screening scale, same convention as the ETKF/4DVar
+sensitivity work above); an N=100 confirmation of both the psi1+psi2 win
+and the cols=16 collapse magnitude is still the natural next step (the
+qualitative direction of both findings is now well-supported, but exact
+N=100 numbers aren't in yet).
+
+Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 16 files:
+the ETKF sweep, the cols=4/random sanity-check pair, and the EnKF
+baseline/cols=8/cols=16-random cross-check). New tests:
+`tests/test_qg_psi2_points.py` (15), `tests/test_qg_cols_sampling.py` (10,
+renamed from `test_qg_col_points.py` in the naming cleanup) -- both new obs
+streams, the combined H-function/localization machinery, the
+`cols_per_day` hang guard, and end-to-end ETKF smoke runs. Scratch driver
+(not committed): `qg_obs_density_sweep_scratch.py`. sbatch:
+`batch/run_qg_obs_density_sweep.sbatch` (interactive runs in this session
+repeatedly died silently around large `torch.load` calls -- same
+established fix as the ETKF-ridge N=100 confirmation and the 4DVar
+sensitivity work: real sbatch job instead).
+
+**Naming cleanup (2026-09-14)**: the first version of this work introduced
+a separate `col_points_per_day` field, but "points" was misleading (it
+counts *columns*, same physical quantity as `cols_per_day`, just sampled
+differently) and having two competing "columns per day" knobs was
+confusing. Refactored to a single density parameter (`cols_per_day`,
+unchanged) plus a `cols_sampling` mode selector (`"sequential"` default /
+`"random"` new) -- one meaningfully-named field per concept, not two
+overlapping ones.
+
+**MAJOR CORRECTION (2026-09-14, same day, later) -- both headline
+conclusions above were wrong, superseded by this section.** The user
+pushed back on the "more upper-layer density destabilizes S1" finding
+(asked directly: "isn't there an impact of a too large/too weak
+inflation? Can you try with 64 cols per day? We would expect this to be
+much easier as a reconstruction task.") -- entirely correctly.
+
+**Step 1, inflation sweep at `cols=16` (`"random"`, S1)**: {0.90, 0.95,
+1.00, 1.02, 1.05} -> q_full {-0.412, -0.355, **0.095**, -23.9, -282}.
+`inflation=1.0` was already the tested optimum -- ruled out inflation
+mismatch as the explanation.
+
+**Step 2, `cols=64` (`"random"`, `loc_radius=6.0` unchanged)**: expected
+(per the user's intuition) to be *easier* than `cols=16` -- instead S1
+q_full=-0.294, **psi_full=-17.6** (far worse). But critically, **S0 (no
+model error) also degraded** at this density (psi 0.907->0.637) -- a
+pure-model-error explanation predicts *no* S0 effect, so this was the
+tell that something else was going on.
+
+**Step 3, `loc_radius` sweep at `cols=64` (N_ensemble=80 fixed, matching
+the "ensemble size stays small operationally" constraint)**: shrinking
+`loc_radius` from 6.0 -> 2.0 **fully recovers and then exceeds** the
+original baseline, on both scenarios:
+
+| loc_radius | S0 psi | S1 psi | S1 q_full |
+|---|---|---|---|
+| 6.0 (unchanged) | 0.637 | -17.6 (collapse) | -0.294 |
+| 4.0 | 0.938 | 0.788 | 0.409 |
+| 3.0 | 0.972 | 0.942 | 0.514 |
+| **2.0 (best)** | **0.980** | **0.962** | **0.560** |
+
+At `loc=2.0`, `cols=64` **beats** the original `cols=4/loc=6` baseline
+(S1 psi 0.962 vs 0.829, q 0.560 vs 0.328) -- the user's original intuition
+was right. Repeated at `cols=16` (`loc_radius` in {4,3,2}): same story,
+full recovery, `q_full` up to 0.506, `psi_full` up to 0.939 -- also beats
+the baseline. **Root cause**: `loc_radius=6.0` was tuned for the sparse
+(4-8/day) regime; localization exists specifically to counter ensemble
+sampling error given a *fixed, small* ensemble (N=80 throughout, deliberately
+not scaled up, matching the operational constraint the user named). Higher
+observation density means more *simultaneous* columns per assimilation
+step, so the same fixed ensemble/localization combination that was fine at
+low density becomes badly under-resourced at high density -- shrinking
+`loc_radius` decomposes each update into smaller, better-conditioned local
+problems instead of one large poorly-conditioned global one. This is the
+standard operational answer when ensemble size can't grow: adapt
+localization to observation density, don't leave it fixed. (The other
+standard tool for the same problem, not tried here: serial/sequential
+per-observation processing instead of one large combined observation
+vector.)
+
+**So finding #1 above ("more upper-layer density destabilizes S1") is
+retracted**: it was a `loc_radius`-mismatch artifact, not a real
+physical/model-error effect. Properly localized, more upper-layer density
+is unambiguously better on both S0 and S1, as conventional DA wisdom would
+predict.
+
+**Finding #2 ("psi2 observations are uniquely valuable") is also not
+supported once the comparison is made fair.** The psi1(4)+psi2(10)
+combined config was only ever tested at `loc_radius=6.0`; a follow-up
+sweep ({5,4,3,2}) found it was *already* near its own optimum (loc=5:
+q_full=0.395 vs loc=6's 0.389 -- barely moves, its total density is
+modest enough that 6.0 was already fine). But once psi1-only configs are
+given their OWN fair, density-matched `loc_radius`, they clearly
+outperform the psi1+psi2 mix at its much lower density:
+
+| config (S1) | q_full | psi_full |
+|---|---|---|
+| psi1(4)+psi2(10), loc=5 (its own optimum) | 0.395 | 0.881 |
+| psi1-only, cols=16, loc=3-4 (tuned) | 0.498 | 0.939 |
+| **psi1-only, cols=64, loc=2 (tuned)** | **0.560** | **0.962** |
+
+**Genuinely open question, not yet answered**: does psi2 information add
+anything *at matched total density* against a properly-tuned pure-psi1
+config (e.g. cols~54 + psi2=10 vs cols=64, both with their own tuned
+`loc_radius`)? Not tested -- the only combined config tried so far has
+much lower total density than the high-density pure-psi1 configs, so this
+comparison so far only shows "more well-localized data beats less
+well-localized-but-mixed data," not "psi1 alone beats psi1+psi2 at equal
+density." A fair head-to-head at matched density is the natural next step
+if this question matters going forward.
+
+**N=100 confirmation (2026-09-14, later same day)**: the loc_radius-tuned
+cols=16 (loc=2.0) and cols=64 (loc=1.0) configs, for **both** ETKF and
+EnKF, run at full N=100 (jobs 53537 [ETKF, 1h50m], 53538 [EnKF, 2h36m],
+`qg_obs_density_n100_scratch.py`, `batch/run_qg_obs_density_n100.sbatch`).
+EnKF's own `loc_radius` optimum was checked separately first at N=10
+(`qg_enkf_loc_check_scratch.py`, {1,2,3} @ cols=16 and {0.5,1,2} @
+cols=64) rather than assumed to match ETKF's -- it turned out to match
+exactly at both densities (cols=16: loc=2.0 best for both S0/S1 on both
+fields; cols=64: loc=1.0 best for both).
+
+| config (N=100) | S0 psi | S0 q | S0 q-layer2 | S1 psi | S1 q | S1 q-layer2 |
+|---|---|---|---|---|---|---|
+| ETKF baseline (cols=4, loc=6.0) | 0.957 | 0.476 | 0.410 | 0.926 | 0.357 | 0.266 |
+| ETKF cols=16 (loc=2.0) | 0.982 | 0.644 | 0.555 | 0.974 | 0.526 | 0.428 |
+| ETKF cols=64 (loc=1.0) | 0.990 | 0.738 | 0.630 | 0.983 | 0.585 | 0.480 |
+| EnKF baseline (cols=4, loc=6.0) | 0.947 | 0.481 | 0.394 | 0.896 | 0.331 | 0.221 |
+| EnKF cols=16 (loc=2.0) | 0.983 | 0.684 | 0.585 | 0.971 | 0.539 | 0.435 |
+| **EnKF cols=64 (loc=1.0)** | **0.992** | **0.768** | **0.655** | **0.984** | **0.600** | **0.489** |
+
+**Fully confirmed**: both tuned high-density configs decisively beat the
+canonical cols=4/loc=6.0 baseline, for both methods, on every field and
+both scenarios -- including the previously-collapsing unobserved deep
+layer (q layer2), which roughly **doubles** at cols=64 despite psi1
+columns never directly observing it (S1: ETKF 0.266->0.480, EnKF
+0.221->0.489). cols=64 beats cols=16 throughout, and the N=10 correction's
+qualitative claim ("more density, properly localized, is unambiguously
+better") holds at full scale, not just N=10.
+
+**New wrinkle, not previously visible at N=10**: at these higher
+densities, **EnKF edges out ETKF+ridge=1.0** on both fields (cols=64 S1:
+EnKF q=0.600 vs ETKF q=0.585; cols=16 S1: EnKF q=0.539 vs ETKF q=0.526) --
+a partial reversal of ETKF's advantage at the cols=4 baseline (where
+`etkf_ridge=1.0` was specifically tuned and promoted, see the
+"ETKF/EnKF sensitivity" sections above). The margin is modest
+(~0.01-0.02), so not necessarily decisive, but "ETKF+ridge=1.0 beats
+EnKF" is now known to be a **cols=4-specific finding**, not universal --
+whether ETKF's own ridge/inflation should be re-tuned at higher density
+(rather than reusing the cols=4-tuned value) is untested.
+
+**Not yet decided**: whether to promote one of these configs (most
+plausibly cols=64/loc=1.0) into the canonical S0/S1 benchmark, the way
+`etkf_ridge=1.0` was promoted after its own N=100 confirmation. Unlike
+that promotion, this one changes the *observation configuration* itself
+(16x the column density), not just a DA hyperparameter -- a
+benchmark-design decision, not a pure tuning one, left open pending
+discussion rather than actioned unilaterally.
+
+Data: `reports/qg/outputs/qg_obs_density_sweep_n100/*.json` (N=100, 8
+files: ETKF/EnKF x cols={16,64} x S0/S1).
+
+**Practical implication for this codebase**: `loc_radius` should be swept
+per obs-density config, not held at one project-wide default (6.0), for
+any future high-density obs-config experiment (this generalizes beyond
+`cols_sampling="random"` -- would apply to any density increase, e.g. a
+future `cols_per_day` increase within the `"sequential"` mode's own
+`steps_per_day` ceiling too, once that ceiling itself is investigated).
+
+**Tooling gotcha**: adding a new `QGConfig` field (even at a neutral
+default) changes `_truth_cache_path`'s hash (it hashes the *entire*
+`asdict(cfg)`), silently invalidating every existing hash-keyed truth
+cache, including the production 1000/100/100 cache used throughout this
+whole session's history. Scratch scripts written *after* a `QGConfig`
+field addition must reference the pre-existing cache file by its
+already-known name directly rather than recomputing the (now different)
+hash. Worth keeping in mind for any future `QGConfig` field addition.
+
+### Sensitivity-study consolidation (2026-09-14)
+
+`reports/qg/generate_da_sensitivity_report.py` (previously ETKF inflation/
+additive/ridge + EnKF inflation only, from the 2026-09-11 work) extended
+with two new sections covering the two later sensitivity studies above:
+"4DVar (Strong/Weak): covariance-scale sensitivity -- negative result" and
+"ETKF/EnKF obs-density sensitivity: psi2 observations, `cols_sampling=
+"random"`, and a `loc_radius` correction" (the latter keeps the full
+"initial sweep" → "correction steps 1-4" narrative, not just the final
+corrected conclusion, per this project's convention of documenting
+retractions rather than silently overwriting them). `qg_da_report.md`'s
+own condensed "Hyperparameter sensitivity analysis" section (which already
+had ETKF-ridge and 4DVar paragraphs) got a matching short paragraph for
+the obs-density study, pointing to the dedicated report's full trail.
+One consolidated document now covers all three studies instead of PLAN.md
+prose scattered across three sweep directories
+(`qg_da_sensitivity_sweep/`, `qg_4dvar_sensitivity_sweep/`,
+`qg_obs_density_sweep/`).
 
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
