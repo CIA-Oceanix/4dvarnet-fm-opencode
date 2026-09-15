@@ -51,13 +51,15 @@ def _l96_true_param_vector(w):
 
 
 class FlowMatchingBatch:
-    def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None):
+    def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None,
+                 true_forcing=None):
         self.states = states
         self.obs = obs
         self.obs_mask = obs_mask
         self.forcing = forcing
         self.params = params
         self.true_params = true_params
+        self.true_forcing = true_forcing
         self.batch_size, self.T, self.dim = states.shape
 
     def to(self, device):
@@ -69,6 +71,8 @@ class FlowMatchingBatch:
             self.params = self.params.to(device)
         if self.true_params is not None:
             self.true_params = self.true_params.to(device)
+        if self.true_forcing is not None:
+            self.true_forcing = self.true_forcing.to(device)
         return self
 
 
@@ -77,7 +81,8 @@ class FlowMatchingDataset(Dataset):
                  obs_interval: int = 20, R_var: float = 0.5, param_names=None,
                  obs_var_indices=None, use_biased_params: bool = False,
                  resample_bias_draws: bool = False, bias_max: float = 0.2,
-                 noisy_da_bias: bool = False, noisy_da_max: float = 1.5):
+                 noisy_da_bias: bool = False, noisy_da_max: float = 1.5,
+                 with_true_forcing: bool = False):
         self.source = lorenz_dataset
         self.T_max = T_max
         self.with_params = with_params
@@ -91,6 +96,14 @@ class FlowMatchingDataset(Dataset):
         self.bias_max = bias_max
         self.noisy_da_bias = noisy_da_bias
         self.noisy_da_max = noisy_da_max
+        # False (default, backward-compatible): when True, appends
+        # w["forcing_true"] to the returned tuple right after
+        # forcing_corrupted (position 4), BEFORE any params -- collate_fm
+        # must be told the same flag (via make_collate_fm's own
+        # with_true_forcing) so producer/consumer agree on the tuple layout
+        # rather than inferring it from length, which the with_params
+        # variable-length suffix already makes ambiguous.
+        self.with_true_forcing = with_true_forcing
 
     def __len__(self):
         return len(self.source)
@@ -134,6 +147,8 @@ class FlowMatchingDataset(Dataset):
         if self.obs_var_indices is not None:
             true_state = true_state[:, self.obs_var_indices]
         result = (true_state, w["obs"], w["obs_mask"], w["forcing_corrupted"])
+        if self.with_true_forcing:
+            result = result + (w["forcing_true"],)
         if self.with_params and self.param_names[0] in w:
             result = result + self._extract_params(w)
             result = result + self._extract_true_params(w)
@@ -188,21 +203,32 @@ class ConcatFMDataset(Dataset):
         raise IndexError
 
 
-def collate_fm(batch):
+def _collate_fm_impl(batch, with_true_forcing: bool = False):
     states = torch.stack([b[0] for b in batch])
     obs = torch.stack([b[1] for b in batch])
     masks = torch.stack([b[2] for b in batch])
     forcing = torch.stack([b[3] for b in batch])
+    idx = 4
+    true_forcing = None
+    if with_true_forcing:
+        true_forcing = torch.stack([b[idx] for b in batch])
+        idx += 1
     params = None
     true_params = None
-    if len(batch[0]) > 4:
-        n_params = (len(batch[0]) - 4) // 2
-        params = torch.stack([torch.tensor(b[4:4 + n_params], dtype=torch.float32) for b in batch])
-        true_params = torch.stack([torch.tensor(b[4 + n_params:4 + 2 * n_params], dtype=torch.float32) for b in batch])
-    return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params)
+    if len(batch[0]) > idx:
+        n_params = (len(batch[0]) - idx) // 2
+        params = torch.stack([torch.tensor(b[idx:idx + n_params], dtype=torch.float32) for b in batch])
+        true_params = torch.stack([torch.tensor(b[idx + n_params:idx + 2 * n_params], dtype=torch.float32) for b in batch])
+    return FlowMatchingBatch(states, obs, masks, forcing, params=params, true_params=true_params,
+                              true_forcing=true_forcing)
 
 
-def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None = None):
+def collate_fm(batch):
+    return _collate_fm_impl(batch, with_true_forcing=False)
+
+
+def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None = None,
+                     with_true_forcing: bool = False):
     """Return a ``collate_fm``-compatible collate fn that additionally
     z-score normalizes ``states``/``obs`` when ``norm_stats`` is given, and/or
     applies TRAINING-time fast-Y observation-density augmentation when
@@ -220,16 +246,23 @@ def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None
     Requires the canonical 24D (8 slow-X + 16 fast-Y) obsj2 observed
     subspace -- raises if ``obs``'s last dim doesn't match.
 
-    ``norm_stats is None and obs_density_cfg is None`` reproduces plain
-    ``collate_fm`` exactly.
+    ``with_true_forcing`` (default False, backward-compatible): must match
+    the ``with_true_forcing`` the paired ``FlowMatchingDataset``/
+    ``ConcatFMDataset`` was constructed with -- producer and consumer must
+    agree on the tuple layout explicitly rather than inferring it from
+    length, which ``with_params``'s own variable-length suffix already
+    makes ambiguous.
+
+    ``norm_stats is None and obs_density_cfg is None and not with_true_forcing``
+    reproduces plain ``collate_fm`` exactly.
     """
-    if norm_stats is None and obs_density_cfg is None:
+    if norm_stats is None and obs_density_cfg is None and not with_true_forcing:
         return collate_fm
 
     from data.normalization import normalize
 
     def _collate(batch):
-        fm_batch = collate_fm(batch)
+        fm_batch = _collate_fm_impl(batch, with_true_forcing=with_true_forcing)
         if obs_density_cfg is not None:
             from data.obs_density import (
                 NUM_FAST,
