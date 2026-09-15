@@ -1555,6 +1555,62 @@ class TestFourDVarNetSolverTrueprior:
             model, lambda model=model, batch=batch: model(batch))
 
 
+class TestFourDVarNetSolverSubgradTrueprior:
+    """"subgrad+trueprior": "subgrad+state+trueprior" minus the raw-state
+    channel x -- cat([g_obs, g_prior]) only, no x. Mirrors "grad-only" (no
+    state) vs "grad+state" (with state) for the real-autograd family. Same
+    NO=2,J=4/state_dim=10/obs_var_indices=(0,1,2,6) convention as
+    TestFourDVarNetSolverTrueprior."""
+
+    def _make_model(self, **kwargs):
+        return _make_full_state_model(update_input="subgrad+trueprior", **kwargs)
+
+    def test_channel_multiplier_is_two_and_no_prior_unet(self):
+        model = self._make_model()
+        assert model.prior_unet is None
+        assert model.true_dynamics is not None
+        assert model.unet.state_dim == 2 * model.state_dim
+
+    def test_build_update_input_excludes_state_channel(self):
+        dynamics = self._make_model().true_dynamics
+        B, T, D = 2, 10, 10
+        torch.manual_seed(0)
+        x = torch.randn(B, T, D)
+        obs_clean = torch.randn(B, T, D)
+        obs_mask = torch.ones(B, T, 1)
+        forcing = torch.randn(B, T)
+        params = torch.tensor([[8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]] * B)
+        inp = _build_update_input(
+            "subgrad+trueprior", x, obs_clean, obs_mask, tau=None,
+            prior_ode_forcing=forcing, prior_ode_params=params, true_dynamics=dynamics,
+        )
+        assert inp.shape == (B, T, 2 * D)
+        # First D channels are g_obs = (obs_clean - x) * obs_mask.
+        assert torch.allclose(inp[..., :D], (obs_clean - x) * obs_mask)
+
+    def test_forward_shape_and_finite(self):
+        model = self._make_model()
+        batch = _FullStateMockBatch(B=2, T=10)
+        out = model(batch)
+        assert out.shape == (2, 10, 10)
+        assert torch.isfinite(out).all()
+
+    def test_gradients_flow_to_unet(self):
+        model = self._make_model(N_outer=3)
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        loss = model.compute_loss(batch)
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.unet.parameters())
+
+    def test_checkpoint_matches_uncheckpointed(self):
+        model = self._make_model(N_outer=3, dropout=0.1)
+        model.train()
+        batch = _FullStateMockBatch(B=2, T=10, seed=0)
+        TestGradientCheckpointing()._assert_checkpoint_matches_reference(
+            model, lambda model=model, batch=batch: model(batch))
+
+
 class TestGradientCheckpointing:
     """``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
     wrap each unrolled iteration in ``torch.utils.checkpoint.checkpoint(...,

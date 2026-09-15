@@ -116,7 +116,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # torch.autograd.grad call instead of a cheap proxy).
 _IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
                               "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
-                              "subgrad+state+trueprior")
+                              "subgrad+state+trueprior", "subgrad+trueprior")
 
 # Modes needing a real torch.autograd.grad call each iteration.
 _AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
@@ -136,20 +136,25 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "gradsplit+state": 3,
     "subgrad+state+xtau": 4,
     "subgrad+state+trueprior": 3,
+    "subgrad+trueprior": 2,
 }
 # "subgrad+state+xtau" needs an outer flow-time conditioning value (x_tau,
 # beta_tau) that only exists for FourDVarNetPredictStateCFM's CFM
 # formulation (see its own docstring) -- structurally undefined for
 # FourDVarNetSolver, which has no outer flow-time at all.
 _CFM_ONLY_UPDATE_INPUTS = ("subgrad+state+xtau",)
-# "subgrad+state+trueprior" needs the FULL physical state (see
-# _true_ode_prior_residual's docstring -- the true dynamics is undefined on
-# a partially-observed subspace), i.e. state_dim == the model's own
-# obs_var_indices-implied full dimension, not the usual 24D observed
-# subspace every other mode operates in. Enforced in FourDVarNetSolver's
-# own __init__ (obs_var_indices/true_dynamics_dt required together with
-# this mode).
-_FULL_STATE_UPDATE_INPUTS = ("subgrad+state+trueprior",)
+# "subgrad+state+trueprior"/"subgrad+trueprior" need the FULL physical state
+# (see _true_ode_prior_residual's docstring -- the true dynamics is
+# undefined on a partially-observed subspace), i.e. state_dim == the
+# model's own obs_var_indices-implied full dimension, not the usual 24D
+# observed subspace every other mode operates in. Enforced in
+# FourDVarNetSolver's own __init__ (obs_var_indices/true_dynamics_dt
+# required together with either mode). "subgrad+trueprior" is
+# "subgrad+state+trueprior" minus the raw-state channel x -- an ablation
+# testing whether the two residuals (g_obs, g_prior) alone are enough,
+# mirroring the existing "grad-only" (no state) vs "grad+state" (with
+# state) pair for the real-autograd-gradient family.
+_FULL_STATE_UPDATE_INPUTS = ("subgrad+state+trueprior", "subgrad+trueprior")
 
 
 def _validate_update_input(update_input):
@@ -567,14 +572,16 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
         g_flow = x - beta_tau * x_tau
         return torch.cat([g_obs, g_prior, g_flow, x], dim=-1)
-    if update_input == "subgrad+state+trueprior":
+    if update_input in ("subgrad+state+trueprior", "subgrad+trueprior"):
         assert prior_ode_forcing is not None and prior_ode_params is not None and true_dynamics is not None, (
-            "subgrad+state+trueprior requires prior_ode_forcing/prior_ode_params/true_dynamics "
+            f"{update_input} requires prior_ode_forcing/prior_ode_params/true_dynamics "
             "(FourDVarNetSolver constructed with obs_var_indices+true_dynamics_dt -- see "
             "_FULL_STATE_UPDATE_INPUTS)"
         )
         g_obs = (obs_clean - x) * obs_mask
         g_prior = _true_ode_prior_residual(x, prior_ode_forcing, prior_ode_params, true_dynamics)
+        if update_input == "subgrad+trueprior":
+            return torch.cat([g_obs, g_prior], dim=-1)
         return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "gradsplit+state":
         with torch.enable_grad():
@@ -637,8 +644,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
 
     ``prior_ode_forcing``/``prior_ode_params``/``true_dynamics`` (all
     default None): forwarded unchanged to ``_build_update_input``, only
-    actually used by "subgrad+state+trueprior" (see
-    ``_FULL_STATE_UPDATE_INPUTS``) -- constant across the whole unroll
+    actually used by the ``_FULL_STATE_UPDATE_INPUTS`` modes
+    ("subgrad+state+trueprior"/"subgrad+trueprior") -- constant across the whole unroll
     (unlike ``x``), so the caller computes them once per ``forward()`` call.
     """
     inp = _build_update_input(update_input, x, obs_clean, obs_mask, prior_tau_k,
@@ -870,9 +877,9 @@ class FourDVarNetSolver(nn.Module):
         # (which would instead collapse the fed signal to subgrad+state's
         # own proxy).
         self.detach_var_cost_grad = detach_var_cost_grad
-        # obs_var_indices/true_dynamics_*: "subgrad+state+trueprior" only
-        # (see _FULL_STATE_UPDATE_INPUTS's validation above -- both None for
-        # every other mode). obs_var_indices: which of state_dim's channels
+        # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
+        # (see that validation above -- both None for every other mode).
+        # obs_var_indices: which of state_dim's channels
         # observation actually covers (state_dim itself is the FULL
         # physical state for this mode, e.g. 40 for NO=8,J=4 -- see
         # _true_ode_prior_residual). true_dynamics: a real, non-trainable
@@ -1002,7 +1009,7 @@ class FourDVarNetSolver(nn.Module):
         N = self.N_outer if N_outer is None else N_outer
         raw_mask = batch.obs_mask.to(batch.obs.dtype).unsqueeze(-1)
         if self.obs_var_indices is not None:
-            # "subgrad+state+trueprior" only: state_dim is the FULL physical
+            # _FULL_STATE_UPDATE_INPUTS modes only: state_dim is the FULL physical
             # state (see _true_ode_prior_residual), but obs/obs_mask only
             # ever cover the actually-observed subspace -- embed both into
             # state_dim-shaped tensors (NaN/0 at the state_dim-obs_var_indices
