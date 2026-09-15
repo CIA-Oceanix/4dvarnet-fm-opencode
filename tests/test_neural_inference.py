@@ -632,6 +632,120 @@ class TestNeuralInference:
         assert m["rmse"] == pytest.approx(expected)
 
 
+class TestTruepriorInference:
+    """``_run_case_inference``/``run_inference`` support for
+    ``FourDVarNetSolver``'s ``"subgrad+state+trueprior"`` mode: state_dim is
+    the FULL physical state (not the 24D observed subspace), and the ODE
+    prior needs the window's true (or, for a stress test, DA-biased)
+    forcing/params fed to it at inference too -- see both functions'
+    ``trueprior_phi_source`` docstrings. Uses NO=2,J=4 (state_dim=10),
+    obs_j=1 (obs_var_indices=(0,1,2,6)), matching
+    ``tests/test_fourdvarnet.py``'s ``_make_full_state_model`` convention (J
+    fixed at 4 since ``fast_weights`` is always a 4-vector)."""
+
+    _OBS_VAR_INDICES = (0, 1, 2, 6)
+
+    def _build_model(self):
+        from models.fourdvarnet import FourDVarNetSolver
+        return FourDVarNetSolver(
+            state_dim=10, hidden_channels=[4, 8], N_outer=3,
+            update_input="subgrad+state+trueprior",
+            obs_var_indices=self._OBS_VAR_INDICES, true_dynamics_dt=0.001,
+            true_dynamics_NO=2, true_dynamics_J=4,
+        )
+
+    def _build_dataloader(self, B=2, T=10, seed=0):
+        from torch.utils.data import DataLoader, TensorDataset
+
+        torch.manual_seed(seed)
+        full_dim = 10
+        truth = torch.randn(B, T, full_dim)
+        obs = truth[..., list(self._OBS_VAR_INDICES)]
+        forcing_true = torch.randn(B, T)
+        forcing_biased = forcing_true + 5.0  # deliberately far from true
+        true_params = torch.tensor([[8.0, 1.0, 1.0, 0.1, 1.0, 1.0, 0.1, 0.1]] * B)
+        biased_params = true_params + 5.0
+
+        class _Collate:
+            def __call__(self, batch):
+                t = torch.stack([b[0] for b in batch])
+                o = torch.stack([b[1] for b in batch])
+                n, t_len = t.shape[0], t.shape[1]
+                return {
+                    "true_state": t, "obs": o,
+                    "obs_mask": torch.ones(n, t_len, dtype=torch.bool),
+                    "forcing": forcing_biased[:n],
+                    "forcing_true": forcing_true[:n],
+                    "params": biased_params[:n],
+                    "true_params": true_params[:n],
+                }
+
+        ds = TensorDataset(truth, obs)
+        return DataLoader(ds, batch_size=B, collate_fn=_Collate())
+
+    def test_run_case_inference_slices_prediction_and_truth_to_obs_var_indices(self):
+        model = self._build_model()
+        model.eval()
+        dl = self._build_dataloader()
+        out = _run_case_inference(model, dl, torch.device("cpu"),
+                                  obs_var_indices=self._OBS_VAR_INDICES, n_outer=3)
+        assert out["trajectories"].shape == (2, 10, 4)
+        assert out["truth"].shape == (2, 10, 4)
+        assert np.isfinite(out["trajectories"]).all()
+
+    def test_true_vs_biased_phi_source_gives_different_predictions(self):
+        model = self._build_model()
+        model.eval()
+        dl = self._build_dataloader()
+        torch.manual_seed(0)
+        out_true = _run_case_inference(model, dl, torch.device("cpu"),
+                                       obs_var_indices=self._OBS_VAR_INDICES, n_outer=3,
+                                       trueprior_phi_source="true")
+        torch.manual_seed(0)
+        out_biased = _run_case_inference(model, dl, torch.device("cpu"),
+                                         obs_var_indices=self._OBS_VAR_INDICES, n_outer=3,
+                                         trueprior_phi_source="biased")
+        assert not np.allclose(out_true["trajectories"], out_biased["trajectories"])
+
+    def test_other_models_unaffected_by_trueprior_phi_source(self):
+        """trueprior_phi_source must be a true no-op for a model without
+        obs_var_indices (every non-trueprior update_input)."""
+        from models.fourdvarnet import FourDVarNetSolver
+        model = FourDVarNetSolver(state_dim=4, hidden_channels=[4, 8], N_outer=2,
+                                  update_input="obs+state")
+        model.eval()
+        truth = torch.randn(2, 10, 4)
+        dl = _build_case_dataloader(truth, truth)
+        out_true = _run_case_inference(model, dl, torch.device("cpu"),
+                                       trueprior_phi_source="true")
+        out_biased = _run_case_inference(model, dl, torch.device("cpu"),
+                                         trueprior_phi_source="biased")
+        assert np.allclose(out_true["trajectories"], out_biased["trajectories"])
+
+    def test_run_inference_applies_phi_source_per_case(self):
+        model = self._build_model()
+        model.eval()
+        dl = {"s0": self._build_dataloader(seed=1), "s1": self._build_dataloader(seed=1)}
+        torch.manual_seed(0)
+        est_default = run_inference(model, dl, torch.device("cpu"), n_outer=3)
+        torch.manual_seed(0)
+        est_s1_biased = run_inference(model, dl, torch.device("cpu"), n_outer=3,
+                                      trueprior_phi_source_s1="biased")
+        # s0 is untouched by the s1-only override.
+        assert np.allclose(est_default["s0"]["trajectories"], est_s1_biased["s0"]["trajectories"])
+        # s1 changes because its own Phi source changed.
+        assert not np.allclose(est_default["s1"]["trajectories"], est_s1_biased["s1"]["trajectories"])
+
+    def test_unknown_phi_source_raises(self):
+        model = self._build_model()
+        model.eval()
+        dl = self._build_dataloader()
+        with pytest.raises(ValueError):
+            _run_case_inference(model, dl, torch.device("cpu"),
+                                obs_var_indices=self._OBS_VAR_INDICES,
+                                trueprior_phi_source="bogus")
+
+
 class TestEnsembleInference:
     """Multi-member (N=30-style) CFM inference + ensemble ES evaluation."""
 
