@@ -31,6 +31,22 @@ channel positions.
 - `train.py` — `make_l96_dataloaders` threads `with_true_forcing`; the
   `fourdvarnet` `model_factory` branch derives `obs_var_indices`/
   `true_dynamics_dt` from `cfg.data` when `fdv.full_state_target` is set.
+  `_make_eval_batch`/`evaluate_model`/`save_trajectories` gain a
+  `with_true_forcing` flag so the end-of-training eval/trajectory-dump path
+  also populates `true_forcing`/`true_params` on the eval batch (previously
+  only the training dataloader did) -- without it, `model.sample(batch)`
+  crashed with `subgrad+state+trueprior`'s own assertion
+  (`prior_ode_forcing/prior_ode_params/true_dynamics` all required) the
+  moment training finished, since `_make_eval_batch`'s old `param_dim==0`
+  short-circuit returned a batch with no params/forcing at all. Caught by a
+  1-epoch/20-window smoke test of the new config, not by the unit tests
+  (which exercise `_unrolled_blocks` directly with a hand-built batch, never
+  through this separate eval-time code path).
+- `config/experiment/FDV2_subgrad_state_monai_l96_trueprior_perfectmodel.yaml`,
+  `batch/run_l96_fdv2_subgrad_state_monai_trueprior_perfectmodel_train.sbatch`
+  — the "perfect-model" S0 training config/launcher (state_dim=40,
+  S-tier MonaiUNet1D, 400 epochs, Phi always reads
+  `batch.true_forcing`/`batch.true_params`).
 - `conf/schema.py` — `FourDVarNetConfig.full_state_target: bool = False`.
 - `tests/test_fourdvarnet.py` — `TestTrueOdePriorResidual` (shape/zero-pad at
   t=0, matches a per-timestep reference loop, gradient never detached),
@@ -49,7 +65,12 @@ per explicit user instruction.
 regression, `fdv` env); `pytest tests/test_fourdvarnet_monai.py -q -m "not
 slow"` (29 passed, `fdv-monai-proto` env); `pytest tests/test_lightning_module.py
 tests/test_l96_normalization.py tests/test_training.py
-tests/test_lorenz96_training.py tests/test_param_head.py -q -m "not slow"`
-(all passed/skipped as expected, `fdv` env); `ruff check
-models/fourdvarnet.py conf/schema.py train.py tests/test_fourdvarnet.py
-data/dataloader.py` clean.
+tests/test_lorenz96_training.py tests/test_param_head.py
+tests/test_joint_estimation_l96_neural.py -q -m "not slow"` (all
+passed/skipped as expected, `fdv` env); `ruff check models/fourdvarnet.py
+conf/schema.py train.py tests/test_fourdvarnet.py data/dataloader.py`
+clean; end-to-end smoke test of the new experiment config (20 train / 10
+val / 10 test windows, 1 epoch, `fdv-monai-proto` env) -- first attempt
+crashed at eval with the `_make_eval_batch` bug above, second attempt
+(after the fix) ran stage1 training through to S0/S1 eval and wrote finite
+per-channel RMSE for both.
