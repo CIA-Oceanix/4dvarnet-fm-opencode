@@ -1,0 +1,79 @@
+# @package _global_
+# Same base as FDV2_grad_state_monai_l96_Stier_priorresidual_nonzeroinit.yaml
+# (job 53542: prior_residual=true, prior_output_init_std=0.1, prior_dropout
+# =0.0, full N_outer=10, S-tier MonaiUNet1D, init_state_var=0.1,
+# aux_var_cost_weight=0.01), plus ONE change: detach_var_cost_grad=true.
+#
+# Purpose: isolate "does the solver benefit from consuming the TRUE
+# differentiated-prior gradient (Jacobian included)" from "does jointly
+# training the prior through the per-iteration double-backward help" --
+# job 53542 conflates both. detach_var_cost_grad=true keeps the fed signal
+# IDENTICAL to 53542's (still the real 2*(x-Phi(x)) - 2*J^T@(x-Phi(x)),
+# full backward through prior_unet every iteration, same cost for THIS
+# forward pass) but severs the OUTER supervised loss's ability to
+# differentiate through that computation afterward -- create_graph=False
+# on the combined torch.autograd.grad(var_cost, x, ...) call instead of
+# True. prior_unet then trains ONLY via the aux prior_cost loss
+# (aux_var_cost_weight=0.01, unchanged), not via the deep double-backward
+# through all 10 unrolled iterations.
+#
+# trainable_prior_weight=false (changed from 53542's true): prior_weight
+# has NO other gradient source than this same per-iteration pathway (the
+# aux loss deliberately never references it, see compute_loss's own
+# docstring) -- with detach_var_cost_grad=true a trainable prior_weight
+# would be permanently stuck at its init value, receiving no gradient from
+# anywhere. Fixed at 1.0 here to avoid carrying a dead parameter.
+#
+# Two things worth watching: (1) does val_loss/RMSE end up close to 53542's
+# despite prior_unet getting a much weaker, indirect training signal --
+# would suggest the double-backward's extra directness wasn't buying much;
+# (2) does per-epoch wall-clock time drop noticeably -- the outer loss's
+# backward() no longer needs to double-differentiate through prior_unet's
+# graph at every iteration, though the per-iteration forward g_prior
+# computation itself (the expensive part) is unchanged.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    prior_dropout: 0.0
+    update_input: grad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    prior_residual: true
+    prior_output_init_std: 0.1
+    detach_var_cost_grad: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

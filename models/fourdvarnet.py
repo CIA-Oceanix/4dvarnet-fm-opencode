@@ -291,7 +291,7 @@ def _normalize_channels(t, cache=None, key=None, clip_range=50.0):
 def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_unet=None, R_var=0.5, obs_weight=1.0, prior_weight=1.0,
                          grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
-                         prior_residual=False):
+                         prior_residual=False, detach_var_cost_grad=False):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -394,6 +394,43 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     differentiate through ``Phi`` w.r.t. ``x`` (directly or via
     ``_prior_cost``) and are therefore all sensitive to whether ``Phi``'s
     Jacobian carries an explicit identity anchor.
+
+    ``detach_var_cost_grad`` (default False, backward-compatible;
+    "grad-only"/"grad+state" only): passed straight through as
+    ``create_graph=not detach_var_cost_grad`` to the combined
+    ``torch.autograd.grad(var_cost, x, ...)`` call below. Does NOT change
+    what gets fed to the main solver UNet at all -- ``grad`` is still the
+    real ``2*(x-Phi(x)) - 2*J^T@(x-Phi(x))`` (Jacobian term included, full
+    backward through ``prior_unet``, same cost as always for THIS forward
+    pass). What changes is purely downstream: with ``create_graph=False``,
+    this tensor carries no graph, so the OUTER supervised loss's own
+    ``.backward()`` can no longer differentiate through it at all -- neither
+    into ``prior_unet``'s weights (and ``prior_weight``, used inside the
+    same ``var_cost`` expression) NOR into ``x``'s own upstream dependency
+    on earlier unrolled iterations via this channel (the plain ``x``
+    channel, concatenated alongside ``grad``, still carries a normal graph
+    and is unaffected). ``prior_unet``/``prior_weight`` then train ONLY via
+    the aux ``prior_cost`` loss (``aux_var_cost_weight>0``), not via the
+    per-iteration double-backward. Added specifically to let a genuinely
+    differentiated prior's TRUE gradient still reach the solver every
+    iteration while decoupling "does the solver benefit from consuming that
+    true gradient" from "does jointly training the prior through the
+    per-iteration double-backward help" -- two questions this mode
+    otherwise conflates. Distinct from (and strictly less destructive than)
+    detaching ``Phi(x)`` inside ``_prior_cost`` itself, which would instead
+    discard the Jacobian term entirely and collapse the fed signal to
+    "subgrad+state"'s own proxy.
+
+    CAVEAT: ``prior_weight`` (when ``trainable_prior_weight=True``) has NO
+    OTHER gradient source than this same per-iteration pathway --
+    ``compute_loss``'s aux ``prior_cost`` term deliberately never
+    references ``self.prior_weight`` (see its docstring: the 2026-09-11
+    ``prior_weight``-collapse-to-zero bugfix). So
+    ``detach_var_cost_grad=True`` with ``trainable_prior_weight=True``
+    makes ``prior_weight`` permanently untrainable -- stuck at its init
+    value, receiving literally no gradient from any loss term. Set
+    ``trainable_prior_weight=False`` alongside ``detach_var_cost_grad=True``
+    to avoid carrying a dead parameter.
     """
     if update_input == "obs-only":
         return obs_clean
@@ -416,8 +453,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
     with torch.enable_grad():
         var_cost = prior_weight * _prior_cost(prior_unet, x, tau, residual=prior_residual) \
             + obs_weight * _masked_obs_cost(x, obs_clean, obs_mask, R_var)
-        grad = _normalize_channels(torch.autograd.grad(var_cost, x, create_graph=True)[0],
-                                    cache=grad_norm_cache, key="grad", clip_range=clip_range)
+        raw_grad = torch.autograd.grad(var_cost, x, create_graph=not detach_var_cost_grad)[0]
+        grad = _normalize_channels(raw_grad, cache=grad_norm_cache, key="grad", clip_range=clip_range)
     if update_input == "grad-only":
         return grad
     return torch.cat([grad, x], dim=-1)
@@ -425,7 +462,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
 
 def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_tau_k,
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
-                       clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False):
+                       clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
+                       detach_var_cost_grad=False):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -439,7 +477,10 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
     reentrant checkpoint implementation -- because "grad-only"/"grad+state"
     call ``torch.autograd.grad(..., create_graph=True)`` inside
     ``_build_update_input``, and only the non-reentrant checkpoint supports
-    nested/higher-order autograd correctly.
+    nested/higher-order autograd correctly. (``detach_var_cost_grad=True``
+    makes that specific call ``create_graph=False`` instead -- still safe
+    under ``use_reentrant=False`` either way, just no longer exercising the
+    nested-autograd path for this term.)
 
     Safe to checkpoint unconditionally (no config flag): under
     ``torch.no_grad()`` (eval/sampling), ``checkpoint`` just runs the
@@ -457,7 +498,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                obs_weight=obs_weight, prior_weight=prior_weight,
                                grad_norm_cache=grad_norm_cache, clip_range=clip_range,
                                gradsplit_prior_scale=gradsplit_prior_scale,
-                               prior_residual=prior_residual).transpose(1, 2)
+                               prior_residual=prior_residual,
+                               detach_var_cost_grad=detach_var_cost_grad).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -545,7 +587,8 @@ class FourDVarNetSolver(nn.Module):
                  gradsplit_prior_scale=1.0,
                  prior_residual=False,
                  prior_dropout=None,
-                 prior_output_init_std=0.0):
+                 prior_output_init_std=0.0,
+                 detach_var_cost_grad=False):
         super().__init__()
         _validate_update_input(update_input)
         _validate_unet_backbone(unet_backbone)
@@ -630,6 +673,22 @@ class FourDVarNetSolver(nn.Module):
         # (and only intended to be set) alongside prior_residual=True, where
         # exact zero-init is a provable permanent dead end for this layer.
         self.prior_output_init_std = prior_output_init_std
+        # False (default, backward-compatible; "grad-only"/"grad+state"
+        # only): create_graph=not detach_var_cost_grad for the per-iteration
+        # combined torch.autograd.grad(var_cost, x, ...) call. Does NOT
+        # change what's fed to the solver UNet (still the real, Jacobian-
+        # including gradient) -- only whether the OUTER supervised loss can
+        # later differentiate through that computation into prior_unet's
+        # weights (and prior_weight) / x's upstream dependency on earlier
+        # iterations via this channel. True decouples "does the solver
+        # benefit from consuming the true differentiated-prior gradient"
+        # from "does jointly training the prior through the per-iteration
+        # double-backward help" -- prior_unet then trains only via the aux
+        # prior_cost loss. See _build_update_input's docstring for the full
+        # derivation and how this differs from detaching Phi(x) itself
+        # (which would instead collapse the fed signal to subgrad+state's
+        # own proxy).
+        self.detach_var_cost_grad = detach_var_cost_grad
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight
         if update_input in _AUTOGRAD_MODES and trainable_prior_weight:
@@ -769,7 +828,7 @@ class FourDVarNetSolver(nn.Module):
                 _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
                 tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
                 grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
-                self.prior_residual,
+                self.prior_residual, self.detach_var_cost_grad,
                 use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)

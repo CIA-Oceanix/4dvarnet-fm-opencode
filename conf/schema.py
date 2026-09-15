@@ -345,6 +345,16 @@ class FourDVarNetConfig:
     # once it starts at exactly zero -- see models/monai_unet_adapter.py's
     # MonaiUNet1D.__init__ docstring for the full derivation).
     prior_output_init_std: float = 0.0
+    # False (default, backward-compatible; grad-only/grad+state only):
+    # create_graph=not detach_var_cost_grad for the per-iteration combined
+    # torch.autograd.grad(var_cost, x, ...) call. Does NOT change what's fed
+    # to the solver UNet (still the real, Jacobian-including gradient) --
+    # only whether the outer supervised loss can later differentiate
+    # through it into prior_unet's weights/prior_weight (which then train
+    # only via the aux prior_cost loss instead). See
+    # models/fourdvarnet.py::_build_update_input's docstring for the full
+    # derivation.
+    detach_var_cost_grad: bool = False
 
 
 @dataclass

@@ -932,6 +932,103 @@ class TestPriorDropout:
         assert model.prior_unet is None
 
 
+class TestDetachVarCostGrad:
+    """detach_var_cost_grad (False default, backward-compatible;
+    grad-only/grad+state only): create_graph=not detach_var_cost_grad for
+    the per-iteration combined torch.autograd.grad(var_cost, x, ...) call.
+    Must NOT change the fed grad tensor's VALUE at all -- only whether the
+    outer loss can later backprop through it into prior_unet's weights /
+    prior_weight (which then train only via the aux prior_cost loss)."""
+
+    def test_default_preserves_existing_behavior(self):
+        torch.manual_seed(0)
+        model_a = _make_model(update_input="grad+state", N_outer=3)
+        torch.manual_seed(0)
+        model_b = _make_model(update_input="grad+state", N_outer=3, detach_var_cost_grad=False)
+        model_b.load_state_dict(model_a.state_dict())
+        model_a.eval()
+        model_b.eval()
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+        with torch.no_grad():
+            assert torch.equal(model_a(batch), model_b(batch))
+
+    def test_fed_grad_value_unchanged_by_detaching(self):
+        """The VALUE of the tensor fed to the solver UNet must be identical
+        whether detach_var_cost_grad is True or False -- only downstream
+        differentiability changes, not the forward computation."""
+        model = _make_model(update_input="grad+state", dropout=0.0)
+        model.prior_unet.eval()
+        B, T, D = 2, 10, 3
+        tau = torch.rand(B)
+        obs_mask = torch.ones(B, T, 1)
+        x = torch.randn(B, T, D).requires_grad_(True)
+        obs_clean = torch.randn(B, T, D)
+        out_attached = _build_update_input("grad+state", x, obs_clean, obs_mask, tau,
+                                            prior_unet=model.prior_unet, R_var=0.5, obs_weight=1.0,
+                                            detach_var_cost_grad=False)
+        out_detached = _build_update_input("grad+state", x, obs_clean, obs_mask, tau,
+                                            prior_unet=model.prior_unet, R_var=0.5, obs_weight=1.0,
+                                            detach_var_cost_grad=True)
+        # cat([grad, x]) still requires_grad overall (x itself is a leaf
+        # requiring grad, concatenated alongside) -- what actually changes
+        # is whether prior_unet's weights receive gradient through the
+        # grad-channel specifically, covered separately by
+        # test_true_severs_prior_unet_gradient_through_unroll below.
+        assert torch.allclose(out_attached, out_detached, atol=1e-6)
+
+    def test_true_severs_prior_unet_gradient_through_unroll(self):
+        """With aux_var_cost_weight=0 (no other gradient source),
+        prior_unet must receive NO gradient when detach_var_cost_grad=True,
+        but a real one when False."""
+        torch.manual_seed(0)
+        model_attached = _make_model(update_input="grad+state", N_outer=3,
+                                      aux_var_cost_weight=0.0, detach_var_cost_grad=False)
+        torch.manual_seed(0)
+        model_detached = _make_model(update_input="grad+state", N_outer=3,
+                                      aux_var_cost_weight=0.0, detach_var_cost_grad=True)
+        model_detached.load_state_dict(model_attached.state_dict())
+        batch = _MockBatch(B=2, T=20, D=3, seed=2)
+
+        model_attached.compute_loss(batch).backward()
+        attached_grads = [p.grad for p in model_attached.prior_unet.parameters()]
+        assert any(g is not None and g.abs().sum() > 0 for g in attached_grads)
+
+        model_detached.compute_loss(batch).backward()
+        detached_grads = [p.grad for p in model_detached.prior_unet.parameters()]
+        assert all(g is None or g.abs().sum() == 0 for g in detached_grads)
+
+    def test_true_still_trains_via_aux_loss(self):
+        """With aux_var_cost_weight>0, prior_unet still gets a real
+        gradient even when detach_var_cost_grad=True -- the aux prior_cost
+        loss is a separate, undetached pathway."""
+        model = _make_model(update_input="grad+state", N_outer=2,
+                             aux_var_cost_weight=0.1, detach_var_cost_grad=True)
+        batch = _MockBatch(B=2, T=10, D=3)
+        model.compute_loss(batch).backward()
+        prior_grads = [p.grad for p in model.prior_unet.parameters()]
+        assert any(g is not None and g.abs().sum() > 0 for g in prior_grads)
+
+    def test_true_leaves_trainable_prior_weight_with_no_gradient(self):
+        """CAVEAT documented in _build_update_input's docstring: prior_weight
+        has no gradient source other than the per-iteration pathway (the aux
+        loss deliberately never references self.prior_weight), so
+        detach_var_cost_grad=True makes a trainable prior_weight permanently
+        stuck -- confirmed directly here, even with aux_var_cost_weight>0."""
+        model = _make_model(update_input="grad+state", N_outer=2,
+                             aux_var_cost_weight=0.1, detach_var_cost_grad=True,
+                             trainable_prior_weight=True)
+        assert model._prior_weight_raw is not None
+        batch = _MockBatch(B=2, T=10, D=3)
+        model.compute_loss(batch).backward()
+        assert model._prior_weight_raw.grad is None or model._prior_weight_raw.grad.abs().sum() == 0
+
+    def test_grad_only_mode_also_supported(self):
+        model = _make_model(update_input="grad-only", N_outer=2, detach_var_cost_grad=True)
+        batch = _MockBatch(B=2, T=10, D=3)
+        out = model(batch)
+        assert torch.isfinite(out).all()
+
+
 def _make_cfm_model(**kwargs):
     defaults = dict(state_dim=3, hidden_channels=[4, 8], N_outer=3, K_inner=2)
     defaults.update(kwargs)
