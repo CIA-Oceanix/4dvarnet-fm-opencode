@@ -1,6 +1,13 @@
 ## 2026-09-16: Paper scoping — "is the true prior the best prior?" + Phase D experiment plan
 
-**Summary:** Two research-planning documents. `scoping_best_prior_approximate_inference.md`
+**Summary:** Three research-planning documents.
+`scoping_ml_paper_exploiting_prior_knowledge.md` is the ML-venue scoping: it
+adopts the `Psi_mean / Psi_G / Psi_NG` flow-matching operator partition (from the
+two drafts added on master in #209) as its *organizing framework*, turning the
+contribution into a domain-agnostic diagnostic that attributes any inversion
+method's deficit to named components, and spans four case-study families
+(Gaussian negative control, deconvolution with a non-Gaussian prior, Fourier
+subsampling / MRI, chaotic dynamics). `scoping_best_prior_approximate_inference.md`
 defines the scientific question (under *approximate* inference, is the true prior
 the best prior to use, and should it be independent of the observation
 configuration?), the Q1/Q2/Q3a/Q3b ladder, four testbed families spanning well
@@ -11,6 +18,7 @@ instantiation: targeted contributions, the four-axis design space, and work
 packages tiered by cost.
 
 **Files modified:**
+- `docs/scoping_ml_paper_exploiting_prior_knowledge.md` — new ML-venue scoping doc (Q1-Q4, the operator decomposition as organizing framework and method taxonomy, four case-study families, E0-E5, risks R1-R6); supersedes the *framing* of the doc below
 - `docs/scoping_best_prior_approximate_inference.md` — new scoping doc (question, testbeds, experiments, risks, phasing, prior art)
 - `docs/phase_D_physics_priors_under_uncertainty.md` — new design doc (C1-C5, work packages WP-0.1 … WP-3.1); its *framing* is superseded by the scoping doc, its work packages survive as the Family-3 instantiation (see scoping §12)
 
