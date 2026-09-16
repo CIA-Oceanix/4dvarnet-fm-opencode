@@ -7,9 +7,9 @@ L96's 1D ring. `models.direct_unet.DirectUNet` never applies a spatial
 convolution at all for QG -- it flattens the (ny, nx) field into a plain
 channel axis and only convolves along the time/day axis.
 
-MUST run in the `fdv-monai-proto` env (monai==1.6.0 needs torch==2.8.0+cu126;
-see `models.monai_unet_adapter`'s docstring), not this project's default
-`fdv` env.
+Needs monai==1.6.0 / torch==2.8.0+cu126, which the project's default
+`fdv-monai-proto` env provides (see `models.monai_unet_adapter`'s docstring
+and AGENTS.md "Conda environment").
 
 Upstream gap patched here (not a MONAI config issue): `monai.networks.blocks.
 Convolution` builds its conv layer via the `Conv[Conv.CONV, spatial_dims]`

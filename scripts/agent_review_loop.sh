@@ -27,7 +27,7 @@ BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_-' | cut -c1-80)"
 
 # Python env that has the project deps (torch, hydra, lightning). The base
 # miniforge env's pytest cannot import torch, so default to the fdv env.
-PYTHON_BIN="${PYTHON_BIN:-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python}"
 
 if [ "$MODE" != "--review" ]; then
     git switch "$MAIN_BRANCH"

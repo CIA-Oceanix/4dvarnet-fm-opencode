@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
 DATASET="experiments/l96_datasets_obsj2_int100_nwin200.pt"

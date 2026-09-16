@@ -175,7 +175,7 @@ pytest tests/ -m "slow" -v
 ### 1. Run Fast Tests
 ```bash
 cd /homes/rfablet/HomeOdyssey/Python/4dvarnet-fm-opencode
-conda activate fdv
+conda activate fdv-monai-proto
 pytest tests/test_metrics.py tests/test_lorenz63.py -v
 ```
 

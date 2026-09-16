@@ -21,7 +21,7 @@ set -e
 # stats are required -- leaving wind_curl unnormalized (raw ~1e-13-1e-12)
 # collapsed a real 200-epoch Q3 training run at epoch 28.
 CACHE_DIR="/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 $PY precompute_qg_norm_stats.py \
     --nx 64 --train-seed 42 --num-train 1000 \

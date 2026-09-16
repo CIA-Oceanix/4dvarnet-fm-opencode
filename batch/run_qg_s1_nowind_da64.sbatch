@@ -11,7 +11,7 @@ set -e
 # S1 factorial run #7: no wind corruption at FULL resolution (--da-nx 64, no
 # resolution mismatch), keeping the param-bias ON. Honest metrics (no upsample
 # inflation at da_nx=64). lag 1.0, psi-obs, cols=4, 1% noise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 64 \
     --window-days 30 \

@@ -98,7 +98,7 @@ def main():
 
     if os.path.exists("checkpoint_stage1.pt") and os.path.exists("checkpoint_stage2.pt"):
         print("  Found checkpoint_stage2.pt, loading model...")
-        model.load_state_dict(torch.load("checkpoint_stage2.pt", map_location=device))
+        model.load_state_dict(torch.load("checkpoint_stage2.pt", map_location=device, weights_only=False))
     else:
         print("\n" + "=" * 60)
         print("STEP 3: Training 4DVarNet-FM (Stage 1: Mean Estimator)")

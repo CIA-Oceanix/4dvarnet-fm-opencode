@@ -12,7 +12,7 @@ set -e
 # (--s1-param-bias 0 --s1-amp-bias 0 --s1-loc-sigma-frac 0 --s1-sigma-eta-frac 0),
 # keeping only the resolution mismatch (da_nx=32 vs truth 64). lag 1.0, psi-obs,
 # cols=4, 1% noise. Mirrors batch/run_qg_s1_da32.sbatch otherwise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 32 \
     --window-days 30 \

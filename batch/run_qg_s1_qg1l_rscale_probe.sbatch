@@ -35,7 +35,7 @@ case $SLURM_ARRAY_TASK_ID in
   3) OV=q;   RS=1;    TAG=s1_qg1l_q_rs1;;
 esac
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

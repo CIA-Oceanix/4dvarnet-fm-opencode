@@ -11,7 +11,7 @@ set -e
 # S1 factorial run @ da_nx=16: no param corruption (--s1-param-bias 0) at the
 # 4:1 mismatch (DA 16x16 vs truth 64x64), keeping the wind corruption ON.
 # lag 1.0, psi-obs, cols=4, 1% noise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 16 \
     --window-days 30 \

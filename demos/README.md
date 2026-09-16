@@ -10,7 +10,7 @@ The demos validate the **degradation hypothesis**: classical DA methods (Weak-4D
 
 ```bash
 # Activate environment
-conda activate fdv
+conda activate fdv-monai-proto
 
 # Run all demos (fast mode: 2-second windows)
 python demos/demo_lorenz63_dynamics.py
@@ -183,7 +183,7 @@ See `requirements.txt` for full dependencies.
 - The optimization is CPU-bound and may take several minutes
 
 ### Import errors
-- Ensure conda environment is activated: `conda activate fdv`
+- Ensure conda environment is activated: `conda activate fdv-monai-proto`
 - Verify all dependencies are installed: `pip install -r requirements.txt`
 
 ## References

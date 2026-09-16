@@ -19,7 +19,7 @@ fi
 
 # Activate conda environment
 echo "🔧 Activating conda environment 'fdv'..."
-source activate fdv 2>/dev/null || conda activate fdv
+source activate fdv-monai-proto 2>/dev/null || conda activate fdv-monai-proto
 
 # Option 1: Fast tests only (recommended for quick validation)
 echo ""

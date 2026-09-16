@@ -14,8 +14,8 @@ set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
-export CONDA_DEFAULT_ENV=fdv
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
+export CONDA_DEFAULT_ENV=fdv-monai-proto
 export PYTHONUNBUFFERED=1
 
 INFLATION_VALUES=(1.0 1.1 1.15 1.2 1.25 1.3 1.35 1.4 1.5 1.6 2.0)

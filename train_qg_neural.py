@@ -718,7 +718,7 @@ def main():
         torch.save(lit.model.state_dict(), ckpt)
         print(f"Stage 1 done in {total_train:.1f}s, saved {ckpt}")
     else:
-        loaded = torch.load(args.eval_only, map_location="cpu")
+        loaded = torch.load(args.eval_only, map_location="cpu", weights_only=False)
         state_dict = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
         state_dict = {(k[6:] if k.startswith("model.") else k): v for k, v in state_dict.items()}
         model.load_state_dict(state_dict)

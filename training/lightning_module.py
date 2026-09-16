@@ -208,6 +208,6 @@ class LitModel(pl.LightningModule):
         return self.model(batch, **kwargs)
 
     def load_legacy_checkpoint(self, ckpt_path: str):
-        state = torch.load(ckpt_path, map_location="cpu")
+        state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         state = {k.replace("_orig_mod.", ""): v for k, v in state.items()}
         self.model.load_state_dict(state)

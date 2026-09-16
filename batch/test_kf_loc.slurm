@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # Best config + localization: inf=1.1, ens=100, loc=2.0
 $PYTHON -u evaluation/run_l96_sweep2.py \

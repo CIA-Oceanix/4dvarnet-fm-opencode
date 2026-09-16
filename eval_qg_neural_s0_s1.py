@@ -102,7 +102,7 @@ def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Mod
     model = build_model(model_type, cfg, param_dim=spec["param_dim"],
                         cond_extra_dim=spec["cond_extra_dim"],
                         ic_dim=spec.get("ic_dim", 0))
-    loaded = torch.load(spec["ckpt"], map_location="cpu")
+    loaded = torch.load(spec["ckpt"], map_location="cpu", weights_only=False)
     # Accepts both a bare state_dict (train_qg_neural.py's final stage1_best.pt)
     # and a full Lightning checkpoint (keys prefixed "model." for the
     # LightningModule's `self.model` submodule) -- e.g. a mid-training
@@ -189,7 +189,7 @@ def main():
     cache_cfg = QGConfig(**CACHE_KW)
     truth_path = _truth_cache_path(cache_cfg, args.num_test, args.cache_dir)
     print(f"Loading cached truth from {truth_path} ...", flush=True)
-    base = torch.load(truth_path, map_location="cpu")[:args.num_test]
+    base = torch.load(truth_path, map_location="cpu", weights_only=False)[:args.num_test]
     print(f"Loaded {len(base)} base truth windows.", flush=True)
 
     eval_overrides = {"nx": args.nx, "seed": args.test_seed, "num_windows": args.num_test,

@@ -16,8 +16,8 @@ from train import model_factory
 
 # Canonical DirectUNet/VanillaCFM/FDV L96 configs that must declare
 # data.normalize explicitly (true or false) -- no silent default. Excludes
-# monai_direct_unet configs (require the separate fdv-monai-proto env, see
-# requirements-monai.txt) and non-DirectUNet/VanillaCFM/FDV families
+# monai_direct_unet configs (require monai, see requirements.txt) and
+# non-DirectUNet/VanillaCFM/FDV families
 # (joint_*, param_head*, sda_prior*, tweedie_cfm, predict_state_cfm), which
 # are out of this plan's scope per the memory.
 NORMALIZE_FALSE_CONFIGS = [

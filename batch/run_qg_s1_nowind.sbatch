@@ -12,7 +12,7 @@ set -e
 # (wind corruption OFF: s1_amp_bias/loc_sigma_frac/sigma_eta_frac = 0 -> corrupted
 # wind == true wind), keeping da_nx=32 cross-resolution and the param-bias ON.
 # Mirrors batch/run_qg_s1_da32.sbatch (the reference) otherwise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 32 \
     --window-days 30 \

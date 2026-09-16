@@ -719,7 +719,7 @@ def ensure_truth_only_cache(cfg: QGConfig, n: int, cache_dir: str) -> list[dict]
     path = _truth_only_cache_path(cfg, n, cache_dir)
     if os.path.exists(path):
         try:
-            return torch.load(path, map_location="cpu")
+            return torch.load(path, map_location="cpu", weights_only=False)
         except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
             pass
     windows = QGS01Dataset._generate_truth_only(cfg, n)
@@ -747,7 +747,7 @@ def make_qg_s0_s1_datasets(cfg: QGConfig, num_test_windows: int | None = None,
         path = _truth_cache_path(cfg, n, cache_dir)
         if os.path.exists(path):
             try:
-                base = torch.load(path, map_location="cpu")
+                base = torch.load(path, map_location="cpu", weights_only=False)
             except (OSError, EOFError, RuntimeError, ValueError, pickle.UnpicklingError):
                 base = None
         if base is None:

@@ -13,7 +13,7 @@ set -e
 # method-list=enkf): nx=64, c4, random_columns, psi-obs, lag 1.0 & 2.0, to add
 # the EnKF row to qg_matrix_c4_psi alongside the existing ETKF rows.
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \
