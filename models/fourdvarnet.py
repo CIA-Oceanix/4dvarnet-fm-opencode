@@ -782,7 +782,8 @@ class FourDVarNetSolver(nn.Module):
                  true_dynamics_dt=None,
                  true_dynamics_NO=8,
                  true_dynamics_J=4,
-                 true_dynamics_h=1.0):
+                 true_dynamics_h=1.0,
+                 true_dynamics_coupling_exponent=1.6):
         super().__init__()
         _validate_update_input(update_input)
         if update_input in _CFM_ONLY_UPDATE_INPUTS:
@@ -920,12 +921,26 @@ class FourDVarNetSolver(nn.Module):
         # Lorenz96Dynamics instance (zero nn.Parameters -- not registered as
         # a submodule, just a plain attribute) used to compute the true
         # one-step-ahead prediction every iteration.
+        #
+        # true_dynamics_coupling_exponent defaults to 1.6, NOT
+        # Lorenz96Dynamics' own class default of 1.0 -- 1.6 is
+        # data/lorenz96.py's Lorenz96Config.coupling_exponent_truth, the
+        # value that actually generates every training/test window's true
+        # trajectory (data/lorenz96.py:110,113,122,139,368,392,448,564, all
+        # via coupling_exponent_truth). Every _FULL_STATE_UPDATE_INPUTS
+        # training run before this fix (jobs 53564/53595/53681) silently
+        # used coupling_exponent=1.0 here -- a subtly WRONG "true" ODE, not
+        # literally the dynamics that generated the data, since this
+        # parameter was never threaded through at all. Matches the same
+        # "default already equals the project's one canonical L96 config"
+        # convention as true_dynamics_NO=8/J=4/h=1.0 above.
         self.obs_var_indices = obs_var_indices
         self.true_dynamics = None
         if update_input in _FULL_STATE_UPDATE_INPUTS:
             self.true_dynamics = Lorenz96Dynamics(
                 dt=true_dynamics_dt, NO=true_dynamics_NO, J=true_dynamics_J,
-                h=true_dynamics_h, clip_range=clip_range,
+                h=true_dynamics_h, coupling_exponent=true_dynamics_coupling_exponent,
+                clip_range=clip_range,
             )
         self._prior_weight_raw = None
         self._prior_weight_fixed = prior_weight

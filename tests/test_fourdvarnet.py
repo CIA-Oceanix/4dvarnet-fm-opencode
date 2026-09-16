@@ -1605,6 +1605,19 @@ class TestFourDVarNetSolverTrueprior:
         n_params_unet_only = sum(p.numel() for p in model.unet.parameters())
         assert n_params_solver == n_params_unet_only
 
+    def test_true_dynamics_coupling_exponent_defaults_to_truth_value(self):
+        """Must default to 1.6 (data/lorenz96.py's
+        Lorenz96Config.coupling_exponent_truth, the value that actually
+        generates every training/test window's true trajectory) -- NOT
+        Lorenz96Dynamics' own class default of 1.0, which every
+        _FULL_STATE_UPDATE_INPUTS run before this fix silently used."""
+        model = _make_full_state_model()
+        assert model.true_dynamics.coupling_exponent == 1.6
+
+    def test_true_dynamics_coupling_exponent_is_configurable(self):
+        model = _make_full_state_model(true_dynamics_coupling_exponent=1.0)
+        assert model.true_dynamics.coupling_exponent == 1.0
+
     def test_checkpoint_matches_uncheckpointed(self):
         model = _make_full_state_model(N_outer=3, dropout=0.1)
         model.train()
