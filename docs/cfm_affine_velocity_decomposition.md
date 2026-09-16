@@ -239,9 +239,17 @@ Agreement ~1.5% (V3) / ~4% (FDV1CFM). Two further confirmations:
 4. **The approximation improves with a better mean model** (V3 → FDV1CFM: peak velocity
    residual 0.314 → 0.273), which supports putting the unrolled solver in the $m$ slot.
 
-5. **Actionable, and a consequence of the flat-then-steep profile**: integrate coarsely
+5. ~~**Actionable, and a consequence of the flat-then-steep profile**: integrate coarsely
    where the affine model is accurate ($\tau<0.8$) and concentrate network evaluations
-   near $\tau\to1$. Testable on an existing checkpoint with no retraining.
+   near $\tau\to1$.~~ **RETRACTED 2026-09-16 — this was a model artifact, not a property
+   of the problem.** The late-$\tau$ blow-up that motivated it is present in V3 and
+   FDV1CFM but **absent in V2rerun** (`TweedieCFM`, multi-$\tau$), whose
+   $\|\rho\|/\|\mu-x_\tau\|$ at $\tau=0.95$ is 0.204 and *falls* to 0.174 under sparse
+   observations, against V3's 0.57-0.62. Since V2 and FDV1CFM have near-identical mean
+   quality ($\hat m$ RMSE 0.522 vs 0.515) but very different late-$\tau$ residuals, the
+   blow-up is a property of the **residual/velocity stage**, not of the posterior — V2's
+   explicitly two-stage design (mean estimator + residual CFM) handles $\tau\to1$
+   cleanly. See `docs/psi_decomposition_results.md` §1.
 
 ### Open / caveats
 
