@@ -8,8 +8,12 @@ only as a rollback path. All `torch.load` calls on project-produced artifacts no
 and numpy arrays.
 
 **Files modified:**
-- `requirements.txt` — now pins `torch==2.8.0+cu126` + `monai==1.6.0` (with the cu126
-  `--extra-index-url` install note); `requirements-monai.txt` deleted, its content folded in.
+- `requirements.txt` — now pins `torch==2.8.0` + `monai==1.6.0` + `einops>=0.8.0` (with the
+  cu126 `--extra-index-url` note for the GPU env; the `+cu126` local version is not on PyPI
+  so it is not pinned here). `requirements-monai.txt` deleted, its content folded in.
+  einops is optional per monai's own packaging but mandatory here — monai's
+  `DiffusionModelUNet` imports `einops.layers.torch.Rearrange` at model construction, which
+  CI hit as soon as monai became a default dependency.
 - `AGENTS.md` — new "Conda environment" section: default env, per-run override, the frozen
   `fdv` rollback path, and the `torch.load`/`weights_only` gotcha.
 - `batch/**` (~174 scripts), `scripts/agent_review_loop.sh`, `batch/run_tests.sh`,

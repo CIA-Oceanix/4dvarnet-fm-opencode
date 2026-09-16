@@ -16,6 +16,11 @@
 # torch 2.4.1's numerics bit-identically.
 torch==2.8.0
 monai==1.6.0
+# einops is an *optional* monai dependency by monai's own packaging, but not
+# optional here: monai's DiffusionModelUNet (models/monai_unet_adapter.py,
+# models/monai_unet_qg2d.py) imports einops.layers.torch.Rearrange at model
+# construction, so every monai-backed model in this project needs it.
+einops>=0.8.0
 numpy>=1.24.0
 matplotlib>=3.8.0
 pytest>=7.4.0
