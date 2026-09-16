@@ -13,8 +13,8 @@ CRPS is computed per-window on the q-state: ensemble methods (ETKF/EnKF) score t
 | method | PV RMSE | improv | CRPS | CRPS (norm.) | PV EV | PV q1 EV | PV q2 EV | ψ EV |
 |---|---|---|---|---|---|---|---|---|
 | _free forecast_ | 1.93e-05 | 1.0 | -- | -- | -0.0312 | -0.0443 | -0.0180 | 0.8854 |
-| EnKF | **1.25e-05** | **1.5417** | **5.69e-06** | **0.2802** | **0.4812** | **0.5686** | *0.3938* | 0.9474 |
-| ETKF | *1.29e-05* | *1.4935* | *5.87e-06* | *0.2891* | *0.4760* | *0.5419* | **0.4100** | 0.9570 |
+| EnKF | **1.27e-05** | **1.5153** | **5.73e-06** | **0.2818** | **0.5000** | **0.5566** | **0.4434** | 0.9584 |
+| ETKF | *1.27e-05* | *1.5105* | *5.75e-06* | *0.2830* | *0.4982* | *0.5539* | *0.4424* | 0.9593 |
 | Weak-4DVar | 1.41e-05 | 1.3691 | 9.19e-06* | 0.4524* | -0.0345 | 0.4677 | -0.5367 | *0.9660* |
 | Strong-4DVar | 1.40e-05 | 1.3793 | 9.22e-06* | 0.4538* | -0.1257 | 0.4830 | -0.7344 | **0.9714** |
 
@@ -31,10 +31,10 @@ CRPS is computed per-window on the q-state: ensemble methods (ETKF/EnKF) score t
 | method | PV RMSE | improv | CRPS | CRPS (norm.) | PV EV | PV q1 EV | PV q2 EV | ψ EV |
 |---|---|---|---|---|---|---|---|---|
 | _free forecast_ | 2.20e-05 | 1.0 | -- | -- | -0.3822 | -0.3091 | -0.4554 | 0.6760 |
-| EnKF | *1.44e-05* | *1.5255* | *6.74e-06* | *0.3318* | *0.3308* | *0.4402* | *0.2214* | 0.8957 |
-| ETKF | **1.43e-05** | **1.5351** | **6.65e-06** | **0.3270** | **0.3570** | **0.4481** | **0.2660** | 0.9261 |
+| EnKF | **1.39e-05** | **1.5854** | **6.39e-06** | **0.3144** | **0.4126** | **0.4844** | **0.3408** | 0.9410 |
+| ETKF | *1.39e-05* | *1.5829* | *6.40e-06* | *0.3150* | *0.4116* | *0.4828* | *0.3404* | *0.9424* |
 | Weak-4DVar | 1.62e-05 | 1.3587 | 1.09e-05* | 0.5378* | -0.5008 | 0.3214 | -1.3229 | **0.9468** |
-| Strong-4DVar | 1.68e-05 | 1.3097 | 1.15e-05* | 0.5648* | -0.8573 | 0.2819 | -1.9966 | *0.9314* |
+| Strong-4DVar | 1.68e-05 | 1.3097 | 1.15e-05* | 0.5648* | -0.8573 | 0.2819 | -1.9966 | 0.9314 |
 
 (Best per column **bolded**, second-best *italicized*, ranked among the 4 DA methods -- the free-forecast reference row above is excluded.)
 
@@ -52,14 +52,25 @@ Condensed summary of the 2026-09-11/12 sensitivity study -- full sweep tables (f
 
 **`etkf_ridge` (Kalman-gain transform-matrix regularization) is the real lever** -- a mechanism EnKF has no equivalent of. Monotonically helps up to a peak (S1 peaks around ridge=2.0, S0 plateaus 0.1-1.0), then mildly declines. `ridge=1.0` was picked as near-optimal on both scenarios. **Confirmed at full N=100** (not just the N=10 sweep):
 
-| | ETKF (old default) | EnKF | **ETKF + ridge=1.0 (new default)** |
+| | ETKF (pre-2026-09-12 default) | EnKF (at loc=6.0) | ETKF + ridge=1.0 (2026-09-12 default) |
 |---|---|---|---|
 | S0 psi EV | 0.921 | 0.947 | **0.957** |
 | S0 q EV | 0.405 | **0.481** | 0.476 |
 | S1 psi EV | 0.874 | 0.896 | **0.926** |
 | S1 q EV | 0.307 | 0.331 | **0.357** |
 
-ETKF+ridge=1.0 beats EnKF outright on **both** fields on S1, and ties/beats it on S0 -- no trade-off on the unobserved PV layer either. This is why `etkf_ridge=1.0` was promoted to the default (2026-09-12): the previously "unexplained" EnKF>ETKF gap was largely an artifact of ETKF running with an under-regularized transform-matrix inversion, not a fundamental method limitation.
+ETKF+ridge=1.0 beat EnKF outright on **both** fields on S1, and tied/beat it on S0 -- no trade-off on the unobserved PV layer either. This is why `etkf_ridge=1.0` was promoted to the default on 2026-09-12: the previously "unexplained" EnKF>ETKF gap was largely an artifact of ETKF running with an under-regularized transform-matrix inversion, not a fundamental method limitation. **Superseded by the 2026-09-15 `loc_radius` re-tune below** -- all four numbers in this table used `loc_radius=6.0`, which turned out to be untuned even at this reference density.
+
+**`loc_radius=6.0` itself was never tuned -- also superseded (2026-09-15)**: the obs-density sensitivity study (cols=1/2/16/64, `da_sensitivity_s0_s1_report.md`) found `loc_radius=2.0` near-universally beats `6.0`, and checking it at the reference density itself (cols=4) confirmed the same -- `loc_radius=6.0` was the *worst* point in a {1,2,3,4,6} grid for both methods. Once `loc_radius` moved to 2.0, `etkf_ridge` needed re-checking too (the two regularizers interact): a fresh ridge sweep found `ridge=1.0`'s benefit had inverted -- q/q-layer2 now decline monotonically from `ridge=0` (the implicit floor) upward, with psi flat throughout. `inflation=1.0` was re-checked at the new config and remains optimal for both methods (unaffected). **New current default (2026-09-15): `loc_radius=2.0`, `etkf_ridge=0.1` (ETKF only; EnKF has no ridge), `inflation=1.0` unchanged** -- confirmed at full N=100:
+
+| | ETKF (loc=6.0, ridge=1.0) | EnKF (loc=6.0) | ETKF (loc=2.0, ridge=0.1) | EnKF (loc=2.0) |
+|---|---|---|---|---|
+| S0 psi EV | 0.957 | 0.947 | 0.959 | **0.958** |
+| S0 q EV | 0.476 | 0.481 | *0.498* | **0.500** |
+| S1 psi EV | 0.926 | 0.896 | **0.942** | *0.941* |
+| S1 q EV | 0.357 | 0.331 | *0.412* | **0.413** |
+
+ETKF and EnKF are now nearly indistinguishable at this reference density once both are properly localized -- the EnKF>ETKF gap (and later ETKF>EnKF gap after the ridge promotion) were both artifacts of running at an untuned `loc_radius=6.0`. (S0/S1 q-layer2 EV, the previously-collapsing unobserved deep layer, moves even more: ETKF 0.410->0.442, EnKF 0.394->0.443 at S0; ETKF 0.266->0.340, EnKF 0.221->0.341 at S1 -- see `da_sensitivity_s0_s1_report.md` for the full trail.) Full sweep + N=100 confirmation tables are in the dedicated report; `PLAN.md` has the complete narrative.
 
 **4DVar (Strong/Weak) covariance-weighting sweep -- negative result**: motivated by the same logic (both 4DVar variants collapse on PV q layer2 under S1: Strong -0.857, Weak -0.501 vs ETKF/EnKF staying positive), swept Strong-4DVar's `b_var_scale` (background-covariance whitening scale) and Weak-4DVar's `q_var_scale` (per-step model-error weight) on S1, N=5 (4DVar is ~15-20x more expensive per window than ETKF/EnKF). Unlike ETKF's ridge, **neither lever helps**: `b_var_scale` is essentially flat across 0.3-3.0 (q EV -1.06/-1.07/-1.11); `q_var_scale` is monotonically *worse* the higher it's pushed above the existing default 0.1 (q EV -0.91/-0.99/-1.09/-1.11 at 0.1/0.3/1.0/3.0) -- giving the model-error controls more freedom actively hurts rather than helping. Both methods' existing defaults (`b_var_scale=1.0`, `q_var_scale=0.1`) were already at or near the best point found. This is consistent with the 4DVar q-layer2 collapse being a more structural limitation (a single optimized trajectory has no ensemble spread to exploit on the unobserved layer) rather than a fixable covariance-tuning gap, unlike ETKF's case.
 
@@ -67,12 +78,12 @@ ETKF+ridge=1.0 beats EnKF outright on **both** fields on S1, and ties/beats it o
 
 ## Synthesis: best configuration per method (S0 vs S1)
 
-Following the sensitivity study above, every method's *best known* config is now also its *shipped default* -- ETKF's default was the one that changed (`etkf_ridge=1.0`); EnKF, Strong-4DVar, and Weak-4DVar were already at their best tested configuration.
+Following the sensitivity study above, every method's *best known* config is now also its *shipped default* -- both ETKF's and EnKF's default changed on 2026-09-15 (`loc_radius` 6.0->2.0, plus `etkf_ridge` 1.0->0.1 for ETKF); Strong-4DVar and Weak-4DVar were already at their best tested configuration.
 
 | method | best config | S0 ψ EV | S0 PV EV | S1 ψ EV | S1 PV EV |
 |---|---|---|---|---|---|
-| EnKF | N=80, inflation=1.0, loc_radius=6.0 (default, unchanged -- own inflation sweep found no improvement over this) | 0.9474 | 0.4812 | 0.8957 | 0.3308 |
-| ETKF | N=80, inflation=1.0, loc_radius=6.0, **etkf_ridge=1.0** (default since 2026-09-12; was the implicit ~1e-4 floor) | 0.9570 | 0.4760 | 0.9261 | 0.3570 |
+| EnKF | N=80, inflation=1.0, **loc_radius=2.0** (default since 2026-09-15; was loc_radius=6.0, untuned) | 0.9584 | 0.5000 | 0.9410 | 0.4126 |
+| ETKF | N=80, inflation=1.0, **loc_radius=2.0, etkf_ridge=0.1** (default since 2026-09-15; was loc_radius=6.0, etkf_ridge=1.0) | 0.9593 | 0.4982 | 0.9424 | 0.4116 |
 | Weak-4DVar | b_var_scale=1.0, q_var_scale=0.1 (default, unchanged -- sweep over 0.1-3.0 found 0.1 already best, higher values monotonically worse) | 0.9660 | -0.0345 | 0.9468 | -0.5008 |
 | Strong-4DVar | b_var_scale=1.0 (default, unchanged -- sweep over 0.3-3.0 found no improvement, roughly flat) | 0.9714 | -0.1257 | 0.9314 | -0.8573 |
 

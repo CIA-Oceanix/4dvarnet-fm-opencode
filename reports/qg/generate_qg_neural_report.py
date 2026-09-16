@@ -64,17 +64,18 @@ SCHEMES = [
     {
         "name": "ETKF",
         "type": "Ensemble DA (deterministic square-root)",
-        "config": "N=80, inflation=1.0, loc_radius=6.0, etkf_ridge=1.0",
+        "config": "N=80, inflation=1.0, loc_radius=2.0, etkf_ridge=0.1",
         "desc": "Ensemble Transform Kalman Filter -- deterministic ensemble-square-root "
                 "analysis update, sequentially cycled over the assimilation window. "
-                "No stochastic observation perturbation. `etkf_ridge=1.0` (Kalman-gain "
-                "transform-matrix regularization) is the default as of 2026-09-12 -- "
-                "see `qg_da_report.md`'s sensitivity-analysis section.",
+                "No stochastic observation perturbation. `loc_radius=2.0`/"
+                "`etkf_ridge=0.1` is the default as of 2026-09-15 (was "
+                "loc_radius=6.0/etkf_ridge=1.0) -- see `qg_da_report.md`'s "
+                "sensitivity-analysis section.",
     },
     {
         "name": "EnKF",
         "type": "Ensemble DA (stochastic, perturbed-obs)",
-        "config": "N=80, inflation=1.0, loc_radius=6.0",
+        "config": "N=80, inflation=1.0, loc_radius=2.0",
         "desc": "Perturbed-observation Ensemble Kalman Filter -- each ensemble member "
                 "assimilates an independently perturbed observation. Same hyperparameters "
                 "as ETKF for a controlled comparison.",

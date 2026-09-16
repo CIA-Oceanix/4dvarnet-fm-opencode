@@ -6,8 +6,8 @@ Two-layer quasi-geostrophic (QG) Phillips-channel case study -- the four DA base
 
 | scheme | type | key config | description |
 |---|---|---|---|
-| ETKF | Ensemble DA (deterministic square-root) | N=80, inflation=1.0, loc_radius=6.0, etkf_ridge=1.0 | Ensemble Transform Kalman Filter -- deterministic ensemble-square-root analysis update, sequentially cycled over the assimilation window. No stochastic observation perturbation. `etkf_ridge=1.0` (Kalman-gain transform-matrix regularization) is the default as of 2026-09-12 -- see `qg_da_report.md`'s sensitivity-analysis section. |
-| EnKF | Ensemble DA (stochastic, perturbed-obs) | N=80, inflation=1.0, loc_radius=6.0 | Perturbed-observation Ensemble Kalman Filter -- each ensemble member assimilates an independently perturbed observation. Same hyperparameters as ETKF for a controlled comparison. |
+| ETKF | Ensemble DA (deterministic square-root) | N=80, inflation=1.0, loc_radius=2.0, etkf_ridge=0.1 | Ensemble Transform Kalman Filter -- deterministic ensemble-square-root analysis update, sequentially cycled over the assimilation window. No stochastic observation perturbation. `loc_radius=2.0`/`etkf_ridge=0.1` is the default as of 2026-09-15 (was loc_radius=6.0/etkf_ridge=1.0) -- see `qg_da_report.md`'s sensitivity-analysis section. |
+| EnKF | Ensemble DA (stochastic, perturbed-obs) | N=80, inflation=1.0, loc_radius=2.0 | Perturbed-observation Ensemble Kalman Filter -- each ensemble member assimilates an independently perturbed observation. Same hyperparameters as ETKF for a controlled comparison. |
 | Strong-4DVar | Variational DA (deterministic, perfect-model) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0 | 4D-Var assuming the DA dynamical model is exact over the assimilation window (strong constraint) -- optimizes only the initial condition. |
 | Weak-4DVar | Variational DA (deterministic, weak-constraint) | window=60 steps, LBFGS, max_iter=60, b_var_scale=1.0, q_var_scale=0.1 | 4D-Var with an added per-step model-error control term (weak constraint) -- can partially compensate for a biased/mismatched dynamical model, at the cost of a larger control space. |
 | Q1 (DirectUNet, T-channels) | Neural (deterministic, single-pass, supervised) | MonaiDirectUNetQGChannelTime, hidden=[64,128,256] (M tier), obs-only, lag=5.0d/noise=0.05 training, gradient_clip_val=1.0, 200 epochs | Direct single forward-pass estimator mapping observations to the full state (no iterative assimilation cycle, no dynamical model at inference time). Merges the T (days) axis into the *channel* dimension (`models.monai_unet_qg2d.MonaiUNet2DQGSolver`) so the 2D circular-conv backbone's ordinary channel mixing can relate one day to another, unlike the older batch-folding backbone (every day processed fully independently). Trained via supervised regression on a combined psi + weighted PV-q loss. |
@@ -23,14 +23,10 @@ Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q (both 
 
 | scheme | S0 ψ EV | S0 PV-q EV | S1 ψ EV | S1 PV-q EV |
 |---|---|---|---|---|
-| EnKF | 0.9474 | 0.4812 | 0.8957 | 0.3308 |
-| ETKF | 0.9570 | 0.4760 | 0.9261 | 0.3570 |
-| Weak-4DVar | 0.9660 | -0.0345 | 0.9468 | -0.5008 |
-| Strong-4DVar | 0.9714 | -0.1257 | 0.9314 | -0.8573 |
-| Q1 (DirectUNet, T-channels, obs-only) | 0.9805 | *0.6238* | *0.9805* | *0.6238* |
-| Q2 (oracle forcing+param cond.) | **0.9827** | 0.6093 | 0.9490 | 0.5571 |
-| Q3 (noisy-trained forcing+param cond.) | 0.9798 | 0.5978 | 0.9763 | 0.5959 |
-| Q4 (noisy cond. + IC) | *0.9824* | **0.6745** | **0.9808** | **0.6744** |
+| EnKF | 0.9584 | **0.5000** | 0.9410 | **0.4126** |
+| ETKF | 0.9593 | *0.4982* | *0.9424* | *0.4116* |
+| Weak-4DVar | *0.9660* | -0.0345 | **0.9468** | -0.5008 |
+| Strong-4DVar | **0.9714** | -0.1257 | 0.9314 | -0.8573 |
 
 (Best per column **bolded**, second-best *italicized*, ranked across all 8 rows.)
 

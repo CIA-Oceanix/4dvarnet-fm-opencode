@@ -43,14 +43,14 @@ ROOT = Path(__file__).resolve().parents[2]
 METHODS = [("EnKF", "enkf"), ("ETKF", "etkf"),
            ("Weak-4DVar", "weak4dvar"), ("Strong-4DVar", "strong4dvar")]
 
-# Best known config per method, from the 2026-09-11/12 sensitivity study.
-# All four are the CURRENT shipped defaults (etkf_ridge=1.0 was promoted
-# specifically because the sweep found it best -- nothing else changed).
+# Best known config per method. EnKF/ETKF updated 2026-09-15 (loc_radius
+# re-tune superseded the 2026-09-11/12 sensitivity study's loc_radius=6.0,
+# which turned out to be untuned even at this reference density).
 BEST_CONFIG = {
-    "EnKF": "N=80, inflation=1.0, loc_radius=6.0 (default, unchanged -- own "
-            "inflation sweep found no improvement over this)",
-    "ETKF": "N=80, inflation=1.0, loc_radius=6.0, **etkf_ridge=1.0** "
-            "(default since 2026-09-12; was the implicit ~1e-4 floor)",
+    "EnKF": "N=80, inflation=1.0, **loc_radius=2.0** (default since "
+            "2026-09-15; was loc_radius=6.0, untuned)",
+    "ETKF": "N=80, inflation=1.0, **loc_radius=2.0, etkf_ridge=0.1** "
+            "(default since 2026-09-15; was loc_radius=6.0, etkf_ridge=1.0)",
     "Strong-4DVar": "b_var_scale=1.0 (default, unchanged -- sweep over "
                     "0.3-3.0 found no improvement, roughly flat)",
     "Weak-4DVar": "b_var_scale=1.0, q_var_scale=0.1 (default, unchanged -- "
@@ -287,19 +287,56 @@ def main() -> None:
         "near-optimal on both scenarios. **Confirmed at full N=100** (not "
         "just the N=10 sweep):")
     add("")
-    add("| | ETKF (old default) | EnKF | **ETKF + ridge=1.0 (new default)** |")
+    add("| | ETKF (pre-2026-09-12 default) | EnKF (at loc=6.0) | ETKF + ridge=1.0 (2026-09-12 default) |")
     add("|---|---|---|---|")
     add("| S0 psi EV | 0.921 | 0.947 | **0.957** |")
     add("| S0 q EV | 0.405 | **0.481** | 0.476 |")
     add("| S1 psi EV | 0.874 | 0.896 | **0.926** |")
     add("| S1 q EV | 0.307 | 0.331 | **0.357** |")
     add("")
-    add("ETKF+ridge=1.0 beats EnKF outright on **both** fields on S1, and "
-        "ties/beats it on S0 -- no trade-off on the unobserved PV layer "
+    add("ETKF+ridge=1.0 beat EnKF outright on **both** fields on S1, and "
+        "tied/beat it on S0 -- no trade-off on the unobserved PV layer "
         "either. This is why `etkf_ridge=1.0` was promoted to the default "
-        "(2026-09-12): the previously \"unexplained\" EnKF>ETKF gap was "
+        "on 2026-09-12: the previously \"unexplained\" EnKF>ETKF gap was "
         "largely an artifact of ETKF running with an under-regularized "
-        "transform-matrix inversion, not a fundamental method limitation.")
+        "transform-matrix inversion, not a fundamental method limitation. "
+        "**Superseded by the 2026-09-15 `loc_radius` re-tune below** -- all "
+        "four numbers in this table used `loc_radius=6.0`, which turned out "
+        "to be untuned even at this reference density.")
+    add("")
+    add("**`loc_radius=6.0` itself was never tuned -- also superseded "
+        "(2026-09-15)**: the obs-density sensitivity study (cols=1/2/16/64, "
+        "`da_sensitivity_s0_s1_report.md`) found `loc_radius=2.0` "
+        "near-universally beats `6.0`, and checking it at the reference "
+        "density itself (cols=4) confirmed the same -- `loc_radius=6.0` was "
+        "the *worst* point in a {1,2,3,4,6} grid for both methods. Once "
+        "`loc_radius` moved to 2.0, `etkf_ridge` needed re-checking too "
+        "(the two regularizers interact): a fresh ridge sweep found "
+        "`ridge=1.0`'s benefit had inverted -- q/q-layer2 now decline "
+        "monotonically from `ridge=0` (the implicit floor) upward, with "
+        "psi flat throughout. `inflation=1.0` was re-checked at the new "
+        "config and remains optimal for both methods (unaffected). **New "
+        "current default (2026-09-15): `loc_radius=2.0`, `etkf_ridge=0.1` "
+        "(ETKF only; EnKF has no ridge), `inflation=1.0` unchanged** -- "
+        "confirmed at full N=100:")
+    add("")
+    add("| | ETKF (loc=6.0, ridge=1.0) | EnKF (loc=6.0) | ETKF (loc=2.0, ridge=0.1) | EnKF (loc=2.0) |")
+    add("|---|---|---|---|---|")
+    add("| S0 psi EV | 0.957 | 0.947 | 0.959 | **0.958** |")
+    add("| S0 q EV | 0.476 | 0.481 | *0.498* | **0.500** |")
+    add("| S1 psi EV | 0.926 | 0.896 | **0.942** | *0.941* |")
+    add("| S1 q EV | 0.357 | 0.331 | *0.412* | **0.413** |")
+    add("")
+    add("ETKF and EnKF are now nearly indistinguishable at this reference "
+        "density once both are properly localized -- the EnKF>ETKF gap "
+        "(and later ETKF>EnKF gap after the ridge promotion) were both "
+        "artifacts of running at an untuned `loc_radius=6.0`. (S0/S1 "
+        "q-layer2 EV, the previously-collapsing unobserved deep layer, "
+        "moves even more: ETKF 0.410->0.442, EnKF 0.394->0.443 at S0; "
+        "ETKF 0.266->0.340, EnKF 0.221->0.341 at S1 -- see "
+        "`da_sensitivity_s0_s1_report.md` for the full trail.) Full "
+        "sweep + N=100 confirmation tables are in the dedicated report; "
+        "`PLAN.md` has the complete narrative.")
     add("")
     add("**4DVar (Strong/Weak) covariance-weighting sweep -- negative "
         "result**: motivated by the same logic (both 4DVar variants "
@@ -342,9 +379,10 @@ def main() -> None:
     add("## Synthesis: best configuration per method (S0 vs S1)")
     add("")
     add("Following the sensitivity study above, every method's *best known* "
-        "config is now also its *shipped default* -- ETKF's default was the "
-        "one that changed (`etkf_ridge=1.0`); EnKF, Strong-4DVar, and "
-        "Weak-4DVar were already at their best tested configuration.")
+        "config is now also its *shipped default* -- both ETKF's and "
+        "EnKF's default changed on 2026-09-15 (`loc_radius` 6.0->2.0, plus "
+        "`etkf_ridge` 1.0->0.1 for ETKF); Strong-4DVar and Weak-4DVar were "
+        "already at their best tested configuration.")
     add("")
     add("| method | best config | S0 ψ EV | S0 PV EV | S1 ψ EV | S1 PV EV |")
     add("|---|---|---|---|---|---|")
