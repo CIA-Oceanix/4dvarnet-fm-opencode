@@ -26,7 +26,8 @@ BRANCH="fix/$(printf '%s' "$STEP_ID" | tr '[:upper:]' '[:lower:]')-$(printf '%s'
 BRANCH="$(printf '%s' "$BRANCH" | tr -cd '[:alnum:]_-' | cut -c1-80)"
 
 # Python env that has the project deps (torch, hydra, lightning). The base
-# miniforge env's pytest cannot import torch, so default to the fdv env.
+# miniforge env's pytest cannot import torch, so default to the project's
+# default env (see AGENTS.md "Conda environment").
 PYTHON_BIN="${PYTHON_BIN:-/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python}"
 
 if [ "$MODE" != "--review" ]; then

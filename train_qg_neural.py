@@ -103,9 +103,9 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
         # unlike L96's DirectUNet (models.direct_unet), which only convolves
         # along time and never exploits the field's 2D spatial/periodic
-        # structure. Requires the `fdv-monai-proto` env (see
-        # models.monai_unet_qg2d's docstring), not this project's default
-        # `fdv` env.
+        # structure. Needs monai, which the project's default
+        # `fdv-monai-proto` env provides (see models.monai_unet_qg2d's
+        # docstring).
         from models.monai_unet_qg2d import MonaiDirectUNetQG
         return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
                                  cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,

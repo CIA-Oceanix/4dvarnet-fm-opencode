@@ -18,7 +18,7 @@ if [ ! -d "tests" ]; then
 fi
 
 # Activate conda environment
-echo "🔧 Activating conda environment 'fdv'..."
+echo "🔧 Activating conda environment 'fdv-monai-proto'..."
 source activate fdv-monai-proto 2>/dev/null || conda activate fdv-monai-proto
 
 # Option 1: Fast tests only (recommended for quick validation)
