@@ -44,7 +44,7 @@ def main(cfg: DictConfig):
     datasets_cache = os.path.join(EXP_DIR, "datasets.pt")
     if os.path.exists(datasets_cache):
         t0 = time.time()
-        datasets = torch.load(datasets_cache)
+        datasets = torch.load(datasets_cache, weights_only=False)
         print(f"Loaded cached datasets in {time.time()-t0:.1f}s")
     else:
         t0 = time.time()

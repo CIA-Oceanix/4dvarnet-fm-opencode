@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-CONDA_ENV="${CONDA_ENV:-fdv}"
+CONDA_ENV="${CONDA_ENV:-fdv-monai-proto}"
 PYTHON="/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV}/bin/python3"
 
 echo "============================================"

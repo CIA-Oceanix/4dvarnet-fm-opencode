@@ -12,5 +12,5 @@ set -e
 WIN_DIR="$PWD/reports/qg/outputs/qg_windows_1000_100_100"
 CACHE_DIR="$WIN_DIR/cache"
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python \
     reports/qg/assemble_qg_windows.py --split train --windows-dir "$WIN_DIR" --cache-dir "$CACHE_DIR"

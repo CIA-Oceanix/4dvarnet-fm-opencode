@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 $PYTHON -u evaluation/run_l96_sweep2.py \
     --label "kf_loc4" \

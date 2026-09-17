@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # square_root mode (default) with loc=2.0, ens=100, inf=1.1
 $PYTHON -u evaluation/run_l96_sweep2.py \

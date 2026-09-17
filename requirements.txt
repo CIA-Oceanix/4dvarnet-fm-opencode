@@ -1,4 +1,26 @@
-torch>=2.0.0
+# Single project env (see AGENTS.md "Conda environment"): torch 2.8.0 + monai
+# are the default, not an opt-in extra.
+#
+# The cluster env (`fdv-monai-proto`) runs the CUDA 12.6 build of this exact
+# torch version. That local version string (`2.8.0+cu126`) is NOT on PyPI, so
+# it is deliberately not pinned here -- pinning it would break `pip install -r
+# requirements.txt` in CI. Install it explicitly when building the GPU env:
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu126
+#   pip install torch==2.8.0+cu126 --extra-index-url https://download.pytorch.org/whl/cu126
+#
+# monai==1.6.0 requires torch>=2.8; these two are pinned together and moved in
+# lockstep. Splitting monai into its own env (the former
+# requirements-monai.txt / `fdv-monai-proto` arrangement) is no longer needed:
+# torch 2.8.0+cu126 was verified to keep CUDA working on every GPU this
+# project runs on (sm_75 RTX8000 through sm_90 H100/H200) and to reproduce
+# torch 2.4.1's numerics bit-identically.
+torch==2.8.0
+monai==1.6.0
+# einops is an *optional* monai dependency by monai's own packaging, but not
+# optional here: monai's DiffusionModelUNet (models/monai_unet_adapter.py,
+# models/monai_unet_qg2d.py) imports einops.layers.torch.Rearrange at model
+# construction, so every monai-backed model in this project needs it.
+einops>=0.8.0
 numpy>=1.24.0
 matplotlib>=3.8.0
 pytest>=7.4.0

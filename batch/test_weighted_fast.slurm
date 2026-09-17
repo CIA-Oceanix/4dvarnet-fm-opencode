@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # Weighted fast coupling: unobserved Y3/Y4 have 0.1 weight in slow dynamics
 # Baseline config: inf=1.1, N=30, no loc

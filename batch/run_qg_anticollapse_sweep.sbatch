@@ -16,7 +16,7 @@ OV=${OBSVARS[$SLURM_ARRAY_TASK_ID]}
 # Anti-collapse tuning: sweep ETKF ridge/additive x inflation x loc at the
 # lags where EV is still high (0.5, 1.0), targeting improv>=1.0 AND EV>=0.8.
 # Reports both expvar_full and forecast_improvement per cell.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

@@ -9,4 +9,4 @@
 
 set -e
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py --method etkf --nx 64 --window-days 30 --num-windows 5 --spinup-years 2.0 --ensemble 80 --init-lag-days-list 1.0,2.0,5.0 --geometry random_columns --cols-per-day 4 --scenarios test_s0 --outdir reports/qg/outputs/figs --tag lag_test${SLURM_ARRAY_TASK_ID}
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py --method etkf --nx 64 --window-days 30 --num-windows 5 --spinup-years 2.0 --ensemble 80 --init-lag-days-list 1.0,2.0,5.0 --geometry random_columns --cols-per-day 4 --scenarios test_s0 --outdir reports/qg/outputs/figs --tag lag_test${SLURM_ARRAY_TASK_ID}

@@ -13,7 +13,7 @@ set -e
 # (obs (T,ny), OBS_GEOMETRY_VERSION=2). Production config: nx=64, psi-obs,
 # cols=4, 1% noise, lag 1.0, ens=80, both scenarios.
 # Writes into reports/qg/outputs/figs/ (the report section 8 default).
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python reports/qg/generate_qg_s0s1_figs.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python reports/qg/generate_qg_s0s1_figs.py \
     --scenario both \
     --cols-per-day 4 \
     --ensemble 80 \

@@ -15,7 +15,7 @@ set -e
 #   task 1 = S1 same-res da_nx=64 (comparator: reports/qg/outputs/qg_s1_nores_lag1p0, noise 0.01)
 # Both use obs_var="psi_state" (index-lookup H into the upper-layer psi entries).
 # Same-resolution guaranteed: da_nx == nx == 64 -> cross_res=False, psi_state guard passes.
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 TASK=${SLURM_ARRAY_TASK_ID}
 

@@ -15,6 +15,6 @@ set -e
 
 START=$(( SLURM_ARRAY_TASK_ID * CHUNK ))
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python \
     reports/qg/generate_qg_window_chunk.py \
     --split "$SPLIT" --start "$START" --count "$CHUNK" --out-dir "$OUT_DIR"

@@ -11,7 +11,7 @@ set -e
 # S1 sensitivity ablation A (lag 1.0): REMOVE the parameter-corruption component
 # (s1_param_bias=0 -> rd,rek == true), keeping da_nx=32 cross-resolution and the
 # corrupted wind ON. Mirrors batch/run_qg_s1_da32.sbatch (the reference) otherwise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 32 \
     --window-days 30 \

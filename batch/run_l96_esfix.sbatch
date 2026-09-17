@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
 # Re-run order prioritized: canonical s0c int100 first, then the rest of the

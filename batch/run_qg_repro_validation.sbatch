@@ -24,24 +24,24 @@ COMMON="--nx 64 --num-windows 5 --window-days 30 --spinup-years 2.0 \
 
 case $SLURM_ARRAY_TASK_ID in
 0)
-  /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py $COMMON \
+  /Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py $COMMON \
       --method-list etkf --ensemble 80 --inflation 1.0 --loc-radius 6.0 \
       --out reports/qg/outputs/qg_repro_validation/etkf.json
   ;;
 1)
-  /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py $COMMON \
+  /Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py $COMMON \
       --method-list enkf --ensemble 80 --inflation 1.0 --loc-radius 6.0 \
       --out reports/qg/outputs/qg_repro_validation/enkf.json
   ;;
 2)
-  /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py $COMMON \
+  /Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py $COMMON \
       --method-list strong4dvar \
       --da-window-steps 60 --fourdvar-optimizer lbfgs --fourdvar-max-iter 60 \
       --fourdvar-lr 1.0 --b-var-scale 1.0 \
       --out reports/qg/outputs/qg_repro_validation/strong4dvar.json
   ;;
 3)
-  /Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py $COMMON \
+  /Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py $COMMON \
       --method-list weak4dvar \
       --da-window-steps 60 --fourdvar-optimizer lbfgs --fourdvar-max-iter 60 \
       --fourdvar-lr 1.0 --b-var-scale 1.0 --q-var-scale 0.1 \

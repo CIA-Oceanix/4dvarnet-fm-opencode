@@ -25,7 +25,7 @@ R_var = 0.5
 # Generate reference trajectory (GPU is fast)
 traj_path = "/tmp/test_traj.pt"
 if os.path.exists(traj_path):
-    traj_full = torch.load(traj_path, map_location=device)
+    traj_full = torch.load(traj_path, map_location=device, weights_only=False)
     print(f"Loaded trajectory from {traj_path}")
 else:
     traj_full = generate_long_trajectory(num_steps=num_steps + 10000, dt=dt, seed=seed,

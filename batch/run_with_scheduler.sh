@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
-CONDA_ENV="${CONDA_ENV:-fdv}"
+CONDA_ENV="${CONDA_ENV:-fdv-monai-proto}"
 POLL_INTERVAL="${POLL_INTERVAL:-120}"
 REPORT="${SCRIPT_DIR}/reports/outputs/synthesis_report.pdf"
 PID_FILE="/tmp/4dvarnet_scheduler.pid"

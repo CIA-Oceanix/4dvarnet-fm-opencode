@@ -14,8 +14,8 @@ set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-cfm-v2v3
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
-export CONDA_DEFAULT_ENV=fdv
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
+export CONDA_DEFAULT_ENV=fdv-monai-proto
 export PYTHONUNBUFFERED=1
 export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 

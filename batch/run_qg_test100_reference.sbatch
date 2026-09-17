@@ -18,7 +18,7 @@ COMMON="--nx 64 --num-windows 100 --window-days 30 --spinup-years 2.0 \
     --geometry random_columns --cols-per-day 4 --obs-var psi \
     --obs-noise-frac 0.01 --init-lag-days 1.0 --scenarios test_s0"
 
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 case $SLURM_ARRAY_TASK_ID in
 0)

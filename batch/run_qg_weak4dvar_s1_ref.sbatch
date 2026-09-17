@@ -16,7 +16,7 @@ set -e
 # tuned on S0. QVAR sets the model-error penalty (default 0.1).
 QVAR=${QVAR:-0.1}
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 64 \
     --window-days 30 \

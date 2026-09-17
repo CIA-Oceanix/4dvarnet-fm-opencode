@@ -32,7 +32,7 @@ T=${SLURM_ARRAY_TASK_ID}
 OUT=reports/qg/outputs/qg_tune_4dvar/weakprobe_${OPT[$T]}_w${W[$T]}_it${IT[$T]}_lr${LR[$T]}_b${B[$T]}_q${Q[$T]}_c${CLIP[$T]}.json
 
 start=$(date +%s)
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py \
     --method-list weak4dvar \
     --nx 64 \
     --num-windows 1 \

@@ -13,8 +13,8 @@ set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
-export CONDA_DEFAULT_ENV=fdv
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
+export CONDA_DEFAULT_ENV=fdv-monai-proto
 export PYTHONUNBUFFERED=1
 
 echo "=== [1/3] Clearing stale T_max=5.0 cache ==="

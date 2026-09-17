@@ -13,7 +13,7 @@ echo "============================================"
 echo " QG 4D-Var baseline test gate | $(date)"
 echo "============================================"
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python -m pytest \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python -m pytest \
     tests/test_qg_dynamics.py \
     tests/test_qg_data.py \
     tests/test_qg_baselines.py \

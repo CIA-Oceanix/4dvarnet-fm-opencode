@@ -36,7 +36,7 @@ def _evaluate_checkpoint(exp_dir, device="cpu"):
         nu=1.0, K_inner=5, N_outer=10, dropout=0.1,
     ).to(device)
 
-    state = torch.load(ckpt_path, map_location=device)
+    state = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = {k.replace("_orig_mod.", ""): v for k, v in state.items()}
     model.load_state_dict(state)
 
@@ -44,7 +44,7 @@ def _evaluate_checkpoint(exp_dir, device="cpu"):
     datasets_path = os.path.join(EXP_DIR, "datasets.pt")
     if not os.path.exists(datasets_path):
         return None, "no datasets.pt"
-    datasets = torch.load(datasets_path, map_location=device)
+    datasets = torch.load(datasets_path, map_location=device, weights_only=False)
 
     # Evaluate
     def _eval(ds):

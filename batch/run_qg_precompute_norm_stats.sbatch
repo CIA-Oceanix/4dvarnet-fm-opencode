@@ -14,7 +14,7 @@ set -e
 # Precompute global psi mean/std + derived q_loss_weight for the Q1
 # psi-only-normalization relaunch (see PLAN.md QG neural baseline section).
 CACHE_DIR="/Odyssey/private/rfablet/Python/4dvarnet-fm-qg-100samples/reports/qg/outputs/qg_windows_1000_100_100/cache"
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 $PY precompute_qg_norm_stats.py \
     --nx 64 --train-seed 42 --num-train 1000 \

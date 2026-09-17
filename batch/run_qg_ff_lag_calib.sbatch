@@ -18,7 +18,7 @@ LAG=${LAGS[$SLURM_ARRAY_TASK_ID]}
 
 mkdir -p reports/qg/outputs/qg_ff_lag_calib_q
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

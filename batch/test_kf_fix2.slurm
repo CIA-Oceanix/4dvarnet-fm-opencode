@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 echo "============================================"
 echo " KF: fixed init v3 (noise at obs+unobs) | $(date)"

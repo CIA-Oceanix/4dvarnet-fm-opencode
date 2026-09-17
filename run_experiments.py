@@ -177,7 +177,7 @@ def run_single_experiment(exp, datasets, device, batch_size=256, num_workers=4):
                              epochs=cfg["epochs_stage1"], lr=cfg["lr"], device=device)
         if os.path.exists("checkpoint_stage1.pt"):
             model.mean_estimator.load_state_dict(
-                torch.load("checkpoint_stage1.pt", map_location=device))
+                torch.load("checkpoint_stage1.pt", map_location=device, weights_only=False))
     finally:
         os.chdir(orig_cwd)
     stage1_t = time.time() - t0
@@ -194,7 +194,7 @@ def run_single_experiment(exp, datasets, device, batch_size=256, num_workers=4):
                                  epochs=cfg["epochs_stage2"], lr=cfg["lr"], device=device)
             if os.path.exists("checkpoint_stage2.pt"):
                 model.load_state_dict(
-                    torch.load("checkpoint_stage2.pt", map_location=device))
+                    torch.load("checkpoint_stage2.pt", map_location=device, weights_only=False))
         finally:
             os.chdir(orig_cwd)
         stage2_t = time.time() - t0
@@ -317,7 +317,7 @@ def main():
     data_gen_time = 0
     if os.path.exists(os.path.join(EXP_DIR, "datasets.pt")):
         print("Loading cached datasets...")
-        datasets = torch.load(os.path.join(EXP_DIR, "datasets.pt"))
+        datasets = torch.load(os.path.join(EXP_DIR, "datasets.pt"), weights_only=False)
         print(f"  Loaded: train {len(datasets['train_cs1'])+len(datasets['train_cs2'])}, "
               f"val {len(datasets['val_cs1'])+len(datasets['val_cs2'])}, "
               f"test {len(datasets['test_cs1'])+len(datasets['test_cs2'])}")
