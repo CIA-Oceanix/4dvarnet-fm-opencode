@@ -300,7 +300,9 @@ architecture in `docs/results/cfm_affine_velocity_decomposition.md` §5.
 
 * An FM prior with variance-weighted guidance **is** a working conditional sampler.
   The cold configuration is the closest to reliable of anything measured here, and
-  its RMSE beats Strong-4DVar by 31% and both ensemble DA baselines by more.
+  its RMSE (0.5295) beats Strong-4DVar (0.8116) by
+  35% and both ensemble DA baselines by more -- same
+  `rmse_repo` convention, same 200 windows.
 * It is **not** calibrated. It is consistently over-dispersive by roughly a fifth to
   a quarter, at every ensemble size tested: ratio/target = 1.20 at `N = 6`
   (1.014/0.845), 1.22 at `N = 10` (1.104/0.905) and 1.24 at `N = 30` (1.202/0.967).

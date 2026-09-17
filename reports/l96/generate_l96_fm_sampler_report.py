@@ -215,11 +215,34 @@ the new affine part, which is precisely the argument for the unrolled-mean
 architecture in `docs/results/cfm_affine_velocity_decomposition.md` §5.
 """
 
-CONCLUSIONS = """## 7. Conclusions
+def cold_vs_baseline(data, baseline="Strong-4DVar"):
+    """Margin computed from the data, never written by hand."""
+    if data is None:
+        return None
+    ref = next((r for n, r, _ in BENCHMARK_ROWS if n == baseline), None)
+    cold = next((v for k, v in data["results"].items() if k.startswith("cold")), None)
+    if ref is None or cold is None:
+        return None
+    return dict(baseline=baseline, ref=ref, cold=cold["rmse_repo"],
+                windows=data["windows_done"],
+                margin=100.0 * (ref - cold["rmse_repo"]) / ref)
+
+
+def build_conclusions(full=None):
+    c = cold_vs_baseline(full)
+    if c is None:
+        cold_bullet = ("its RMSE beats the variational and ensemble DA baselines\n"
+                       "  (margin not computed: no full-test-set run supplied).")
+    else:
+        cold_bullet = (
+            f"its RMSE ({c['cold']:.4f}) beats {c['baseline']} ({c['ref']:.4f}) by\n"
+            f"  {c['margin']:.0f}% and both ensemble DA baselines by more -- same\n"
+            f"  `rmse_repo` convention, same {c['windows']} windows.")
+    return f"""## 7. Conclusions
 
 * An FM prior with variance-weighted guidance **is** a working conditional sampler.
   The cold configuration is the closest to reliable of anything measured here, and
-  its RMSE beats Strong-4DVar by 31% and both ensemble DA baselines by more.
+  {cold_bullet}
 * It is **not** calibrated. It is consistently over-dispersive by roughly a fifth to
   a quarter, at every ensemble size tested: ratio/target = 1.20 at `N = 6`
   (1.014/0.845), 1.22 at `N = 10` (1.104/0.905) and 1.24 at `N = 30` (1.202/0.967).
@@ -498,7 +521,7 @@ def main():
               ("decoupled control", args.decoupled, decoupled)]
     sections = [HEADER, QUESTION, THEORY, SETUP, build_benchmark_section(full),
                 build_results_section(full, sweep, decoupled), NEGATIVES,
-                CONCLUSIONS, build_reproduction_section(inputs)]
+                build_conclusions(full), build_reproduction_section(inputs)]
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n\n".join(s.strip() for s in sections) + "\n")
