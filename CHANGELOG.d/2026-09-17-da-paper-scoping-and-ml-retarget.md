@@ -58,3 +58,30 @@ robust to parameter error largely because they barely use the parameters, which
 is a sharper statement of the thesis than the original framing. R1 is rewritten
 into three graded issues; D2 gains a common-axis requirement and a new D2b for
 the missing DirectUNet/FDV conditioning on L96.
+
+**Second correction, and a new claim (same PR).** Chasing the conditioning
+ladder to disk turned up three results that exist but are absent from
+`l96_consolidated_benchmark.md` (all `—` placeholder rows): `L6` (forcing-
+conditioned tau=0 VanillaCFM) against its matched control `L2b`, and
+`SDA2_cond_mixed` / `SDA2_cond_nominal` guided 30-member evaluations. Two
+consequences:
+
+- §4.1.1's claim that conditioning is "slightly worse" was **wrong in sign for
+  one family**. Measured across three families the effect is ±1.5% with
+  *inconsistent sign* (monai SDA +1.0%, non-monai SDA −1.5%, L2b→L6 +0.9%);
+  only *noisy* conditioning reliably helps (−3.0%). The claim is now "close to
+  inert", which is what the data supports.
+- R1.3 (training-time exposure explains the S1 invariance) is **RESOLVED, not
+  merely mitigated**: `SDA2_cond_nominal` trains at `forcing_state_bias=0.0`
+  and still gives S1/S0 = 0.998, indistinguishable from the S1-exposed
+  SDA2-mixed at 0.997.
+
+New **C6** and **D7** record a corollary raised by the user: the ODE
+representation's sensitivity to (theta, z) is not a proxy for the sensitivity of
+p(x | y, theta, z) to (theta, z). Classical DA conflates the two because its
+estimator *is* the ODE, so its 1.68-1.80x S0→S1 degradation measures its own
+estimator's sensitivity rather than the posterior's — against ≤1.5% for
+conditioned amortized estimators, which perturb (theta, z) at fixed y and so
+measure the posterior quantity directly. This makes H2 and H3 non-independent:
+H3 is what makes H2 bind. Phasing split into P0a (reporting only, no compute)
+and P0b (D0), with D7 promoted to P1 as the cheapest route to C6.

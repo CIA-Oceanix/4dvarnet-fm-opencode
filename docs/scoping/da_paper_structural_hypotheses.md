@@ -121,10 +121,22 @@ noisy+IC). Its S0 numbers are the interesting part:
 | SDA2(monai) | **true** params + corrupted forcing | 0.5588 | 0.5610 | 1.004 |
 | SDA3(monai) | **noisy** params (0-1.5x of the true→DA bias) | **0.5365** | 0.5355 | 0.998 |
 
-Conditioning on the *exact* parameters is **slightly worse than not conditioning
-at all** (0.5588 vs 0.5532), and conditioning on *noisy* parameters is the best
-of the three. The network extracts little usable information from the physical
-parameters; the noisy variant's gain looks like regularization, not information.
+Three further runs already on disk make this a replicated observation across
+independent families (within-family comparisons only -- the backbones and
+normalization differ, so the absolute levels are not comparable across rows):
+
+| family | uncond. | + model-information conditioning | effect |
+|---|---|---|---|
+| SDA (monai, guided) | SDA1 0.5532 | SDA2 (true params) 0.5588 | **+1.0% worse** |
+| SDA (non-monai, guided, `ens30_no10`) | SDA1 0.7185 | SDA2-mixed 0.7074 | −1.5% better |
+| VanillaCFM tau=0 (`L6` vs `L2b`) | L2b 0.6329 | L6 (corrupted forcing) 0.6389 | **+0.9% worse** |
+| SDA (monai, guided) | SDA1 0.5532 | SDA3 (**noisy** params) 0.5365 | −3.0% better |
+
+**Conditioning on model information moves S0 skill by at most ~1.5%, and the
+sign is not even consistent across families.** It is, to a good approximation,
+**inert**. The one variant that reliably helps is *noisy* conditioning (−3.0%),
+which looks like regularization rather than information use. The network extracts
+little usable information from the physical parameters and forcings.
 
 **This is the sharpest available statement of the paper's thesis.** The learned
 schemes are robust to corrupted model parameters largely *because they barely
@@ -134,10 +146,60 @@ a perturbed input but a corrupted prior, compounding over the window. H2 is
 binding not because model information is unhelpful, but because DA has no way to
 down-weight it.
 
+**The training-exposure control has also been run, and it does not explain the
+invariance.** `SDA2_cond_nominal_l96` is trained at `forcing_state_bias=0.0` --
+the only configuration that never sees S1-level model error during training. Its
+guided 30-member evaluation gives S0 0.7046 / S1 0.7033, **ratio 0.998**,
+indistinguishable from SDA2-mixed (0.997) and SDA1 (0.998). Removing training-time
+exposure to model error entirely leaves the S1 invariance intact. This retires
+what was the third concern in R1.
+
 **The caveat a referee will raise, and it is fair.** Conditioning on biased
 parameters is not the same exposure as *integrating* a biased model: one is an
 input perturbation, the other compounds through time. The two are not
-interchangeable, and §6 D2 is what puts them on a common axis. See R1.
+interchangeable, and §6 D2 is what puts them on a common axis. §4.1.2 is what
+makes that distinction the point rather than a nuisance.
+
+### 4.1.2 Corollary: ODE sensitivity is not a proxy for posterior sensitivity
+
+Write the model-uncertainty pair as `(theta, z)` -- physical parameters and
+forcings. Two different sensitivities are in play, and **classical DA cannot
+separate them**:
+
+- **Model sensitivity**, `d x_ODE / d(theta, z)` -- how much the *free-running*
+  trajectory moves. In a chaotic system this is Lyapunov-amplified and large;
+  §4.1's 1.68-1.80x degradation is an instance of it.
+- **Posterior sensitivity**, `d p(x | y, theta, z) / d(theta, z)` at **fixed
+  `y`** -- how much the actual object of inference moves.
+
+Classical DA conflates the two **by construction**, because its estimator *is*
+the ODE: every route from `(theta, z)` to the analysis passes through the
+integration, so the analysis inherits the model sensitivity whether or not the
+posterior has it. Its S0→S1 degradation therefore measures **its own estimator's
+sensitivity**, and cannot be read as a measurement of how much `(theta, z)`
+uncertainty matters for `p(x | y, theta, z)`.
+
+A conditioned amortized estimator measures the *other* quantity directly: it
+takes `(theta, z)` as inputs at fixed `y`, so perturbing the conditioning while
+holding the observations fixed is a finite-difference estimate of posterior
+sensitivity. Across three families that perturbation moves skill by **≤1.5%**,
+and full corruption (S1) by **~0.2%**.
+
+**Consequence, and it is the sharpest methodological point in this document.**
+The standard practice of assessing parameter/forcing uncertainty by *propagating
+it through the model* systematically **overstates** its effect on the posterior
+whenever the observations are informative, and the overstatement is exactly the
+gap between the two sensitivities. It also reframes H2: "the better the
+dynamical model, the better the DA" is a true statement about DA's *estimator*,
+and its apparent force is partly an artifact of **H3** -- the ODE representation
+that routes all prior information through the integration. H2 and H3 are not
+independent hypotheses; H3 is what makes H2 bind.
+
+**Prediction.** Posterior sensitivity should *grow* as observations sparsify,
+since less of `(theta, z)` is screened off by `y`. §4.2's collapse in the
+marginal value of observations is the shadow of the same mechanism: at low
+density DA has nothing but the model, so model error and observation sparsity
+**compound rather than add**. **D7** measures both sensitivities on one grid.
 
 ### 4.2 H2 × S-a: model error destroys the *marginal value* of observations
 
@@ -233,6 +295,13 @@ D1 is what turns this into evidence.
 - **C5 (attribution).** Each hypothesis can be relaxed separately, and the
   resulting gain attributed to a named term of the operator partition. This is
   what makes the paper a diagnosis rather than a benchmark.
+- **C6 (H2×H3, the corollary).** The ODE representation's sensitivity to
+  `(theta, z)` is **not a proxy** for the sensitivity of `p(x | y, theta, z)` to
+  `(theta, z)`. DA conflates them because its estimator is the model; a
+  conditioned amortized estimator separates them; and the gap is large — 1.68-1.80x
+  against ≤1.5%. Assessing forcing/parameter uncertainty by propagating it
+  through the model therefore overstates its effect on the posterior whenever the
+  observations are informative.
 
 ---
 
@@ -260,13 +329,14 @@ Prediction: classical DA's slope is steep, the conditioned learned slope is
 near-flat, and §4.1.1 predicts *why* — the learned schemes barely use the
 parameters.
 
-**D2b — close the conditioning ladder on the deterministic schemes.** The ladder
-exists for the SDA/CFM family on L96 and for DirectUNet on QG (Q2-Q5), but
-**not for DirectUNet/FDV on L96** — `cond_extra_dim`/`state_cond_extra_dim`
-already exist in `conf/schema.py`, so adding params/forcing conditioning to the
-strongest deterministic rows is cheap. This is the arm that would let the
-mean-slot family be compared to DA on the model-information axis rather than
-only on accuracy.
+**D2b — close the conditioning ladder on the deterministic schemes.** Partly
+done already: `L6` is a forcing-conditioned `tau=0` VanillaCFM (i.e. a
+conditional-mean estimator) with a matched unconditioned control in `L2b`, and QG
+has the DirectUNet ladder Q2-Q5. What is **missing on L96 is params/forcing
+conditioning for DirectUNet and FDV specifically** —
+`cond_extra_dim`/`state_cond_extra_dim` already exist in `conf/schema.py`, so
+this is cheap. It is the arm that lets the mean-slot family be compared to DA on
+the model-information axis rather than only on accuracy.
 
 **D3 — S-a, the marginal-value surface.** dSkill/d(density) over a 2-D grid of
 (observation density × model error), for every method class, on matched axes.
@@ -283,6 +353,16 @@ method classes. **No code in this repo implements a rank histogram** -- the term
 appears only in three planning docs, always as a gap -- and the consolidated
 benchmark still mixes `N=1` proxies with proper `N=30` scores under one
 bold-best marker. This is the largest new-code item in the plan.
+
+**D7 — The two sensitivities on one grid (C6).** Measure model sensitivity
+(spread of free forecasts under `(theta, z)` perturbation) and posterior
+sensitivity (change in the conditioned estimator's posterior at fixed `y` under
+the *same* perturbation) over a grid of observation density × perturbation
+amplitude. `noisy_da_max` already parameterizes the perturbation
+(`data/dataloader.py:99-108`) and the obs-density machinery already exists, so
+this is mostly assembly. **Prediction:** the two curves diverge as density rises
+and converge as it falls; the crossover density is the paper's second deliverable
+number after §4.2's collapse factor.
 
 **D6 — Attribution.** Report `S(Ψ_mean)`, `S(Ψ_G)`, `S(Ψ_NG)` per method per
 regime, on both axes (point estimate *and* dispersion — a point-estimate score
@@ -307,20 +387,22 @@ not cashed in.** Three issues, in descending severity:
    integrating a biased model for a 500-step window. Any cross-class claim has to
    put the two on a common axis (**D2**) rather than compare a conditioning
    corruption against a compounding one.
-3. **The learned schemes' training set already contains S1-level error.**
-   `data/lorenz96.py` documents `train_forcing_state_bias` defaulting to 0.1,
-   matching `test_s1`, so "every model trained this way already sees S1-like
-   model error during training". **The control for this already exists** —
-   `SDA2_cond_nominal_l96.yaml` is trained at `forcing_state_bias=0.0` and is
-   the only such row — but it has **no numeric entry in the consolidated
-   benchmark**. Getting SDA2-nominal vs SDA2-mixed into the table is a cheap and
-   necessary prerequisite.
+3. ~~**The learned schemes' training set already contains S1-level error.**~~
+   **RESOLVED — the control was already run.** `train_forcing_state_bias`
+   defaults to 0.1, matching `test_s1`, so most rows do see S1-like error in
+   training. But `SDA2_cond_nominal_l96` is trained at `forcing_state_bias=0.0`
+   and its guided 30-member evaluation gives S0 0.7046 / S1 0.7033,
+   **ratio 0.998** — indistinguishable from the S1-exposed SDA2-mixed (0.997).
+   Training-time exposure does **not** explain the invariance. The result exists
+   on disk and is simply **not in the consolidated benchmark**, which is a
+   reporting gap, not an experimental one.
 
-*Mitigation:* (a) state all three rather than cash them in; (b) run **D0**, since
+*Mitigation:* (a) state 1 and 2 rather than cash them in; (b) run **D0**, since
 weak-constraint 4D-Var is the classical method *allowed* to know about model
-error; (c) land the SDA2-nominal row; (d) **D2** to put conditioning corruption
-and model-integration error on one axis. §4.2's intra-DA result needs none of
-this and is publishable on its own.
+error; (c) **report** the SDA2-nominal / SDA2-mixed / L6-vs-L2b rows that already
+exist; (d) **D2** and **D7** to put conditioning corruption and model-integration
+error on one axis. §4.2's intra-DA result needs none of this and is publishable
+on its own.
 
 **R2 — "your baselines were under-tuned".** The standard rebuttal to any
 DA-vs-ML comparison. *Mitigation:* the QG localization/inflation sensitivity
@@ -365,15 +447,22 @@ the dramatic numbers are metric choice as much as physics. Report per-field.
 mechanism sections. Both systems already have the S0/S1 ladder, the DA
 baselines, the obs-density machinery and the tuning sensitivity studies.
 
-**Phasing.** **P0 — three cheap items, all of which gate something:**
-**D0** (L96 Weak-4DVar; gates C1 and re-anchors the companion doc's 93%/7%
-split), the **SDA2-nominal row** (R1.3's existing-but-unreported control for
-training exposure), and **D2b** (params/forcing conditioning for DirectUNet/FDV
-on L96 — the schema fields already exist). None needs new modelling.
-P1: D2 + D3 (the two dose-response surfaces; the paper's spine). P2: D5
-(posterior diagnostics — the largest new-code item; no rank histogram is
-implemented anywhere in the repo). P3: D1 and D4. P4: D6 attribution, shared
-with the companion doc.
+**Phasing.**
+
+**P0a — pure reporting, no compute.** Three results already sit on disk and are
+absent from `l96_consolidated_benchmark.md` (all four rows are `—` placeholders):
+`L2b` vs `L6` (forcing conditioning, plain VanillaCFM), and `SDA2-mixed` vs
+`SDA2-nominal` (the training-exposure control). These carry §4.1.1 and R1.3 and
+cost only an evaluation-to-table pass.
+
+**P0b — one cheap run: D0** (L96 Weak-4DVar). It gates C1 and re-anchors the
+companion doc's 93%/7% split. Still the single highest-value item here.
+
+P1: **D7** then **D2 + D3** — D7 (the two sensitivities on one grid) is the
+cheapest route to C6, the paper's sharpest methodological claim, and largely
+assembles existing machinery. P2: D5 (posterior diagnostics — the largest
+new-code item; no rank histogram is implemented anywhere in the repo). P3: D1,
+D2b and D4. P4: D6 attribution, shared with the companion doc.
 
 ---
 
