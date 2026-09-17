@@ -23,7 +23,7 @@ from evaluation.sda_samplers_experimental import r_tau_sq
 
 
 def pigdm_sample(model, batch, r_var_vec, N_outer, prior_var, gamma,
-                 n_members, max_step_norm=None, stats=None):
+                 n_members, max_step_norm=None, stats=None, variance_form="exact"):
     """Returns (members, diag) with diag = {step_rms, clamp_frac}."""
     B, T, _ = batch.obs.shape
     device = batch.obs.device
@@ -41,7 +41,14 @@ def pigdm_sample(model, batch, r_var_vec, N_outer, prior_var, gamma,
             tau = torch.full((B,), tv, device=device)
             beta = max(tv, dt / 2.0)
             a2 = ((1.0 - tv) * s0) ** 2
-            r2 = r_tau_sq(tv, prior_var, s0)
+            if variance_form == "sda":
+                # Rozet & Louppe Eq.(15)/Alg.3: Sigma_y + (sigma^2/mu^2) Gamma,
+                # Gamma = gamma*I (they use 1e-2). Diverges as tau->0, which
+                # deliberately suppresses guidance in the low-SNR regime.
+                r2 = a2 / (beta ** 2)
+            else:
+                # exact isotropic posterior variance (Appendix B, first line)
+                r2 = r_tau_sq(tv, prior_var, s0)
             w_d = 1.0 / (2.0 * (r_var_vec + gamma * r2))          # (D,)
             coef = dt * a2 / (beta * max(1.0 - tv, 1e-6))
             with torch.enable_grad():
@@ -83,8 +90,14 @@ def main():
     p.add_argument("--members", type=int, default=8)
     p.add_argument("--n-outer", type=int, default=10)
     p.add_argument("--r-var", type=float, default=0.5)
+    p.add_argument("--baseline-weight", type=float, default=40.0,
+                   help="fixed step length for the normalized-gradient baseline; "
+                        "scale as 400/N_outer to hold total guidance constant")
     p.add_argument("--gammas", type=float, nargs="+", default=[0.03, 0.1, 0.3, 1.0, 3.0])
     p.add_argument("--clamp", type=float, default=None)
+    p.add_argument("--variance-form", choices=["exact", "sda"], default="exact",
+                   help="'exact' = p*alpha^2/(p*beta^2+alpha^2) (Appendix B line 1); "
+                        "'sda' = gamma*alpha^2/beta^2 (Eq.15 with Gamma=gamma*I)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--output", default="pigdm_sweep.json")
@@ -102,8 +115,8 @@ def main():
     dataset, dls, obs_idx = prepare_dataset(cfg, args.dataset, batch_size=args.chunk)
     idx = torch.as_tensor(obs_idx, dtype=torch.long).to(device)
 
-    configs = [("unguided(w=0)", None), ("baseline(w=40)", None)] + \
-              [(f"pigdm g={g}", g) for g in args.gammas]
+    configs = [("unguided(w=0)", None), (f"baseline(w={args.baseline_weight:g})", None)] + \
+              [(f"{args.variance_form} g={g}", g) for g in args.gammas]
     agg = {name: dict(est=[], tru=[], sp=0.0, n=0, diag=[]) for name, _ in configs}
 
     done = 0
@@ -117,14 +130,15 @@ def main():
         for name, g in configs:
             torch.manual_seed(args.seed)
             if g is None:
-                w = 0.0 if "w=0" in name else 40.0
+                w = 0.0 if "w=0" in name else args.baseline_weight
                 mem, _ = sda_guided_sample(model, batch, R_var=float(r_var_vec.mean()),
                                            N_outer=args.n_outer, guidance_weight=w,
                                            n_members=args.members)
                 diag = dict(step_rms=float("nan"), clamp_frac=0.0)
             else:
                 mem, diag = pigdm_sample(model, batch, r_var_vec, args.n_outer,
-                                         1.0, g, args.members, args.clamp, stats)
+                                         1.0, g, args.members, args.clamp, stats,
+                                         variance_form=args.variance_form)
             m = mem.mean(-1) * std + stats["mean"].view(1, 1, -1)
             s = mem.std(-1) * std
             agg[name]["est"].append(m.cpu())
