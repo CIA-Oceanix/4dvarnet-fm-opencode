@@ -107,6 +107,22 @@ call repaired so the script runs again. Automated equivalence coverage already
 lives in `tests/test_refactoring_equivalence.py` (4 test classes) — which is
 itself one of the 29 ungated files, and gets picked up by 0c.
 
+### Dead code found during Phase 0 — decide before Phase 3
+
+`evaluation/experiment.py` (2.2 KB, `run_baselines` / `run_full_experiment`) is
+**orphaned**: nothing in the repo imports it (checked `.py`, `.sbatch`, `.sh`,
+`.md`, `.ipynb`), it is untouched since the initial implementation commit apart
+from one ruff auto-fix, and `tests/TEST_SUITE_SUMMARY.md` already records it at
+0% coverage. It would raise `AttributeError: 'NoneType' object has no attribute
+'step'` if called, because it builds `Weak4DVar` / `Strong4DVar` / `EnKF`
+without `dynamics=` — the same 2026-07 API drift that had broken seven tests.
+
+This is the third artifact of one root cause, all invisible for the same reason
+(nothing ran them): misfiled scripts under `tests/`, stale ungated tests, and
+this orphaned module. **Left in place pending a decision** — deleting is the
+obvious call but it is the user's, not the refactor's, and it belongs with the
+Phase 3 `evaluation/` split rather than in the test-gate change.
+
 ### Phase 1 — one model registry
 
 `models/registry.py` exposing `build_model(cfg)` and `load_model(ckpt)`. Delete
