@@ -786,6 +786,16 @@ class L96Weak4DVar:
         self.r_var = float(r_var)
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.state_dim = dynamics.state_dim
+        # Diagnostics (2026-09-17): how often/when the NaN-reset safety net
+        # actually fires, to distinguish "stable AND learning a real
+        # correction" from "stable only because it keeps resetting to the
+        # pure background/dynamics forecast" -- reset_step_indices[i] is
+        # the Adam step index (0-based; None for an LBFGS reset, which has
+        # no single triggering step) at which sub-window i's reset fired,
+        # or absent (no entry) if that sub-window never reset.
+        self.n_subwindows = 0
+        self.n_resets = 0
+        self.reset_step_indices = []
 
     def _forward_strong(self, x0, win, force, params):
         traj = [x0]
@@ -810,8 +820,9 @@ class L96Weak4DVar:
                 Jo = Jo + torch.sum(diff ** 2)
         return Jo
 
-    @staticmethod
-    def _reset_nan(params):
+    def _reset_nan(self, params, step_index=None):
+        self.n_resets += 1
+        self.reset_step_indices.append(step_index)
         with torch.no_grad():
             for p in params:
                 p.fill_(0.0)
@@ -822,6 +833,7 @@ class L96Weak4DVar:
         closure skips backward() on a non-finite loss (returning it as-is
         so LBFGS's own line search rejects the step) and resets afterward
         if any control ended up non-finite regardless."""
+        self.n_subwindows += 1
         if self.optimizer == "lbfgs":
             opt = torch.optim.LBFGS(params, lr=self.lr, max_iter=self.max_iter,
                                     line_search_fn="strong_wolfe")
@@ -836,14 +848,14 @@ class L96Weak4DVar:
 
             opt.step(closure)
             if any(not torch.isfinite(p).all() for p in params):
-                self._reset_nan(params)
+                self._reset_nan(params, step_index=None)
             return
         opt = torch.optim.Adam(params, lr=self.lr)
-        for _ in range(self.opt_steps):
+        for step_i in range(self.opt_steps):
             opt.zero_grad()
             J = loss_fn()
             if not torch.isfinite(J).all():
-                self._reset_nan(params)
+                self._reset_nan(params, step_index=step_i)
                 break
             J.backward()
             for p in params:

@@ -74,11 +74,25 @@ class TestL96Weak4DVarForward:
 
 class TestL96Weak4DVarResetNan:
     def test_reset_nan_zeros_params(self):
+        dyn = _make_dynamics()
+        obs_op, sd = _make_obs_op()
+        m = L96Weak4DVar(dt=0.01, dynamics=dyn, obs_operator=obs_op)
         w = torch.full((5,), float("nan"))
         u = torch.full((3, 5), float("nan"))
-        L96Weak4DVar._reset_nan([w, u])
+        m._reset_nan([w, u], step_index=7)
         assert torch.equal(w, torch.zeros(5))
         assert torch.equal(u, torch.zeros(3, 5))
+
+    def test_reset_nan_records_diagnostics(self):
+        dyn = _make_dynamics()
+        obs_op, sd = _make_obs_op()
+        m = L96Weak4DVar(dt=0.01, dynamics=dyn, obs_operator=obs_op)
+        assert m.n_resets == 0
+        assert m.reset_step_indices == []
+        m._reset_nan([torch.zeros(3)], step_index=7)
+        m._reset_nan([torch.zeros(3)], step_index=None)
+        assert m.n_resets == 2
+        assert m.reset_step_indices == [7, None]
 
 
 class TestL96Weak4DVarOptimizeSafety:
@@ -99,8 +113,18 @@ class TestL96Weak4DVarOptimizeSafety:
 
         m._optimize(loss_fn, [w])
         assert torch.equal(w.detach(), torch.zeros(sd))
+        # Always-NaN loss must reset on step 0, and record it as such.
+        assert m.n_subwindows == 1
+        assert m.n_resets == 1
+        assert m.reset_step_indices == [0]
 
-    def test_lbfgs_resets_on_nan_loss(self):
+    def test_lbfgs_handles_always_nan_loss_without_crashing(self):
+        """closure() skips backward() every time loss_fn() is degenerate
+        (always NaN), so LBFGS never gets a gradient and never moves the
+        param -- it stays at its finite initial value. Zero resets
+        because nothing unstable ever happened, not because a reset
+        fired; documents this edge case rather than forcing a reset that
+        wouldn't actually occur."""
         m, sd = self._make(optimizer="lbfgs")
         w = torch.zeros(sd, requires_grad=True)
 
@@ -109,6 +133,20 @@ class TestL96Weak4DVarOptimizeSafety:
 
         m._optimize(loss_fn, [w])
         assert torch.isfinite(w.detach()).all()
+        assert m.n_subwindows == 1
+        assert m.n_resets == 0
+
+    def test_no_reset_when_loss_stays_finite(self):
+        m, sd = self._make(optimizer="adam")
+        w = torch.zeros(sd, requires_grad=True)
+
+        def loss_fn():
+            return (w ** 2).sum()
+
+        m._optimize(loss_fn, [w])
+        assert m.n_subwindows == 1
+        assert m.n_resets == 0
+        assert m.reset_step_indices == []
 
     def test_adam_clips_and_sanitizes_gradient(self):
         """A deliberately huge, partly-NaN gradient must be sanitized
