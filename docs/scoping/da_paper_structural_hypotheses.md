@@ -87,26 +87,57 @@ RMSE and explained variance, from `reports/l96/outputs/l96_consolidated_benchmar
 | FDV1-Stier(monai) | 0.4011 | 0.3993 | 0.996 | 0.936 → 0.936 |
 | subgrad+state-Stier+SDA3(monai) | 0.3410 | 0.3402 | 0.997 | 0.952 → 0.952 |
 
-**Read this table correctly — the neural rows are a control, not a competitor.**
+**Read this table with the three method classes separated.**
 `data/lorenz96.py:614-622` builds `test_s1` with `param_bias=0.15` through
 `RandomBiasLorenz96Dataset`, whose `_compute_params_da` applies the bias to the
 **DA model's** parameters; the truth is drawn from the same distribution in both
-splits (`param_noise=0.2` either way). So S1 differs from S0 *only for a method
-that runs a forward model at inference*. For every neural row -- none of which
-uses one -- S0 and S1 are statistically the same problem, and a ratio of ~1.00 is
-**definitional, not a robustness result**. The 0.992-1.002 scatter is
-resampling noise.
+splits (`param_noise=0.2` either way). What S1 means therefore depends on
+whether, and how, a method consumes model information:
 
-That makes the table valuable for exactly one thing, which is what this paper
-needs: a clean measurement of **what H2 costs the methods that make it**, with
-the neural rows as a no-op control confirming nothing else changed between the
-two splits. The classical methods lose **two thirds of their explained
-variance** to a 10-15% parameter bias.
+| class | what S1 changes for it | ratio ~1.00 means |
+|---|---|---|
+| classical DA (4D-Var, EnKF/ETKF) | integrates a **biased forward model**; bias compounds through the integration | n/a — they degrade 1.68-1.80x |
+| model-free learned (DirectUNet, FDV, SDA1) | **nothing** — no params, no forward model | **definitional**; the 0.992-1.002 scatter is resampling noise |
+| conditioned learned (SDA2, SDA3; QG Q2-Q5) | **the conditioning inputs are biased/corrupted** | **a genuine robustness result** |
 
-**What it does not support**, and must never be presented as supporting, is
-"learned priors absorb model error". No experiment in this repo exposes a learned
-scheme to genuine forward-model error at inference, because none of them uses a
-forward model at inference. See R1.
+The third row is the one to be careful about, and it is *not* a no-op.
+`data/dataloader.py:99-108` (`FlowMatchingDataset._extract_params`) is explicit:
+S0 windows carry no `*_da` entries so the conditioning falls back to the true
+values, while on S1 the conditioning vector is
+`true + frac * (da - true)`, `frac ~ U(0, noisy_da_max)`. **So SDA2/SDA3 are
+handed wrong physical parameters at inference on S1 and true ones on S0** — and
+their ratios are 1.004 and 0.998. That is model-error exposure at inference, and
+they absorb it.
+
+### 4.1.1 Why they absorb it: on L96, parameter conditioning is nearly inert
+
+The conditioning ladder was built to test exactly this (`SDA1_*`, `SDA2_cond_mixed`,
+`SDA2_cond_nominal`, `SDA3_cond_noisy`; QG's `Q2` oracle / `Q3` noisy / `Q4`
+noisy+IC). Its S0 numbers are the interesting part:
+
+| scheme | conditioning | S0 RMSE | S1 RMSE | S1/S0 |
+|---|---|---|---|---|
+| SDA1(monai) | none (unconditional prior) | 0.5532 | 0.5521 | 0.998 |
+| SDA2(monai) | **true** params + corrupted forcing | 0.5588 | 0.5610 | 1.004 |
+| SDA3(monai) | **noisy** params (0-1.5x of the true→DA bias) | **0.5365** | 0.5355 | 0.998 |
+
+Conditioning on the *exact* parameters is **slightly worse than not conditioning
+at all** (0.5588 vs 0.5532), and conditioning on *noisy* parameters is the best
+of the three. The network extracts little usable information from the physical
+parameters; the noisy variant's gain looks like regularization, not information.
+
+**This is the sharpest available statement of the paper's thesis.** The learned
+schemes are robust to corrupted model parameters largely *because they barely
+depend on them* — the observations carry the information. Classical DA has no
+such fallback: its prior **is** the integrated model, so a parameter bias is not
+a perturbed input but a corrupted prior, compounding over the window. H2 is
+binding not because model information is unhelpful, but because DA has no way to
+down-weight it.
+
+**The caveat a referee will raise, and it is fair.** Conditioning on biased
+parameters is not the same exposure as *integrating* a biased model: one is an
+input perturbation, the other compounds through time. The two are not
+interchangeable, and §6 D2 is what puts them on a common axis. See R1.
 
 ### 4.2 H2 × S-a: model error destroys the *marginal value* of observations
 
@@ -218,10 +249,24 @@ L63 and QG both have it and it is best-or-near-best under model error.
 model, matched observations, matched compute. Turns §4.6's ordering into
 evidence by removing the capacity/learning confound.
 
-**D2 — H2 dose-response.** Sweep model error continuously (parameter bias,
-structural error, resolution) rather than the binary S0/S1, and measure
-dSkill/d(model error) for each method class. Prediction: classical DA's slope is
-steep and a learned prior's is flat, *and the slopes cross nowhere*.
+**D2 — H2 dose-response, on a common axis.** Sweep model error continuously
+(parameter bias, structural error, resolution) rather than the binary S0/S1, and
+measure dSkill/d(model error) per method class. The axis must be one both classes
+feel: the *same* biased parameter set given to the DA method's forward model and
+to the learned scheme's conditioning inputs, swept together. `noisy_da_max`
+already parameterizes exactly this for the conditioned learned rows
+(`data/dataloader.py:99-108`), so the sweep is largely a matter of running it.
+Prediction: classical DA's slope is steep, the conditioned learned slope is
+near-flat, and §4.1.1 predicts *why* — the learned schemes barely use the
+parameters.
+
+**D2b — close the conditioning ladder on the deterministic schemes.** The ladder
+exists for the SDA/CFM family on L96 and for DirectUNet on QG (Q2-Q5), but
+**not for DirectUNet/FDV on L96** — `cond_extra_dim`/`state_cond_extra_dim`
+already exist in `conf/schema.py`, so adding params/forcing conditioning to the
+strongest deterministic rows is cheap. This is the arm that would let the
+mean-slot family be compared to DA on the model-information axis rather than
+only on accuracy.
 
 **D3 — S-a, the marginal-value surface.** dSkill/d(density) over a 2-D grid of
 (observation density × model error), for every method class, on matched axes.
@@ -247,29 +292,35 @@ cannot price the non-Gaussian branch; see the companion doc's R6).
 
 ## 7. Risks
 
-**R1 — the S0/S1 axis does not measure what its name suggests. Existential.**
-Two asymmetries compound:
+**R1 — the S0/S1 axis means different things per method class. Must be stated,
+not cashed in.** Three issues, in descending severity:
 
-1. **S1 is invisible to model-free methods.** Per §4.1, `param_bias` reaches only
-   the DA model's parameters. A neural row's S1/S0 ~ 1.00 says nothing about
-   robustness -- the test is a no-op for it. QG is the same story in its starkest
-   form: Q1's S1 numbers are bit-identical to its S0 numbers.
-2. **The learned schemes' training set already contains S1-level error.**
-   `data/lorenz96.py` documents that `train_forcing_state_bias` defaults to 0.1,
-   matching `test_s1`'s level, so "every model trained this way already sees
-   S1-like model error during training". Even a properly model-exposed learned
-   scheme would start with an advantage that must be controlled for.
+1. **S1 is a no-op for model-free rows.** DirectUNet, FDV and the unconditional
+   SDA1 receive no parameters and run no forward model, so their S1/S0 ~ 1.00
+   carries no information about robustness. QG's Q1 is the starkest case: its S1
+   numbers are bit-identical to its S0 numbers. **These rows must never be tabled
+   as robustness evidence.** The *conditioned* rows (SDA2/SDA3, QG Q2-Q5) are a
+   different matter — §4.1 shows they genuinely do receive corrupted parameters
+   at inference.
+2. **Input perturbation is not model-error propagation.** Even for the
+   conditioned rows, being handed biased parameters is not the same as
+   integrating a biased model for a 500-step window. Any cross-class claim has to
+   put the two on a common axis (**D2**) rather than compare a conditioning
+   corruption against a compounding one.
+3. **The learned schemes' training set already contains S1-level error.**
+   `data/lorenz96.py` documents `train_forcing_state_bias` defaulting to 0.1,
+   matching `test_s1`, so "every model trained this way already sees S1-like
+   model error during training". **The control for this already exists** —
+   `SDA2_cond_nominal_l96.yaml` is trained at `forcing_state_bias=0.0` and is
+   the only such row — but it has **no numeric entry in the consolidated
+   benchmark**. Getting SDA2-nominal vs SDA2-mixed into the table is a cheap and
+   necessary prerequisite.
 
-*Consequence:* S0/S1 may be used to price H2 **within** the classical class
-(§4.1, §4.2) and must **not** be used for cross-class robustness claims.
-*Mitigation, mandatory:* (a) state both asymmetries rather than cash them in;
-(b) build a genuinely symmetric arm -- truth generated by a process outside the
-model class used for training, and a learned scheme that actually consumes a
-forward model at inference (the FDV/unrolled family can, which is what makes it
-the right vehicle); (c) run **D0**, since weak-constraint 4D-Var is the classical
-method *allowed* to know about model error. **Without (b) and (c) there is no
-cross-class claim at all** -- only the intra-DA result, which is still
-publishable and is what §4.2 rests on.
+*Mitigation:* (a) state all three rather than cash them in; (b) run **D0**, since
+weak-constraint 4D-Var is the classical method *allowed* to know about model
+error; (c) land the SDA2-nominal row; (d) **D2** to put conditioning corruption
+and model-integration error on one axis. §4.2's intra-DA result needs none of
+this and is publishable on its own.
 
 **R2 — "your baselines were under-tuned".** The standard rebuttal to any
 DA-vs-ML comparison. *Mitigation:* the QG localization/inflation sensitivity
@@ -314,11 +365,15 @@ the dramatic numbers are metric choice as much as physics. Report per-field.
 mechanism sections. Both systems already have the S0/S1 ladder, the DA
 baselines, the obs-density machinery and the tuning sensitivity studies.
 
-**Phasing.** **P0: D0 (L96 Weak-4DVar)** — it gates C1, it is cheap, and it also
-re-anchors the companion doc's 93%/7% split. P1: D2 + D3 (the two dose-response
-surfaces; this is the paper's spine). P2: D5 (posterior diagnostics — needs new
-code: rank histograms do not exist anywhere in the repo). P3: D1 and D4. P4: D6
-attribution, shared with the companion doc.
+**Phasing.** **P0 — three cheap items, all of which gate something:**
+**D0** (L96 Weak-4DVar; gates C1 and re-anchors the companion doc's 93%/7%
+split), the **SDA2-nominal row** (R1.3's existing-but-unreported control for
+training exposure), and **D2b** (params/forcing conditioning for DirectUNet/FDV
+on L96 — the schema fields already exist). None needs new modelling.
+P1: D2 + D3 (the two dose-response surfaces; the paper's spine). P2: D5
+(posterior diagnostics — the largest new-code item; no rank histogram is
+implemented anywhere in the repo). P3: D1 and D4. P4: D6 attribution, shared
+with the companion doc.
 
 ---
 

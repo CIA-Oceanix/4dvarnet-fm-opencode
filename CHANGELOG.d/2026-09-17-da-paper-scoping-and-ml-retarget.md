@@ -40,3 +40,21 @@ second compounding asymmetry now recorded in R1.
 both papers (it re-anchors the 93%/7% split and is the classical method allowed
 to know about model error); the DA and neural obs-density studies vary
 *different* sparsity axes (temporal vs channel) and must not be tabled together.
+
+**Correction before merge (same PR):** an earlier draft of §4.1/R1 claimed "no
+experiment in this repo exposes a learned scheme to genuine forward-model error
+at inference". That is wrong. The SDA conditioning ladder
+(`SDA1` unconditional / `SDA2` true-params / `SDA2_cond_nominal` /
+`SDA3` noisy-params) and QG's `Q2`-`Q5` were built for exactly that purpose, and
+`data/dataloader.py:99-108` shows the conditioning vector is
+`true + frac*(da-true)` on S1 while falling back to true values on S0 — so
+SDA2/SDA3 *are* handed wrong parameters at inference and their S1/S0 of
+1.004/0.998 is a genuine robustness result. §4.1 now separates three method
+classes (classical / model-free learned / conditioned learned) instead of two.
+New §4.1.1 records the finding this exposed: conditioning on *exact* parameters
+is slightly worse than not conditioning at all (SDA2 0.5588 vs SDA1 0.5532),
+while *noisy* conditioning is best (SDA3 0.5365) — the learned schemes are
+robust to parameter error largely because they barely use the parameters, which
+is a sharper statement of the thesis than the original framing. R1 is rewritten
+into three graded issues; D2 gains a common-axis requirement and a new D2b for
+the missing DirectUNet/FDV conditioning on L96.
