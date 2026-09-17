@@ -85,3 +85,10 @@ conditioned amortized estimators, which perturb (theta, z) at fixed y and so
 measure the posterior quantity directly. This makes H2 and H3 non-independent:
 H3 is what makes H2 bind. Phasing split into P0a (reporting only, no compute)
 and P0b (D0), with D7 promoted to P1 as the cheapest route to C6.
+
+**Rebased on #215 (same PR).** #215 landed after the `docs/` reorganization and
+placed `refactor_plan.md` inside `docs/scoping/` while leaving `CONTRIBUTING.md`
+at the `docs/` root. Two index statements were left inaccurate by that and are
+corrected here: `docs/README.md` now accounts for `CONTRIBUTING.md` as a
+root-level repo doc, and `docs/scoping/README.md` lists `refactor_plan.md`,
+which the index had omitted. No science content changed.

@@ -49,6 +49,7 @@ any experiment twice.
 | `phase_C_l96_joint_neural.md` | Designed for execution. |
 | `experiment_G_tau0_cfm.md` | Plan only — motivation, expected outcomes, run command; **no results section**. Outcomes live in the L63 reports. **No `Status:` line**; filed by content. |
 | `cond_extra_dim_plan.md` | **No `Status:` line** — unclassified, filed here on its `_plan` name alone. |
+| `refactor_plan.md` | Contributor-facing codebase refactor plan (added by #215). Phase 0 (CI gates the whole `tests/` tree) done; Phases 1-4 open. Not a science doc — filed here because it is a forward-looking plan. |
 | `joint_additional_metrics_plan.md` | **No `Status:` line** — unclassified, filed here on its `_plan` name alone. |
 | `refactor_plan.md` | **CURRENT.** Contributor-facing refactor (codebase structure, not science). Phase 0 landed 2026-09-17; Phases 1-4 not started. |
 
