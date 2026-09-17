@@ -9,7 +9,8 @@ differently and mixing them is what made the flat directory hard to read.
 | `results/` | measurement records, investigation notes — *what was found* | **append-only.** Do not edit one to reflect a later finding; write a new doc and have it state the retraction (as `psi_decomposition_results.md` does for conclusion 5 of `cfm_affine_velocity_decomposition.md`). |
 | `papers/` | draft PDFs, `case_studies.tex` | external artifacts, not repo prose |
 
-`worktrees.md` stays at this level: it describes the repo, not the science.
+`worktrees.md` and `CONTRIBUTING.md` stay at this level: they describe the repo
+and how to work on it, not the science.
 
 ## Conventions
 
