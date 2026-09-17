@@ -83,11 +83,11 @@ needs a window in which no topic worktree is editing `evaluation/baselines.py`.
 
 | id | task | state |
 |---|---|---|
-| 0a | Triage: run the full fast suite, list what actually fails among the 29 ungated files | running |
+| 0a | Triage: run the full fast suite, list what actually fails among the 29 ungated files | **done** |
 | 0b | Unbreak collection | **done** |
-| 0c | Flip the CI gate to `pytest tests/ -m "not slow"` | blocked on 0a |
-| 0d | README + `docs/CONTRIBUTING.md` with one worked path | todo |
-| 0e | Root cleanup (untracked `slurm-*.out`, `*.log`, `checkpoint_stage1.pt`) | todo |
+| 0c | Flip the CI gate to `pytest tests/ -m "not slow"` | **done** |
+| 0d | README + `docs/CONTRIBUTING.md` with one worked path | **done** |
+| 0e | Ignore the nested `4dvarnet-fm-*/` worktrees (the rest was already gitignored) | **done** |
 
 **0b outcome — the two "broken tests" were never tests.**
 `tests/test_numerical_equivalence.py`, `tests/test_equiv_report.py` and
@@ -106,6 +106,46 @@ Fix: moved to `scripts/verification/` with a README, and the stale positional
 call repaired so the script runs again. Automated equivalence coverage already
 lives in `tests/test_refactoring_equivalence.py` (4 test classes) — which is
 itself one of the 29 ungated files, and gets picked up by 0c.
+
+### Known bug found during Phase 0 — L63 shared observation noise
+
+**`data/lorenz63.py:160` gives every window in a `Lorenz63Dataset` the same
+observation-noise realization.** `obs_seed = cfg.seed + 1` is constant, and
+`generate_observations` is then called once per window with it, so all windows
+receive an identical noise draw. The forcing seed three lines below *does* vary
+per window (`force_seed = cfg.seed + 2 + idx // (cfg.num_steps + 1)`).
+
+Both sibling datasets already do it correctly:
+
+| file | obs_seed | per-window? |
+|---|---|---|
+| `data/lorenz96.py:437,466` | `cfg.seed + i * 100 + 1` | yes |
+| `data/random_param_dataset.py:35` | `cfg.seed + i * 100 + 1 + attempt` | yes |
+| `data/lorenz63.py:160` | `cfg.seed + 1` | **no** |
+
+Measured 2026-09-17:
+
+| check | per-dim variance (target 0.5) |
+|---|---|
+| `generate_observations` in isolation, n=1000 | 0.509 / 0.539 / 0.509 |
+| via `Lorenz63Dataset`, 5 windows (n=125) | 0.319 / 0.506 / 0.331 |
+| via `Lorenz63Dataset`, 40 windows (n=1000) | 0.316 / 0.502 / 0.329 |
+
+Pooling 8x more windows barely moves the numbers, because they are not
+independent samples; the noise vector in window 5 matches window 0 to ~1e-6
+(float32 rounding on `obs - true_state`).
+
+`tests/test_lorenz63.py::test_observations_noise` detects this correctly and has
+been failing for as long as it has been ungated.
+
+**Impact** is bounded to the base-`Lorenz63Dataset` results — the L63 S0/S1 DA
+baselines and the E/F/G/S series. L96 (the main benchmark) and QG are
+unaffected, as is the randomized-parameter L63 path.
+
+**Decision (2026-09-17): recorded, not fixed.** The one-line fix re-randomises
+every L63 dataset and therefore moves published L63 numbers, which is a
+scientific call to make deliberately rather than inside a test-gate change. The
+one failing test is deselected in CI with a pointer to this section.
 
 ### Dead code found during Phase 0 — decide before Phase 3
 
