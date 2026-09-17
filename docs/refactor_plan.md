@@ -21,14 +21,33 @@ The problems worth fixing sit on a different axis.
 
 ## Findings that drive the plan
 
-1. **Two model-construction dispatchers, already diverged.**
-   `train.py:103` `model_factory` (281 lines, 18 model types) and
-   `evaluation/neural_inference.py:441` `resolve_model_class` + `create_model`
-   (~230 lines, 11 model types) duplicate the same kwargs and defaults. The eval
-   side does not know `monai_direct_unet`, `monai_vanilla_cfm`, `param_head` or
-   `tweedie`. That gap is the traceable cause of `eval_monai_l96.py:28`
-   `load_monai_direct_unet`, a hand-rolled loader that `eval_obs_density_l96.py:41`
-   then imports *from a top-level script*.
+1. **Three model-construction paths, partially diverged.**
+   - `train.py:103` `model_factory` — 281 lines, 18 model types (training side)
+   - `evaluation/neural_inference.py:152` `load_checkpoint` — ~290 lines,
+     reconstructs from the run's `resolved_config.yaml` (the primary eval path)
+   - `evaluation/neural_inference.py:441` `resolve_model_class` + `create_model`
+     — ~230 lines, 11 model types, used as the fallback branch at
+     `neural_inference.py:703`
+
+   `resolve_model_class` does not know `monai_*`, `param_head` or `tweedie`.
+   **Measured 2026-09-17:** this does *not* break archived checkpoints —
+   `load_model()` loads **17 of 17** `.ckpt` files under `experiments/l96/`
+   (all `monai_*` variants) via the `load_checkpoint` path. So the divergence is
+   real but currently latent, and `eval_monai_l96.py:28`
+   `load_monai_direct_unet` is **historical**, not presently forced: it predates
+   `load_checkpoint`'s monai support. An earlier draft of this plan asserted the
+   reverse causal story; the measurement above supersedes it.
+
+   Consequence for Phase 1: **lower risk than first scoped.** The shared path
+   already covers every archived benchmark checkpoint, so the golden harness has
+   a clean baseline and the work is consolidation (fold `model_factory` and the
+   `resolve_model_class`/`create_model` fallback into one registry) rather than
+   repair.
+
+   Note the two checkpoint artifacts per run: `stage1_best.ckpt` (Lightning, has
+   `state_dict`) and `stage1.pt` (a bare `OrderedDict`). `load_checkpoint`
+   accepts only the former; `eval_monai_l96.py:42` accepts both. The registry
+   should accept both.
 
 2. **Entry-point sprawl.** 26 top-level scripts; the 8 `eval_*_l96.py` share
    78-128 identical lines pairwise out of 150-330-line files. `reports/l96/` holds
