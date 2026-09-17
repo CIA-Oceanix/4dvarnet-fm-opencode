@@ -143,7 +143,7 @@ def test_enkf_assimilation_runs(cs1_dataset, cs1_config, device):
     assert not np.isnan(result.rmse).any(), "RMSE should not contain NaNs"
 
 
-def test_enkf_ensemble_variance(cs1_dataset, cs1_config, device):
+def test_enkf_ensemble_variance(cs1_dataset, cs1_config, device, l63_dynamics):
     """EnKF should output ensemble variance at all time steps."""
     torch.manual_seed(42)
     enkf = EnKF(
@@ -151,6 +151,7 @@ def test_enkf_ensemble_variance(cs1_dataset, cs1_config, device):
         R_var=0.5,
         dt=cs1_config.dt,
         device=device,
+        dynamics=l63_dynamics,
     )
     
     window = cs1_dataset[0]
@@ -200,7 +201,7 @@ def test_enkf_mean_tracks_truth(cs1_dataset, cs1_config, device):
         f"EnKF should track truth well on CS1 (RMSE < 0.5), got {mean_rmse:.4f}"
 
 
-def test_enkf_no_collapse(cs1_dataset, cs1_config, device):
+def test_enkf_no_collapse(cs1_dataset, cs1_config, device, l63_dynamics):
     """Ensemble spread should not collapse to zero."""
     torch.manual_seed(42)
     enkf = EnKF(
@@ -209,6 +210,7 @@ def test_enkf_no_collapse(cs1_dataset, cs1_config, device):
         inflation=1.0,
         dt=cs1_config.dt,
         device=device,
+        dynamics=l63_dynamics,
     )
     
     window = cs1_dataset[0]
