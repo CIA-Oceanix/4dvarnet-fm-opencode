@@ -9,7 +9,7 @@ files and fixing the stale tests that had accumulated in them.
 - `tests/conftest.py` — new `l63_dynamics` fixture
 - `tests/test_baselines_{enkf,strong4dvar,weak4dvar}.py` — inject `dynamics=`
 - `tests/test_refactoring_equivalence.py`, `tests/test_random_param_dataset.py` — NaN-aware comparisons, current key set
-- `docs/refactor_plan.md` — triage outcome, the L63 seed bug, the orphaned module
+- `docs/scoping/refactor_plan.md` — triage outcome, the L63 seed bug, the orphaned module
 
 **Rationale:** A new test file is now gated by existing, rather than by
 remembering to edit `ci.yml`. The previous list was last extended one commit
@@ -23,7 +23,7 @@ deferred; one is a real data bug, recorded but not fixed.
 --deselect tests/test_lorenz63.py::test_observations_noise -m "not slow"` →
 808 tests collected, 36 deselected, 0 collection errors.
 
-**Deliberate exclusions** (both tracked in `docs/refactor_plan.md`):
+**Deliberate exclusions** (both tracked in `docs/scoping/refactor_plan.md`):
 - `tests/test_joint_estimation.py` — 7 tests against `JointCFM`'s
   pre-restructure API. `JointCFM` is covered by `test_joint_estimation_l96_neural.py`
   (25 tests) and `test_neural_inference.py`. Deferred to a second step.

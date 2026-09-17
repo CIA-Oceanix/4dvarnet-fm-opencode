@@ -1,5 +1,7 @@
 # Contributor-facing refactor plan
 
+**Status:** SCOPING — active. Phase 0 landed; Phases 1-4 not started.
+
 Goal: make the repository navigable by a scientist who did not write it, without
 a reorganization whose blast radius exceeds its benefit.
 

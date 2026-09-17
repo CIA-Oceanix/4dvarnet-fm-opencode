@@ -10,7 +10,7 @@ and added the contributor documentation a newcomer needs before touching code.
 - `tests/test_equiv_report.py` -> `scripts/verification/check_equiv_report.py` — moved
 - `tests/compare_rmse_slices.py` -> `scripts/verification/compare_rmse_slices.py` — moved
 - `scripts/verification/README.md` — new; explains these are manually-run scripts, not tests
-- `docs/refactor_plan.md` — new; the phased plan, findings that drive it, and delegation table
+- `docs/scoping/refactor_plan.md` — new; the phased plan, findings that drive it, and delegation table
 - `docs/CONTRIBUTING.md` — new; one worked L96 loop end to end with real commands
 - `README.md` — rewritten; led with the science and the three case studies instead of the worktree list
 - `.gitignore` — ignore the nested `4dvarnet-fm-*/` topic worktrees
