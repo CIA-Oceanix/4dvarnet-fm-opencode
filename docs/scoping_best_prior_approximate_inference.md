@@ -1,9 +1,20 @@
 # Is the true prior the best prior? — scoping doc
 
-**Status:** SCOPING, v1 (2026-09-16). Defines the scientific question, the
-testbed families, and the experiment set. No implementation yet. Supersedes the
+**Status:** SCOPING, v1 (2026-09-16). **Superseded in framing by
+`docs/scoping_ml_paper_exploiting_prior_knowledge.md` (2026-09-16) — read that
+one first; it is the current scoping document.** This doc's testbed ladder and
+risk register were folded into it. Defines the scientific question, the testbed
+families, and the experiment set. No implementation yet. Supersedes the
 *framing* of `docs/phase_D_physics_priors_under_uncertainty.md`; Phase D's work
 packages survive as the dynamical-systems instantiation and evidence base.
+
+> **Question numbering differs between the two scoping docs — do not cross-cite
+> by number.** Here the observation-configuration question ("does the optimal
+> prior depend on `H`?") is **Q2**; in the ML-venue doc the same question is
+> **Q3**, which inserts a new Q2 on the posterior-targeting objective. So §7.1's
+> "Q2 — partially answered" and the ML doc's "Q3 partially answered" are the
+> *same* finding on the *same* evidence
+> (`l96_obs_density_augmented_training.md`), not two results.
 
 ---
 
