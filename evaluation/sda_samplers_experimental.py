@@ -1,4 +1,4 @@
-"""EXPERIMENTAL / NOT PRODUCTION -- see docs/psi_decomposition_results.md section 3.
+"""EXPERIMENTAL / NOT PRODUCTION -- see docs/results/psi_decomposition_results.md section 3.
 
 Status (2026-09-16):
   * `guided_sample_pigdm` WORKS but is under-tuned: best gamma=1.0 gives S0 RMSE

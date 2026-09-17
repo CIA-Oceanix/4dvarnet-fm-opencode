@@ -220,7 +220,8 @@ def main() -> None:
         (
             "Setup: two-scale L96, Obs30 (`obs_interval=100`, `obs_j=2` → 24D observed space), "
             "dws=500, 200 shared cached test windows; S1 = ±20% params + ±10% bias. "
-            "All schemes are the [V2/V3 CFM variants](phase_B_l96_cfm_variants.md); "
+            "All schemes are the [V2/V3 CFM variants]"
+            "(../../../docs/scoping/phase_B_l96_cfm_variants.md); "
             "DA baselines are covered in `l96_consolidated_benchmark.md`."
         ),
         "",

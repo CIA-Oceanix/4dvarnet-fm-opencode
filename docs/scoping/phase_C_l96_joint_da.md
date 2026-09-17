@@ -5,7 +5,7 @@
 **Scope:** Redesign `JointETKFL96` from scratch and benchmark it against `ETKF` on the
 cached S0/S1 test set (200 windows), producing a standalone DA report.
 
-This is the L96 analogue of the L63 `docs/joint_estimation_progress.md`, scoped
+This is the L96 analogue of the L63 `docs/results/joint_estimation_progress.md`, scoped
 specifically to the **ETKF** joint state-parameter problem (F, c1, hx, eps, w1..w4;
 h fixed), evaluated apples-to-apples with the L7/L8/L9 joint neural models.
 

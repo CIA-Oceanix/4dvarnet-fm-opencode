@@ -1,11 +1,11 @@
 # Is the true prior the best prior? — scoping doc
 
 **Status:** SCOPING, v1 (2026-09-16). **Superseded in framing by
-`docs/scoping_ml_paper_exploiting_prior_knowledge.md` (2026-09-16) — read that
+`docs/scoping/ml_paper_exploiting_prior_knowledge.md` (2026-09-16) — read that
 one first; it is the current scoping document.** This doc's testbed ladder and
 risk register were folded into it. Defines the scientific question, the testbed
 families, and the experiment set. No implementation yet. Supersedes the
-*framing* of `docs/phase_D_physics_priors_under_uncertainty.md`; Phase D's work
+*framing* of `docs/scoping/phase_D_physics_priors_under_uncertainty.md`; Phase D's work
 packages survive as the dynamical-systems instantiation and evidence base.
 
 > **Question numbering differs between the two scoping docs — do not cross-cite
