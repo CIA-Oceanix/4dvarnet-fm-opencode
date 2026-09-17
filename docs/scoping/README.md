@@ -21,6 +21,25 @@ Read **top to bottom**; only the first is current.
 > posterior-targeting objective. "§7.1 Q2 — partially answered" and "Q3
 > partially answered" are the *same* finding on the *same* evidence.
 
+## The DA-venue paper (JAMES)
+
+| doc | status |
+|---|---|
+| **`da_paper_structural_hypotheses.md`** | **CURRENT**, SCOPING v1 2026-09-17. Diagnosis paper: three structural hypotheses of classical DA (sequential; model fidelity as the route to skill; ODE state representation) and how they explain DA's limited return on sparse observations and its impoverished posteriors. |
+
+Its relationship to the ML chain above is **not yet settled** — see its §10
+decision 1. Working split: the ML doc owns the architecture/inductive-bias axis
+at fixed model error; this one owns the model-error and observation-sparsity
+axes. They share the L96/QG evidence base, so decide the boundary before running
+any experiment twice.
+
+> **Standing caveat for both papers.** The L96/QG `S0`/`S1` axis prices model
+> error **only for methods that run a forward model at inference**. `param_bias`
+> reaches the DA model's parameters, not the truth, so a model-free neural row's
+> `S1/S0 ~ 1.00` is definitional, not a robustness result. Never table it as a
+> cross-class robustness comparison. (`da_paper_structural_hypotheses.md` §4.1,
+> R1.)
+
 ## Standalone plans
 
 | doc | status |
