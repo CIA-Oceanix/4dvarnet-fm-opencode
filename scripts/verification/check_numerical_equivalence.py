@@ -45,7 +45,8 @@ print("=== Test 1: Single Euler step (Lorenz63Dynamics.step vs inline) ===")
 dynamics = Lorenz63Dynamics(dt=dt, coupling_exponent=1.6)
 s = state_traj[0]
 W = forcing_traj[0]
-new_dyn = dynamics.step(s.unsqueeze(0), W.unsqueeze(0), sigma, rho, beta)
+new_dyn = dynamics.step(s.unsqueeze(0), W.unsqueeze(0),
+                        sigma=sigma, rho=rho, beta=beta)
 
 X, Y, Z = s[0], s[1], s[2]
 coupling = _apply_coupling(W.unsqueeze(0), c1, 1.6).squeeze(0)
@@ -77,7 +78,7 @@ inline_traj = inline_rollout(state_traj[0], forcing_traj, num_steps, sigma, rho,
 dyn_traj = [state_traj[0].unsqueeze(0)]
 s = state_traj[0].unsqueeze(0)
 for t in range(1, num_steps):
-    s = dynamics.step(s, forcing_traj[t-1:t], sigma, rho, beta)
+    s = dynamics.step(s, forcing_traj[t-1:t], sigma=sigma, rho=rho, beta=beta)
     dyn_traj.append(s)
 dyn_traj = torch.cat(dyn_traj, dim=0)
 

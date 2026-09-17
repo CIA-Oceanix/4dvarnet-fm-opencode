@@ -89,7 +89,9 @@ class TestDataEquivalence:
         ds2 = Lorenz63Dataset(cfg2)
         for i in range(len(ds1)):
             for key in ["true_state", "obs", "forcing_true", "forcing_corrupted"]:
-                torch.testing.assert_close(ds1[i][key], ds2[i][key])
+                # `obs` is NaN at unobserved steps by construction, and
+                # assert_close treats NaN != NaN unless equal_nan is set.
+                torch.testing.assert_close(ds1[i][key], ds2[i][key], equal_nan=True)
 
     def test_trajectory_reproducible(self):
         """generate_long_trajectory is deterministic with same seed."""

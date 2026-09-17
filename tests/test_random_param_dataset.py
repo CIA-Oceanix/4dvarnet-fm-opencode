@@ -22,7 +22,13 @@ class TestRandomParamDataset:
     def test_getitem_keys(self, tiny_cfg):
         ds = RandomParamLorenz63Dataset(tiny_cfg, param_noise=0.2)
         item = ds[0]
-        expected_keys = {"true_state", "obs", "obs_mask", "forcing_true", "forcing_corrupted", "sigma", "rho", "beta"}
+        expected_keys = {
+            "true_state", "obs", "obs_mask", "forcing_true", "forcing_corrupted",
+            "sigma", "rho", "beta",
+            # per-window randomized-parameter bookkeeping added after this test
+            # was written: the draw actually used, plus the per-window obs seed.
+            "true_sigma", "true_rho", "true_beta", "true_c1", "obs_seed",
+        }
         assert set(item.keys()) == expected_keys, f"Got keys: {set(item.keys())}"
 
     def test_tensor_shapes(self, tiny_cfg):
@@ -47,7 +53,9 @@ class TestRandomParamDataset:
         ds2 = RandomParamLorenz63Dataset(tiny_cfg, param_noise=0.2)
         for i in range(len(ds1)):
             for key in ["true_state", "obs"]:
-                assert torch.allclose(ds1[i][key], ds2[i][key]), \
+                # `obs` is NaN at unobserved steps by construction, so the
+                # comparison has to treat NaN as equal to NaN.
+                assert torch.allclose(ds1[i][key], ds2[i][key], equal_nan=True), \
                     f"Mismatch at window {i}, key {key}"
 
     def test_cs2_corrupted_forcing(self, tiny_cfg):

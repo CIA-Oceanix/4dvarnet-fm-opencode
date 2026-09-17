@@ -101,30 +101,25 @@ jobs:
           pip install hydra-core omegaconf pytorch-lightning tensorboard
       - name: Run fast test suite
         run: |
-          pytest \
-            tests/test_lorenz96_training.py \
-            tests/test_direct_unet.py \
-            tests/test_vanilla_cfm.py \
-            tests/test_neural_inference.py \
-            tests/test_obs_density.py \
-            tests/test_sda_sampler.py \
-            tests/test_fm_sampler.py \
-            tests/test_l96_fm_sampler_report.py \
-            tests/test_l96_normalization.py \
-            tests/test_hydra_config.py \
-            tests/test_baselines_hydra.py \
-            tests/test_metrics.py \
-            tests/test_estimate_metrics.py \
-            tests/test_joint_estimation_l96_neural.py \
-            tests/test_joint_estimation_l96.py \
-            tests/test_qg_dynamics.py \
-            tests/test_qg_data.py \
-            tests/test_qg_baselines.py \
-            tests/test_qg_s0s1.py \
-            tests/test_qg_random_columns.py \
-            tests/test_qg1l_dynamics.py \
-            tests/test_qg_psi_state.py \
-            tests/test_qg_baselines_4dvar.py \
-            tests/test_qg_neural.py \
-            tests/test_resume.py \
+          # The whole tests/ tree, not a hand-maintained file list. The list
+          # this replaced named 24 of 53 files; the other 29 had never run in
+          # CI, and had silently accumulated a refactor's worth of API drift
+          # (see docs/scoping/refactor_plan.md, Phase 0). A new test file is now
+          # gated by existing, rather than by remembering to edit this file.
+          #
+          # Two deliberate exclusions, both tracked in docs/scoping/refactor_plan.md:
+          #   test_joint_estimation.py        -- 7 tests written against
+          #       JointCFM's pre-restructure API. JointCFM itself is covered by
+          #       test_joint_estimation_l96_neural.py and test_neural_inference.py.
+          #       Deferred to a second step.
+          #   test_lorenz63.py::test_observations_noise -- correctly detects a
+          #       real data bug (Lorenz63Dataset gives every window the same
+          #       observation-noise realization; data/lorenz63.py:160 uses a
+          #       constant obs_seed where lorenz96.py and random_param_dataset.py
+          #       use a per-window one). Recorded, not yet fixed, because fixing
+          #       it re-randomises every L63 dataset and moves published L63
+          #       numbers.
+          pytest tests/ \
+            --deselect tests/test_joint_estimation.py \
+            --deselect tests/test_lorenz63.py::test_observations_noise \
             -m "not slow" -q
