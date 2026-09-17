@@ -249,7 +249,7 @@ Agreement ~1.5% (V3) / ~4% (FDV1CFM). Two further confirmations:
    quality ($\hat m$ RMSE 0.522 vs 0.515) but very different late-$\tau$ residuals, the
    blow-up is a property of the **residual/velocity stage**, not of the posterior — V2's
    explicitly two-stage design (mean estimator + residual CFM) handles $\tau\to1$
-   cleanly. See `docs/psi_decomposition_results.md` §1.
+   cleanly. See `docs/results/psi_decomposition_results.md` §1.
 
 ### Open / caveats
 

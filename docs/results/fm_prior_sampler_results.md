@@ -16,6 +16,6 @@ written by hand in a second place will drift away from the numbers.
 
 Related:
 
-* `docs/cfm_affine_velocity_decomposition.md` — the operator decomposition the
+* `docs/results/cfm_affine_velocity_decomposition.md` — the operator decomposition the
   schemes are built on (`Psi = mu_p + K_tau(x_tau - beta mu_p) + Psi_NG`).
-* `docs/psi_decomposition_results.md` — its measurement.
+* `docs/results/psi_decomposition_results.md` — its measurement.

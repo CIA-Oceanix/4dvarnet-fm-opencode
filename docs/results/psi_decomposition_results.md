@@ -1,8 +1,8 @@
 # Psi_mean / Psi_G / Psi_NG measurements on L96 — results
 
 **Status:** RESULTS (2026-09-16). Measurements only; no training was run. Companion
-to `docs/cfm_affine_velocity_decomposition.md` (the derivation) and
-`docs/scoping_ml_paper_exploiting_prior_knowledge.md` (which adopts this partition
+to `docs/results/cfm_affine_velocity_decomposition.md` (the derivation) and
+`docs/scoping/ml_paper_exploiting_prior_knowledge.md` (which adopts this partition
 as its organizing framework).
 
 Decomposition, with `x_tau = (1-tau) x0 + tau x1`, `x0 ~ N(0, sigma0^2 I)`:
