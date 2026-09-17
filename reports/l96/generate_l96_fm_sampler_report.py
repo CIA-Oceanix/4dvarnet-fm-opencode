@@ -428,10 +428,10 @@ python reports/l96/run_sda_sampler_experiments.py --suite {c['suite']} \\
     body = "\n\n".join(cmds)
     return f"""## 8. Reproduction
 
-**Environment.** `fdv-monai-proto` (torch 2.8.0, monai 1.6.0) is required for every
-monai checkpoint; the `fdv` environment (torch 2.4.1) has no monai and fails with a
-late `ModuleNotFoundError` inside `train.py::model_factory`. The report scripts live
-outside the package tree, so `PYTHONPATH` must point at the repo root.
+**Environment.** `fdv-monai-proto`, the project's single default env (see AGENTS.md's
+"Conda environment" section) — monai is a hard requirement for every checkpoint used
+here. The report scripts live outside the package tree, so `PYTHONPATH` must point at
+the repo root.
 
 ```bash
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
