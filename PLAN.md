@@ -1803,13 +1803,12 @@ EnKF" is now known to be a **cols=4-specific finding**, not universal --
 whether ETKF's own ridge/inflation should be re-tuned at higher density
 (rather than reusing the cols=4-tuned value) is untested.
 
-**Not yet decided**: whether to promote one of these configs (most
-plausibly cols=64/loc=1.0) into the canonical S0/S1 benchmark, the way
-`etkf_ridge=1.0` was promoted after its own N=100 confirmation. Unlike
-that promotion, this one changes the *observation configuration* itself
-(16x the column density), not just a DA hyperparameter -- a
-benchmark-design decision, not a pure tuning one, left open pending
-discussion rather than actioned unilaterally.
+**Resolved (2026-09-15/16)**: rather than promoting a high-density
+override, the reference density (cols=4) itself turned out to be
+untuned too -- see the "Reference density (cols=4) re-check, ridge
+re-tune, and full density-curve extension" section below for the actual
+resolution (a uniform `loc_radius`/`etkf_ridge` fix, not a benchmark-
+design call).
 
 Data: `reports/qg/outputs/qg_obs_density_sweep_n100/*.json` (N=100, 8
 files: ETKF/EnKF x cols={16,64} x S0/S1).
@@ -1829,6 +1828,137 @@ whole session's history. Scratch scripts written *after* a `QGConfig`
 field addition must reference the pre-existing cache file by its
 already-known name directly rather than recomputing the (now different)
 hash. Worth keeping in mind for any future `QGConfig` field addition.
+
+### Reference density (cols=4) re-check, ridge re-tune, and full density-curve extension (2026-09-15/16)
+
+Direct follow-up to the N=100 confirmation above: the user asked to
+extend the obs-density curve to the full 1/2/4/8/16/32/64 cols/day range
+and to run the full N=100 S0/S1 eval for the reference case (cols=4)
+with whatever the "nominal" config turned out to be. That question --
+"is `loc_radius=6.0` (the project's own never-swept reference default)
+actually tuned even at cols=4?" -- turned out to be the single biggest
+finding of this whole density investigation.
+
+**Step 1, cols=4 `loc_radius` re-check (N=10, grid {1,2,3,4,6}, both
+methods)**: `loc_radius=6.0` was the **worst** point in the grid for
+both ETKF and EnKF -- e.g. ETKF S1 psi 0.877 @ loc=2.0 vs 0.834 @ loc=6.0
+(the "current default"); EnKF S1 psi 0.855 @ loc=2.0 vs 0.738 @ loc=6.0,
+q 0.391 vs 0.282. `loc_radius=2.0` (the same value that won at every
+other tested density) won again. Confirmed at N=100:
+
+| config | S0 psi | S0 q | S1 psi | S1 q |
+|---|---|---|---|---|
+| ETKF, loc=6.0 (old default) | 0.957 | 0.476 | 0.926 | 0.357 |
+| ETKF, loc=2.0 (new) | 0.959 | 0.498 | 0.942 | 0.412 |
+| EnKF, loc=6.0 (old default) | 0.947 | 0.481 | 0.896 | 0.331 |
+| EnKF, loc=2.0 (new) | 0.958 | 0.500 | 0.941 | 0.413 |
+
+**Step 2, `etkf_ridge` re-check at `loc_radius=2.0` (N=10 then N=100,
+grid {0.0,0.1,0.25,0.5,1.0,2.0,3.0,5.0})**: `etkf_ridge=1.0` was tuned
+specifically for `loc_radius=6.0` on 2026-09-11/12 -- with `loc_radius`
+now 2.0, its benefit **inverted**. psi is flat across the whole range
+(N=100: 0.958-0.961 S0, 0.939-0.947 S1 -- noise-level), while q and
+q-layer2 decline *monotonically* from `ridge=0.0` (the implicit ~1e-4
+floor) upward: N=100 S0 q = 0.500 (ridge=0.0) -> 0.498 (0.1) -> 0.493
+(0.25) -> 0.484 (0.5) -> 0.466 (1.0) -> 0.437 (2.0). No local optimum
+found above the floor at cols=4 (initially thought ridge=0.5 might be
+one, but 0.25 beat it too, at N=100). `ridge=0.1` was picked as a small
+safety margin over the bare floor.
+
+**Step 3, does the new ridge value transfer to `loc_radius=1.0`
+(cols=64)?** A matching N=10 ridge sweep at `loc_radius=1.0` found
+`ridge=0.1` works well there too (near-best psi, best/tied-best q and
+q-layer2) -- so **one `etkf_ridge` value (0.1) is used uniformly across
+the whole density curve**, regardless of which `loc_radius` bucket
+(2.0 or 1.0) applies. No density-specific ridge re-tuning was needed
+beyond checking these two `loc_radius` values.
+
+**Step 4, `inflation` re-check at the new config (N=10, both methods,
+grid {0.9,0.95,1.0,1.02,1.05})**: `inflation=1.0` remains sharply
+optimal for both methods -- confirms the new `loc_radius`/`ridge`
+combination didn't shift the inflation optimum, closing the "did we tune
+everything jointly" question.
+
+**Step 5, extend the density curve to cols={8,32} (new) and re-run
+cols={1,2,16,64} ETKF at `ridge=0.1`** (they were previously confirmed
+with the old `ridge=1.0`, before this re-tune) for full internal
+consistency. `loc_radius=2.0` confirmed (N=10, both methods) as the
+optimum at both new densities too, matching the established pattern.
+Full N=100 curve, both methods (from the new dedicated
+`reports/qg/generate_qg_obs_density_report.py` ->
+`qg_obs_density_report.md`):
+
+| cols/day | loc | ETKF S1 psi | ETKF S1 q | ETKF S1 q-l2 | EnKF S1 psi | EnKF S1 q | EnKF S1 q-l2 |
+|---|---|---|---|---|---|---|---|
+| 1 | 2.0 | 0.885 | 0.267 | 0.243 | 0.883 | 0.268 | 0.243 |
+| 2 | 2.0 | 0.916 | 0.332 | 0.285 | 0.914 | 0.332 | 0.285 |
+| 4 | 2.0 | 0.942 | 0.412 | 0.340 | 0.941 | 0.413 | 0.341 |
+| 8 | 2.0 | 0.962 | 0.490 | 0.398 | 0.962 | 0.491 | 0.399 |
+| 16 | 2.0 | 0.971 | 0.537 | 0.434 | 0.971 | 0.539 | 0.435 |
+| 32 | 2.0 | 0.978 | 0.568 | 0.460 | 0.979 | 0.573 | 0.464 |
+| 64 | 1.0 | 0.982 | 0.600 | 0.490 | 0.984 | 0.600 | 0.489 |
+
+**Two striking, clean results**: (1) a perfectly monotonic dose-response
+curve across the entire 1-64 range on every field, both scenarios, both
+methods -- no collapse, no non-monotonicity anywhere, once `loc_radius`
+is tuned per density instead of held at one project-wide default; (2)
+**ETKF and EnKF are now nearly indistinguishable at every density**
+(typically within 0.001-0.006 EV) -- both the original EnKF>ETKF gap
+(2026-09-11, which motivated the whole `etkf_ridge` sensitivity study)
+and the later ETKF>EnKF gap (after `etkf_ridge=1.0`'s promotion, briefly
+reversed again at cols=16/64 in the N=100 confirmation above) were
+**both** largely artifacts of running at an untuned `loc_radius=6.0`.
+
+**Promoted to the new project-wide reference default**: `loc_radius=2.0`
+for cols<=32, `loc_radius=1.0` for cols=64 (both methods); `etkf_ridge=
+0.1` (was 1.0) for ETKF at every density; `inflation=1.0` unchanged. The
+canonical `qg_repro_validation{,_s1}/{etkf,enkf}.json` now hold these
+N=100 numbers; the old `loc_radius=6.0` results are archived as
+`{etkf,enkf}_loc6_default.json` in both directories (not deleted).
+`qg_da_report.md` and `qg_neural_report.md` (both read the same
+canonical files) regenerated to match -- `qg_da_report.md`'s
+"Hyperparameter sensitivity analysis" section now documents both the
+2026-09-12 `etkf_ridge=1.0` promotion (at the old `loc_radius=6.0`,
+marked superseded) and this one.
+
+**Still open, untouched by this promotion**: whether psi2 information
+adds value *at matched total density* against a properly-tuned pure-psi1
+config (unrelated question, no new evidence either way); `N_ensemble`
+has never been varied (hardcoded 80 throughout this entire density
+curve, at every density from 1 to 64).
+
+**Git gotcha hit again**: PR #205 (the N=100 cols=16/64 confirmation)
+was also squash-merged, same as PR #203 before it -- see
+[[feedback_squash_merge_branch_divergence]] in memory. Had to commit the
+uncommitted working-tree state, then `git rebase --onto origin/master
+<old-parent> <branch>` to replay it cleanly, resolving one real conflict
+(`generate_qg_neural_report.py`/`qg_neural_report.md`, against an
+unrelated concurrently-merged PR #206 that added new neural model rows
+to the same report) by letting the `.py` auto-merge and regenerating the
+`.md` from scratch rather than hand-merging two independently-generated
+outputs.
+
+**Also caught and fixed mid-session**: two SLURM screening jobs
+(cols=8/cols=32 `loc_radius` screens) were launched with a `sed`-based
+rename that missed "colpts4" (not a "cols4" substring, so the intended
+`s/cols4/cols8/` replacement never matched), leaving both scripts
+writing to the *same* stale `colpts4`-labeled output filenames --
+cancelled immediately (`scancel`) once noticed from the job logs, before
+either wrote more than one file; verified no committed data was touched
+(only the disposable, untracked root-level scratch directory), fixed the
+label strings, and resubmitted cleanly.
+
+Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 231 files
+as of 2026-09-16, cumulative across every screen in this whole density
+investigation) + `reports/qg/outputs/qg_obs_density_sweep_n100/*.json`
+(N=100, all 7 densities x 2 methods x 2 scenarios, plus the ridge/
+inflation re-check points at cols=4). Scratch drivers (not committed):
+`qg_cols4_loc_scratch.py`, `qg_ridge_at_loc2_scratch.py`,
+`qg_ridge_at_loc1_cols64_scratch.py`, `qg_inflation_at_loc2_scratch.py`,
+`qg_cols8_loc_scratch.py`, `qg_cols32_loc_scratch.py`,
+`qg_density_n100_scratch.py` (generic N=100 driver, parametrized by
+method/cols/loc_radius/ridge/sampling -- used for cols=8/32 and the
+ridge=0.1 re-runs at cols=1/2/16/64).
 
 ### Sensitivity-study consolidation (2026-09-14)
 

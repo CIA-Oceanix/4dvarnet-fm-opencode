@@ -23,7 +23,7 @@ B=(1 10 10 0.1)
 T=${SLURM_ARRAY_TASK_ID}
 OUT=reports/qg/outputs/qg_tune_4dvar/strong_w${W[$T]}_s${S[$T]}_lr${LR[$T]}_b${B[$T]}.json
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py \
     --method-list strong4dvar \
     --nx 64 \
     --num-windows 1 \

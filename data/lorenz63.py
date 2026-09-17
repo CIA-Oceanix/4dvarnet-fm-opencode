@@ -330,7 +330,7 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
 
     if os.path.exists(cache_path):
         print(f"  Loading cached datasets ({cache_key[:12]}...)")
-        cached = torch.load(cache_path)
+        cached = torch.load(cache_path, weights_only=False)
         train = RandomBiasLorenz63Dataset(
             train_cfg, param_noise=param_noise, bias_mode='random',
             bias_range=bias_range, cached_windows=cached["train_windows"])

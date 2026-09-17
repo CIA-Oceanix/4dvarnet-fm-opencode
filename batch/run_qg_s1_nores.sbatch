@@ -14,7 +14,7 @@ set -e
 # "qg2l_lores" (label-only; _build_dyn treats it as a 2-layer QG at nx_da, so at
 # da_nx=64 it is functionally full-res). Mirrors batch/run_qg_s1_da32.sbatch
 # (the reference) otherwise.
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 64 \
     --window-days 30 \

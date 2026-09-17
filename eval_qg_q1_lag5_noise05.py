@@ -44,7 +44,7 @@ def main():
     cache_cfg = QGConfig(**CACHE_KW)
     path = _truth_cache_path(cache_cfg, CACHE_KW["num_windows"], CACHE_DIR)
     print(f"Loading cached truth from {path} ...", flush=True)
-    base = torch.load(path, map_location="cpu")[:args.num_test]
+    base = torch.load(path, map_location="cpu", weights_only=False)[:args.num_test]
     print(f"Loaded {len(base)} base truth windows.", flush=True)
 
     eval_cfg = QGConfig(**{**CACHE_KW, "obs_noise_std_frac": args.noise_frac,
@@ -59,7 +59,7 @@ def main():
     from models.monai_unet_qg2d import MonaiDirectUNetQG
     model = MonaiDirectUNetQG(ny=eval_cfg.ny, nx=eval_cfg.nx, nlayers=2, param_dim=0,
                               cond_extra_dim=0, hidden_channels=[64, 128, 256])
-    loaded = torch.load(args.ckpt, map_location="cpu")
+    loaded = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     state_dict = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
     state_dict = {(k[6:] if k.startswith("model.") else k): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict)

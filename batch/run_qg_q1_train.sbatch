@@ -28,8 +28,8 @@ set -e
 # doubly periodic; the old models.direct_unet.DirectUNet only convolved along
 # time and never used the field's spatial structure at all) -- with a cosine
 # LR schedule (train_qg_neural.py's --cosine-scheduler, on by default).
-# Requires fdv-monai-proto (see models.monai_unet_qg2d's docstring), not this
-# project's default fdv env. New --exp-dir (old Q1_direct_unet_s0/ holds the
+# Needs monai, which the project's default fdv-monai-proto env provides (see
+# models.monai_unet_qg2d's docstring). New --exp-dir (old Q1_direct_unet_s0/ holds the
 # prior 1D-architecture results; kept for comparison, not overwritten).
 # 2-epoch smoke test (job 52857): ~225s/epoch on 1 A40 -> 200 epochs ~12.5h,
 # PSI EV=0.86 already after 2 epochs.

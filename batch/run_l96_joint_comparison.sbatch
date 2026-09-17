@@ -19,7 +19,7 @@ REPO_ROOT="/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-join
 cd "$REPO_ROOT"
 mkdir -p "$REPO_ROOT/sbatch_logs"
 
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
 echo "============================================"

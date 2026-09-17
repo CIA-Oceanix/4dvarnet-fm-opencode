@@ -724,9 +724,18 @@ def test_ensure_truth_cache_redrawn_matches_plain_when_cfg_unchanged():
     loading the cache at a separate, unaffected `cache_cfg` key and
     redrawing obs/IC via `eval_cfg`. When `eval_cfg == cache_cfg` (the
     Q1/Q3/Q4 case, no override), it must reproduce `ensure_truth_cache`'s
-    output bit-for-bit (same underlying `_generate_truth_only` +
-    `_generate_obs_ic` composition, see
-    `test_truth_only_plus_obs_ic_matches_generate_truth`)."""
+    output (same underlying `_generate_truth_only` + `_generate_obs_ic`
+    composition, see `test_truth_only_plus_obs_ic_matches_generate_truth`).
+
+    `true_state`/`init_state` are compared exactly; `obs` is compared to
+    within a tight tolerance rather than bit-for-bit. Under torch 2.4 the two
+    paths agreed to the last bit, but they reach `_generate_obs_ic`'s
+    spectral field extraction with differently-shaped intermediates, and
+    torch >= 2.8 picks a different kernel for one of them -- a <=1 ULP
+    float32 difference (measured: max 6.1e-05 absolute, 7e-08 relative, on
+    obs of magnitude ~6e+02). That is ~6 orders of magnitude smaller than a
+    genuinely different obs realization, which is what this test guards
+    against."""
     from data.qg_neural import ensure_truth_cache_redrawn
     cfg = _cfg(num_windows=2)
     cache_dir = "/tmp/qg_neural_test_cache"
@@ -734,7 +743,8 @@ def test_ensure_truth_cache_redrawn_matches_plain_when_cfg_unchanged():
     redrawn = ensure_truth_cache_redrawn(cfg, cfg, 2, cache_dir)
     for a, b in zip(plain, redrawn):
         assert torch.equal(a["true_state"], b["true_state"])
-        assert torch.equal(torch.nan_to_num(a["obs"]), torch.nan_to_num(b["obs"]))
+        assert torch.allclose(torch.nan_to_num(a["obs"]), torch.nan_to_num(b["obs"]),
+                              rtol=1e-5, atol=1e-3)
         assert torch.equal(a["init_state"], b["init_state"])
 
 

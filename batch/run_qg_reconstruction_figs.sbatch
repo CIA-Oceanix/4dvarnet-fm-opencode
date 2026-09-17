@@ -8,7 +8,7 @@
 #SBATCH --error=batch/logs/qg_recon_figs_%j.err
 
 set -e
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 export PYTHONPATH=/Odyssey/private/rfablet/Python/4dvarnet-fm-qg
 export PYTHONUNBUFFERED=1
 

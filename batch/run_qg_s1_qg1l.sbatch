@@ -17,7 +17,7 @@ set -e
 # fresh ~5 min CPU spinup is expected on first run.
 LAG=1.0
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

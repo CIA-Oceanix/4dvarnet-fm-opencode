@@ -23,8 +23,8 @@ cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-eval-con
 # already-trained checkpoint, no retraining needed.
 : "${EXP:?Set EXP via --export=EXP=<experiment_name>}"
 
-# ENV_NAME selects fdv (plain VanillaCFM) vs fdv-monai-proto (Monai variant).
-ENV_NAME="${ENV_NAME:-fdv}"
+# ENV_NAME overrides the default env (fdv-monai-proto) if a run needs another.
+ENV_NAME="${ENV_NAME:-fdv-monai-proto}"
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/${ENV_NAME}/bin:$PATH"
 export CONDA_DEFAULT_ENV="${ENV_NAME}"
 export PYTHONUNBUFFERED=1

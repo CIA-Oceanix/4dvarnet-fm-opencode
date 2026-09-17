@@ -50,7 +50,7 @@ def main():
     seed = SPLIT_SEED_BASE["test"]
     indices = list(range(n))
 
-    old_windows = torch.load(args.old_cache, map_location="cpu")
+    old_windows = torch.load(args.old_cache, map_location="cpu", weights_only=False)
     if len(old_windows) != n:
         raise RuntimeError(f"expected {n} windows in {args.old_cache}, "
                            f"found {len(old_windows)}")

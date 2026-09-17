@@ -13,7 +13,7 @@ set -e
 # comparison is apples-to-apples with full metrics_per_field (the default-noise
 # 0.05 q-state reference qg_s0_lag_sweep_psi only stores the aggregate qall).
 # 4 cols/day, lag 1.0, same-res (da_nx == nx == 64), ETKF N=80 infl 1.0 loc 6.
-PY=/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python
+PY=/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python
 
 $PY evaluation/sweep_qg_baselines.py \
     --nx 64 \

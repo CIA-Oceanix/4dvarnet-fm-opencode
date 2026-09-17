@@ -1,14 +1,15 @@
 """Adapter exposing MONAI's DiffusionModelUNet with the same call signature as
 models.unet.UNet1D, for prototyping (see /homes/rfablet/.claude/plans/monai-diffunet-prototype.md).
 
-monai is intentionally NOT in requirements.txt: monai==1.6.0 requires
-torch==2.8.0+cu126, newer than this project's standard torch==2.4.1+cu121 (a
-prior attempt to add monai to the shared env broke CUDA for everything else).
-This module -- and anything importing it -- must run in a separate env built
-from requirements-monai.txt (e.g. `fdv-monai-proto`), not the project's
-default `fdv` env. Every other importer of this module already guards the
-import (see evaluation/neural_inference.py's try/except) so the rest of the
-codebase keeps working with the default env.
+monai==1.6.0 requires torch==2.8.0+cu126, and both are now pinned in
+requirements.txt: `fdv-monai-proto` is the project's single default env (see
+AGENTS.md "Conda environment"). This replaces the earlier two-env split, where
+monai lived in its own requirements-monai.txt env because an attempt to add it
+to the then-standard torch==2.4.1+cu121 env broke CUDA for everything else --
+torch 2.8.0+cu126 has since been verified to keep CUDA working on every GPU
+this project runs on and to reproduce 2.4.1's numerics bit-identically. Other
+importers still guard the import (see evaluation/neural_inference.py's
+try/except), so the codebase also stays importable in a monai-less env.
 
 Verified directly against the installed monai==1.6.0 wheel:
 - DiffusionModelUNet.forward(x, timesteps, context=None, class_labels=None, ...)

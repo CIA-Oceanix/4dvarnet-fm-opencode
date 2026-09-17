@@ -13,7 +13,7 @@ set -e
 # (analogous to the S1 "resolution-only" off/off cell, but structural not grids).
 LAG=1.0
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

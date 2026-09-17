@@ -13,7 +13,7 @@ set -e
 # (nx=64, c4, psi, lag1.0) on a single eval window with reduced Adam steps,
 # to choose the full Win reference configuration.
 start=$(date +%s)
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py \
     --method-list strong4dvar \
     --nx 64 \
     --num-windows 1 \

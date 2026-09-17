@@ -35,7 +35,7 @@ def main():
             f"[{args.split}] expected {n_total} windows, found {len(files)}; "
             f"missing indices: {missing[:20]}{'...' if len(missing) > 20 else ''}")
 
-    windows = [torch.load(f, map_location="cpu") for f in files]
+    windows = [torch.load(f, map_location="cpu", weights_only=False) for f in files]
 
     cfg = QGConfig(nx=64, dt=7200.0, seed=SPLIT_SEED_BASE[args.split],
                    num_windows=n_total)

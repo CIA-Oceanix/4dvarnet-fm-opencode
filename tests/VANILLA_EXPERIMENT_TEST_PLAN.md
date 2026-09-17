@@ -62,7 +62,7 @@ Runs the largest DirectUNet config (E1) for 1 epoch with the **full 2000-window 
 
 set -euo pipefail
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
-export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin:$PATH"
+export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
 echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv -i 0)"

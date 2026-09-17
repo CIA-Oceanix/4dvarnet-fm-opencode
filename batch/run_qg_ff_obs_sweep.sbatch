@@ -26,7 +26,7 @@ NZ=${NOISES[$SLURM_ARRAY_TASK_ID]}
 ODIR=reports/qg/outputs/qg_ff_obs_sweep
 mkdir -p ${ODIR}
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

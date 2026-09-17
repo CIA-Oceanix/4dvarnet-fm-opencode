@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # 1) Baseline: per-component 5% noise, same obs interval for S0 and S1
 $PYTHON -u evaluation/run_l96_sweep2.py \

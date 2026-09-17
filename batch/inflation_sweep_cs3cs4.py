@@ -43,7 +43,7 @@ def main():
     datasets = None
     if os.path.exists(datasets_cache):
         try:
-            loaded = torch.load(datasets_cache)
+            loaded = torch.load(datasets_cache, weights_only=False)
             if "test_cs3" in loaded and "test_cs4" in loaded:
                 datasets = loaded
                 print(f"Loaded cached datasets in {time.time()-t0:.1f}s")

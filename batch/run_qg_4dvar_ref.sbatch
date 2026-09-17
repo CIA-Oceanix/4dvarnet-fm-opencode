@@ -14,7 +14,7 @@ set -e
 # Uses the LBFGS / 5-day-window config that beat the free forecast in tuning
 # (improv 1.14, EV 0.85 on the single-window probe).
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --window-days 30 \
     --num-windows 5 \

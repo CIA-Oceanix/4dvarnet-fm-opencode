@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # Equal weights (w=1.0 for all fast vars) — should reproduce the baseline
 $PYTHON -u evaluation/run_l96_sweep2.py \

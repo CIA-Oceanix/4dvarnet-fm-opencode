@@ -8,4 +8,4 @@
 
 set -e
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python reports/qg/probe_device_fix_timing.py
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python reports/qg/probe_device_fix_timing.py

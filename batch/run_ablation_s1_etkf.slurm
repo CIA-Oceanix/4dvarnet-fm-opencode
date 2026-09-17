@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python3"
+PYTHON="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python3"
 
 # Five factors, each with N values (total 25 array jobs, 0-24)
 # Factor 0: s1_j (J order of S1 DA model)

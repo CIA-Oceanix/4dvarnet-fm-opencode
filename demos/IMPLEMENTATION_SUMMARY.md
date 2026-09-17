@@ -149,7 +149,7 @@ To ensure reasonable runtimes, the scripts use:
 
 ### Quick Test (Fast)
 ```bash
-conda activate fdv
+conda activate fdv-monai-proto
 cd /homes/rfablet/HomeOdyssey/Python/4dvarnet-fm-opencode
 
 # Run all demos sequentially

@@ -166,8 +166,14 @@ def main() -> None:
         "`loc_radius` was properly tuned per density -- see that section's "
         "own \"before correction\"/\"correction\" subsections for the full "
         "trail rather than only the corrected conclusion, per this "
-        "project's convention of keeping the narrative honest). All three "
-        "studies share the same underlying motivation: PV on the "
+        "project's convention of keeping the narrative honest). That "
+        "correction then led to re-checking the reference density "
+        "(cols=4) itself, finding it was *also* untuned -- `loc_radius=2.0`"
+        "/`etkf_ridge=0.1` are now the project-wide default (2026-09-15/16, "
+        "see the \"Reference density (cols=4) re-check\" subsection), and "
+        "the density curve was extended to cols=1-64 (dedicated "
+        "`qg_obs_density_report.md`). All three studies share the same "
+        "underlying motivation: PV on the "
         "unobserved lower layer (q layer2) collapses under S1's model "
         "error, and each asks whether a different lever (inflation/ridge, "
         "4DVar covariance scale, or observation configuration/density) can "
@@ -712,13 +718,12 @@ def main() -> None:
         "re-tuned at higher density, rather than reusing the cols=4-tuned "
         "value, is untested.")
     add("")
-    add("**Not yet decided**: whether to promote one of these configs "
-        "(most plausibly cols=64/loc=1.0) into the canonical S0/S1 "
-        "benchmark, the way `etkf_ridge=1.0` was promoted after its own "
-        "N=100 confirmation. Unlike that promotion, this one changes the "
-        "*observation configuration* itself (16x the column density), not "
-        "just a DA hyperparameter -- a benchmark-design decision, not a "
-        "pure tuning one, so left open here rather than actioned.")
+    add("**Resolved (2026-09-15/16) -- see the reference-density re-check "
+        "below**: rather than picking a high-density config as a special "
+        "override, the reference density (cols=4) itself was re-checked "
+        "and its own `loc_radius`/`etkf_ridge` promoted instead, so the "
+        "\"benchmark-design decision\" this callout flagged didn't end up "
+        "needing to be made -- the actual fix applies uniformly.")
     add("")
     add(f"Data: `reports/qg/outputs/{obsd_n100_dir}/*.json` (N=100, 8 "
         "files: ETKF/EnKF x cols={16,64} x S0/S1). Scratch drivers (not "
@@ -727,13 +732,101 @@ def main() -> None:
         "Batch: `batch/run_qg_obs_density_n100.sbatch` (jobs 53537 [ETKF, "
         "1h50m], 53538 [EnKF, 2h36m]).")
     add("")
-    add("Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, 57 "
-        "files: the original ETKF/EnKF density sweep, the cols=4/random "
-        "sanity check, the EnKF cross-check, the ETKF inflation and "
-        "`loc_radius` sweeps at cols=16/64, the psi1+psi2 `loc_radius` "
-        "sweep, and EnKF's own `loc_radius` check at cols=16/64 -- used to "
-        "confirm EnKF's optimum before the N=100 run below rather than "
-        "assume it matched ETKF's). Tests: `tests/test_qg_psi2_points.py` "
+
+    add("### Reference density (cols=4) re-check, ridge re-tune, and "
+        "final promotion (2026-09-15/16)")
+    add("")
+    add("The N=100 confirmation above raised an obvious follow-up: is "
+        "`loc_radius=6.0` -- the project's own reference-case default, "
+        "never itself swept -- actually tuned for cols=4? An N=10 sweep "
+        "({1,2,3,4,6}, both methods) found **no**: `loc_radius=6.0` was "
+        "the *worst* point in the grid for both ETKF and EnKF, and "
+        "`loc_radius=2.0` (the same value that won at every other tested "
+        "density) won again.")
+    add("")
+    add("Confirmed at N=100 (cols=4, both methods):")
+    add("")
+    cols4_rows = [
+        ("ETKF, loc=6.0 (old default)",
+         metrics(load_json(root / "qg_repro_validation/etkf_loc6_default.json"), "test_s0"),
+         metrics(load_json(root / "qg_repro_validation_s1/etkf_loc6_default.json"), "test_s1")),
+        ("ETKF, loc=2.0 (new)",
+         metrics(load_json(root / "qg_obs_density_sweep_n100/s0_etkf_loc2_ridge0p1_n100.json"), "test_s0"),
+         metrics(load_json(root / "qg_obs_density_sweep_n100/s1_etkf_loc2_ridge0p1_n100.json"), "test_s1")),
+        ("EnKF, loc=6.0 (old default)",
+         metrics(load_json(root / "qg_repro_validation/enkf_loc6_default.json"), "test_s0"),
+         metrics(load_json(root / "qg_repro_validation_s1/enkf_loc6_default.json"), "test_s1")),
+        ("EnKF, loc=2.0 (new)",
+         metrics(load_json(root / "qg_obs_density_sweep_n100/s0_enkf_colpts4_n100.json"), "test_s0"),
+         metrics(load_json(root / "qg_obs_density_sweep_n100/s1_enkf_colpts4_n100.json"), "test_s1")),
+    ]
+    add("| config | S0 psi | S0 q | S1 psi | S1 q |")
+    add("|---|---|---|---|---|")
+    for label, m0, m1 in cols4_rows:
+        add(f"| {label} | {fmt(m0['psi_ev']) if m0 else '--'} | "
+            f"{fmt(m0['q_ev']) if m0 else '--'} | "
+            f"{fmt(m1['psi_ev']) if m1 else '--'} | "
+            f"{fmt(m1['q_ev']) if m1 else '--'} |")
+    add("")
+    add("With `loc_radius` now 2.0, `etkf_ridge=1.0` (tuned specifically "
+        "for the old `loc_radius=6.0`) needed re-checking too -- a fresh "
+        "N=10 sweep ({0.0,0.1,0.5,1.0,2.0,3.0,5.0}) found its benefit had "
+        "**inverted**: psi is flat across the whole range (noise-level "
+        "differences), while q and q-layer2 decline *monotonically* from "
+        "`ridge=0.0` (the implicit floor) upward -- confirmed at N=100 "
+        "down to `ridge=0.25`, still declining, so `ridge=0.1` was taken "
+        "as the new value (near the floor, not exactly at it, as a small "
+        "safety margin). A matching ridge re-check at `loc_radius=1.0` "
+        "(cols=64) found `ridge=0.1` works well there too -- one ridge "
+        "value transfers across both `loc_radius` regimes, so no "
+        "density-specific ridge tuning was needed. `inflation=1.0` was "
+        "re-checked at the new config (both methods) and remains clearly "
+        "optimal -- unaffected by the `loc_radius`/`ridge` change.")
+    add("")
+    add("**Promoted to the new project-wide reference default "
+        "(2026-09-15/16)**: `loc_radius=2.0` for cols<=32, "
+        "`loc_radius=1.0` for cols=64 (both methods); `etkf_ridge=0.1` "
+        "(was 1.0) for ETKF at every density; `inflation=1.0` unchanged. "
+        "The canonical `qg_repro_validation{,_s1}/{etkf,enkf}.json` now "
+        "hold these numbers (old `loc_radius=6.0` results archived as "
+        "`{etkf,enkf}_loc6_default.json` in both directories, not "
+        "deleted). The density curve was also extended to cols={8,32} "
+        "(previously only 1,2,4,16,64 had been tested) and cols={1,2,16,"
+        "64}'s ETKF numbers re-run at `ridge=0.1` for full internal "
+        "consistency -- see the dedicated "
+        "`reports/qg/outputs/qg_obs_density_report.md` "
+        "(`reports/qg/generate_qg_obs_density_report.py`) for the "
+        "complete cols=1-64 curve. Notably, ETKF and EnKF are now nearly "
+        "indistinguishable at every density once both are properly "
+        "localized -- both the original EnKF>ETKF gap (2026-09-11) and "
+        "the later ETKF>EnKF gap (after `etkf_ridge=1.0`'s promotion) "
+        "were largely artifacts of the untuned `loc_radius=6.0`.")
+    add("")
+    add("Data: `reports/qg/outputs/qg_obs_density_sweep/s{0,1}_{etkf,enkf}"
+        "_colpts4_loc*.json` (cols=4 loc_radius screen, N=10) + "
+        "`s{0,1}_etkf_loc{1,2}_ridge*.json` (ridge re-checks at both "
+        "`loc_radius` values, N=10) + `s{0,1}_{etkf,enkf}_loc2_infl*.json` "
+        "(inflation re-check, N=10) + `s{0,1}_{etkf,enkf}_colpts{8,32}"
+        "_loc*.json` (new density points, N=10) + "
+        "`reports/qg/outputs/qg_obs_density_sweep_n100/*.json` (all N=100 "
+        "confirmations). Scratch drivers (not committed): "
+        "`qg_cols4_loc_scratch.py`, `qg_ridge_at_loc2_scratch.py`, "
+        "`qg_ridge_at_loc1_cols64_scratch.py`, "
+        "`qg_inflation_at_loc2_scratch.py`, `qg_cols8_loc_scratch.py`, "
+        "`qg_cols32_loc_scratch.py`, `qg_density_n100_scratch.py` "
+        "(generic N=100 driver).")
+    add("")
+    add("Data: `reports/qg/outputs/qg_obs_density_sweep/*.json` (N=10, "
+        "231 files as of 2026-09-16: the original ETKF/EnKF density "
+        "sweep, the cols=4/random sanity check, the EnKF cross-check, the "
+        "ETKF inflation and `loc_radius` sweeps at cols=16/64, the "
+        "psi1+psi2 `loc_radius` sweep, EnKF's own `loc_radius` checks "
+        "(cols=16/64 and, later, cols=1/2/4/8/32), the cols=4 reference-"
+        "density `loc_radius` re-check, the ridge re-checks at both "
+        "`loc_radius` values, the inflation re-check, and the new "
+        "cols=8/32 density screens -- see the \"Reference density "
+        "(cols=4) re-check\" subsection above for the later additions). "
+        "Tests: `tests/test_qg_psi2_points.py` "
         "(15), `tests/test_qg_cols_sampling.py` (10) -- mechanical "
         "correctness only (shapes, determinism, no-hang, H-function/"
         "localization correctness), no scientific claim baked in. Scratch "
@@ -802,12 +895,20 @@ def main() -> None:
         "including the previously-collapsing q layer2 (roughly doubles at "
         "cols=64). One new wrinkle: EnKF edges out ETKF+ridge=1.0 at these "
         "higher densities (modest margin, ~0.01-0.02) -- \"ETKF+ridge=1.0 "
-        "beats EnKF\" is a cols=4-specific finding, not universal. Whether "
-        "psi2 information adds value *at matched total density* against a "
-        "properly-tuned pure-psi1 config remains genuinely open; whether "
-        "to promote a high-density config into the canonical benchmark is "
-        "also not yet decided (unlike ridge, this changes the observation "
-        "configuration itself, a benchmark-design call).")
+        "beats EnKF\" turned out to be a cols=4-specific artifact of "
+        "`loc_radius=6.0` also being untuned at the reference density "
+        "itself. **Resolved (2026-09-15/16)**: re-checked `loc_radius` at "
+        "cols=4 -- also found 6.0 was the worst point in the grid there "
+        "too -- and re-tuned `etkf_ridge` (1.0->0.1) at the new "
+        "`loc_radius`. Both promoted to the new project-wide default "
+        "(see the \"Reference density (cols=4) re-check\" subsection "
+        "above); the density curve was extended to cols={8,32} and every "
+        "existing point re-confirmed at the final config. Once properly "
+        "localized, ETKF and EnKF are nearly indistinguishable at every "
+        "density from 1-64 cols/day -- see the dedicated "
+        "`qg_obs_density_report.md`. Whether psi2 information adds value "
+        "*at matched total density* against a properly-tuned pure-psi1 "
+        "config remains genuinely open (untouched by this promotion).")
     add("- **Still open**: `N_ensemble` has never been varied (hardcoded 80 "
         "everywhere) in any of the three studies above.")
     add("")
@@ -827,7 +928,13 @@ def main() -> None:
         "`qg_n100_ridge_confirm_scratch.py`, "
         "`qg_4dvar_sensitivity_sweep_scratch.py`, "
         "`qg_obs_density_sweep_scratch.py`, "
-        "`qg_obs_density_n100_scratch.py`, `qg_enkf_loc_check_scratch.py`.")
+        "`qg_obs_density_n100_scratch.py`, `qg_enkf_loc_check_scratch.py`, "
+        "`qg_cols4_loc_scratch.py`, `qg_ridge_at_loc2_scratch.py`, "
+        "`qg_ridge_at_loc1_cols64_scratch.py`, "
+        "`qg_inflation_at_loc2_scratch.py`, `qg_cols8_loc_scratch.py`, "
+        "`qg_cols32_loc_scratch.py`, `qg_density_n100_scratch.py`. See "
+        "also the dedicated `reports/qg/outputs/qg_obs_density_report.md` "
+        "for the complete cols=1-64 curve at the final promoted config.")
     add("")
 
     out_path = Path(args.out)

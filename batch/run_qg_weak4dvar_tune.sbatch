@@ -23,7 +23,7 @@ T=${SLURM_ARRAY_TASK_ID}
 OUT=reports/qg/outputs/qg_tune_4dvar/weak_lbfgs_w60_lr1.0_b1.0_q${Q[$T]}.json
 
 start=$(date +%s)
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/run_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/run_qg_baselines.py \
     --method-list weak4dvar \
     --nx 64 \
     --num-windows 1 \

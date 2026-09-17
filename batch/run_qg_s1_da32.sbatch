@@ -19,7 +19,7 @@ set -e
 LAGS=(1.0 2.0)
 LAG=${LAGS[$SLURM_ARRAY_TASK_ID]}
 
-/Odyssey/private/rfablet/miniforge3/envs/fdv/bin/python evaluation/sweep_qg_baselines.py \
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python evaluation/sweep_qg_baselines.py \
     --nx 64 \
     --da-nx 32 \
     --window-days 30 \

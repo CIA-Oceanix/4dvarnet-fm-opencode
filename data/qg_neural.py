@@ -666,7 +666,7 @@ def ensure_truth_cache_redrawn(cache_cfg: QGConfig, eval_cfg: QGConfig, num_wind
     """
     from data.qg import QGS01Dataset, _truth_cache_path
     path = _truth_cache_path(cache_cfg, num_windows, cache_dir)
-    base = torch.load(path, map_location="cpu")[:num_windows]
+    base = torch.load(path, map_location="cpu", weights_only=False)[:num_windows]
     raw = QGS01Dataset(eval_cfg, scenario, base_windows=base).windows
     ic = QGS01Dataset._generate_obs_ic(eval_cfg, raw, list(range(len(raw))))
     return [dict(w, **entry) for w, entry in zip(raw, ic)]

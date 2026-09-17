@@ -108,6 +108,33 @@ Periodically (not part of any individual PR), run
 `python scripts/assemble_changelog.py` to fold all pending fragments into
 `CHANGELOG.md` (newest first) and delete the consumed fragment files.
 
+## Conda environment
+
+**`fdv-monai-proto` is the project's single default env** (torch 2.8.0+cu126 +
+monai 1.6.0, pinned together in `requirements.txt`):
+
+```bash
+/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin/python ...
+```
+
+Batch scripts default to it (`CONDA_ENV="${CONDA_ENV:-fdv-monai-proto}"`, or a
+direct `envs/fdv-monai-proto/bin/python` path); override per-run with
+`CONDA_ENV=<other>` where a script reads it.
+
+The older `fdv` env (torch 2.4.1+cu121, no monai) is **kept frozen as a
+rollback path** — two past incidents had a concurrent process break the shared
+env under running jobs — but nothing should point at it any more. Before the
+switch, `fdv-monai-proto` was verified to be a strict superset of `fdv`
+(identical Python and all 356 packages at identical versions apart from
+torch/triton/CUDA libs + monai), with working CUDA on every GPU tier this
+project uses (sm_75 RTX8000 -> sm_90 H100/H200), bit-identical numerics, and
+no test or throughput regression.
+
+**`torch.load` note:** torch >= 2.6 defaults to `weights_only=True`, which
+rejects pickled Dataset objects and numpy arrays (e.g. the L96
+`dataset_cache/*.pt` caches). Project code passes `weights_only=False`
+explicitly when loading its own artifacts — keep doing so in new code.
+
 ## Build, Lint, and Test Commands
 
 - **Lint:** `ruff check .` — check code quality
