@@ -36,10 +36,10 @@ def test_strong4dvar_initialization(device):
     assert strong.device == device
 
 
-def test_strong4dvar_forward_model(device):
+def test_strong4dvar_forward_model(device, l63_dynamics):
     """Test _forward_strong method produces valid trajectories."""
     torch.manual_seed(42)
-    strong = Strong4DVar(da_window_steps=50, dt=0.01, device=device)
+    strong = Strong4DVar(da_window_steps=50, dt=0.01, device=device, dynamics=l63_dynamics)
     
     x0 = torch.tensor([1.0, 1.0, 20.0], device=device)
     forcing = torch.zeros(100, device=device)
@@ -219,10 +219,10 @@ def test_strong4dvar_degrades_cs2(cs2_dataset, cs2_config, device):
         f"CS2 RMSE ({mean_rmse_cs2:.4f}) should be significantly higher than CS1 ({mean_rmse_cs1:.4f})"
 
 
-def test_strong4dvar_dynamics_exact(device):
+def test_strong4dvar_dynamics_exact(device, l63_dynamics):
     """Strong 4D-Var uses exact dynamics (no model error term q)."""
     torch.manual_seed(42)
-    strong = Strong4DVar(da_window_steps=50, dt=0.01, device=device)
+    strong = Strong4DVar(da_window_steps=50, dt=0.01, device=device, dynamics=l63_dynamics)
     
     # Forward model should not have a q parameter
     x0 = torch.tensor([1.0, 1.0, 20.0], device=device, requires_grad=True)

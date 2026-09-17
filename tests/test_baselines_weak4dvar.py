@@ -38,10 +38,10 @@ def test_weak4dvar_initialization(device):
     assert weak.device == device
 
 
-def test_weak4dvar_forward_model(device):
+def test_weak4dvar_forward_model(device, l63_dynamics):
     """Test _forward_weak method produces valid trajectories."""
     torch.manual_seed(42)
-    weak = Weak4DVar(da_window_steps=50, dt=0.01, device=device)
+    weak = Weak4DVar(da_window_steps=50, dt=0.01, device=device, dynamics=l63_dynamics)
     
     x0 = torch.tensor([1.0, 1.0, 20.0], device=device)
     q = torch.zeros(50, 3, device=device)
@@ -150,7 +150,7 @@ def test_weak4dvar_perfect_obs_low_rmse(device):
     assert not np.isnan(mean_rmse), "RMSE should not be NaN"
 
 
-def test_weak4dvar_model_error_nonzero(cs2_dataset, cs2_config, device):
+def test_weak4dvar_model_error_nonzero(cs2_dataset, cs2_config, device, l63_dynamics):
     """Weak 4D-Var should estimate non-zero model error (q_ctrl) for CS2."""
     torch.manual_seed(42)
     weak = Weak4DVar(
@@ -162,6 +162,7 @@ def test_weak4dvar_model_error_nonzero(cs2_dataset, cs2_config, device):
         opt_steps=30,  # Reduced for speed
         dt=cs2_config.dt,
         device=device,
+        dynamics=l63_dynamics,
     )
     
     window = cs2_dataset[0]
@@ -184,7 +185,7 @@ def test_weak4dvar_model_error_nonzero(cs2_dataset, cs2_config, device):
     assert result.rmse.mean() < 15.0, "RMSE should be reasonable (< 15.0)"
 
 
-def test_weak4dvar_output_format(cs1_dataset, cs1_config, device):
+def test_weak4dvar_output_format(cs1_dataset, cs1_config, device, l63_dynamics):
     """Weak4DVar should return BaselineResult with correct structure."""
     torch.manual_seed(42)
     weak = Weak4DVar(
@@ -192,6 +193,7 @@ def test_weak4dvar_output_format(cs1_dataset, cs1_config, device):
         dt=cs1_config.dt,
         opt_steps=20,  # Minimal for speed
         device=device,
+        dynamics=l63_dynamics,
     )
     
     window = cs1_dataset[0]
