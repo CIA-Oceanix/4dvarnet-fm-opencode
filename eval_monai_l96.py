@@ -25,6 +25,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+
+def run_name_for(checkpoint_path: str) -> str:
+    """Run directory name for a checkpoint, for artifact resolution.
+
+    <...>/<run>/checkpoints/<file> -> "<run>". Used only to look for stats kept
+    beside a run; resolution falls back to the shared default when that misses,
+    so an unexpected layout degrades to the old behaviour rather than failing.
+    """
+    return Path(checkpoint_path).resolve().parent.parent.name
+
+
 def load_monai_direct_unet(checkpoint_path: str, config_path: str, device):
     cfg = OmegaConf.load(config_path)
     mc = cfg.model
@@ -53,6 +64,9 @@ def main():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--dataset", help="Path to cached test dataset .pt (optional)")
+    parser.add_argument("--normalize-stats", default=None,
+                        help="Override the normalization stats path "
+                             "(default: resolve from config/run dir)")
     parser.add_argument("--num-windows", type=int, default=200)
     parser.add_argument("--obs-interval", type=int, default=100)
     parser.add_argument("--obs-j", type=int, default=2)
@@ -97,13 +111,14 @@ def main():
     norm_stats = None
     if cfg.data.get("normalize", False):
         from data.normalization import load_norm_stats
-        # args.checkpoint is <exp_dir>/checkpoints/stage1.pt -- parents[2] of
-        # its resolved path is the shared "experiments" directory itself.
-        norm_stats_path = cfg.data.get(
-            "norm_stats_path",
-            str(Path(args.checkpoint).resolve().parents[2] / "l96_norm_stats_obsj2.pt"),
-        )
-        norm_stats = load_norm_stats(norm_stats_path)
+        from evaluation.archive import resolve_norm_stats
+        # Resolved from config (then the run dir, then the shared default) --
+        # never by walking a fixed number of parents up from the checkpoint
+        # path, which is what the previous version did and which broke for
+        # every archived checkpoint once experiments/l96/ added a level.
+        norm_stats_path = args.normalize_stats or resolve_norm_stats(
+            cfg, name=run_name_for(args.checkpoint), required=True)
+        norm_stats = load_norm_stats(str(norm_stats_path))
         logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
 
     dataset, dataloaders, obs_var_indices = prepare_dataset(

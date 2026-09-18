@@ -32,6 +32,7 @@ import numpy as np
 import torch
 
 from evaluation.estimate_metrics import (
+    evaluate_ensemble_estimates,
     evaluate_estimates,
     per_window_deterministic_crps,
     per_window_ensemble_crps,
@@ -42,6 +43,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from evaluation import archive  # noqa: E402
 
 DA_JSON_CANDIDATES = [
     "experiments/l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.json",
@@ -56,22 +60,6 @@ DATASET_CANDIDATES = [
     "experiments/l96_datasets_obsj2_int100_nwin200.pt",
 ]
 NEURAL_EXP_DIRS = [
-    "L1b_direct_unet_s0s1",
-    "L2b_vanilla_cfm_s0s1",
-    "L3_vanilla_cfm_s0s1",
-    "L4_direct_unet_s0s1_small",
-    "L5_vanilla_cfm_s0s1_small_tau0",
-    "L6_vanilla_cfm_s0s1_forcing_cond",
-    "V2_tweedie_cfm_l96",
-    "V3_predict_state_cfm_l96",
-    "SDA1_prior_l96",
-    "SDA2_cond_mixed_l96",
-    "SDA2_cond_nominal_l96",
-    "FDV1_unrolled_unet_l96",
-    "FDV1CFM_predict_state_l96",
-    "FDV1_SDA1_hybrid_l96",
-    "FDV1_SDA2_hybrid_l96",
-    "FDV1_FDV1CFM_hybrid_l96",
     "L1b_monai_unet_s0s1_norm_splus_cosine",
     "L1b_monai_unet_s0s1_norm",
     "L1b_monai_unet_s0s1_norm_cosine",
@@ -90,6 +78,13 @@ NEURAL_EXP_DIRS = [
     "FDV1_SDA3_monai_hybrid",
     "FDV1_SDA1_monai_hybrid",
     "FDV1_SDA2_monai_hybrid",
+    "L1b_monai_unet_s0s1_norm_obsdensity",
+    "L2b_monai_vanilla_cfm_s0s1_norm_obsdensity",
+    "l96_obs_density_directunet_aug_sda3_hybrid",
+    "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01",
+    "FDV2_subgrad_state_monai_l96_Stier",
+    "FDV1_Stier_SDA3_monai_hybrid",
+    "subgrad_Stier_SDA3_monai_hybrid",
 ]
 
 # The monai-backbone subset of NEURAL_EXP_DIRS -- used to scope the
@@ -115,68 +110,37 @@ MONAI_ROWS = [
     "FDV1_SDA3_monai_hybrid",
     "FDV1_SDA1_monai_hybrid",
     "FDV1_SDA2_monai_hybrid",
+    "L1b_monai_unet_s0s1_norm_obsdensity",
+    "L2b_monai_vanilla_cfm_s0s1_norm_obsdensity",
+    "l96_obs_density_directunet_aug_sda3_hybrid",
+    "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01",
+    "FDV2_subgrad_state_monai_l96_Stier",
+    "FDV1_Stier_SDA3_monai_hybrid",
+    "subgrad_Stier_SDA3_monai_hybrid",
 ]
 
 # ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
 # (MAE - 0.5*pairwise spread); deterministic N=1 methods use per-dim MAE.
-# N1_ES_METHODS = methods whose ES is the N=1 MAE proxy (marked with * in the table).
-# DA ensemble methods (EnKF/ETKF) and L3-ens30 use the proper scoring rule.
-N1_ES_METHODS = {"Strong-4DVar", "L1b_direct_unet_s0s1", "L2b_vanilla_cfm_s0s1",
-                 "L4_direct_unet_s0s1_small", "L5_vanilla_cfm_s0s1_small_tau0",
-                 "L6_vanilla_cfm_s0s1_forcing_cond", "FDV1_unrolled_unet_l96",
+# N1_ES_METHODS = methods whose ES is the N=1 MAE proxy (marked with * in the
+# table) rather than a proper ensemble scoring rule. DA ensemble methods
+# (EnKF/ETKF) and the ens30 SDA hybrids use the proper rule.
+N1_ES_METHODS = {"Strong-4DVar",
                  "L1b_monai_unet_s0s1_norm_splus_cosine", "L1b_monai_unet_s0s1_norm",
                  "L1b_monai_unet_s0s1_norm_cosine", "L1b_monai_unet_s0s1_norm_l_cosine",
+                 "L1b_monai_unet_s0s1_norm_obsdensity",
+                 "L2b_monai_vanilla_cfm_s0s1_norm_obsdensity",
+                 "l96_obs_density_directunet_aug_sda3_hybrid",
+                 "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01",
+                 "FDV2_subgrad_state_monai_l96_Stier",
                  "FDV1_unrolled_monai_unet_l96"}
 
-# Methods evaluated as N=30 ensembles (proper ensemble ES, not the N=1 MAE
-# proxy). L3, V2 and V3 run ens30x10; RMSE/EV/ES are taken from the ens30 subdir.
-ENS30_DIRS = {
-    "L3_vanilla_cfm_s0s1": {
-        "s0": "L3_vanilla_cfm_s0s1/ens30_no10",
-        "s1": "L3_vanilla_cfm_s0s1/ens30_s1_no10",
-    },
-    "V2_tweedie_cfm_l96": {
-        "s0": "V2_tweedie_cfm_l96_kinner1/ens30_no10",
-        "s1": "V2_tweedie_cfm_l96_kinner1/ens30_no10",
-    },
-    "V3_predict_state_cfm_l96": {
-        "s0": "V3_predict_state_cfm_l96/ens30_no10",
-        "s1": "V3_predict_state_cfm_l96/ens30_no10",
-    },
-    "SDA1_prior_l96": {
-        "s0": "SDA1_prior_l96/ens30_no10",
-        "s1": "SDA1_prior_l96/ens30_no10",
-    },
-    "SDA2_cond_mixed_l96": {
-        "s0": "SDA2_cond_mixed_l96/ens30_no10",
-        "s1": "SDA2_cond_mixed_l96/ens30_no10",
-    },
-    "SDA2_cond_nominal_l96": {
-        "s0": "SDA2_cond_nominal_l96/ens30_no10",
-        "s1": "SDA2_cond_nominal_l96/ens30_no10",
-    },
-    "FDV1CFM_predict_state_l96": {
-        "s0": "FDV1CFM_predict_state_l96/ens30_no10",
-        "s1": "FDV1CFM_predict_state_l96/ens30_no10",
-    },
-    "FDV1_SDA1_hybrid_l96": {
-        "s0": "FDV1_SDA1_hybrid_l96/ens30_no10",
-        "s1": "FDV1_SDA1_hybrid_l96/ens30_no10",
-    },
-    "FDV1_SDA2_hybrid_l96": {
-        "s0": "FDV1_SDA2_hybrid_l96/ens30_no10",
-        "s1": "FDV1_SDA2_hybrid_l96/ens30_no10",
-    },
-    "FDV1_FDV1CFM_hybrid_l96": {
-        "s0": "FDV1_FDV1CFM_hybrid_l96/ens30_no10",
-        "s1": "FDV1_FDV1CFM_hybrid_l96/ens30_no10",
-    },
+# Methods whose RMSE/EV/ES come from a per-case ens30 subdirectory rather than
+# the run dir itself. Every entry was a pre-monai method (L3/V2/V3/SDA1/SDA2
+# and the FDV1 hybrids), all dropped 2026-09-18, so the map is now empty --
+# kept because collect_estimates still supports the indirection and a future
+# ens30-subdir run would use it.
+ENS30_DIRS: dict[str, dict[str, str]] = {
 }
-
-# L3 uses the ens30 (N=30, 10-step) evaluation for both RMSE and ES, per case.
-# S0 was the original ens30 study (dual-convention JSON); S1 the bug-fixed
-# single-ES follow-up (see PLAN.md "L3 ens30 on S1").
-L3_ENS30_DIR = ENS30_DIRS["L3_vanilla_cfm_s0s1"]
 # Best-of-each-family monai-backbone comparison (2026-09-08/09 session): best
 # DA scheme (Strong-4DVar) vs best DirectUNet (L-tier, cosine-annealed -- the
 # cosine schedule fixed an instability that made flat-LR L-tier much worse
@@ -210,103 +174,6 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "observation updates.")),
     ("ETKF", "Ensemble KF",
      "Deterministic ensemble square-root filter, `N_ens=30`, inflation=2.0, no localization."),
-    ("L1b_direct_unet_s0s1", "Neural (DirectUNet)",
-     "Single-pass regression obs → state, hidden [64,128,256]; obs-only conditioning; 200 epochs."),
-    ("L2b_vanilla_cfm_s0s1", "Neural (CFM, τ=0)",
-     ("Conditional flow matching trained at τ=0 only; sampled with a single Euler step (deterministic, "
-      "conditional-mean-like); hidden [64,128,256]; 400 epochs.")),
-    ("L3_vanilla_cfm_s0s1", "Neural (CFM, multi-τ)",
-     ("Standard multi-τ CFM training; evaluated as a 30-member ensemble with 10 Euler steps "
-      "(`ens30×10`, N=30, deterministic τ-schedule 0→1, fresh x₀ per member); hidden [64,128,256]; 400 epochs.")),
-    ("L4_direct_unet_s0s1_small", "Neural (DirectUNet)", "As L1b with small backbone [32,64,128]."),
-    ("L5_vanilla_cfm_s0s1_small_tau0", "Neural (CFM, τ=0)", "As L2b with small backbone [32,64,128]."),
-    ("L6_vanilla_cfm_s0s1_forcing_cond", "Neural (CFM, τ=0)",
-     ("As L2b plus corrupted-forcing conditioning (`cond_extra_dim=1`); tests the robustness value of "
-      "forcing input.")),
-    ("V2_tweedie_cfm_l96", "Neural (TweedieCFM)",
-     ("Two-stage Tweedie CFM: stage-1 MeanEstimatorCell (obs → mean), stage-2 residual velocity UNet; "
-      "hidden [64,128,256]; 100+400 epochs; multi-τ, **K_inner=1 (kinner1 variant)**; evaluated as a "
-      "30-member ensemble with 10 Euler steps (`ens30×10`, N=30); N_outer=10. The V2 row reports the "
-      "**K_inner=1 ablation** (see the dedicated `l96_tweediecfm_benchmark.md` for the full V2 family).")),
-    ("V3_predict_state_cfm_l96", "Neural (PredictStateCFM)",
-     ("Single-stage CFM predicting the final-state mean μ = E[x₁|x_τ,y]; hidden [64,128,256]; "
-      "400 epochs; evaluated as a 30-member ensemble with 10 Euler steps (`ens30×10`, N=30); "
-      "N_outer=10.")),
-    ("SDA1_prior_l96", "Neural (SDA prior + DPS guidance)",
-     ("Unconditional flow-matching prior p(x₁) -- no obs, params, or forcing conditioning at all, "
-      "trained on the same S0/S1 mix (`forcing_state_bias=0.1` in train/val, same as every other "
-      "L-series/V2/V3 config); hidden [64,128,256]; 400 epochs. State estimated at inference time "
-      "only, via DPS/Pi-GDM-style observation guidance (normalized-gradient step on the Tweedie "
-      "posterior-mean estimate, `evaluation/sda_sampler.py`) with N_outer=10 Euler steps, "
-      "guidance_weight=40 (picked by an S0 RMSE sweep over {0.3..400}), R_var=0.5 (matches "
-      "`data.R_var`); evaluated as a 30-member ensemble (fresh x₀ per member, `ens30×10`, N=30), "
-      "same convention as L3/V2/V3.")),
-    ("SDA2_cond_mixed_l96", "Neural (SDA prior, params+forcing cond. + DPS guidance)",
-     ("As SDA1 but the prior is additionally conditioned on the per-window physical params (F, c1, "
-      "hx, eps, w1-w4) and the corrupted forcing signal (`ConditionalPriorCFM`, `models/sda.py`) -- "
-      "obs is still never a network input, only the guidance term at inference conditions on it. "
-      "Trained on the identical S0/S1 mix as SDA1 (`forcing_state_bias=0.1`); hidden [64,128,256]; "
-      "400 epochs; guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble "
-      "(`ens30×10`, N=30).")),
-    ("SDA2_cond_nominal_l96", "Neural (SDA prior, params+forcing cond., nominal-only train)",
-     ("Identical architecture/inference to SDA2-mixed but trained with `forcing_state_bias=0.0` "
-      "(genuinely nominal-only train/val -- never sees the S1-level forcing corruption at training "
-      "time, unlike every other row in this table); hidden [64,128,256]; 400 epochs; "
-      "guidance_weight=40, N_outer=10, R_var=0.5; evaluated as a 30-member ensemble (`ens30×10`, "
-      "N=30). Tests whether the amortized S1/S0 resilience seen elsewhere in this table survives "
-      "when training-time exposure to model error is removed entirely.")),
-    ("FDV1_unrolled_unet_l96", "Neural (4DVarNet-style unrolled solver)",
-     ("Unrolled solver: the update at each of N_outer=10 iterations is the output of a weight-tied "
-      "UNet1D fed `concat(state, obs)` (`update_input='obs+state'`, no gradient/cost term at all -- "
-      "see `models/fourdvarnet.py::FourDVarNetSolver`), `x_{k+1} = x_k - (1/N_outer)*UNet(x_k, obs)`, "
-      "zero-initialized; hidden [64,128,256]; 400 epochs; loss = final-iteration MSE only. "
-      "Fully deterministic (no ensemble, no randomness anywhere) -- evaluated as a single pass (N=1), "
-      "same convention as Strong-4DVar/L1b/L2b. Design taxonomy (`update_input` string) traced to "
-      "CIA-Oceanix/4dvarnet-global-mapping's `ronan_devs` branch (`GradSolver_withStep`); "
-      "gradient-conditioned modes (`grad-only`/`grad+state`/`subgrad+state`) reserved for a future FDV2.")),
-    ("FDV1CFM_predict_state_l96", "Neural (4DVarNet-CFM, PredictStateCFM + FDV1 backbone)",
-     ("V3 (`PredictStateCFM`) CFM parameterization -- predicts μ = E[x1|x_τ,y] at a randomly-sampled "
-      "outer flow-time τ, trained via MSE(μ,x1), sampled by forward ODE integration "
-      "`x += dt*(μ-x)/(1-τ)` over N_outer=10 steps -- but μ is computed by FDV1's own K_inner=5-step "
-      "weight-tied unrolled `obs+state` refinement (`models/fourdvarnet.py::FourDVarNetPredictStateCFM`), "
-      "started from the current x_τ, instead of a single UNet1D forward pass as plain V3 uses. "
-      "Total NFE per sample = N_outer×K_inner = 50 (5x V3's 10, 5x FDV1's 10). hidden [64,128,256]; "
-      "400 epochs, single random τ per training batch (cheaper to train than FDV1 itself, which "
-      "backprops through its full 10-step unroll every batch). A rare (~1-in-several-thousand ens30 "
-      "samples) divergence of the inner unroll on out-of-distribution x_τ is guarded with a "
-      "`clip_range=50.0` clamp after each inner step (same convention as this codebase's L96/QG "
-      "dynamics integrators) -- inactive for in-distribution trajectories (|x|<10). Evaluated as a "
-      "30-member ensemble with 10 Euler steps (`ens30×10`, N=30).")),
-    ("FDV1_SDA1_hybrid_l96", "Neural (FDV1 mean + SDA1 warm-started guidance)",
-     ("No retraining: FDV1's frozen point estimate warm-starts SDA1's guided sampling trajectory "
-      "(`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`, a \"SDEdit\"-style warm start -- "
-      "`x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1) instead of "
-      "starting from pure noise; `guided_obs_cost`/the Tweedie x_hat_1 machinery are unchanged. "
-      "Hyperparameters (`tau0=0.7`, `guidance_weight=2`) picked by an S0-only grid sweep over "
-      "`tau0∈{0,0.3,0.5,0.7,0.8}×guidance_weight∈{0,1,2,5,10,40,100}` -- any guidance stronger than "
-      "~2 actively hurts once warm-started (the DPS step size calibrated for pure-noise starts is "
-      "too aggressive here); evaluated as a 30-member ensemble (`ens30×10`, N=30).")),
-    ("FDV1_SDA2_hybrid_l96", "Neural (FDV1 mean + SDA2-nominal warm-started guidance)",
-     ("As FDV1+SDA1 but warm-starting SDA2-nominal (params+forcing-conditioned prior) instead of "
-      "SDA1; `tau0=0.5`, `guidance_weight=2` (own S0-only grid sweep -- SDA2's conditioning makes "
-      "more remaining Euler steps useful than SDA1's fully-unconditional prior, hence the lower "
-      "`tau0`); evaluated as a 30-member ensemble (`ens30×10`, N=30). **New best neural scheme in "
-      "this table on RMSE/EV** (FDV1CFM above still has the best ES).")),
-    ("FDV1_FDV1CFM_hybrid_l96", "Neural (FDV1 mean + FDV1-CFM warm-started sampling)",
-     ("No retraining: FDV1's frozen point estimate warm-starts FDV1-CFM's own sampling trajectory "
-      "via the same `mean_estimate`/`tau0` SDEdit-style mechanism as the FDV1+SDA hybrids "
-      "(`models/fourdvarnet.py::FourDVarNetPredictStateCFM.sample`) -- "
-      "`x_τ0 = (1-τ0)·noise + τ0·FDV1_estimate`, Euler-integrated only from τ0 to 1. A literal "
-      "τ0=0 warm start (recentering the τ=0 noise on FDV1's estimate, still running the full "
-      "N_outer steps) was tried first and made things *worse* (single-sample RMSE 0.897 vs. 0.555 "
-      "unwarm-started): CFM training pairs τ=0 with near-zero-magnitude noise only, so injecting a "
-      "real-state-scale mean there is an out-of-training-distribution (τ, |x_τ|) combination that "
-      "confuses the first refinement step, and that confusion compounds since no steps are skipped. "
-      "`tau0=0.7` (picked by an S0-only sweep over `tau0∈{0,0.2,...,0.9}`, single-sample RMSE, "
-      "plateauing over `tau0∈[0.6,0.8]`) avoids this the same way the FDV1+SDA hybrids do. "
-      "Evaluated as a 30-member ensemble (`ens30×10`, N=30); no clamp activations observed in this "
-      "evaluation (unlike FDV1CFM alone) since the shorter, better-anchored trajectory has much less "
-      "room to diverge.")),
     ("L1b_monai_unet_s0s1_norm_splus_cosine", "Neural (DirectUNet, monai backbone)",
      ("MonaiUNet1D backbone (FiLM-conditioned ResBlocks vs UNet1D's additive-only conditioning; "
       "`models/monai_unet_adapter.py`) swapped into L1b's single-pass regression, plus per-channel "
@@ -402,6 +269,20 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
       "exact point regardless of SDA variant or mean model).")),
     ("FDV1_SDA2_monai_hybrid", "Neural (FDV1-monai mean + SDA2-monai warm-started guidance)",
      "As above, warm-starting SDA2-monai (true-params conditioned) instead of SDA1-monai."),
+    ("L1b_monai_unet_s0s1_norm_obsdensity", "Neural (DirectUNet, monai backbone, obs-density-augmented)",
+     ("As DirectUNet-M(monai,cos) but trained with `data.obs_density_augment=true` (`data/obs_density.py::sample_training_density_mask`): at every (window, obs-time), 40% chance of full fast-Y density, else a uniformly-random `keep_k∈{0,...,15}` of the 16 fast-Y channels kept, redrawn every batch. Closes the OOD gap found in the fast-Y observation-density generalization sweep (PR #180): DirectUNet/CFM read `obs` only via `nan_to_num`, no mask channel, so an unseen-at-training partial-channel dropout pattern reads as a spurious near-zero observation. An L-tier attempt at this same augmentation collapsed toward the fast-Y conditional mean even at full density (variance ratio ~35%); M-tier avoids it entirely (variance ratio ~99%). Evaluated here at full canonical density only (N=1, single pass) -- see `l96_obs_density_augmented_training.md` for the dedicated reduced-density sweep.")),
+    ("L2b_monai_vanilla_cfm_s0s1_norm_obsdensity", "Neural (CFM, τ=0, monai backbone, obs-density-augmented)",
+     ("As CFM-M(monai,flat) but with the identical `obs_density_augment` training augmentation described above -- unlike the DirectUNet-L attempt, CFM tolerated it cleanly at M-tier with no collapse (variance ratio ~96%). Evaluated here at full canonical density only (N=1, single pass); see `l96_obs_density_augmented_training.md` for the reduced-density sweep.")),
+    ("l96_obs_density_directunet_aug_sda3_hybrid", "Neural (DirectUNet-M(monai,cos,obsdensity) mean + SDA3-monai warm-started guidance)",
+     ("Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its full-density ES/CRPS here are on the N=1 MAE-proxy convention, not the proper ensemble score its non-augmented sibling rows get (see the note above table).")),
+    ("FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01", "Neural (4DVarNet-style unrolled solver, monai backbone, S-tier)",
+     ("As FDV1(monai) above (`update_input=obs+state`, `models/fourdvarnet.py::FourDVarNetSolver`, N_outer=10, monai backbone) but at a smaller \"S\" capacity tier (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 params -- vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every other FDV1/FDV2 row in this table uses), a random (not zero) initial condition (`init_state_var=0.1`, i.e. `x_0 ~ N(0, 0.1)`), and a small auxiliary prior-consistency loss term during training (`aux_var_cost_weight=0.01`, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in -- a real bug in an earlier version of this loss term, since fixed, is documented in `CHANGELOG.d/2026-09-12-fdv-aux-prior-loss-drop-prior-weight-obs-cost.md`); 400 epochs, cosine-annealed LR. Genuinely better than the M-tier FDV1(monai) baseline above on every RMSE/EV metric despite being ~5.6x smaller in parameter count. Evaluated as a single pass (N=1), same convention as FDV1(monai).")),
+    ("FDV2_subgrad_state_monai_l96_Stier", "Neural (4DVarNet-style unrolled solver, cheap proxy-gradient-conditioned, monai backbone, S-tier)",
+     ("FDV2's `update_input=subgrad+state` solver (`models/fourdvarnet.py::FourDVarNetSolver`) -- a cheap two-residual proxy gradient (the observation residual `obs-x` plus the prior-autoencoder residual `x-Phi(x)`, fed to the UNet alongside the state, with **no** `torch.autograd.grad` call at all, unlike FDV2(monai)'s real `grad+state` cost gradient above) -- on the same S-tier MonaiUNet1D as `FDV1-Stier(monai)` (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 main-solver params, vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every earlier FDV2 attempt in this table's history used), plus the same `init_state_var=0.1` (random initial condition) and `aux_var_cost_weight=0.01` (small auxiliary prior-consistency loss, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in) recipe as `FDV1-Stier(monai)`; 400 epochs, cosine-annealed LR. **Best standalone (non-hybrid) neural mean-estimate model found in this entire investigation** -- better than `FDV1-Stier(monai)` itself, and dramatically better than every earlier `subgrad+state`/`grad+state` attempt at the M tier, which all showed a severe fast-Y reconstruction collapse (variance ratio ~0.5-0.6); this run shows no such collapse at all (fast-Y variance ratio ~1.01-1.02, essentially perfectly calibrated). Evaluated as a single pass (N=1), same convention as FDV1-Stier(monai).")),
+    ("FDV1_Stier_SDA3_monai_hybrid", "Neural (FDV1-Stier-monai mean + SDA3-monai warm-started guidance)",
+     ("Same SDEdit-style warm start as FDV1+SDA3(monai) above (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`), but swapping in FDV1-Stier(monai) (above) as the mean-estimate model instead of the M-tier FDV1(monai) -- same `tau0=0.3`, `guidance_weight=2.0`, `r_var=0.5`, ens30 (`n_members=30`, `n_outer=10`); not re-swept, reusing the established convention. Same raw-obs handling as FDV1+SDA3(monai) above (FDV1-Stier was also trained without `data.normalize=true`; `--no-mean-normalized`, separate raw dataloader, `eval_sda_mean_hybrid_l96.py`'s existing mechanism, unchanged). Was the best scheme in this table overall (previous-best 0.3587/0.3583 S0/S1 pooled RMSE, beating FDV1+SDA3(monai)'s 0.3787/0.3740) -- see `subgrad+state-Stier+SDA3(monai)` below, which now beats it on every RMSE/EV/ES metric by swapping in an even better (and cheaper) mean-estimate model. One real bug hit and fixed while producing this row: running the hybrid eval from the `4dvarnet-fm-fdv-monai` worktree (needed because that's where the `SDA3_monai_cond_noisy_l96_norm` checkpoint, `l96_norm_stats_obsj2.pt`, and the cached test dataset live) silently built the WRONG UNet tier for the mean-estimate model -- that worktree's `train.py`/`models/fourdvarnet.py` predates this session's `monai_num_res_blocks` feature (a `FourDVarNetSolver` param needed alongside `hidden_channels` to actually get an S tier vs M/S+), so it silently defaulted to `monai_num_res_blocks=2`, building an S+-tier-shaped model (1,482,264 params) instead of true S-tier (1,055,544), partially failing to load the checkpoint (shape mismatches on 8 `unet.*` keys, silently skipped) and producing garbage output (RMSE ~1.8, negative EV) on the first attempt. Fixed by running the exact same command from `4dvarnet-fm-obs-density-gen` instead (which has the feature), with absolute paths for the SDA3 checkpoint/config/dataset/norm-stats pointing into `4dvarnet-fm-fdv-monai`'s `experiments/` dir -- `model_factory` then correctly built the true 1,055,544-param S-tier model matching the checkpoint exactly (verified: zero `unet.*` shape-mismatch warnings, and a direct `load_model(...)` unit check confirming `sum(p.numel() for p in model.unet.parameters()) == 1055544`).")),
+    ("subgrad_Stier_SDA3_monai_hybrid", "Neural (subgrad+state-Stier-monai mean + SDA3-monai warm-started guidance)",
+     ("Same SDEdit-style warm start as FDV1-Stier+SDA3(monai) above (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`), but swapping in `subgrad+state-Stier(monai)` (above) as the mean-estimate model instead of `FDV1-Stier(monai)` -- same `tau0=0.3`, `guidance_weight=2.0`, `r_var=0.5`, ens30 (`n_members=30`, `n_outer=10`); not re-swept, reusing the established convention. Same raw-obs handling as `FDV1-Stier+SDA3(monai)` above (this checkpoint's config also has no `data.normalize` block; `--no-mean-normalized`, separate raw dataloader, `eval_sda_mean_hybrid_l96.py`'s existing mechanism, unchanged). **New best scheme in this entire table, on every RMSE/EV/ES metric** -- beats `FDV1-Stier+SDA3(monai)`'s previous-best 0.3587/0.3583 S0/S1 pooled RMSE with 0.3410/0.3402.")),
 ]
 
 
@@ -420,21 +301,6 @@ def _first_existing(patterns: list[str]) -> Path:
 
 
 def short_name(name: str) -> str:
-    if name.startswith("V2_"):
-        variant = name.replace("V2_tweedie_cfm_l96", "")
-        if variant:
-            return "V2" + variant.replace("_", "-").strip("-")
-        return "V2"
-    if name == "SDA2_cond_mixed_l96":
-        return "SDA2-mixed"
-    if name == "SDA2_cond_nominal_l96":
-        return "SDA2-nominal"
-    if name == "FDV1_SDA1_hybrid_l96":
-        return "FDV1+SDA1"
-    if name == "FDV1_SDA2_hybrid_l96":
-        return "FDV1+SDA2"
-    if name == "FDV1_FDV1CFM_hybrid_l96":
-        return "FDV1+FDV1CFM"
     MONAI_SHORT_NAMES = {
         "L1b_monai_unet_s0s1_norm_splus_cosine": "DirectUNet-S+(monai,cos)",
         "L1b_monai_unet_s0s1_norm": "DirectUNet-M(monai,flat)",
@@ -454,6 +320,13 @@ def short_name(name: str) -> str:
         "FDV1_SDA3_monai_hybrid": "FDV1+SDA3(monai)",
         "FDV1_SDA1_monai_hybrid": "FDV1+SDA1(monai)",
         "FDV1_SDA2_monai_hybrid": "FDV1+SDA2(monai)",
+        "L1b_monai_unet_s0s1_norm_obsdensity": "DirectUNet-M(monai,cos,obsdensity)",
+        "L2b_monai_vanilla_cfm_s0s1_norm_obsdensity": "CFM-M(monai,flat,obsdensity)",
+        "l96_obs_density_directunet_aug_sda3_hybrid": "DirectUNet(aug)+SDA3",
+        "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01": "FDV1-Stier(monai)",
+        "FDV2_subgrad_state_monai_l96_Stier": "subgrad+state-Stier(monai)",
+        "FDV1_Stier_SDA3_monai_hybrid": "FDV1-Stier+SDA3(monai)",
+        "subgrad_Stier_SDA3_monai_hybrid": "subgrad+state-Stier+SDA3(monai)",
     }
     if name in MONAI_SHORT_NAMES:
         return MONAI_SHORT_NAMES[name]
@@ -476,20 +349,49 @@ def load_da_trajectories(path: Path, case: str, method: str, obs_idx: np.ndarray
     return traj.astype(np.float64)
 
 
-def load_neural_trajectories(exp_dir: Path, case: str) -> np.ndarray | None:
-    npz_path = exp_dir / f"estimates_{case}.npz"
-    if not npz_path.exists():
+# Methods deliberately listed with no result: the row exists so its description
+# is published, and every metric cell renders as an em-dash. FDV2(monai)
+# diverged to NaN at epoch 190/400 (see its description); there is no valid
+# trained result to score, so absent estimates are expected, not a broken
+# artifact.
+UNAVAILABLE_METHODS: frozenset[str] = frozenset({
+    "FDV2_grad_state_monai_l96_fixedw",
+})
+
+
+# Runs whose estimate arrays are not named estimates_<case>.npz. The
+# obs-density hybrid writes one file per retained fast-Y channel count; keep16
+# is the full-density one this benchmark reports.
+ESTIMATE_FILENAMES: dict[str, str] = {
+    "l96_obs_density_directunet_aug_sda3_hybrid":
+        "estimates_directunet_sda3_{case}_keep16.npz",
+}
+
+
+def load_neural_trajectories(name: str, case: str) -> np.ndarray | None:
+    """Trajectories for run ``name``, case ``case``, or None if unavailable.
+
+    Artifact location is delegated to ``evaluation.archive``, which knows about
+    both the canonical ``experiments/l96/<run>/`` layout and the legacy
+    ``experiments/<run>/`` one. Building the path here is what previously made
+    this report unrunnable from the master worktree: the 2026-09-10
+    consolidation left the estimate arrays in whichever worktree trained each
+    run, so 24 of 34 rows resolved to a path that does not exist here.
+    """
+    npz_path = archive.resolve_estimates(
+        name, case, filename=ESTIMATE_FILENAMES.get(name), required=False)
+    if npz_path is None:
         return None
     return np.load(npz_path)["trajectories"].astype(np.float64)
 
 
-def stored_truth_npz(name: str, case: str) -> Path:
-    """Resolve the estimates_*.npz path (ens30 subdir for ens30 methods) that
-    carries the stored truth, so the truth-consistency check reads from the
-    same directory the trajectories came from."""
-    if name in ENS30_DIRS:
-        return ROOT / "experiments" / ENS30_DIRS[name][case] / f"estimates_{case}.npz"
-    return ROOT / "experiments" / name / f"estimates_{case}.npz"
+def stored_truth_npz(name: str, case: str) -> Path | None:
+    """The estimates_*.npz (ens30 subdir for ens30 methods) carrying the stored
+    truth, so the truth-consistency check reads the same file the trajectories
+    came from."""
+    lookup = ENS30_DIRS[name][case] if name in ENS30_DIRS else name
+    return archive.resolve_estimates(
+        lookup, case, filename=ESTIMATE_FILENAMES.get(lookup), required=False)
 
 
 def collect_estimates(
@@ -502,15 +404,13 @@ def collect_estimates(
         est[method] = {case: load_da_trajectories(da_traj_path, case, method, obs_idx) for case in CASES}
     for dirname in neural_dirs:
         if dirname in ENS30_DIRS:
-            regular_dir = ROOT / "experiments" / dirname
             est[dirname] = {}
             for case in CASES:
-                ens30_dir = ROOT / "experiments" / ENS30_DIRS[dirname][case]
-                ens30_est = load_neural_trajectories(ens30_dir, case)
-                est[dirname][case] = ens30_est if ens30_est is not None else load_neural_trajectories(regular_dir, case)
+                ens30_est = load_neural_trajectories(ENS30_DIRS[dirname][case], case)
+                est[dirname][case] = (ens30_est if ens30_est is not None
+                                      else load_neural_trajectories(dirname, case))
         else:
-            exp_dir = ROOT / "experiments" / dirname
-            est[dirname] = {case: load_neural_trajectories(exp_dir, case) for case in CASES}
+            est[dirname] = {case: load_neural_trajectories(dirname, case) for case in CASES}
     return est
 
 
@@ -618,8 +518,9 @@ def collect_metric_values(
         (``ensemble.es_textbook``) and the single-convention schema
         (``ensemble.es``). Returns None when the JSON / block is unavailable.
         """
-        ens30_json = ROOT / "experiments" / ENS30_DIRS[row][case] / "neural_eval.json"
-        if not ens30_json.exists():
+        ens30_json = archive.resolve_artifact(
+            ENS30_DIRS[row][case], "neural_eval.json", required=False)
+        if ens30_json is None:
             return None
         blk = json.load(open(ens30_json)).get("metrics", {}).get(case, {}).get("ensemble", {})
         for key in ("es_textbook", "es"):
@@ -655,16 +556,40 @@ def collect_metric_values(
                     values["es"][(row, case)] = m["es"]["groups"]
                     n1_cells.add((row, case))
             else:
-                values["es"][(row, case)] = m["es"]["groups"]
+                # An ens30 row that stores its own members_<case>.npz gets the
+                # proper ensemble ES computed here. Without this branch the only
+                # sources were the DA cache and an ens30 neural_eval.json, so a
+                # hybrid evaluated with --n-members 30 silently fell back to the
+                # N=1 MAE proxy -- which is what forced the FDV1-Stier+SDA3 and
+                # subgrad+state-Stier+SDA3 rows to be computed by hand.
+                members = load_members(row, case)
+                if members is not None:
+                    ens = evaluate_ensemble_estimates(members, truth[case])
+                    values["es"][(row, case)] = ens["ensemble"]["es"]["groups"]
+                else:
+                    values["es"][(row, case)] = m["es"]["groups"]
     return values, n1_cells
 
 
 def load_members(dirname: str, case: str) -> np.ndarray | None:
-    """Load a row's members_{case}.npz (ensemble spread) if it exists."""
-    npz_path = ROOT / "experiments" / dirname / f"members_{case}.npz"
-    if not npz_path.exists():
+    """A row's members_{case}.npz (ensemble spread), or None if it has none.
+
+    Resolved through ``evaluation.archive`` like every other artifact. Building
+    this path directly is not harmless: when it misses, the caller silently
+    falls back to the deterministic CRPS proxy instead of the proper ensemble
+    score, so an ens30 row quietly reports a different (worse) number rather
+    than failing.
+    """
+    npz_path = archive.resolve_artifact(dirname, f"members_{case}.npz", required=False)
+    if npz_path is None:
         return None
-    return np.load(npz_path)["members"].astype(np.float64)
+    # Left in float32, unlike the (much smaller) trajectory arrays which are
+    # promoted for precision. A members array is (W, T, D, M) -- 1.6 GB at
+    # 200x3000x24x30 -- and the ES accuracy term allocates a temporary of the
+    # same shape, so promoting to float64 costs ~6.5 GB per call and was enough
+    # to get this script OOM-killed. float32 is also what produced the
+    # published ensemble-ES numbers.
+    return np.load(npz_path)["members"]
 
 
 def collect_per_window_values(
