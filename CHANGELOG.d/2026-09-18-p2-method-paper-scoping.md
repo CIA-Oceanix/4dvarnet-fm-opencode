@@ -59,3 +59,36 @@ verified by retrieval on 2026-09-18. Cross-directory reference checker: 0 broken
 **Caution recorded:** one search returned this repo's own PR #211 and echoed its
 `Psi_mean` terminology back as if it were external literature. Prior-art claims
 in §7 come from retrieved papers only, never from search summaries.
+
+**Added before merge (same PR): the decomposition becomes prescriptive.** Two
+architectural points, both raised by the user, turn P2's decomposition from a
+read-out into a design constraint and give the paper its one claim that
+*predicts* an architecture rather than classifying existing ones (new C5, new
+§2.4, M4 rewritten as M4a/b/c):
+
+- **`Psi_NG` vanishes at both endpoints, exactly.** At `tau=0`, `x0` is
+  independent of `x1` so `Psi = mu` and `K_0 = 0`, giving `Psi_NG = 0`; at
+  `tau=1`, `Psi = x1` and `K_1 = I` with `beta_1 = 1`, giving `Psi_NG = 0`. The
+  ML doc records the `K` boundary conditions but never drew this consequence. It
+  means the non-Gaussian branch is a bump on `(0,1)` pinned at both ends, so the
+  residual should be parameterized as `g(tau) * r_psi` with `g(0)=g(1)=0` rather
+  than left free where the answer is known.
+- **The unrolled solver is `tau`-blind.** Verified in source:
+  `FourDVarNetPredictStateCFM.forward(self, x_t, batch, tau)` mentions `tau` only
+  in its signature — the update rule is conditioned on the inner iteration index
+  `k/(K_inner-1)`, and the class docstring confirms `tau` is accepted "only for
+  interface parity". Since the exact gain runs `K_0 = 0` to `K_1 = I`, a
+  `tau`-blind update rule cannot represent it except through its initialization.
+
+Also records a measurement subtlety that blocks testing the first point with the
+current probe: the 19-31% `Psi_NG` figure is **velocity-relative**, and velocity
+carries `1/(1-tau)`, so near `tau=1` the reported quantity is `Psi_NG/(1-tau)`, a
+`0/0`. The observed rise past 0.9 is therefore *not* evidence against
+`Psi_NG(1) = 0`, and the existing probe cannot test the constraint at all. M4c
+re-probes at the `mu` level and is a change of normalization, not new code.
+
+Possible corroboration recorded with an explicit caveat: the closed-form gain
+matches the fitted optimum to ~1.5% for V3 (whose net has a CFM time embedding)
+against ~4% for FDV1CFM (whose net does not). That is a hypothesis consistent
+with a two-checkpoint comparison, **not** an established attribution; M4a tests
+it directly.
