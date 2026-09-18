@@ -108,8 +108,8 @@ Pooled RMSE, S0 / S1. Source: `reports/l96/outputs/l96_consolidated_benchmark.md
 | DirectUNet-M(monai,cos) | 0.5064 | 0.5072 | 1.00 |
 | CFM-M(monai,flat) | 0.4810 | 0.4784 | 1.00 |
 | FDV1(monai) | 0.4251 | 0.4218 | 0.99 |
-| subgrad+state-Stier(monai) | 0.3728 | 0.3729 | 1.00 |
-| subgrad+state-Stier+SDA3(monai) | **0.3410** | **0.3402** | 1.00 |
+| subgrad+state-Stier(monai) | 0.3729 | 0.3730 | 1.00 |
+| subgrad+state-Stier+SDA3(monai) | **0.3411** | **0.3403** | 1.00 |
 
 ### 3.1 Evidence already in hand for C3
 
@@ -236,7 +236,7 @@ Run under **both S0 and E1-S1** — the S0 cell is the strong form of the claim
 > It **hurt** — job 53289 plateaued at val_loss ≈ 0.39 vs ≈ 0.20-0.29 for every
 > aux-loss-free FDV1 variant. Meanwhile the learned prior entering *implicitly*,
 > through `subgrad+state`'s gradient channel, gives the best non-hybrid row
-> (0.3728).
+> (0.3729).
 >
 > So the axis is not simply learned-vs-ODE: **how the prior enters the cost
 > (explicit penalty vs. gradient conditioning) appears to matter more than what

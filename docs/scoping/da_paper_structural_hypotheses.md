@@ -84,8 +84,8 @@ RMSE and explained variance, from `reports/l96/outputs/l96_consolidated_benchmar
 | ETKF | 0.8883 | 1.4998 | **1.688** | 0.692 → 0.215 |
 | EnKF | 0.9131 | 1.5381 | **1.684** | 0.676 → 0.172 |
 | DirectUNet-M(monai,cos) | 0.5064 | 0.5072 | 1.002 | 0.899 → 0.898 |
-| FDV1-Stier(monai) | 0.4011 | 0.3993 | 0.996 | 0.936 → 0.936 |
-| subgrad+state-Stier+SDA3(monai) | 0.3410 | 0.3402 | 0.997 | 0.952 → 0.952 |
+| FDV1-Stier(monai) | 0.4012 | 0.3994 | 0.996 | 0.936 → 0.936 |
+| subgrad+state-Stier+SDA3(monai) | 0.3411 | 0.3403 | 0.997 | 0.952 → 0.952 |
 
 **Read this table with the three method classes separated.**
 `data/lorenz96.py:614-622` builds `test_s1` with `param_bias=0.15` through
@@ -270,7 +270,7 @@ sensitivity of the classical baselines has been mapped, not assumed.
 ### 4.6 A motivating ordering (not yet evidence)
 
 L96 S0: sequential filters (ETKF 0.8883, EnKF 0.9131) < window variational
-(Strong-4DVar 0.8116) < window-amortized learned (0.3410–0.5064). Suggestive of
+(Strong-4DVar 0.8116) < window-amortized learned (0.3411–0.5064). Suggestive of
 H1, but **confounded** — amortization, learning, and capacity all vary at once.
 D1 is what turns this into evidence.
 

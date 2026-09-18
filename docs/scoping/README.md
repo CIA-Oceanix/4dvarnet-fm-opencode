@@ -35,6 +35,16 @@ S0. Two boundaries must not blur — calibration (P1 diagnoses, P2 measures a
 sampler) and observation density (P1's *density × model-error* grid vs P2's
 *density sweep at S0*, which **must share one protocol**).
 
+> **Standing caveat: these docs quote the benchmark by digit.** The scoping docs
+> cite exact values from `reports/l96/outputs/l96_consolidated_benchmark.md`
+> (DA baselines, the Stier rows, the SDA monai trio). That report is
+> **regenerated**, and a regeneration can move them: #219 shifted the three Stier
+> values by 1 in the last decimal (0.4011→0.4012, 0.3728→0.3729,
+> 0.3410→0.3411), which the docs were refreshed for on 2026-09-18. Nothing
+> guards the docs against the report — `tests/test_l96_report_consistency.py`
+> guards the report against the archive. **After any regeneration, re-grep these
+> docs for the values they cite.**
+
 > **Standing caveat for both DA papers.** The L96/QG `S0`/`S1` axis prices model
 > error **only for methods that run a forward model at inference**. `param_bias`
 > reaches the DA model's parameters, not the truth, so a model-free neural row's
