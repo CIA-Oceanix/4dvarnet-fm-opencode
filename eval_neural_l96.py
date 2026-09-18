@@ -80,11 +80,19 @@ def main():
             dataset_path = str(candidates[0])
             logger.info(f"Auto-detected dataset: {dataset_path}")
 
+    # Keyed off the CONFIG, not off whether --normalize-stats was passed. The
+    # previous form silently skipped normalization when the flag was omitted
+    # for a model trained with data.normalize=true, feeding raw-scale obs to
+    # weights tuned for normalized-scale obs -- which does not fail, it just
+    # produces meaningless RMSE (the same bug eval_monai_l96.py's comment
+    # records having been bitten by).
     norm_stats = None
-    if args.normalize_stats:
+    if cfg.data.get("normalize", False) or args.normalize_stats:
         from data.normalization import load_norm_stats
-        norm_stats = load_norm_stats(args.normalize_stats)
-        logger.info(f"Loaded normalize-stats from {args.normalize_stats}: "
+        from evaluation.archive import resolve_norm_stats
+        norm_stats_path = args.normalize_stats or resolve_norm_stats(cfg, required=True)
+        norm_stats = load_norm_stats(str(norm_stats_path))
+        logger.info(f"Loaded normalize-stats from {norm_stats_path}: "
                     f"mean/std shape {tuple(norm_stats['mean'].shape)}")
 
     dataset, dataloaders, obs_var_indices = prepare_dataset(
