@@ -76,6 +76,20 @@ inner product and `Ψ_G` defined as the `L²` projection.
 This is the paper's organizing table: it says precisely what an unrolled solver
 is missing, and that what it is missing is *two named things*, not one.
 
+**Boundary conditions — `Ψ_NG` vanishes at both ends, exactly.** The ML doc
+records `K_0 = 0`, `K_1 = I` but stops there. The consequence for the
+non-Gaussian term is two lines and is the architecturally useful part:
+
+- **`τ = 0`:** `x₀ ⊥ x₁`, so `Ψ = E[x₁|x₀,y] = E[x₁|y] = μ`. With `K_0 = 0`,
+  `Ψ_G = 0`. Hence **`Ψ_NG(0) = μ − μ − 0 = 0`.**
+- **`τ = 1`:** `x_τ = x₁`, so `Ψ = x₁`. With `K_1 = I` and `β_1 = 1`,
+  `Ψ_mean + Ψ_G = μ + (x₁ − μ) = x₁`. Hence **`Ψ_NG(1) = 0`.**
+
+So the non-Gaussian branch is a *bump* on `(0,1)` pinned to zero at both ends.
+Any parameterization that lets a network spend capacity there is spending it
+where the answer is already known — and, worse, permits the model to be wrong
+where it is certain. §2.4 and M4 act on this.
+
 ### 2.3 The blend
 
 Velocities are combinable, so the two classes can be mixed continuously:
@@ -88,6 +102,48 @@ v_λ = (1 − λ(τ)) v_FM + λ(τ) v_det ,      λ(τ) = λ₀ (1 − τ)^p
 blend contains `λ(τ)/(1−τ) = λ₀(1−τ)^{p−1}`, bounded as `τ → 1` only for
 `p ≥ 1`. The hard warm start is the discontinuous member
 `λ(τ) = 1{τ < τ₀}`.
+
+### 2.4 What the current architecture cannot represent
+
+Two gaps follow directly from §2.2, and each is a testable prediction rather
+than a preference.
+
+**(a) The unrolled solver is `τ`-blind, so `K_τ` is not representable.**
+`FourDVarNetPredictStateCFM` (the `FDV1CFM` row) already does the right *outer*
+thing — it computes `μ = E[x₁|x_τ,y]` at **every** flow time, by `K_inner`
+weight-tied refinement steps started from the current `x_τ`, rather than freezing
+a single `m̂(y)`. But its update rule never sees `τ`:
+
+```python
+def forward(self, x_t, batch, tau):        # tau is accepted...
+    for k in range(self.K_inner):
+        tau_k = torch.full((x.shape[0],), k / denom, ...)   # ...and never used
+        gmod = checkpoint(_solver_iteration, self.unet, ..., tau_k, tau_k, ...)
+```
+
+The network is conditioned on the **inner iteration index** `k`, not the flow
+time; the class docstring calls this "a documented simplification", with `tau`
+accepted "only for interface parity". So `τ` enters **only through the
+initialization** `x = x_t`, never through the operator.
+
+Since the exact gain `K_τ = β_τΣ(β²_τΣ + α²_τI)⁻¹` runs from `0` to `I`, a
+`τ`-blind update rule **cannot represent it** except indirectly through where it
+starts. *Possible corroboration already in hand:* the closed-form gain matches
+the fitted optimum to **~1.5% for V3** (whose net carries a standard CFM time
+embedding) against **~4% for FDV1CFM** (whose net does not) — nearly 3× worse in
+exactly the model that cannot see `τ`. **This is a hypothesis consistent with a
+two-checkpoint comparison, not an established attribution**; other differences
+exist and M4a is what tests it.
+
+**(b) `Ψ_NG` is unconstrained where it is exactly zero.** The affine doc's §5
+proposal,
+
+```
+v_θ = a_θ(τ)·μ_φ(y) + b_θ(τ)·x_τ + c_θ(τ)·HᵀR⁻¹(y − Hx_τ) + r_ψ(x_τ,τ,y)
+```
+
+makes the *affine* part `τ`-dependent but leaves the residual `r_ψ` free at the
+endpoints, where §2.2 shows the answer is `0`.
 
 ---
 
@@ -104,8 +160,15 @@ blend contains `λ(τ)/(1−τ) = λ₀(1−τ)^{p−1}`, bounded as `τ → 1` 
   **read-out, not a design space**: re-using a trained `Ψ_NG` beneath a different
   affine part is inconsistent, and the inconsistency dominates. Real decoupling
   requires retraining `Ψ_NG` against a prescribed `(μ, K)`.
-- **C4.** Putting the unrolled solver in the `m̂` slot is the right place for it,
+- **C4.** Putting the unrolled solver in the `Ψ` slot is the right place for it,
   and the measured non-affine fraction bounds what the flow can add.
+- **C5 (constructive, and the paper's one architectural claim).** The
+  decomposition is not only a read-out — it **prescribes** a parameterization.
+  Making the solver `τ`-aware lets `K_τ` be represented at all, and writing the
+  residual as `Ψ_NG = g(τ)·r_ψ` with `g(0) = g(1) = 0` imposes §2.2's exact
+  boundary conditions by construction instead of hoping they are learned. C3 says
+  the components cannot be recombined *post hoc*; C5 says they can be *trained*
+  jointly with the known structure built in.
 
 ---
 
@@ -125,6 +188,14 @@ on two trained checkpoints (V3, FDV1CFM):
 - **`Ψ_NG` is 19–31% of velocity amplitude**, roughly flat over `τ ∈ [0.1, 0.8]`,
   rising sharply past 0.9 — the empirical justification for a non-Gaussian branch
   existing at all, and the bound behind C4 (payoff ≈ 3×, not 5×).
+  - **Caveat that matters for §2.2's boundary conditions.** That figure is
+    **velocity-relative**, and velocity carries the `1/(1−τ)` factor, so near
+    `τ = 1` what is reported is `Ψ_NG/(1−τ)` — a `0/0`. The rise past 0.9 is
+    therefore **not** evidence against `Ψ_NG(1) = 0`: a ratio can grow while its
+    numerator vanishes, if the denominator vanishes faster. It does mean **the
+    existing probe cannot test the constraint**, which is what M4c is for. The
+    affine doc already half-suspects the parameterization here — "never regress
+    `v` directly, or the `1/(1−τ)` inflates the loss near `τ = 1`".
 
 ### 4.2 The blend is a measured Pareto improvement (C2)
 
@@ -214,9 +285,27 @@ ingredients are existing benchmark rows (`FDV1CFM`, `FDV1+FDV1CFM`,
 **M3 — blend schedule sweep.** `(λ₀, p)` beyond the four points measured, and
 the crossover against the hard warm start as a function of observation density.
 
-**M4 — retrain `Ψ_NG` against a prescribed `(μ, K)`.** The constructive answer to
-C3, and the only route the negatives leave open. This is the paper's one piece
-of genuinely new modelling.
+**M4 — the decomposition-aware architecture (C5).** The constructive answer to
+C3 and the paper's one piece of genuinely new modelling. Three separable pieces,
+in increasing cost:
+
+- **M4c — re-probe `Ψ_NG` at the `μ` level, not velocity-relative.** *Cheapest,
+  do first.* The probe exists; this is a change of normalization. Check both
+  endpoints empirically. Either outcome is publishable: the constraint is
+  satisfied, and the `τ → 1` blow-up is a pure parameterization artifact; or it
+  is violated, and the network is wrong where the answer is exactly known — which
+  is the motivation for M4b.
+- **M4a — make the solver `τ`-aware.** Feed the outer flow time to the update
+  rule alongside (or in place of) the inner index `k/(K_inner−1)`, retrain
+  FDV1CFM, re-run the gain probe, and test whether the fitted-vs-closed-form gain
+  error falls from ~4% toward V3's ~1.5%. Directly tests §2.4(a).
+- **M4b — impose the `Ψ_NG` envelope.** Parameterize
+  `Ψ_NG = g(τ)·r_ψ(x_τ,y,τ)` with `g(0) = g(1) = 0` (e.g. `τ(1−τ)`, `sin πτ`),
+  on top of the affine doc's §5 form. Tests whether spending no capacity where
+  the answer is known buys accuracy, calibration, or neither.
+
+**Ordering matters:** M4c is a measurement and gates the motivation for M4b;
+M4a is independent of both and is the cheaper of the two training runs.
 
 **M5 — ADDA cross-check** (optional, cheap). Run ADDA's differentiable
 strong/weak 4D-Var on L96 and confirm the repo's classical baselines agree. See
@@ -343,8 +432,10 @@ new-modelling item.
 
 **Phasing.** P0: **M0** (the guidance sweep — gates every calibration statement).
 P1: M1 + M3 (taxonomy and blend schedule; both reuse existing probes and rows).
-P2: M2, the mean-slot comparison. P3: M4, the retrained `Ψ_NG` — the only part
-that could fail expensively, so it goes last and the paper stands without it.
+P2: M2, the mean-slot comparison, **and M4c** (a re-normalization of an existing
+probe, so it does not wait on the training items). P3: M4a then M4b — the only
+parts that could fail expensively, so they go last and the paper stands without
+them.
 P4: M5 / QG if §10.3 says yes.
 
 **This is the nearest-term paper of the three.** It needs no Weak-4DVar, no
@@ -383,10 +474,13 @@ deliberately non-DA. That decision should be closed in the ML doc.
 1. **Title and framing.** "Unification" is not defensible after §7. Current
    working title frames it as *what a flow adds and what it cannot* — diagnosis
    again. Is that too modest for a methods paper, and if so what replaces it?
-2. **Does M4 (retraining `Ψ_NG` against a prescribed `(μ, K)`) belong in v1?**
-   It is the constructive answer to C3 and the most interesting forward step, but
-   it is also the only item that can fail expensively. *Leaning:* keep it as P3
-   and ship without it if it does not land.
+2. **How much of M4 belongs in v1?** M4c is a measurement and should be in
+   regardless. M4a and M4b are training runs and are the only items that can fail
+   expensively. *Leaning:* M4c in v1; M4a in if it lands (it is the cheaper run
+   and tests a sharp prediction); M4b optional, and the paper stands without it.
+   Note that C5 is the only claim making the decomposition *prescriptive* rather
+   than diagnostic — dropping all of M4 would leave P2 a diagnosis paper, which is
+   P1's genre, so at least M4c and M4a should survive.
 3. **QG as a second system?** Adds external validity and a second geometry at
    moderate cost; L96-only is defensible for a mechanism paper but invites the
    single-system criticism.
