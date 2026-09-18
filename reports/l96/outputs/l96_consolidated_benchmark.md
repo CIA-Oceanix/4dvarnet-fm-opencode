@@ -193,7 +193,7 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 | FDV1-Stier+SDA3(monai) | 0.1708 | 0.0901 | 0.2112 | 0.1704 | 0.0875 | 0.2119 |
 | subgrad+state-Stier+SDA3(monai) | **0.1596** | **0.0828** | **0.1979** | **0.1592** | **0.0812** | **0.1982** |
 
-`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
+Every value here is the **same** quantity: a proper ensemble Energy Score (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF are read from the DA cache; the hybrids are computed from their stored `members_<case>.npz`. **—** means the scheme is a deterministic point estimator, so an ensemble score is not defined for it (this includes Strong-4DVar, whose cached ES was itself a one-member proxy). **pending** means the scheme is ensemble-capable but has not been re-evaluated with `--n-members 30` yet.
 
 ## Per-trajectory detail: mean +/- std across the 200 test windows
 
@@ -298,7 +298,7 @@ Every table above pools all windows/timesteps into one number per method. This s
 | FDV1-Stier+SDA3(monai) | 0.171±0.035 | 0.090±0.025 | 0.211±0.045 | 0.170±0.037 | 0.088±0.025 | 0.212±0.047 |
 | subgrad+state-Stier+SDA3(monai) | 0.160±0.035 | 0.083±0.025 | 0.198±0.044 | 0.159±0.037 | 0.081±0.026 | 0.198±0.046 |
 
-`*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`.
+Same convention as the pooled ES table: every value is a proper ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise member distance) computed from the stored `members_<case>.npz`; **—** is a deterministic point estimator, for which it is not defined; **pending** is ensemble-capable but not yet re-evaluated with `--n-members 30`.
 
 ## Consistency checks
 

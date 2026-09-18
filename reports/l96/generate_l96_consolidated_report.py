@@ -574,13 +574,6 @@ def collect_metric_values(
                     ens_es if ens_es else {g: None for g in GROUPS})
                 if not ens_es:
                     pending_cells.add((row, case))
-            elif row in DETERMINISTIC_METHODS:
-                # A point estimator has no sampler, so a proper ensemble score
-                # is not defined for it. Left empty rather than back-filled with
-                # the N=1 MAE proxy: mixing the two formulas in one column made
-                # rows non-comparable, because a proper ensemble score credits
-                # spread and the proxy cannot.
-                values["es"][(row, case)] = {g: None for g in GROUPS}
             else:
                 # Ensemble-capable. Scored properly when members_<case>.npz is
                 # present; otherwise marked pending -- the run needs
@@ -996,10 +989,14 @@ def main() -> None:
         fmt_block_table("ES by variable group", values["es"], table_rows, False, False,
                         pending_cells=pending_cells, is_es=True),
         (
-            "`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). "
-            "Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). "
-            "EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; "
-            "Strong-4DVar and other neural models are deterministic (N=1)."
+            "Every value here is the **same** quantity: a proper ensemble Energy "
+            "Score (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF are read from the "
+            "DA cache; the hybrids are computed from their stored "
+            "`members_<case>.npz`. **—** means the scheme is a deterministic point "
+            "estimator, so an ensemble score is not defined for it (this includes "
+            "Strong-4DVar, whose cached ES was itself a one-member proxy). "
+            "**pending** means the scheme is ensemble-capable but has not been "
+            "re-evaluated with `--n-members 30` yet."
         ),
         "",
         "## Per-trajectory detail: mean +/- std across the 200 test windows",
@@ -1022,9 +1019,12 @@ def main() -> None:
         fmt_per_window_table("CRPS per window (mean +/- std, lower is better)",
                              pw_values["crps"], PER_WINDOW_ROWS, pending_cells=pw_pending_cells, is_crps=True),
         (
-            "`*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the "
-            "N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension "
-            "Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`."
+            "Same convention as the pooled ES table: every value is a proper "
+            "ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise "
+            "member distance) computed from the stored `members_<case>.npz`; "
+            "**—** is a deterministic point estimator, for which it is not "
+            "defined; **pending** is ensemble-capable but not yet re-evaluated "
+            "with `--n-members 30`."
         ),
         "",
         "## Consistency checks",

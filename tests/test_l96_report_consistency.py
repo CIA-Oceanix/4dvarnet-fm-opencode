@@ -137,6 +137,18 @@ class TestParallelMethodListsAgree:
             "methods absent from MONAI_ROWS, so they would be missing from the "
             f"per-window tables: {missing}")
 
+    def test_no_stale_marker_convention_in_prose(self, src):
+        """Footnotes must not describe a `*` marking the tables no longer emit.
+
+        Caught in review on #223: the header note and one scheme description
+        were updated when the N=1 proxy was removed, but the footnotes under the
+        ES and CRPS tables still told the reader to look for `*`-marked cells
+        that cannot exist. Prose describing a convention is as load-bearing as
+        the code implementing it.
+        """
+        assert "`*` = " not in src, (
+            "a footnote still documents the removed `*` proxy marker")
+
     def test_deterministic_methods_are_declared(self, src):
         da = {"Strong-4DVar", "Weak-4DVar", "EnKF", "ETKF"}
         unknown = [m for m in deterministic_methods(src)
