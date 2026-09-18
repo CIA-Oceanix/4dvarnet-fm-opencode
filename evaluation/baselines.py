@@ -295,8 +295,17 @@ class _ESAccumulator:
         self.pairwise = np.zeros(sd)
         self.t = 0
 
-    def step(self, ensemble_t: torch.Tensor, ref_t) -> None:
-        ens = ensemble_t.detach().cpu().numpy()  # (N, sd)
+    def step(self, ensemble_t, ref_t) -> None:
+        # Both arguments may arrive as a tensor or as a numpy array: the
+        # ensemble filters pass tensors, while Strong4DVar/Weak4DVar pass a
+        # slice of an already-converted numpy analysis. The guard used to cover
+        # ref_t only, so the deterministic methods raised
+        # "'numpy.ndarray' object has no attribute 'detach'" whenever ES
+        # accumulation was enabled.
+        if isinstance(ensemble_t, torch.Tensor):
+            ens = ensemble_t.detach().cpu().numpy()  # (N, sd)
+        else:
+            ens = np.asarray(ensemble_t)
         if isinstance(ref_t, torch.Tensor):
             ref = ref_t.detach().cpu().numpy()
         else:

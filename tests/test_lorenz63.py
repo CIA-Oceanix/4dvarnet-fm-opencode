@@ -159,24 +159,37 @@ def test_observations_sparsity(cs1_dataset, cs1_config):
 
 
 def test_observations_noise(cs1_dataset, cs1_config):
-    """Observation noise should have variance approximately equal to R_var."""
-    window = cs1_dataset[0]
-    true_state = window["true_state"]
-    noisy_obs = window["obs"]
-    obs_mask = window["obs_mask"]
-    
-    # Extract observed values
-    obs_indices = torch.where(obs_mask)[0]
-    noise = noisy_obs[obs_indices] - true_state[obs_indices]
-    
-    # Compute variance per dimension
+    """Observation noise should have variance approximately equal to R_var.
+
+    Pooled over every window, not just window 0. A single window carries ~25
+    observations, whose sample variance has a relative standard error of
+    sqrt(2/24) ~ 29% -- so a +/-30% tolerance on one window is a +/-1 sigma
+    test that fails routinely by construction.
+
+    Pooling is only meaningful because each window now draws its own noise
+    realization (`obs_seed = cfg.seed + i * 100 + 1`). Before that fix the seed
+    was constant, every window held an identical noise vector, and pooling more
+    windows added no information at all -- the pooled per-dim variance sat at
+    0.32/0.50/0.33 against a target of 0.5 no matter how many windows were used.
+    """
+    noise = torch.cat([
+        (w["obs"][torch.where(w["obs_mask"])[0]]
+         - w["true_state"][torch.where(w["obs_mask"])[0]])
+        for w in (cs1_dataset[i] for i in range(len(cs1_dataset)))
+    ], dim=0)
+
+    n = noise.shape[0]
+    assert n >= 100, f"too few pooled observations ({n}) for a variance check"
+
     noise_var = torch.var(noise, dim=0)
     expected_var = cs1_config.R_var
-    
-    # Allow ±30% tolerance (stochastic process)
+
+    # ~3 sigma for the pooled sample size, i.e. sqrt(2/(n-1)) per dimension.
+    tol = 3.0 * (2.0 / (n - 1)) ** 0.5
     for i, var in enumerate(noise_var):
-        assert expected_var * 0.7 <= var <= expected_var * 1.3, \
-            f"Noise variance dim {i}: expected ~{expected_var:.2f}, got {var:.2f}"
+        assert abs(var - expected_var) <= tol * expected_var, \
+            (f"Noise variance dim {i}: expected ~{expected_var:.2f} "
+             f"+/-{tol:.0%}, got {var:.3f} (pooled over {n} observations)")
 
 
 def test_cs1_vs_cs2_configs(cs1_config, cs2_config):

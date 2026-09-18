@@ -65,11 +65,12 @@ def test_obs_noise_statistics(nanos_test_config, device):
 
 
 @pytest.mark.slow
-def test_weak4dvar_with_nan_obs(nanos_test_config, device):
+def test_weak4dvar_with_nan_obs(nanos_test_config, device, l63_dynamics):
     ds = make_mixed_datasets(nanos_test_config, num_test_windows=3)
     dataset = ds["test_s0"]
     weak = Weak4DVar(da_window_steps=300, B_var=2.0, R_var=0.5,
-                     Q_var=0.05, lr=0.02, opt_steps=50, dt=0.01, device=device)
+                     Q_var=0.05, lr=0.02, opt_steps=50, dt=0.01, device=device,
+                     dynamics=l63_dynamics)
     rmse_list = []
     for i in range(len(dataset)):
         w = dataset[i]
@@ -94,11 +95,12 @@ def test_weak4dvar_with_nan_obs(nanos_test_config, device):
 
 
 @pytest.mark.slow
-def test_strong4dvar_with_nan_obs(nanos_test_config, device):
+def test_strong4dvar_with_nan_obs(nanos_test_config, device, l63_dynamics):
     ds = make_mixed_datasets(nanos_test_config, num_test_windows=3)
     dataset = ds["test_s0"]
     strong = Strong4DVar(da_window_steps=300, B_var=2.0, R_var=0.5,
-                         max_iter=80, lr=0.1, dt=0.01, device=device)
+                         max_iter=80, lr=0.1, dt=0.01, device=device,
+                         dynamics=l63_dynamics)
     rmse_list = []
     for i in range(len(dataset)):
         w = dataset[i]
