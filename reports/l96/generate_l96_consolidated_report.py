@@ -34,7 +34,6 @@ import torch
 from evaluation.estimate_metrics import (
     evaluate_ensemble_estimates,
     evaluate_estimates,
-    per_window_deterministic_crps,
     per_window_ensemble_crps,
     per_window_rmse_ev,
 )
@@ -119,20 +118,12 @@ MONAI_ROWS = [
     "subgrad_Stier_SDA3_monai_hybrid",
 ]
 
-# ES convention: methods evaluated as N=30 ensembles use the proper ensemble ES
-# (MAE - 0.5*pairwise spread); deterministic N=1 methods use per-dim MAE.
-# N1_ES_METHODS = methods whose ES is the N=1 MAE proxy (marked with * in the
-# table) rather than a proper ensemble scoring rule. DA ensemble methods
-# (EnKF/ETKF) and the ens30 SDA hybrids use the proper rule.
-N1_ES_METHODS = {"Strong-4DVar",
-                 "L1b_monai_unet_s0s1_norm_splus_cosine", "L1b_monai_unet_s0s1_norm",
-                 "L1b_monai_unet_s0s1_norm_cosine", "L1b_monai_unet_s0s1_norm_l_cosine",
-                 "L1b_monai_unet_s0s1_norm_obsdensity",
-                 "L2b_monai_vanilla_cfm_s0s1_norm_obsdensity",
-                 "l96_obs_density_directunet_aug_sda3_hybrid",
-                 "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01",
-                 "FDV2_subgrad_state_monai_l96_Stier",
-                 "FDV1_unrolled_monai_unet_l96"}
+# ES / CRPS convention: reported only where a proper ensemble score is defined
+# AND available. A deterministic point estimator (DETERMINISTIC_METHODS) gets an
+# em-dash; an ensemble-capable scheme with no members_<case>.npz yet gets
+# "pending". The former N=1 MAE-proxy fallback was removed on 2026-09-18: it put
+# two different formulas in the same column, so the only two rows that had real
+# members appeared better partly by convention rather than by skill.
 
 # Methods whose RMSE/EV/ES come from a per-case ens30 subdirectory rather than
 # the run dir itself. Every entry was a pre-monai method (L3/V2/V3/SDA1/SDA2
@@ -274,7 +265,7 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
     ("L2b_monai_vanilla_cfm_s0s1_norm_obsdensity", "Neural (CFM, τ=0, monai backbone, obs-density-augmented)",
      ("As CFM-M(monai,flat) but with the identical `obs_density_augment` training augmentation described above -- unlike the DirectUNet-L attempt, CFM tolerated it cleanly at M-tier with no collapse (variance ratio ~96%). Evaluated here at full canonical density only (N=1, single pass); see `l96_obs_density_augmented_training.md` for the reduced-density sweep.")),
     ("l96_obs_density_directunet_aug_sda3_hybrid", "Neural (DirectUNet-M(monai,cos,obsdensity) mean + SDA3-monai warm-started guidance)",
-     ("Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its full-density ES/CRPS here are on the N=1 MAE-proxy convention, not the proper ensemble score its non-augmented sibling rows get (see the note above table).")),
+     ("Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its ES/CRPS cells read `pending` -- it is ensemble-capable but was evaluated single-pass (N=1), and the N=1 MAE proxy that used to fill them was removed on 2026-09-18.")),
     ("FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01", "Neural (4DVarNet-style unrolled solver, monai backbone, S-tier)",
      ("As FDV1(monai) above (`update_input=obs+state`, `models/fourdvarnet.py::FourDVarNetSolver`, N_outer=10, monai backbone) but at a smaller \"S\" capacity tier (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 params -- vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every other FDV1/FDV2 row in this table uses), a random (not zero) initial condition (`init_state_var=0.1`, i.e. `x_0 ~ N(0, 0.1)`), and a small auxiliary prior-consistency loss term during training (`aux_var_cost_weight=0.01`, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in -- a real bug in an earlier version of this loss term, since fixed, is documented in `CHANGELOG.d/2026-09-12-fdv-aux-prior-loss-drop-prior-weight-obs-cost.md`); 400 epochs, cosine-annealed LR. Genuinely better than the M-tier FDV1(monai) baseline above on every RMSE/EV metric despite being ~5.6x smaller in parameter count. Evaluated as a single pass (N=1), same convention as FDV1(monai).")),
     ("FDV2_subgrad_state_monai_l96_Stier", "Neural (4DVarNet-style unrolled solver, cheap proxy-gradient-conditioned, monai backbone, S-tier)",
@@ -347,6 +338,26 @@ def load_da_trajectories(path: Path, case: str, method: str, obs_idx: np.ndarray
     if traj.shape[-1] > len(obs_idx):
         traj = traj[..., obs_idx]
     return traj.astype(np.float64)
+
+
+# Point estimators: one deterministic forward pass, no stochastic sampler, so a
+# 30-member "ensemble" would be 30 identical copies and a proper ensemble CRPS/ES
+# is not defined for them. Their probabilistic cells are left empty rather than
+# filled with the N=1 MAE proxy -- mixing the two formulas in one column made
+# rows non-comparable, since a proper ensemble score credits spread and the
+# proxy cannot.
+DETERMINISTIC_METHODS: frozenset[str] = frozenset({
+    "Strong-4DVar",
+    "L1b_monai_unet_s0s1_norm",
+    "L1b_monai_unet_s0s1_norm_cosine",
+    "L1b_monai_unet_s0s1_norm_l_cosine",
+    "L1b_monai_unet_s0s1_norm_splus_cosine",
+    "L1b_monai_unet_s0s1_norm_obsdensity",
+    "FDV1_unrolled_monai_unet_l96",
+    "FDV2_grad_state_monai_l96_fixedw",
+    "FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01",
+    "FDV2_subgrad_state_monai_l96_Stier",
+})
 
 
 # Methods deliberately listed with no result: the row exists so its description
@@ -510,7 +521,7 @@ def collect_metric_values(
     ensembles + ens30 methods (L3, V3), from trajectories (MAE) for the rest."""
     values: dict[str, dict[tuple[str, str], dict[str, float | None]]] = {"rmse": {}, "ev": {}, "es": {}}
     da_cache = json.load(open(da_json_path))
-    n1_cells: set[tuple[str, str]] = set()
+    pending_cells: set[tuple[str, str]] = set()
 
     def _ens30_es(row: str, case: str) -> dict[str, float] | None:
         """Proper (N=30, textbook) ensemble ES for an ens30 method from its
@@ -541,7 +552,16 @@ def collect_metric_values(
             m = evaluate_estimates(traj, truth[case])
             values["rmse"][(row, case)] = m["groups"]
             values["ev"][(row, case)] = m["ev"]["groups"]
-            if row in DA_METHODS:
+            if row in DETERMINISTIC_METHODS:
+                # Checked before DA_METHODS on purpose: Strong-4DVar is a
+                # deterministic variational analysis, and the ES the DA driver
+                # cached for it is the N=1 proxy (_ESAccumulator is fed a
+                # single-member "ensemble", analysis[t].reshape(1, -1)). Leaving
+                # it in would re-introduce exactly the mixed-formula column this
+                # convention removes. ETKF/EnKF are genuine N=30 ensembles and
+                # keep their cached score.
+                values["es"][(row, case)] = {g: None for g in GROUPS}
+            elif row in DA_METHODS:
                 da_blk = da_cache.get(case, {}).get(row, {})
                 es_blk = da_blk.get("es")
                 if es_blk and "groups" in es_blk:
@@ -550,25 +570,22 @@ def collect_metric_values(
                     values["es"][(row, case)] = {g: None for g in GROUPS}
             elif row in ENS30_DIRS:
                 ens_es = _ens30_es(row, case)
-                if ens_es:
-                    values["es"][(row, case)] = ens_es
-                else:
-                    values["es"][(row, case)] = m["es"]["groups"]
-                    n1_cells.add((row, case))
+                values["es"][(row, case)] = (
+                    ens_es if ens_es else {g: None for g in GROUPS})
+                if not ens_es:
+                    pending_cells.add((row, case))
             else:
-                # An ens30 row that stores its own members_<case>.npz gets the
-                # proper ensemble ES computed here. Without this branch the only
-                # sources were the DA cache and an ens30 neural_eval.json, so a
-                # hybrid evaluated with --n-members 30 silently fell back to the
-                # N=1 MAE proxy -- which is what forced the FDV1-Stier+SDA3 and
-                # subgrad+state-Stier+SDA3 rows to be computed by hand.
+                # Ensemble-capable. Scored properly when members_<case>.npz is
+                # present; otherwise marked pending -- the run needs
+                # re-evaluating with --n-members 30.
                 members = load_members(row, case)
                 if members is not None:
                     ens = evaluate_ensemble_estimates(members, truth[case])
                     values["es"][(row, case)] = ens["ensemble"]["es"]["groups"]
                 else:
-                    values["es"][(row, case)] = m["es"]["groups"]
-    return values, n1_cells
+                    values["es"][(row, case)] = {g: None for g in GROUPS}
+                    pending_cells.add((row, case))
+    return values, pending_cells
 
 
 def load_members(dirname: str, case: str) -> np.ndarray | None:
@@ -600,11 +617,14 @@ def collect_per_window_values(
     """Per-window (mean +/- std across the ~200 test windows) RMSE/EV/CRPS,
     scoped to whichever rows the caller passes (this report uses it for
     ``DA_METHODS + MONAI_ROWS``, not every historical row -- see MONAI_ROWS'
-    docstring). CRPS uses the proper ensemble formula (``members_{case}.npz``)
-    when available, else falls back to the N=1 MAE-equivalent (marked with a
-    returned n1_cells entry, same convention as the pooled ES table)."""
+    docstring). CRPS is reported only where a proper ensemble score is defined and available:
+    empty for a deterministic point estimator, empty (and returned in
+    ``pending_cells``) for an ensemble-capable scheme whose
+    ``members_{case}.npz`` has not been produced yet. The N=1 MAE-equivalent
+    fallback was removed -- it put two different formulas in one column, so the
+    two rows that did have members looked better partly by convention."""
     values: dict = {"rmse": {}, "ev": {}, "crps": {}}
-    n1_cells: set[tuple[str, str]] = set()
+    pending_cells: set[tuple[str, str]] = set()
     for row in row_order:
         for case in CASES:
             traj = est[row][case]
@@ -616,21 +636,62 @@ def collect_per_window_values(
             pw = per_window_rmse_ev(traj, truth[case])
             values["rmse"][(row, case)] = pw["rmse"]
             values["ev"][(row, case)] = pw["ev"]
+            if row in DETERMINISTIC_METHODS:
+                # Point estimator: no ensemble CRPS is defined. Left empty.
+                values["crps"][(row, case)] = None
+                continue
             members = load_members(row, case)
             if members is not None:
                 values["crps"][(row, case)] = per_window_ensemble_crps(members, truth[case])
             else:
-                values["crps"][(row, case)] = per_window_deterministic_crps(traj, truth[case])
-                n1_cells.add((row, case))
-    return values, n1_cells
+                # Ensemble-capable but no members stored yet -- pending a
+                # re-evaluation with --n-members 30.
+                values["crps"][(row, case)] = None
+                pending_cells.add((row, case))
+    return values, pending_cells
+
+
+def fmt_summary_table(
+    pw_values: dict,
+    row_order: list[str],
+    pending_cells: set[tuple[str, str]] | None = None,
+) -> str:
+    """One row per scheme: the three standardized metrics side by side.
+
+    Per-window mean +/- std over the test windows, ``all_obs`` group only --
+    the slow/obs_fast split lives in the detail tables below. Sorted by S0 RMSE
+    so the table reads as a ranking. This is the view to quote; the pooled
+    tables are kept further down for continuity with earlier revisions.
+    """
+    def cell(metric: str, row: str, case: str) -> str:
+        v = pw_values[metric][(row, case)]
+        if v is not None:
+            return f"{v['all_obs']['mean']:.3f}±{v['all_obs']['std']:.3f}"
+        if pending_cells and (row, case) in pending_cells:
+            return "pending"
+        return "—"
+
+    def sort_key(row: str) -> float:
+        v = pw_values["rmse"][(row, "s0")]
+        return v["all_obs"]["mean"] if v is not None else float("inf")
+
+    header = "| Scheme | RMSE S0 | RMSE S1 | EV S0 | EV S1 | CRPS S0 | CRPS S1 |"
+    lines = [header, "|---|---|---|---|---|---|---|"]
+    for row in sorted(row_order, key=sort_key):
+        cells = [cell("rmse", row, "s0"), cell("rmse", row, "s1"),
+                 cell("ev", row, "s0"), cell("ev", row, "s1"),
+                 cell("crps", row, "s0"), cell("crps", row, "s1")]
+        lines.append(f"| {short_name(row)} | " + " | ".join(cells) + " |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def fmt_per_window_table(
     title: str,
     block: dict[tuple[str, str], dict[str, dict[str, float]] | None],
     row_order: list[str],
-    n1_cells: set[tuple[str, str]] | None = None,
     is_crps: bool = False,
+    pending_cells: set[tuple[str, str]] | None = None,
 ) -> str:
     header = "| Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast |"
     sep = "|---|---|---|---|---|---|---|"
@@ -640,9 +701,12 @@ def fmt_per_window_table(
         for case in CASES:
             for group in GROUPS:
                 v = block[(row, case)]
-                cell = "  —  " if v is None else f"{v[group]['mean']:.3f}±{v[group]['std']:.3f}"
-                if is_crps and v is not None and n1_cells and (row, case) in n1_cells:
-                    cell += "*"
+                if v is not None:
+                    cell = f"{v[group]['mean']:.3f}±{v[group]['std']:.3f}"
+                elif pending_cells and (row, case) in pending_cells:
+                    cell = " pending "
+                else:
+                    cell = "  —  "
                 cells.append(cell)
         lines.append(f"| {short_name(row)} | " + " | ".join(cells) + " |")
     lines.append("")
@@ -655,8 +719,7 @@ def fmt_block_table(
     row_order: list[str],
     higher_better: bool,
     include_degradation: bool,
-    n1_methods: set[str] | None = None,
-    n1_cells: set[tuple[str, str]] | None = None,
+    pending_cells: set[tuple[str, str]] | None = None,
     is_es: bool = False,
 ) -> str:
     agg = max if higher_better else min
@@ -682,10 +745,10 @@ def fmt_block_table(
                     cell = f"{v:.4f}"
                     if abs(v - best[f"{case}_{group}"]) < 5e-5:
                         cell = f"**{cell}**"
-                if is_es:
-                    is_n1 = (n1_methods and row in n1_methods) or (n1_cells and (row, case) in n1_cells)
-                    if is_n1:
-                        cell = f"{cell}*"
+                if is_es and v is None and pending_cells and (row, case) in pending_cells:
+                    # Distinguish "not defined for this scheme" (plain em-dash)
+                    # from "defined but not computed yet".
+                    cell = " pending "
                 cells.append(cell)
         line = f"| {short_name(row)} | " + " | ".join(cells) + " |"
         if include_degradation:
@@ -834,8 +897,8 @@ def main() -> None:
     figure_methods = resolve_figure_methods(args.methods, est)
     table_rows = DA_METHODS + NEURAL_EXP_DIRS
 
-    values, n1_cells = collect_metric_values(est, truth, table_rows, da_json_path)
-    pw_values, pw_n1_cells = collect_per_window_values(PER_WINDOW_ROWS, est, truth)
+    values, pending_cells = collect_metric_values(est, truth, table_rows, da_json_path)
+    pw_values, pw_pending_cells = collect_per_window_values(PER_WINDOW_ROWS, est, truth)
     with open(da_json_path) as f:
         cfg = json.load(f)["config"]
 
@@ -854,11 +917,28 @@ def main() -> None:
         ),
         "",
         (
-            "RMSE/EV are recomputed from the stored trajectory arrays via "
-            "`evaluation/estimate_metrics.py`; ES for DA ensemble methods (EnKF/ETKF) "
-            "and L3 (ens30×10) are proper ensemble scores (N=30, MAE − 0.5·pairwise spread) "
-            "read from cached run outputs; ES for deterministic methods is the N=1 per-dim "
-            "MAE proxy. **bold** marks the best value per column."
+            "RMSE and EV are recomputed for every scheme from the stored trajectory "
+            "arrays via `evaluation/estimate_metrics.py`, so they are directly "
+            "comparable across the whole table.\n\n"
+            "ES/CRPS carries **one formula only** — the proper ensemble score "
+            "(N=30, MAE − 0.5·pairwise spread). A cell is therefore one of three "
+            "things:\n\n"
+            "- a **value** — a real ensemble score (EnKF/ETKF from the DA cache; "
+            "schemes with a stored `members_<case>.npz`);\n"
+            "- **—** — not defined, because the scheme is a deterministic point "
+            "estimator with no sampler (every DirectUNet tier, the FDV1/FDV2 "
+            "unrolled solvers, and Strong-4DVar);\n"
+            "- **pending** — ensemble-capable but not yet evaluated with "
+            "`--n-members 30`; a re-run would fill it.\n\n"
+            "The earlier N=1 per-dim MAE proxy was removed on 2026-09-18. It sat in "
+            "the same column as the proper score with only a trailing `*` to "
+            "separate them, which made rows non-comparable: an ensemble score "
+            "credits spread and the proxy cannot, so the few rows with real members "
+            "looked better partly by convention. **Consequence to keep in mind: the "
+            "table currently has no probabilistic metric comparing neural schemes "
+            "with one another** — the only real ensemble scores belong to two DA "
+            "methods and two hybrids.\n\n"
+            "**bold** marks the best value per column."
         ),
         "",
         "## Benchmarked schemes",
@@ -870,6 +950,24 @@ def main() -> None:
             "24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window "
             "parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what "
             "makes the DA-vs-neural comparison apples-to-apples."
+        ),
+        "",
+        "## Summary",
+        "",
+        (
+            "Per-window **mean ± std** across the test windows, `all_obs` group, "
+            "ranked by S0 RMSE. This is the standardized view: every metric is the "
+            "same statistic (a per-window mean and spread) for every scheme, so rows "
+            "are directly comparable. The slow / obs_fast breakdown is in "
+            "*Per-trajectory detail* below; the pooled tables that follow are kept "
+            "for continuity with earlier revisions of this report."
+        ),
+        "",
+        fmt_summary_table(pw_values, PER_WINDOW_ROWS, pw_pending_cells),
+        (
+            "The **std columns carry real information**: the DA rows degrade on S1 "
+            "not only in the mean but in window-to-window spread, while the neural "
+            "rows hold essentially the same spread across both scenarios."
         ),
         "",
         "## RMSE (pooled, lower is better)",
@@ -889,12 +987,16 @@ def main() -> None:
         "## Energy Score (lower is better)",
         "",
         fmt_block_table("ES by variable group", values["es"], table_rows, False, False,
-                        n1_methods=N1_ES_METHODS, n1_cells=n1_cells, is_es=True),
+                        pending_cells=pending_cells, is_es=True),
         (
-            "`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). "
-            "Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). "
-            "EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; "
-            "Strong-4DVar and other neural models are deterministic (N=1)."
+            "Every value here is the **same** quantity: a proper ensemble Energy "
+            "Score (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF are read from the "
+            "DA cache; the hybrids are computed from their stored "
+            "`members_<case>.npz`. **—** means the scheme is a deterministic point "
+            "estimator, so an ensemble score is not defined for it (this includes "
+            "Strong-4DVar, whose cached ES was itself a one-member proxy). "
+            "**pending** means the scheme is ensemble-capable but has not been "
+            "re-evaluated with `--n-members 30` yet."
         ),
         "",
         "## Per-trajectory detail: mean +/- std across the 200 test windows",
@@ -915,11 +1017,14 @@ def main() -> None:
         fmt_per_window_table("EV per window (mean +/- std, higher is better)",
                              pw_values["ev"], PER_WINDOW_ROWS),
         fmt_per_window_table("CRPS per window (mean +/- std, lower is better)",
-                             pw_values["crps"], PER_WINDOW_ROWS, n1_cells=pw_n1_cells, is_crps=True),
+                             pw_values["crps"], PER_WINDOW_ROWS, pending_cells=pw_pending_cells, is_crps=True),
         (
-            "`*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the "
-            "N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension "
-            "Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`."
+            "Same convention as the pooled ES table: every value is a proper "
+            "ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise "
+            "member distance) computed from the stored `members_<case>.npz`; "
+            "**—** is a deterministic point estimator, for which it is not "
+            "defined; **pending** is ensemble-capable but not yet re-evaluated "
+            "with `--n-members 30`."
         ),
         "",
         "## Consistency checks",
