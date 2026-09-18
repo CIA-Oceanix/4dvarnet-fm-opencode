@@ -2,7 +2,17 @@
 
 Setup: two-scale L96, Obs30 (`obs_interval=100`, `obs_j=2` → 24D observed space), dws=500, 200 shared cached test windows; S1 = ±20% params + ±10% bias (DA forward model uses biased `*_da`).
 
-RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimate_metrics.py`; ES for DA ensemble methods (EnKF/ETKF) and L3 (ens30×10) are proper ensemble scores (N=30, MAE − 0.5·pairwise spread) read from cached run outputs; ES for deterministic methods is the N=1 per-dim MAE proxy. **bold** marks the best value per column.
+RMSE and EV are recomputed for every scheme from the stored trajectory arrays via `evaluation/estimate_metrics.py`, so they are directly comparable across the whole table.
+
+ES/CRPS carries **one formula only** — the proper ensemble score (N=30, MAE − 0.5·pairwise spread). A cell is therefore one of three things:
+
+- a **value** — a real ensemble score (EnKF/ETKF from the DA cache; schemes with a stored `members_<case>.npz`);
+- **—** — not defined, because the scheme is a deterministic point estimator with no sampler (every DirectUNet tier, the FDV1/FDV2 unrolled solvers, and Strong-4DVar);
+- **pending** — ensemble-capable but not yet evaluated with `--n-members 30`; a re-run would fill it.
+
+The earlier N=1 per-dim MAE proxy was removed on 2026-09-18. It sat in the same column as the proper score with only a trailing `*` to separate them, which made rows non-comparable: an ensemble score credits spread and the proxy cannot, so the few rows with real members looked better partly by convention. **Consequence to keep in mind: the table currently has no probabilistic metric comparing neural schemes with one another** — the only real ensemble scores belong to two DA methods and two hybrids.
+
+**bold** marks the best value per column.
 
 ## Benchmarked schemes
 
@@ -31,13 +41,50 @@ RMSE/EV are recomputed from the stored trajectory arrays via `evaluation/estimat
 | FDV1+SDA2(monai) | Neural (FDV1-monai mean + SDA2-monai warm-started guidance) | As above, warm-starting SDA2-monai (true-params conditioned) instead of SDA1-monai. |
 | DirectUNet-M(monai,cos,obsdensity) | Neural (DirectUNet, monai backbone, obs-density-augmented) | As DirectUNet-M(monai,cos) but trained with `data.obs_density_augment=true` (`data/obs_density.py::sample_training_density_mask`): at every (window, obs-time), 40% chance of full fast-Y density, else a uniformly-random `keep_k∈{0,...,15}` of the 16 fast-Y channels kept, redrawn every batch. Closes the OOD gap found in the fast-Y observation-density generalization sweep (PR #180): DirectUNet/CFM read `obs` only via `nan_to_num`, no mask channel, so an unseen-at-training partial-channel dropout pattern reads as a spurious near-zero observation. An L-tier attempt at this same augmentation collapsed toward the fast-Y conditional mean even at full density (variance ratio ~35%); M-tier avoids it entirely (variance ratio ~99%). Evaluated here at full canonical density only (N=1, single pass) -- see `l96_obs_density_augmented_training.md` for the dedicated reduced-density sweep. |
 | CFM-M(monai,flat,obsdensity) | Neural (CFM, τ=0, monai backbone, obs-density-augmented) | As CFM-M(monai,flat) but with the identical `obs_density_augment` training augmentation described above -- unlike the DirectUNet-L attempt, CFM tolerated it cleanly at M-tier with no collapse (variance ratio ~96%). Evaluated here at full canonical density only (N=1, single pass); see `l96_obs_density_augmented_training.md` for the reduced-density sweep. |
-| DirectUNet(aug)+SDA3 | Neural (DirectUNet-M(monai,cos,obsdensity) mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its full-density ES/CRPS here are on the N=1 MAE-proxy convention, not the proper ensemble score its non-augmented sibling rows get (see the note above table). |
+| DirectUNet(aug)+SDA3 | Neural (DirectUNet-M(monai,cos,obsdensity) mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its ES/CRPS cells read `pending` -- it is ensemble-capable but was evaluated single-pass (N=1), and the N=1 MAE proxy that used to fill them was removed on 2026-09-18. |
 | FDV1-Stier(monai) | Neural (4DVarNet-style unrolled solver, monai backbone, S-tier) | As FDV1(monai) above (`update_input=obs+state`, `models/fourdvarnet.py::FourDVarNetSolver`, N_outer=10, monai backbone) but at a smaller "S" capacity tier (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 params -- vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every other FDV1/FDV2 row in this table uses), a random (not zero) initial condition (`init_state_var=0.1`, i.e. `x_0 ~ N(0, 0.1)`), and a small auxiliary prior-consistency loss term during training (`aux_var_cost_weight=0.01`, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in -- a real bug in an earlier version of this loss term, since fixed, is documented in `CHANGELOG.d/2026-09-12-fdv-aux-prior-loss-drop-prior-weight-obs-cost.md`); 400 epochs, cosine-annealed LR. Genuinely better than the M-tier FDV1(monai) baseline above on every RMSE/EV metric despite being ~5.6x smaller in parameter count. Evaluated as a single pass (N=1), same convention as FDV1(monai). |
 | subgrad+state-Stier(monai) | Neural (4DVarNet-style unrolled solver, cheap proxy-gradient-conditioned, monai backbone, S-tier) | FDV2's `update_input=subgrad+state` solver (`models/fourdvarnet.py::FourDVarNetSolver`) -- a cheap two-residual proxy gradient (the observation residual `obs-x` plus the prior-autoencoder residual `x-Phi(x)`, fed to the UNet alongside the state, with **no** `torch.autograd.grad` call at all, unlike FDV2(monai)'s real `grad+state` cost gradient above) -- on the same S-tier MonaiUNet1D as `FDV1-Stier(monai)` (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 main-solver params, vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every earlier FDV2 attempt in this table's history used), plus the same `init_state_var=0.1` (random initial condition) and `aux_var_cost_weight=0.01` (small auxiliary prior-consistency loss, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in) recipe as `FDV1-Stier(monai)`; 400 epochs, cosine-annealed LR. **Best standalone (non-hybrid) neural mean-estimate model found in this entire investigation** -- better than `FDV1-Stier(monai)` itself, and dramatically better than every earlier `subgrad+state`/`grad+state` attempt at the M tier, which all showed a severe fast-Y reconstruction collapse (variance ratio ~0.5-0.6); this run shows no such collapse at all (fast-Y variance ratio ~1.01-1.02, essentially perfectly calibrated). Evaluated as a single pass (N=1), same convention as FDV1-Stier(monai). |
 | FDV1-Stier+SDA3(monai) | Neural (FDV1-Stier-monai mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as FDV1+SDA3(monai) above (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`), but swapping in FDV1-Stier(monai) (above) as the mean-estimate model instead of the M-tier FDV1(monai) -- same `tau0=0.3`, `guidance_weight=2.0`, `r_var=0.5`, ens30 (`n_members=30`, `n_outer=10`); not re-swept, reusing the established convention. Same raw-obs handling as FDV1+SDA3(monai) above (FDV1-Stier was also trained without `data.normalize=true`; `--no-mean-normalized`, separate raw dataloader, `eval_sda_mean_hybrid_l96.py`'s existing mechanism, unchanged). Was the best scheme in this table overall (previous-best 0.3587/0.3583 S0/S1 pooled RMSE, beating FDV1+SDA3(monai)'s 0.3787/0.3740) -- see `subgrad+state-Stier+SDA3(monai)` below, which now beats it on every RMSE/EV/ES metric by swapping in an even better (and cheaper) mean-estimate model. One real bug hit and fixed while producing this row: running the hybrid eval from the `4dvarnet-fm-fdv-monai` worktree (needed because that's where the `SDA3_monai_cond_noisy_l96_norm` checkpoint, `l96_norm_stats_obsj2.pt`, and the cached test dataset live) silently built the WRONG UNet tier for the mean-estimate model -- that worktree's `train.py`/`models/fourdvarnet.py` predates this session's `monai_num_res_blocks` feature (a `FourDVarNetSolver` param needed alongside `hidden_channels` to actually get an S tier vs M/S+), so it silently defaulted to `monai_num_res_blocks=2`, building an S+-tier-shaped model (1,482,264 params) instead of true S-tier (1,055,544), partially failing to load the checkpoint (shape mismatches on 8 `unet.*` keys, silently skipped) and producing garbage output (RMSE ~1.8, negative EV) on the first attempt. Fixed by running the exact same command from `4dvarnet-fm-obs-density-gen` instead (which has the feature), with absolute paths for the SDA3 checkpoint/config/dataset/norm-stats pointing into `4dvarnet-fm-fdv-monai`'s `experiments/` dir -- `model_factory` then correctly built the true 1,055,544-param S-tier model matching the checkpoint exactly (verified: zero `unet.*` shape-mismatch warnings, and a direct `load_model(...)` unit check confirming `sum(p.numel() for p in model.unet.parameters()) == 1055544`). |
 | subgrad+state-Stier+SDA3(monai) | Neural (subgrad+state-Stier-monai mean + SDA3-monai warm-started guidance) | Same SDEdit-style warm start as FDV1-Stier+SDA3(monai) above (`evaluation/sda_sampler.py`'s `mean_estimate`/`tau0`), but swapping in `subgrad+state-Stier(monai)` (above) as the mean-estimate model instead of `FDV1-Stier(monai)` -- same `tau0=0.3`, `guidance_weight=2.0`, `r_var=0.5`, ens30 (`n_members=30`, `n_outer=10`); not re-swept, reusing the established convention. Same raw-obs handling as `FDV1-Stier+SDA3(monai)` above (this checkpoint's config also has no `data.normalize` block; `--no-mean-normalized`, separate raw dataloader, `eval_sda_mean_hybrid_l96.py`'s existing mechanism, unchanged). **New best scheme in this entire table, on every RMSE/EV/ES metric** -- beats `FDV1-Stier+SDA3(monai)`'s previous-best 0.3587/0.3583 S0/S1 pooled RMSE with 0.3410/0.3402. |
 
 Shared setup: all L-series neural models are trained and evaluated on the identical DA-parity benchmark (all-5 params ±20% randomized per window; S1 adds a ±10% bias; models operate in the 24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what makes the DA-vs-neural comparison apples-to-apples.
+
+## Summary
+
+Per-window **mean ± std** across the test windows, `all_obs` group, ranked by S0 RMSE. This is the standardized view: every metric is the same statistic (a per-window mean and spread) for every scheme, so rows are directly comparable. The slow / obs_fast breakdown is in *Per-trajectory detail* below; the pooled tables that follow are kept for continuity with earlier revisions of this report.
+
+| Scheme | RMSE S0 | RMSE S1 | EV S0 | EV S1 | CRPS S0 | CRPS S1 |
+|---|---|---|---|---|---|---|
+| subgrad+state-Stier+SDA3(monai) | 0.320±0.074 | 0.318±0.076 | 0.952±0.025 | 0.952±0.025 | 0.160±0.035 | 0.159±0.037 |
+| FDV1-Stier+SDA3(monai) | 0.338±0.074 | 0.337±0.077 | 0.947±0.026 | 0.946±0.028 | 0.171±0.035 | 0.170±0.037 |
+| subgrad+state-Stier(monai) | 0.352±0.077 | 0.351±0.080 | 0.944±0.027 | 0.944±0.028 | — | — |
+| FDV1+SDA3(monai) | 0.358±0.077 | 0.355±0.073 | 0.941±0.028 | 0.942±0.026 | pending | pending |
+| FDV1+SDA2(monai) | 0.365±0.074 | 0.362±0.072 | 0.939±0.027 | 0.940±0.026 | pending | pending |
+| FDV1+SDA1(monai) | 0.365±0.074 | 0.362±0.071 | 0.940±0.027 | 0.941±0.026 | pending | pending |
+| DirectUNet(aug)+SDA3 | 0.372±0.070 | 0.373±0.071 | 0.939±0.025 | 0.938±0.026 | pending | pending |
+| FDV1-Stier(monai) | 0.381±0.078 | 0.379±0.080 | 0.936±0.029 | 0.936±0.030 | — | — |
+| DirectUNet+SDA3 | 0.403±0.074 | 0.401±0.073 | 0.927±0.029 | 0.927±0.029 | pending | pending |
+| FDV1(monai) | 0.407±0.079 | 0.405±0.074 | 0.928±0.031 | 0.929±0.029 | — | — |
+| DirectUNet+SDA1 | 0.410±0.074 | 0.408±0.073 | 0.926±0.029 | 0.926±0.029 | pending | pending |
+| DirectUNet+SDA2 | 0.411±0.074 | 0.410±0.072 | 0.925±0.030 | 0.925±0.029 | pending | pending |
+| CFM-M(monai,flat,obsdensity) | 0.450±0.075 | 0.450±0.077 | 0.917±0.031 | 0.916±0.032 | pending | pending |
+| DirectUNet-M(monai,cos,obsdensity) | 0.459±0.071 | 0.462±0.072 | 0.914±0.029 | 0.913±0.030 | — | — |
+| CFM-M(monai,flat) | 0.466±0.072 | 0.464±0.071 | 0.910±0.030 | 0.910±0.030 | pending | pending |
+| DirectUNet-L(monai,cos) | 0.470±0.073 | 0.472±0.071 | 0.907±0.032 | 0.906±0.030 | — | — |
+| CFM-M(monai,cos) | 0.471±0.073 | 0.473±0.074 | 0.908±0.031 | 0.906±0.033 | pending | pending |
+| DirectUNet-M(monai,flat) | 0.486±0.073 | 0.488±0.071 | 0.902±0.032 | 0.901±0.031 | — | — |
+| DirectUNet-M(monai,cos) | 0.491±0.073 | 0.493±0.069 | 0.899±0.032 | 0.898±0.031 | — | — |
+| DirectUNet-S+(monai,cos) | 0.501±0.076 | 0.501±0.077 | 0.898±0.034 | 0.898±0.034 | — | — |
+| CFM-S+(monai,cos) | 0.511±0.088 | 0.512±0.085 | 0.896±0.038 | 0.895±0.038 | pending | pending |
+| SDA3(monai) | 0.524±0.071 | 0.523±0.069 | 0.888±0.035 | 0.887±0.034 | pending | pending |
+| SDA1(monai) | 0.541±0.074 | 0.541±0.072 | 0.882±0.036 | 0.881±0.035 | pending | pending |
+| SDA2(monai) | 0.546±0.076 | 0.548±0.077 | 0.876±0.039 | 0.874±0.040 | pending | pending |
+| Strong-4DVar | 0.738±0.191 | 1.437±0.233 | 0.748±0.141 | 0.233±0.241 | — | — |
+| ETKF | 0.866±0.145 | 1.475±0.241 | 0.692±0.113 | 0.215±0.252 | pending | pending |
+| EnKF | 0.894±0.135 | 1.512±0.248 | 0.676±0.107 | 0.172±0.269 | pending | pending |
+| FDV2(monai) | — | — | — | — | — | — |
+
+The **std columns carry real information**: the DA rows degrade on S1 not only in the mean but in window-to-window spread, while the neural rows hold essentially the same spread across both scenarios.
 
 ## RMSE (pooled, lower is better)
 
@@ -119,34 +166,34 @@ Note on conventions: the DA metric cache stores the **mean of per-window RMSEs**
 |---|---|---|---|---|---|---|
 | ETKF | 0.4548 | 0.2857 | 0.5393 | 0.8511 | 0.7626 | 0.8953 |
 | EnKF | 0.4599 | 0.2915 | 0.5440 | 0.9018 | 0.7942 | 0.9556 |
-| Strong-4DVar | 0.4850* | 0.3551* | 0.5499* | 0.9892* | 0.8197* | 1.0740* |
-| DirectUNet-S+(monai,cos) | 0.3278* | 0.2232* | 0.3801* | 0.3290* | 0.2233* | 0.3819* |
-| DirectUNet-M(monai,flat) | 0.3082* | 0.1975* | 0.3635* | 0.3094* | 0.1952* | 0.3664* |
-| DirectUNet-M(monai,cos) | 0.3080* | 0.1903* | 0.3669* | 0.3101* | 0.1905* | 0.3700* |
-| DirectUNet-L(monai,cos) | 0.2937* | 0.1860* | 0.3475* | 0.2944* | 0.1836* | 0.3498* |
-| CFM-M(monai,flat) | 0.2943 | 0.1881 | 0.3475 | 0.2937 | 0.1854 | 0.3479 |
-| CFM-M(monai,cos) | 0.2959 | 0.1870 | 0.3504 | 0.2972 | 0.1854 | 0.3531 |
-| CFM-S+(monai,cos) | 0.3427 | 0.2677 | 0.3802 | 0.3438 | 0.2669 | 0.3823 |
-| SDA1(monai) | 0.3624 | 0.2244 | 0.4314 | 0.3624 | 0.2212 | 0.4330 |
-| SDA2(monai) | 0.3621 | 0.2032 | 0.4415 | 0.3631 | 0.1991 | 0.4451 |
-| SDA3(monai) | 0.3441 | 0.1957 | 0.4183 | 0.3439 | 0.1925 | 0.4195 |
-| DirectUNet+SDA1 | 0.2558 | 0.1477 | 0.3099 | 0.2556 | 0.1457 | 0.3105 |
-| DirectUNet+SDA2 | 0.2544 | 0.1415 | 0.3108 | 0.2545 | 0.1392 | 0.3122 |
-| DirectUNet+SDA3 | 0.2472 | 0.1341 | 0.3037 | 0.2474 | 0.1323 | 0.3050 |
-| FDV1(monai) | 0.2668* | 0.1582* | 0.3211* | 0.2667* | 0.1575* | 0.3214* |
+| Strong-4DVar |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-S+(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-M(monai,flat) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-M(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-L(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| CFM-M(monai,flat) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| CFM-M(monai,cos) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| CFM-S+(monai,cos) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA1(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA2(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA3(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA1 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA2 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA3 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
 | FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
-| FDV1+SDA3(monai) | 0.2200 | 0.1177 | 0.2712 | 0.2187 | 0.1150 | 0.2706 |
-| FDV1+SDA1(monai) | 0.2282 | 0.1328 | 0.2760 | 0.2263 | 0.1293 | 0.2748 |
-| FDV1+SDA2(monai) | 0.2262 | 0.1239 | 0.2774 | 0.2247 | 0.1205 | 0.2768 |
-| DirectUNet-M(monai,cos,obsdensity) | 0.3026* | 0.2001* | 0.3538* | 0.3054* | 0.2014* | 0.3574* |
-| CFM-M(monai,flat,obsdensity) | 0.2929* | 0.1946* | 0.3420* | 0.2934* | 0.1941* | 0.3431* |
-| DirectUNet(aug)+SDA3 | 0.2334* | 0.1330* | 0.2836* | 0.2345* | 0.1322* | 0.2856* |
-| FDV1-Stier(monai) | 0.2464* | 0.1540* | 0.2925* | 0.2451* | 0.1512* | 0.2921* |
-| subgrad+state-Stier(monai) | 0.2226* | 0.1361* | 0.2659* | 0.2223* | 0.1338* | 0.2665* |
+| FDV1+SDA3(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1+SDA1(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1+SDA2(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet-M(monai,cos,obsdensity) |   —   |   —   |   —   |   —   |   —   |   —   |
+| CFM-M(monai,flat,obsdensity) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet(aug)+SDA3 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1-Stier(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| subgrad+state-Stier(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
 | FDV1-Stier+SDA3(monai) | 0.1708 | 0.0901 | 0.2112 | 0.1704 | 0.0875 | 0.2119 |
 | subgrad+state-Stier+SDA3(monai) | **0.1596** | **0.0828** | **0.1979** | **0.1592** | **0.0812** | **0.1982** |
 
-`*` = ES from a one-member ensemble (N=1, deterministic; ES = per-dim MAE). Unmarked = proper ensemble ES (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF ES are read from the bug-fixed DA cache; L3 ES from the ens30×10 run; Strong-4DVar and other neural models are deterministic (N=1).
+Every value here is the **same** quantity: a proper ensemble Energy Score (N=30, MAE − 0.5·pairwise spread). EnKF/ETKF are read from the DA cache; the hybrids are computed from their stored `members_<case>.npz`. **—** means the scheme is a deterministic point estimator, so an ensemble score is not defined for it (this includes Strong-4DVar, whose cached ES was itself a one-member proxy). **pending** means the scheme is ensemble-capable but has not been re-evaluated with `--n-members 30` yet.
 
 ## Per-trajectory detail: mean +/- std across the 200 test windows
 
@@ -222,36 +269,36 @@ Every table above pools all windows/timesteps into one number per method. This s
 
 | Method | S0 all | S0 slow | S0 fast | S1 all | S1 slow | S1 fast |
 |---|---|---|---|---|---|---|
-| ETKF | 0.612±0.094* | 0.369±0.036* | 0.734±0.128* | 1.032±0.186* | 0.946±0.160* | 1.075±0.203* |
-| EnKF | 0.637±0.089* | 0.390±0.040* | 0.760±0.120* | 1.084±0.198* | 0.974±0.161* | 1.139±0.221* |
-| Strong-4DVar | 0.485±0.110* | 0.355±0.048* | 0.550±0.145* | 0.989±0.174* | 0.820±0.149* | 1.074±0.189* |
-| DirectUNet-S+(monai,cos) | 0.328±0.048* | 0.223±0.035* | 0.380±0.059* | 0.329±0.049* | 0.223±0.040* | 0.382±0.059* |
-| DirectUNet-M(monai,flat) | 0.308±0.043* | 0.197±0.030* | 0.363±0.057* | 0.309±0.042* | 0.195±0.031* | 0.366±0.055* |
-| DirectUNet-M(monai,cos) | 0.308±0.043* | 0.190±0.030* | 0.367±0.056* | 0.310±0.041* | 0.191±0.029* | 0.370±0.053* |
-| DirectUNet-L(monai,cos) | 0.294±0.042* | 0.186±0.029* | 0.347±0.055* | 0.294±0.041* | 0.184±0.029* | 0.350±0.053* |
-| CFM-M(monai,flat) | 0.294±0.042* | 0.188±0.029* | 0.347±0.056* | 0.294±0.041* | 0.185±0.030* | 0.348±0.053* |
-| CFM-M(monai,cos) | 0.296±0.042* | 0.187±0.029* | 0.350±0.056* | 0.297±0.043* | 0.185±0.030* | 0.353±0.056* |
-| CFM-S+(monai,cos) | 0.343±0.059* | 0.268±0.073* | 0.380±0.064* | 0.344±0.058* | 0.267±0.073* | 0.382±0.062* |
-| SDA1(monai) | 0.362±0.043* | 0.224±0.020* | 0.431±0.063* | 0.362±0.041* | 0.221±0.019* | 0.433±0.061* |
-| SDA2(monai) | 0.362±0.043* | 0.203±0.021* | 0.442±0.066* | 0.363±0.044* | 0.199±0.022* | 0.445±0.067* |
-| SDA3(monai) | 0.344±0.039* | 0.196±0.020* | 0.418±0.060* | 0.344±0.038* | 0.193±0.023* | 0.420±0.059* |
-| DirectUNet+SDA1 | 0.256±0.042* | 0.148±0.027* | 0.310±0.056* | 0.256±0.041* | 0.146±0.029* | 0.311±0.054* |
-| DirectUNet+SDA2 | 0.254±0.040* | 0.142±0.026* | 0.311±0.054* | 0.255±0.039* | 0.139±0.028* | 0.312±0.052* |
-| DirectUNet+SDA3 | 0.247±0.040* | 0.134±0.025* | 0.304±0.053* | 0.247±0.040* | 0.132±0.027* | 0.305±0.052* |
-| FDV1(monai) | 0.267±0.047* | 0.158±0.031* | 0.321±0.060* | 0.267±0.044* | 0.158±0.030* | 0.321±0.056* |
+| ETKF |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| EnKF |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| Strong-4DVar |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-S+(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-M(monai,flat) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-M(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| DirectUNet-L(monai,cos) |   —   |   —   |   —   |   —   |   —   |   —   |
+| CFM-M(monai,flat) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| CFM-M(monai,cos) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| CFM-S+(monai,cos) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA1(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA2(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| SDA3(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA1 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA2 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet+SDA3 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
 | FDV2(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
-| FDV1+SDA3(monai) | 0.220±0.040* | 0.118±0.027* | 0.271±0.052* | 0.219±0.039* | 0.115±0.027* | 0.271±0.049* |
-| FDV1+SDA1(monai) | 0.228±0.041* | 0.133±0.028* | 0.276±0.053* | 0.226±0.041* | 0.129±0.030* | 0.275±0.052* |
-| FDV1+SDA2(monai) | 0.226±0.040* | 0.124±0.027* | 0.277±0.052* | 0.225±0.040* | 0.121±0.028* | 0.277±0.050* |
-| DirectUNet-M(monai,cos,obsdensity) | 0.303±0.043* | 0.200±0.030* | 0.354±0.056* | 0.305±0.044* | 0.201±0.032* | 0.357±0.056* |
-| CFM-M(monai,flat,obsdensity) | 0.293±0.043* | 0.195±0.029* | 0.342±0.056* | 0.293±0.044* | 0.194±0.029* | 0.343±0.057* |
-| DirectUNet(aug)+SDA3 | 0.233±0.038* | 0.133±0.025* | 0.284±0.049* | 0.234±0.038* | 0.132±0.026* | 0.286±0.050* |
-| FDV1-Stier(monai) | 0.246±0.045* | 0.154±0.032* | 0.293±0.056* | 0.245±0.047* | 0.151±0.036* | 0.292±0.058* |
-| subgrad+state-Stier(monai) | 0.223±0.043* | 0.136±0.032* | 0.266±0.053* | 0.222±0.046* | 0.134±0.033* | 0.267±0.057* |
+| FDV1+SDA3(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1+SDA1(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1+SDA2(monai) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet-M(monai,cos,obsdensity) |   —   |   —   |   —   |   —   |   —   |   —   |
+| CFM-M(monai,flat,obsdensity) |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| DirectUNet(aug)+SDA3 |  pending  |  pending  |  pending  |  pending  |  pending  |  pending  |
+| FDV1-Stier(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
+| subgrad+state-Stier(monai) |   —   |   —   |   —   |   —   |   —   |   —   |
 | FDV1-Stier+SDA3(monai) | 0.171±0.035 | 0.090±0.025 | 0.211±0.045 | 0.170±0.037 | 0.088±0.025 | 0.212±0.047 |
 | subgrad+state-Stier+SDA3(monai) | 0.160±0.035 | 0.083±0.025 | 0.198±0.044 | 0.159±0.037 | 0.081±0.026 | 0.198±0.046 |
 
-`*` = CRPS from a one-member reconstruction (N=1, deterministic; CRPS = per-dim MAE, the N=1 special case of the ensemble formula). Unmarked = proper ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise member distance) from the stored `members_*.npz`.
+Same convention as the pooled ES table: every value is a proper ensemble CRPS (per-dimension Energy Score, N=30, MAE − 0.5·pairwise member distance) computed from the stored `members_<case>.npz`; **—** is a deterministic point estimator, for which it is not defined; **pending** is ensemble-capable but not yet re-evaluated with `--n-members 30`.
 
 ## Consistency checks
 

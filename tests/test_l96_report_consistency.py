@@ -43,8 +43,10 @@ def monai_rows(src: str) -> list[str]:
     return re.findall(r'"([^"]+)"', _block(src, r"MONAI_ROWS = \[(.*?)\n\]"))
 
 
-def n1_es_methods(src: str) -> list[str]:
-    return re.findall(r'"([^"]+)"', _block(src, r"N1_ES_METHODS = \{(.*?)\}"))
+def deterministic_methods(src: str) -> list[str]:
+    return re.findall(
+        r'"([^"]+)"',
+        _block(src, r"DETERMINISTIC_METHODS: frozenset\[str\] = frozenset\(\{(.*?)\}\)"))
 
 
 def short_names(src: str) -> dict[str, str]:
@@ -135,7 +137,31 @@ class TestParallelMethodListsAgree:
             "methods absent from MONAI_ROWS, so they would be missing from the "
             f"per-window tables: {missing}")
 
-    def test_n1_es_methods_are_declared(self, src):
+    def test_no_stale_marker_convention_in_prose(self, src):
+        """Footnotes must not describe a `*` marking the tables no longer emit.
+
+        Caught in review on #223: the header note and one scheme description
+        were updated when the N=1 proxy was removed, but the footnotes under the
+        ES and CRPS tables still told the reader to look for `*`-marked cells
+        that cannot exist. Prose describing a convention is as load-bearing as
+        the code implementing it.
+        """
+        assert "`*` = " not in src, (
+            "a footnote still documents the removed `*` proxy marker")
+
+    def test_deterministic_methods_are_declared(self, src):
         da = {"Strong-4DVar", "Weak-4DVar", "EnKF", "ETKF"}
-        unknown = [m for m in n1_es_methods(src) if m not in neural_dirs(src) and m not in da]
-        assert not unknown, f"N1_ES_METHODS entries that are not methods: {unknown}"
+        unknown = [m for m in deterministic_methods(src)
+                   if m not in neural_dirs(src) and m not in da]
+        assert not unknown, f"DETERMINISTIC_METHODS entries that are not methods: {unknown}"
+
+    def test_no_n1_proxy_fallback_remains(self, src):
+        """The ES/CRPS columns must not mix two scoring formulas.
+
+        A proper ensemble score credits spread; the N=1 MAE proxy cannot. When
+        both appeared in one column the two rows that had real members looked
+        better partly by convention, which is exactly the apples-to-apples
+        failure this table exists to avoid.
+        """
+        assert "N1_ES_METHODS" not in src
+        assert "per_window_deterministic_crps" not in src
