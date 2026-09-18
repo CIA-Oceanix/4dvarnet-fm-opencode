@@ -144,10 +144,21 @@ been failing for as long as it has been ungated.
 baselines and the E/F/G/S series. L96 (the main benchmark) and QG are
 unaffected, as is the randomized-parameter L63 path.
 
-**Decision (2026-09-17): recorded, not fixed.** The one-line fix re-randomises
-every L63 dataset and therefore moves published L63 numbers, which is a
-scientific call to make deliberately rather than inside a test-gate change. The
-one failing test is deselected in CI with a pointer to this section.
+**Decision (2026-09-17): recorded, not fixed.** Superseded — see below.
+
+**FIXED 2026-09-18** (user decision): `obs_seed = cfg.seed + i * 100 + 1`,
+matching the two sibling datasets. Pooled per-dim variance goes from
+0.316/0.502/0.329 to 0.524/0.492/0.495 against a target of 0.5. Window 0 is
+bit-identical to before (its seed is unchanged at `cfg.seed + 1`), so only
+windows 1+ move. `tests/test_lorenz63.py::test_observations_noise` was also
+rewritten: it checked one window's 25 observations against a +/-30% tolerance,
+which is +/-1 sigma and fails routinely by construction; it now pools across
+windows, which is only meaningful because the realizations are independent.
+The CI deselect is removed.
+
+**L63 results built on `Lorenz63Dataset` need re-running** before their
+published numbers are valid again: the L63 S0/S1 DA baselines and the E/F/G/S
+series. L96 and QG are unaffected.
 
 ### Dead code found during Phase 0 — decide before Phase 3
 
@@ -161,9 +172,7 @@ without `dynamics=` — the same 2026-07 API drift that had broken seven tests.
 
 This is the third artifact of one root cause, all invisible for the same reason
 (nothing ran them): misfiled scripts under `tests/`, stale ungated tests, and
-this orphaned module. **Left in place pending a decision** — deleting is the
-obvious call but it is the user's, not the refactor's, and it belongs with the
-Phase 3 `evaluation/` split rather than in the test-gate change.
+this orphaned module. **DELETED 2026-09-18** (user decision).
 
 ### Phase 1 — one model registry
 

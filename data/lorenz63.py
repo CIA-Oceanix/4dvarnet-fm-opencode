@@ -157,7 +157,6 @@ class Lorenz63Dataset:
         self.device = torch.device("cpu")
 
         traj_seed = cfg.seed
-        obs_seed = cfg.seed + 1
 
         full_steps = cfg.spinup_steps + (cfg.num_windows + 2) * cfg.window_spacing
         long_traj = generate_long_trajectory(
@@ -177,7 +176,7 @@ class Lorenz63Dataset:
         ).astype(int)
 
         self.windows = []
-        for idx in start_indices:
+        for i, idx in enumerate(start_indices):
             seg = long_traj[idx: idx + cfg.num_steps].clone()
             true_fluid = seg[:, :3]
             W_L_true = seg[:, 3]
@@ -192,6 +191,17 @@ class Lorenz63Dataset:
             else:
                 W_L_star = W_L_true.clone()
 
+            # Per-window observation seed, matching data/lorenz96.py:437 and
+            # data/random_param_dataset.py:35. This was `cfg.seed + 1` -- a
+            # constant -- so generate_observations drew the SAME noise
+            # realization for every window in the dataset: the noise vector in
+            # window 5 matched window 0 to float32 rounding, and pooling 8x more
+            # windows did not move the sample variance (0.319/0.506/0.331 at
+            # n=125 vs 0.316/0.502/0.329 at n=1000) because the samples were not
+            # independent. The forcing seed three lines above already varied per
+            # window, which is what made the asymmetry an oversight rather than
+            # a design choice.
+            obs_seed = cfg.seed + i * 100 + 1
             noisy_obs, obs_mask = generate_observations(
                 true_fluid, cfg.obs_interval, cfg.R_var, obs_seed,
                 self.device,
@@ -203,6 +213,7 @@ class Lorenz63Dataset:
                 "obs_mask": obs_mask,
                 "forcing_true": W_L_true,
                 "forcing_corrupted": W_L_star,
+                "obs_seed": obs_seed,
             })
 
     def __len__(self) -> int:

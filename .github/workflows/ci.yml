@@ -107,19 +107,11 @@ jobs:
           # (see docs/scoping/refactor_plan.md, Phase 0). A new test file is now
           # gated by existing, rather than by remembering to edit this file.
           #
-          # Two deliberate exclusions, both tracked in docs/scoping/refactor_plan.md:
+          # One deliberate exclusion, tracked in docs/scoping/refactor_plan.md:
           #   test_joint_estimation.py        -- 7 tests written against
           #       JointCFM's pre-restructure API. JointCFM itself is covered by
           #       test_joint_estimation_l96_neural.py and test_neural_inference.py.
           #       Deferred to a second step.
-          #   test_lorenz63.py::test_observations_noise -- correctly detects a
-          #       real data bug (Lorenz63Dataset gives every window the same
-          #       observation-noise realization; data/lorenz63.py:160 uses a
-          #       constant obs_seed where lorenz96.py and random_param_dataset.py
-          #       use a per-window one). Recorded, not yet fixed, because fixing
-          #       it re-randomises every L63 dataset and moves published L63
-          #       numbers.
           pytest tests/ \
             --deselect tests/test_joint_estimation.py \
-            --deselect tests/test_lorenz63.py::test_observations_noise \
             -m "not slow" -q
