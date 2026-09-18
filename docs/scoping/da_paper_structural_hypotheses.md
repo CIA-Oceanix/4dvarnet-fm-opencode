@@ -449,14 +449,34 @@ baselines, the obs-density machinery and the tuning sensitivity studies.
 
 **Phasing.**
 
-**P0a — pure reporting, no compute.** Three results already sit on disk and are
-absent from `l96_consolidated_benchmark.md` (all four rows are `—` placeholders):
-`L2b` vs `L6` (forcing conditioning, plain VanillaCFM), and `SDA2-mixed` vs
-`SDA2-nominal` (the training-exposure control). These carry §4.1.1 and R1.3 and
-cost only an evaluation-to-table pass.
+**P0 — one cheap run: D0** (L96 Weak-4DVar). It gates C1 and re-anchors the
+companion doc's 93%/7% split. The single highest-value item here.
 
-**P0b — one cheap run: D0** (L96 Weak-4DVar). It gates C1 and re-anchors the
-companion doc's 93%/7% split. Still the single highest-value item here.
+> **Note on where §4.1.1's and R1.3's evidence lives (updated after #219).** An
+> earlier version of this plan carried a "P0a — pure reporting" item: get `L2b`
+> vs `L6` and `SDA2-mixed` vs `SDA2-nominal` into
+> `l96_consolidated_benchmark.md`, where they then sat as `—` placeholders.
+> **That item is withdrawn.** #219 rebuilt the report to recompute every row from
+> archived trajectory arrays and scoped its row list to the monai-backbone
+> schemes plus the DA baselines; the legacy non-monai rows were **removed, not
+> filled**. Putting these five back would mean re-adding rows against that
+> design, so the right reading is that the benchmark is the *monai* benchmark and
+> these runs are not part of it.
+>
+> The evidence is not lost and does not need to be: §4.1.1's headline table uses
+> the **monai** trio (`SDA1/SDA2/SDA3(monai)`), which the report still carries,
+> and the non-monai ladder is supporting evidence cited to each run's own
+> `neural_eval.json` (resolvable through `evaluation/archive.py`). **Cite those
+> five by run artifact, never as benchmark rows.**
+>
+> **One asymmetry to own in the paper rather than paper over:**
+> `SDA2_cond_nominal` is the only configuration trained at
+> `forcing_state_bias=0.0` — R1.3's training-exposure control — and it has **no
+> monai counterpart** (`SDA2_monai_cond_mixed_l96_norm` exists; a nominal variant
+> does not). So the claim that removing training-time exposure leaves S1/S0
+> unchanged rests on a run the canonical table does not and will not show. Either
+> state that plainly, or train a monai nominal variant if the claim is to carry
+> more weight.
 
 P1: **D7** then **D2 + D3** — D7 (the two sensitivities on one grid) is the
 cheapest route to C6, the paper's sharpest methodological claim, and largely
@@ -497,11 +517,16 @@ scope rather than over-claim transfer to operational systems.
 
 ## 10. Open decisions
 
-1. **The split with the companion ML doc.** The matched-budget mean-slot
-   comparison (now the ML paper's headline) and D1/D2 here share evidence.
-   Decide the boundary before either set of experiments is run twice. *Leaning:*
-   ML paper owns the **architecture/inductive-bias** axis at fixed model error;
-   this paper owns the **model-error and observation-sparsity** axes.
+1. ~~**The split with the companion ML doc.**~~ **CLOSED (2026-09-18).** There
+   are now three papers, split by testbed, and the boundary is recorded in
+   `docs/scoping/p2_unrolled_solvers_and_flows.md` §9: the ML doc owns families
+   A/B/C and is **deliberately non-DA**; **this paper** owns the model-error axis
+   on L96/QG; **P2** owns the operator family and the observation-sparsity axis
+   at S0. The matched-budget mean-slot comparison went to **P2** (M2), not to the
+   ML paper. Two boundaries must not blur: calibration (this paper diagnoses, P2
+   measures a sampler) and observation density (**this paper's** *density ×
+   model-error* grid vs P2's *density sweep at S0* — they must share one
+   protocol).
 2. Does the paper claim anything **prescriptive**, or is diagnosis the whole
    contribution? Diagnosis is safer and matches the evidence; a prescription
    invites the method-paper critique this framing was chosen to avoid.
