@@ -265,7 +265,7 @@ SCHEME_DESCRIPTIONS: list[tuple[str, str, str]] = [
     ("L2b_monai_vanilla_cfm_s0s1_norm_obsdensity", "Neural (CFM, τ=0, monai backbone, obs-density-augmented)",
      ("As CFM-M(monai,flat) but with the identical `obs_density_augment` training augmentation described above -- unlike the DirectUNet-L attempt, CFM tolerated it cleanly at M-tier with no collapse (variance ratio ~96%). Evaluated here at full canonical density only (N=1, single pass); see `l96_obs_density_augmented_training.md` for the reduced-density sweep.")),
     ("l96_obs_density_directunet_aug_sda3_hybrid", "Neural (DirectUNet-M(monai,cos,obsdensity) mean + SDA3-monai warm-started guidance)",
-     ("Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its full-density ES/CRPS here are on the N=1 MAE-proxy convention, not the proper ensemble score its non-augmented sibling rows get (see the note above table).")),
+     ("Same SDEdit-style warm start as DirectUNet+SDA3 above, but swapping in the `obs_density_augment`-trained DirectUNet-M mean estimate instead of the non-augmented one -- same `tau0=0.3`/`guidance_weight=2.0`. Third-best full-density RMSE/EV in this whole table (0.389 S0 -- behind FDV1-Stier+SDA3(monai)'s 0.359 and FDV1+SDA3-monai's 0.379, and comfortably ahead of non-augmented DirectUNet+SDA3's 0.420) **and** the best absolute worst-case RMSE at zero fast-Y density among everything tested in that sweep (1.065, edging out plain SDA3's 1.082 -- see `l96_obs_density_augmented_training.md`; neither FDV1+SDA3 nor FDV1-Stier+SDA3 were part of that reduced-density sweep, so they aren't ruled out as contenders there); its ES/CRPS cells read `pending` -- it is ensemble-capable but was evaluated single-pass (N=1), and the N=1 MAE proxy that used to fill them was removed on 2026-09-18.")),
     ("FDV1_obsstate_monai_l96_initvar01_Stier_auxpriorcost01", "Neural (4DVarNet-style unrolled solver, monai backbone, S-tier)",
      ("As FDV1(monai) above (`update_input=obs+state`, `models/fourdvarnet.py::FourDVarNetSolver`, N_outer=10, monai backbone) but at a smaller \"S\" capacity tier (`hidden_channels=[32,64,128]`, `monai_num_res_blocks=1`, 1,055,544 params -- vs the M tier's `hidden_channels=[64,128,256]`, `monai_num_res_blocks=2`, 5,889,048 params every other FDV1/FDV2 row in this table uses), a random (not zero) initial condition (`init_state_var=0.1`, i.e. `x_0 ~ N(0, 0.1)`), and a small auxiliary prior-consistency loss term during training (`aux_var_cost_weight=0.01`, `prior_cost(x_final)+prior_cost(states)`, no `prior_weight`/`obs_cost` mixed in -- a real bug in an earlier version of this loss term, since fixed, is documented in `CHANGELOG.d/2026-09-12-fdv-aux-prior-loss-drop-prior-weight-obs-cost.md`); 400 epochs, cosine-annealed LR. Genuinely better than the M-tier FDV1(monai) baseline above on every RMSE/EV metric despite being ~5.6x smaller in parameter count. Evaluated as a single pass (N=1), same convention as FDV1(monai).")),
     ("FDV2_subgrad_state_monai_l96_Stier", "Neural (4DVarNet-style unrolled solver, cheap proxy-gradient-conditioned, monai backbone, S-tier)",
@@ -658,6 +658,41 @@ def collect_per_window_values(
     return values, pending_cells
 
 
+def fmt_summary_table(
+    pw_values: dict,
+    row_order: list[str],
+    pending_cells: set[tuple[str, str]] | None = None,
+) -> str:
+    """One row per scheme: the three standardized metrics side by side.
+
+    Per-window mean +/- std over the test windows, ``all_obs`` group only --
+    the slow/obs_fast split lives in the detail tables below. Sorted by S0 RMSE
+    so the table reads as a ranking. This is the view to quote; the pooled
+    tables are kept further down for continuity with earlier revisions.
+    """
+    def cell(metric: str, row: str, case: str) -> str:
+        v = pw_values[metric][(row, case)]
+        if v is not None:
+            return f"{v['all_obs']['mean']:.3f}±{v['all_obs']['std']:.3f}"
+        if pending_cells and (row, case) in pending_cells:
+            return "pending"
+        return "—"
+
+    def sort_key(row: str) -> float:
+        v = pw_values["rmse"][(row, "s0")]
+        return v["all_obs"]["mean"] if v is not None else float("inf")
+
+    header = "| Scheme | RMSE S0 | RMSE S1 | EV S0 | EV S1 | CRPS S0 | CRPS S1 |"
+    lines = [header, "|---|---|---|---|---|---|---|"]
+    for row in sorted(row_order, key=sort_key):
+        cells = [cell("rmse", row, "s0"), cell("rmse", row, "s1"),
+                 cell("ev", row, "s0"), cell("ev", row, "s1"),
+                 cell("crps", row, "s0"), cell("crps", row, "s1")]
+        lines.append(f"| {short_name(row)} | " + " | ".join(cells) + " |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def fmt_per_window_table(
     title: str,
     block: dict[tuple[str, str], dict[str, dict[str, float]] | None],
@@ -889,11 +924,28 @@ def main() -> None:
         ),
         "",
         (
-            "RMSE/EV are recomputed from the stored trajectory arrays via "
-            "`evaluation/estimate_metrics.py`; ES for DA ensemble methods (EnKF/ETKF) "
-            "and L3 (ens30×10) are proper ensemble scores (N=30, MAE − 0.5·pairwise spread) "
-            "read from cached run outputs; ES for deterministic methods is the N=1 per-dim "
-            "MAE proxy. **bold** marks the best value per column."
+            "RMSE and EV are recomputed for every scheme from the stored trajectory "
+            "arrays via `evaluation/estimate_metrics.py`, so they are directly "
+            "comparable across the whole table.\n\n"
+            "ES/CRPS carries **one formula only** — the proper ensemble score "
+            "(N=30, MAE − 0.5·pairwise spread). A cell is therefore one of three "
+            "things:\n\n"
+            "- a **value** — a real ensemble score (EnKF/ETKF from the DA cache; "
+            "schemes with a stored `members_<case>.npz`);\n"
+            "- **—** — not defined, because the scheme is a deterministic point "
+            "estimator with no sampler (every DirectUNet tier, the FDV1/FDV2 "
+            "unrolled solvers, and Strong-4DVar);\n"
+            "- **pending** — ensemble-capable but not yet evaluated with "
+            "`--n-members 30`; a re-run would fill it.\n\n"
+            "The earlier N=1 per-dim MAE proxy was removed on 2026-09-18. It sat in "
+            "the same column as the proper score with only a trailing `*` to "
+            "separate them, which made rows non-comparable: an ensemble score "
+            "credits spread and the proxy cannot, so the few rows with real members "
+            "looked better partly by convention. **Consequence to keep in mind: the "
+            "table currently has no probabilistic metric comparing neural schemes "
+            "with one another** — the only real ensemble scores belong to two DA "
+            "methods and two hybrids.\n\n"
+            "**bold** marks the best value per column."
         ),
         "",
         "## Benchmarked schemes",
@@ -905,6 +957,24 @@ def main() -> None:
             "24D observed subspace with obs-only inputs unless noted). DA baselines receive the same per-window "
             "parameters as the truth generation (S0) or their biased `*_da` counterparts (S1), which is what "
             "makes the DA-vs-neural comparison apples-to-apples."
+        ),
+        "",
+        "## Summary",
+        "",
+        (
+            "Per-window **mean ± std** across the test windows, `all_obs` group, "
+            "ranked by S0 RMSE. This is the standardized view: every metric is the "
+            "same statistic (a per-window mean and spread) for every scheme, so rows "
+            "are directly comparable. The slow / obs_fast breakdown is in "
+            "*Per-trajectory detail* below; the pooled tables that follow are kept "
+            "for continuity with earlier revisions of this report."
+        ),
+        "",
+        fmt_summary_table(pw_values, PER_WINDOW_ROWS, pw_pending_cells),
+        (
+            "The **std columns carry real information**: the DA rows degrade on S1 "
+            "not only in the mean but in window-to-window spread, while the neural "
+            "rows hold essentially the same spread across both scenarios."
         ),
         "",
         "## RMSE (pooled, lower is better)",
