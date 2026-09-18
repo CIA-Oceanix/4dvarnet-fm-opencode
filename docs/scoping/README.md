@@ -21,19 +21,21 @@ Read **top to bottom**; only the first is current.
 > posterior-targeting objective. "§7.1 Q2 — partially answered" and "Q3
 > partially answered" are the *same* finding on the *same* evidence.
 
-## The DA-venue paper (JAMES)
+## The DA-venue papers (JAMES)
 
 | doc | status |
 |---|---|
 | **`da_paper_structural_hypotheses.md`** | **CURRENT**, SCOPING v1 2026-09-17. Diagnosis paper: three structural hypotheses of classical DA (sequential; model fidelity as the route to skill; ODE state representation) and how they explain DA's limited return on sparse observations and its impoverished posteriors. |
+| **`p2_unrolled_solvers_and_flows.md`** | **CURRENT**, SCOPING v1 2026-09-18. Method paper, sequel to the 4DVarNet line: an unrolled variational solver is the degenerate (`Ψ_mean`-only) member of the conditional-flow family; the continuous blend; the negatives. **S0 only.** |
 
-Its relationship to the ML chain above is **not yet settled** — see its §10
-decision 1. Working split: the ML doc owns the architecture/inductive-bias axis
-at fixed model error; this one owns the model-error and observation-sparsity
-axes. They share the L96/QG evidence base, so decide the boundary before running
-any experiment twice.
+**The three-paper split is now settled** (P2 §9): the ML doc owns
+families A/B/C and is **deliberately non-DA**; **P1** owns the model-error axis
+on L96/QG; **P2** owns the operator family and the observation-sparsity axis at
+S0. Two boundaries must not blur — calibration (P1 diagnoses, P2 measures a
+sampler) and observation density (P1's *density × model-error* grid vs P2's
+*density sweep at S0*, which **must share one protocol**).
 
-> **Standing caveat for both papers.** The L96/QG `S0`/`S1` axis prices model
+> **Standing caveat for both DA papers.** The L96/QG `S0`/`S1` axis prices model
 > error **only for methods that run a forward model at inference**. `param_bias`
 > reaches the DA model's parameters, not the truth, so a model-free neural row's
 > `S1/S0 ~ 1.00` is definitional, not a robustness result. Never table it as a
