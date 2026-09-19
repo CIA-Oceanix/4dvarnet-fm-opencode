@@ -95,6 +95,15 @@ def build_cfg(**overrides) -> QGConfig:
     return QGConfig(**{k: v for k, v in overrides.items() if v is not None})
 
 
+# The capacity every DirectUNet/CFM scheme is built at. Named (rather than
+# repeated as a literal) because `resolved_config.yaml` records it as the
+# architecture the checkpoint was trained with: the experiment YAML's own
+# `model.hidden_channels` is a *dead field* for these model types -- main()
+# never passes it to build_model() -- so recording the YAML value instead
+# would state a capacity the weights may not have.
+DEFAULT_HIDDEN_CHANNELS = [64, 128, 256]
+
+
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
                 cond_extra_dim: int = 0, ic_dim: int = 0,
                 fdv_kwargs: dict | None = None) -> torch.nn.Module:
@@ -109,7 +118,7 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         from models.monai_unet_qg2d import MonaiDirectUNetQG
         return MonaiDirectUNetQG(ny=cfg.ny, nx=cfg.nx, nlayers=2, param_dim=param_dim,
                                  cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
-                                 hidden_channels=[64, 128, 256])
+                                 hidden_channels=DEFAULT_HIDDEN_CHANNELS)
     if model_type == "direct_unet_tchannels":
         # Q7: same M-tier capacity as Q1 (hidden_channels=[64,128,256]) and
         # same single-pass DirectUNet role, but merges T (days) into the
@@ -128,13 +137,13 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # out, up to 300 in for Q10's param_dim=3+cond_extra_dim=1+ic_dim=2).
         from models.monai_unet_qg2d import MonaiDirectUNetQGChannelTime
         return MonaiDirectUNetQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
-                                           hidden_channels=[64, 128, 256], norm_num_groups=4,
+                                           hidden_channels=DEFAULT_HIDDEN_CHANNELS, norm_num_groups=4,
                                            param_dim=param_dim, cond_extra_dim=cond_extra_dim,
                                            ic_dim=ic_dim)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
-                          hidden_channels=[64, 128, 256], time_emb_dim=64,
+                          hidden_channels=DEFAULT_HIDDEN_CHANNELS, time_emb_dim=64,
                           N_outer=10, sigma_prior=0.5, dropout=0.1,
                           train_tau_0_only=True)
     if model_type == "fourdvarnet":
@@ -354,6 +363,80 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float,
             "outputs_dir": os.path.join(exp_dir, "logs"),
         },
     })
+
+
+def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type: str,
+                          cfg, fdv_kwargs: dict | None = None,
+                          cols_per_day_range=None, **kw) -> str:
+    """Persist the config this run actually used, beside its checkpoints.
+
+    Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
+    resolve=True)`), which `evaluation.neural_inference` then finds next to a
+    checkpoint so an evaluation rebuilds the model the training built rather than
+    one re-declared by hand at the call site.
+
+    QG's entry point is argparse-driven, so the effective config is the
+    experiment YAML *merged with* whatever the CLI overrode -- which is exactly
+    what makes a copy of the source YAML (what the 2026-09-14 archive kept) an
+    incomplete record. The values written here are the post-override ones the
+    model and data pipeline were built from, plus the architecture build_model
+    actually used and the resulting parameter count, so a later run can be
+    checked against it rather than assumed to match.
+
+    Written before training starts, so a run killed mid-flight (the Q5 sweep's
+    24h timeouts) still leaves behind the config its checkpoints belong to.
+    """
+    data = {
+        "nx": cfg.nx, "state_dim": cfg.state_dim,
+        "num_train_windows": kw["num_train"], "num_val_windows": kw["num_val"],
+        "num_test_windows": kw["num_test"],
+        "train_seed": kw["train_seed"], "val_seed": kw["val_seed"],
+        "test_seed": kw["test_seed"],
+        "on_the_fly_split_obs": kw["on_the_fly_split_obs"],
+        "cache_dir": kw["cache_dir"],
+        "obs_geometry": cfg.obs_geometry, "cols_per_day": cfg.cols_per_day,
+        "cols_per_day_min": cols_per_day_range[0] if cols_per_day_range else None,
+        "cols_per_day_max": cols_per_day_range[1] if cols_per_day_range else None,
+        "obs_noise_std_frac": cfg.obs_noise_std_frac,
+        "init_lag_days": cfg.init_lag_days,
+        "s1_param_bias": cfg.s1_param_bias, "s1_amp_bias": cfg.s1_amp_bias,
+        "normalize": kw["normalize"], "norm_stats_path": kw["norm_stats_path"],
+        "param_norm_stats_path": kw["param_norm_stats_path"],
+        "forcing_norm_stats_path": kw["forcing_norm_stats_path"],
+        # Training-time conditioning source. NOT what an evaluation should use:
+        # cond_mode="scenario" (data/qg_neural.py) reads each window's own
+        # believed model, which is the only fair S1 test -- see
+        # eval_qg_neural_s0_s1.py.
+        "cond_mode": kw["cond_mode"], "noisy_max": kw["noisy_max"],
+        "include_ic": kw["include_ic"],
+    }
+    model_block = {
+        "model_type": model_type,
+        "hidden_channels": list((fdv_kwargs or {}).get("hidden_channels",
+                                                       DEFAULT_HIDDEN_CHANNELS)),
+        "param_dim": kw["param_dim"], "cond_extra_dim": kw["cond_extra_dim"],
+        "ic_dim": kw["ic_dim"],
+        "param_count": sum(p.numel() for p in model.parameters()),
+    }
+    if fdv_kwargs:
+        model_block["fdv"] = dict(fdv_kwargs)
+    resolved = OmegaConf.create({
+        "experiment_id": experiment_id,
+        "entry_point": "train_qg_neural.py",
+        "system": "qg",
+        "model": model_block,
+        "data": data,
+        "training": {
+            "epochs": kw["epochs"], "lr": kw["lr"], "batch_size": kw["batch_size"],
+            "gradient_clip_val": kw["gradient_clip_val"],
+            "q_loss_weight": kw["q_loss_weight"],
+            "use_cosine_scheduler": kw["use_cosine_scheduler"],
+            "seed": kw["seed"],
+        },
+    })
+    path = os.path.join(exp_dir, "resolved_config.yaml")
+    OmegaConf.save(resolved, path, resolve=True)
+    return path
 
 
 def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1,
@@ -634,6 +717,31 @@ def main():
                         s1_param_bias=s1_param_bias, s1_amp_bias=s1_amp_bias)
     state_dim = test_cfg.state_dim
 
+    model = build_model(model_type, test_cfg, param_dim=param_dim,
+                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
+                       fdv_kwargs=fdv_kwargs).to(device)
+
+    # Written before the skip-check below, so re-running an already-finished
+    # experiment backfills the config its checkpoints belong to instead of
+    # returning early and leaving them undocumented. Same ordering, for the same
+    # reason, as train.py's own -- which is why the archived L96 runs have
+    # configs at all.
+    resolved_path = write_resolved_config(
+        exp_dir, config_name, model, model_type=model_type, cfg=test_cfg,
+        epochs=epochs, lr=args.lr, batch_size=args.batch_size,
+        gradient_clip_val=gradient_clip_val, q_loss_weight=q_loss_weight,
+        use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
+        num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
+        train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,
+        on_the_fly_split_obs=not args.fixed_split_obs, cache_dir=args.cache_dir,
+        normalize=do_normalize, norm_stats_path=norm_stats_path,
+        param_norm_stats_path=param_norm_stats_path,
+        forcing_norm_stats_path=forcing_norm_stats_path,
+        cond_mode=cond_mode, noisy_max=noisy_max, param_dim=param_dim,
+        cond_extra_dim=cond_extra_dim, include_ic=include_ic, ic_dim=ic_dim,
+        cols_per_day_range=cols_per_day_range, fdv_kwargs=fdv_kwargs)
+    print(f"wrote {resolved_path}")
+
     if os.path.exists(results_path) and args.eval_only is None:
         print(f"Results exist at {results_path}, skipping.")
         return
@@ -696,10 +804,6 @@ def main():
               f"psi2 mean={norm['mean'][1]:.4e} std={norm['std'][1]:.4e}")
     else:
         print("normalization disabled (--no-normalize)")
-
-    model = build_model(model_type, test_cfg, param_dim=param_dim,
-                       cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
-                       fdv_kwargs=fdv_kwargs).to(device)
 
     total_train = 0.0
     if args.eval_only is None:

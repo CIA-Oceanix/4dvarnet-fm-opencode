@@ -44,6 +44,7 @@ Usage:
 import argparse
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -51,6 +52,8 @@ import torch
 from data.normalization import load_norm_stats
 from data.qg import QGConfig, QGS01Dataset, _truth_cache_path
 from data.qg_neural import psi_daily, psi_to_q, q_daily
+from evaluation import qg_runs
+from evaluation.archive import ROOT
 from train_qg_neural import build_model, estimate_windows, layer_summary, pooled_metrics
 
 # Matches train_qg_neural.py's test_cfg defaults (obs_geometry/cols_per_day/
@@ -73,43 +76,36 @@ CACHE_KW = dict(nx=64, seed=20_042, num_windows=100, obs_geometry="random_column
 # family (Q1/Q3/Q4/Q3-noise0.05/Q5, config/experiment/Q{1,3,4,5}_direct_unet_*.yaml)
 # is retired from this eval script -- those config files/checkpoints still
 # exist on disk as historical experiments, just no longer wired into SCHEMES.
+#
+# Each entry names the archived run and the *evaluation-time* conditioning
+# source. Everything about the architecture -- model_type, param_dim,
+# cond_extra_dim, ic_dim -- is read from the run itself
+# (`evaluation.qg_runs.architecture`, which prefers the `resolved_config.yaml`
+# training now writes), not declared here: a literal at the call site is tied to
+# the checkpoint by nothing but hope, and drifts silently when a config changes.
+# `cond_mode` stays here precisely because it is *not* a property of the
+# checkpoint -- see the module docstring.
 SCHEMES = {
-    "Q1": {
-        "ckpt": "experiments/Q1_direct_unet_tchannels_s0/stage1_best.pt",
-        "param_dim": 0, "cond_extra_dim": 0, "cond_mode": "none",
-        "model_type": "direct_unet_tchannels",
-    },
-    "Q2": {
-        "ckpt": "experiments/Q2_direct_unet_tchannels_s0_oracle_cond/stage1_best.pt",
-        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-        "model_type": "direct_unet_tchannels",
-    },
-    "Q3": {
-        "ckpt": "experiments/Q3_direct_unet_tchannels_s1_noisy_cond/stage1_best.pt",
-        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-        "model_type": "direct_unet_tchannels",
-    },
-    "Q4": {
-        "ckpt": "experiments/Q4_direct_unet_tchannels_s1_noisy_ic_cond/stage1_best.pt",
-        "param_dim": 3, "cond_extra_dim": 1, "cond_mode": "scenario",
-        "model_type": "direct_unet_tchannels", "include_ic": True, "ic_dim": 2,
-    },
+    "Q1": {"run": "Q1_direct_unet_tchannels_s0", "cond_mode": "none"},
+    "Q2": {"run": "Q2_direct_unet_tchannels_s0_oracle_cond", "cond_mode": "scenario"},
+    "Q3": {"run": "Q3_direct_unet_tchannels_s1_noisy_cond", "cond_mode": "scenario"},
+    "Q4": {"run": "Q4_direct_unet_tchannels_s1_noisy_ic_cond", "cond_mode": "scenario"},
 }
 
 
-def _load_model(spec: dict, cfg: QGConfig, device: torch.device) -> torch.nn.Module:
-    model_type = spec.get("model_type", "direct_unet")
-    model = build_model(model_type, cfg, param_dim=spec["param_dim"],
-                        cond_extra_dim=spec["cond_extra_dim"],
-                        ic_dim=spec.get("ic_dim", 0))
-    loaded = torch.load(spec["ckpt"], map_location="cpu", weights_only=False)
+def _load_model(arch: dict, ckpt, cfg: QGConfig, device: torch.device) -> torch.nn.Module:
+    model = build_model(arch["model_type"], cfg, param_dim=arch["param_dim"],
+                        cond_extra_dim=arch["cond_extra_dim"], ic_dim=arch["ic_dim"])
+    loaded = torch.load(ckpt, map_location="cpu", weights_only=False)
     # Accepts both a bare state_dict (train_qg_neural.py's final stage1_best.pt)
     # and a full Lightning checkpoint (keys prefixed "model." for the
     # LightningModule's `self.model` submodule) -- e.g. a mid-training
     # checkpoints/stage1_best.ckpt for a run not yet finished.
     state_dict = loaded["state_dict"] if isinstance(loaded, dict) and "state_dict" in loaded else loaded
     state_dict = {(k[6:] if k.startswith("model.") else k): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict)
+    # strict: an architecture read from the wrong run, or a stale fallback
+    # source, must fail here rather than silently score a half-initialized model.
+    model.load_state_dict(state_dict, strict=True)
     return model.to(device).eval()
 
 
@@ -163,9 +159,15 @@ def main():
                     help="S1 wind-amplitude bias fraction (default: QGConfig's "
                          "own default, 0.15). Pass 0.1 to match qg_da_s1_scratch.py.")
     ap.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
-    ap.add_argument("--norm-stats-path", default="experiments/qg_psi_norm_stats.pt")
-    ap.add_argument("--param-norm-stats-path", default="experiments/qg_param_norm_stats.pt")
-    ap.add_argument("--forcing-norm-stats-path", default="experiments/qg_forcing_norm_stats.pt")
+    # Default None -> resolved per run through evaluation.archive (the run's own
+    # recorded path, then the stats kept with the archive, then the shared
+    # experiments/ copy). Hardcoding "experiments/qg_*.pt" made every evaluation
+    # implicitly require the worktree that trained the models: the archived
+    # checkpoints were reachable from master and unusable there, because the psi
+    # z-scoring they were trained under was not.
+    ap.add_argument("--norm-stats-path", default=None)
+    ap.add_argument("--param-norm-stats-path", default=None)
+    ap.add_argument("--forcing-norm-stats-path", default=None)
     ap.add_argument("--output", default=None,
                     help="Default: reports/qg/outputs/qg_neural_s0_s1_cross_scenario/"
                          "results_lag<L>_noise<N>[_biasB].json, derived from "
@@ -177,9 +179,22 @@ def main():
                        f"results_lag{args.lag_days:g}_noise{args.noise_frac:g}{bias_suffix}.json")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    norm = load_norm_stats(args.norm_stats_path)
-    param_norm = load_norm_stats(args.param_norm_stats_path)
-    forcing_norm = load_norm_stats(args.forcing_norm_stats_path)
+    # One normalization for every scheme in the table (they share it by
+    # construction), taken from the first scheme evaluated.
+    stats = qg_runs.norm_stats_paths(SCHEMES[args.schemes[0]]["run"])
+    stats_paths = {k: args_override or stats[k] for k, args_override in (
+        ("psi", args.norm_stats_path), ("param", args.param_norm_stats_path),
+        ("forcing", args.forcing_norm_stats_path))}
+    for key, path in stats_paths.items():
+        if path is None:
+            raise SystemExit(
+                f"No {key} normalization stats found. Pass --{key}-norm-stats-path, "
+                "or link them into the archive with "
+                "`python scripts/consolidate_qg_archive.py --apply`.")
+        print(f"{key} norm stats: {path}", flush=True)
+    norm = load_norm_stats(str(stats_paths["psi"]))
+    param_norm = load_norm_stats(str(stats_paths["param"]))
+    forcing_norm = load_norm_stats(str(stats_paths["forcing"]))
 
     # Cached truth is keyed at the original (0.01, 1.0) obs/IC protocol --
     # load it there, then cheaply redraw obs/init-state at the requested
@@ -209,20 +224,39 @@ def main():
         ic = QGS01Dataset._generate_obs_ic(eval_cfg, raw, list(range(len(raw))))
         ds[scenario] = [dict(w, **entry) for w, entry in zip(raw, ic)]
 
+    def rel(path) -> str:
+        """Repo-relative where possible: this JSON is tracked, so an absolute
+        path would record whichever worktree happened to run the evaluation."""
+        try:
+            return str(Path(path).relative_to(ROOT))
+        except ValueError:
+            return str(path)
+
     results = {}
+    # Which artifacts each row's numbers came from, recorded alongside them: a
+    # published row whose provenance is not written down cannot be audited later.
+    provenance = {}
     for name in args.schemes:
         spec = SCHEMES[name]
-        if not os.path.exists(spec["ckpt"]):
-            print(f"  {name}: checkpoint not found at {spec['ckpt']}, skipping", flush=True)
+        ckpt = qg_runs.checkpoint(spec["run"], required=False)
+        if ckpt is None:
+            print(f"  {name}: no checkpoint for run {spec['run']!r}, skipping", flush=True)
             continue
-        model = _load_model(spec, eval_cfg, device)
-        print(f"Loaded {name} from {spec['ckpt']} (cond_mode={spec['cond_mode']})", flush=True)
+        arch = qg_runs.architecture(spec["run"])
+        model = _load_model(arch, ckpt, eval_cfg, device)
+        print(f"Loaded {name} from {ckpt} (arch from {arch['source']}: "
+              f"{arch['model_type']}, param_dim={arch['param_dim']}, "
+              f"cond_extra_dim={arch['cond_extra_dim']}, ic_dim={arch['ic_dim']}; "
+              f"eval cond_mode={spec['cond_mode']})", flush=True)
         results[name] = {}
+        provenance[name] = {"run": spec["run"], "checkpoint": rel(ckpt),
+                            "arch_source": arch["source"],
+                            "cond_mode": spec["cond_mode"]}
         for label, scenario in [("S0", "test_s0"), ("S1", "test_s1")]:
             windows = ds[scenario]
             summ = _eval_one(model, windows, eval_cfg, device, norm, param_norm, forcing_norm,
-                             spec["cond_mode"], include_ic=spec.get("include_ic", False),
-                             model_type=spec.get("model_type", "direct_unet"))
+                             spec["cond_mode"], include_ic=arch["ic_dim"] > 0,
+                             model_type=arch["model_type"])
             results[name][label] = summ
             print(f"  {name} {label}: PSI EV={summ['psi']['pooled_ev']:.4f}  "
                   f"PV-q EV={summ['q']['pooled_ev']:.4f}", flush=True)
@@ -233,7 +267,9 @@ def main():
                               "num_test": args.num_test, "lag_days": args.lag_days,
                               "noise_frac": args.noise_frac,
                               "s1_param_bias": eval_cfg.s1_param_bias,
-                              "s1_amp_bias": eval_cfg.s1_amp_bias},
+                              "s1_amp_bias": eval_cfg.s1_amp_bias,
+                              "norm_stats": {k: rel(v) for k, v in stats_paths.items()}},
+                  "runs": provenance,
                   "results": results}, f, indent=2)
     print(f"\nWrote {args.output}")
 

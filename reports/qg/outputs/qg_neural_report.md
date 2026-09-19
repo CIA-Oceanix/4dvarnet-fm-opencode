@@ -23,10 +23,14 @@ Pooled EV (higher is better) on ψ (streamfunction, both layers) and PV-q (both 
 
 | scheme | S0 ψ EV | S0 PV-q EV | S1 ψ EV | S1 PV-q EV |
 |---|---|---|---|---|
-| EnKF | 0.9584 | **0.5000** | 0.9410 | **0.4126** |
-| ETKF | 0.9593 | *0.4982* | *0.9424* | *0.4116* |
-| Weak-4DVar | *0.9660* | -0.0345 | **0.9468** | -0.5008 |
-| Strong-4DVar | **0.9714** | -0.1257 | 0.9314 | -0.8573 |
+| EnKF | 0.9584 | 0.5000 | 0.9410 | 0.4126 |
+| ETKF | 0.9593 | 0.4982 | 0.9424 | 0.4116 |
+| Weak-4DVar | 0.9660 | -0.0345 | 0.9468 | -0.5008 |
+| Strong-4DVar | 0.9714 | -0.1257 | 0.9314 | -0.8573 |
+| Q1 (DirectUNet, T-channels, obs-only) | 0.9805 | *0.6238* | *0.9805* | *0.6238* |
+| Q2 (oracle forcing+param cond.) | **0.9827** | 0.6093 | 0.9490 | 0.5571 |
+| Q3 (noisy-trained forcing+param cond.) | 0.9798 | 0.5978 | 0.9763 | 0.5959 |
+| Q4 (noisy cond. + IC) | *0.9824* | **0.6745** | **0.9808** | **0.6744** |
 
 (Best per column **bolded**, second-best *italicized*, ranked across all 8 rows.)
 

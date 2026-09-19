@@ -74,3 +74,83 @@ The checked-in `reports/l96/outputs/l96_consolidated_benchmark.md` follows the
 sidecars, so regenerating it moves published numbers. **Cause not identified —
 treat neither set as authoritative until it is.** `manifest.json` exists so that
 a future re-score can at least be checked against what produced it.
+
+## QG
+
+Same resolver (`evaluation.archive.QG`), different conventions:
+
+```
+experiments/qg/<run>/stage1_best.pt              bare state dict, written when training finishes
+experiments/qg/<run>/checkpoints/stage1_best.ckpt  Lightning's own (monitored val_loss)
+experiments/qg/<run>/checkpoints/stage1_last.ckpt  ditto, last epoch
+experiments/qg/<run>/resolved_config.yaml        the config training actually used
+experiments/qg/<run>/config.yaml                 copy of the source experiment YAML
+experiments/qg/<run>/results.json                in-training S0 metrics + effective config
+experiments/qg/<run>/estimates_s0.npz
+experiments/qg/qg_psi_norm_stats.pt              shared, and part of the archive
+experiments/qg/qg_param_norm_stats.pt
+experiments/qg/qg_forcing_norm_stats.pt
+```
+
+Run directories are named by `experiment_id` (`Q1_direct_unet_tchannels_s0`),
+not by benchmark position. `Q1` has meant three different architectures across
+the 2026-09 backbone migrations; a checkpoint directory named after the position
+says nothing about which.
+
+A run killed before it finished has only `checkpoints/*.ckpt` and no
+`stage1_best.pt`. `evaluation.qg_runs.checkpoint()` takes either, so an
+interrupted sweep stays evaluable instead of looking like a missing run.
+
+**The normalization stats live in the archive**, not only in
+`experiments/`. QG psi is z-scored globally before training, so a checkpoint
+without its stats predicts in units nobody can invert: the Q1-Q4 checkpoints
+were reachable from master for four days and unusable there, because
+`experiments/qg_psi_norm_stats.pt` existed only in the training worktree.
+`evaluation.qg_runs.norm_stats_paths(run)` resolves all three, config-first.
+
+### An evaluation reads the architecture from the run
+
+`evaluation.qg_runs.architecture(run)` returns `model_type`/`param_dim`/
+`cond_extra_dim`/`ic_dim` from `resolved_config.yaml`, falling back to
+`results.json` (runs archived before 2026-09-19) and then to
+`config/experiment/<run>.yaml`. Do not re-declare those at a call site:
+`eval_qg_neural_s0_s1.py` used to carry them as per-scheme literals, tied to the
+checkpoint by nothing, and a config change would have loaded weights into a
+differently-shaped model.
+
+`cond_mode` is deliberately *not* part of that. It is an evaluation-time choice
+(`"scenario"`), not a property of the checkpoint (trained `"true"`/`"noisy"`),
+and taking the recorded value would quietly turn the S1 comparison into a
+meaningless one.
+
+### Keeping it reproducible
+
+```bash
+# can the published report be regenerated from HERE?
+python scripts/consolidate_qg_archive.py --check
+
+# ...and from anywhere else? (canonical archive only)
+python scripts/consolidate_qg_archive.py --check --portable
+
+# link anything missing into the archive (hard links, no extra disk)
+python scripts/consolidate_qg_archive.py --apply --manifest
+```
+
+`--portable` is the one that matters and the one the old layout failed: an
+artifact reachable only through the training worktree's own
+`experiments/<run>` looks fine from there and does not exist anywhere else.
+
+The canonical archive is one physical directory, in the master worktree. A topic
+worktree reaches it with `ln -s <master>/experiments/qg experiments/qg`, and then
+`--apply` run from either one hard-links into the same place. (`experiments/` is
+gitignored, so this is local plumbing, not a committed path.)
+
+### What this cost before it was fixed
+
+`reports/qg/outputs/qg_neural_report.md`'s benchmark table lost all four neural
+rows in #208 (2026-09-16): the report was regenerated in a worktree where
+`qg_neural_s0_s1_cross_scenario/results_lag5_noise0.05_bias0.1.json` did not
+exist, the generator returned `None` for the neural half, and the table was
+published with the four DA rows alone. That JSON is now tracked, and
+`tests/test_qg_report_consistency.py` fails if a published row and its input
+disagree.
