@@ -1979,6 +1979,71 @@ prose scattered across three sweep directories
 (`qg_da_sensitivity_sweep/`, `qg_4dvar_sensitivity_sweep/`,
 `qg_obs_density_sweep/`).
 
+### Archive reproducibility: the QG benchmark re-runs from its checkpoints (2026-09-19,
+### `feature/qg-archive-reproducibility`)
+
+PR #219 made the L96 consolidated benchmark regenerable from archived
+artifacts. QG had the same defect in a sharper form, and it had already
+cost a published result: #208 regenerated
+`reports/qg/outputs/qg_neural_report.md` in a worktree where
+`qg_neural_s0_s1_cross_scenario/results_lag5_noise0.05_bias0.1.json` did
+not exist, `load_neural_summary` returned `None`, and the benchmark table
+shipped with its four DA rows and none of Q1-Q4. Nothing failed; the rows
+simply stopped being there.
+
+Three things lived only in the training worktree: that JSON, the
+`qg_*_norm_stats.pt` files (QG psi is globally z-scored, so a checkpoint
+without them predicts in units nobody can invert), and any run not yet
+moved into `experiments/qg/`. The 2026-09-14 consolidation had also used
+**symlinks** and named the archived runs by benchmark position (`Q1`..`Q4`)
+rather than `experiment_id` -- and `Q1` has meant three different
+architectures across the backbone migrations.
+
+What changed:
+
+- **`resolved_config.yaml` at training time** (`train_qg_neural.py`),
+  mirroring `train.py`. QG's entry point is argparse-driven, so the
+  effective config is the experiment YAML *merged with* CLI overrides --
+  which is what makes the archived `config.yaml` (a byte-identical copy of
+  the source YAML) an incomplete record. It also records the capacity
+  `build_model` actually used: `model.hidden_channels` in the experiment
+  YAML is a dead field for every DirectUNet scheme, so recording the YAML
+  value would state a capacity the weights may not have.
+- **Evaluation reads the architecture from the run**
+  (`evaluation/qg_runs.py`): `resolved_config.yaml` -> `results.json` ->
+  `config/experiment/<run>.yaml`, with the source named in the eval log.
+  `eval_qg_neural_s0_s1.py`'s `SCHEMES` is now run name + eval-time
+  `cond_mode` only. `cond_mode` stays at the call site deliberately: the
+  schemes train with `"true"`/`"noisy"` and evaluate with `"scenario"`, so
+  reading the trained value would quietly make the S1 column meaningless.
+- **One resolver for both case studies**: `evaluation/archive.py` became a
+  `RunArchive` layout with `L96` and `QG` instances; the module-level
+  functions stayed L96's, so no existing L96 caller changed. Norm-stats
+  resolution gained an archive-dir step, which is the actual fix for stats
+  that existed only where training ran.
+- **`scripts/consolidate_qg_archive.py`**, with a `--check --portable` mode
+  the L96 script lacks: it resolves through the canonical archive *only*,
+  answering "could another worktree regenerate this?" rather than the
+  question the training worktree always answers yes to. 23 artifacts
+  hard-linked (2.9 GB of archive, no new disk on a volume at 98%);
+  portable-unresolvable went 5 -> 0.
+
+Verified by re-running the whole S0/S1 evaluation from the archive (jobs
+54246/54247): every EV reproduces the published table at its own
+4-decimal precision (largest relative difference across all 32 stored
+metrics: 1.7e-05, float32 kernel selection on a different GPU -- not
+bit-identical, and the tracked JSON is left as published), and each of
+the four checkpoints `load_state_dict(strict=True)` into the model built
+from its own recorded architecture. `tests/test_qg_report_consistency.py` now
+fails if a published row and the tracked JSON behind it disagree.
+
+**Not addressed here** (open): `train_qg_neural.py` still calls
+`trainer.fit()` with no `ckpt_path` and no config fingerprint, so an
+interrupted run cannot resume -- the Q5 FDV1 sweep lost three 24h jobs to
+this on 2026-09-16 (small/M/large reached epochs 359/253/257 of 400, their
+`stage1_last.ckpt` intact and unusable). L96 has had
+`training/resume.py` since PR #178.
+
 ## L96 (two-scale Lorenz-96) — merged to master 2026-08-18
 
 - **Dynamics/DA baselines** (`feat/weighted-fast-coupling` merged into master, SW/MAOOAM excluded):

@@ -148,3 +148,63 @@ class TestManifest:
         archive.write_manifest("runA", {"run": "runA"})
         written = fake_tree / "l96" / "runA" / "manifest.json"
         assert json.loads(written.read_text())["run"] == "runA"
+
+
+class TestQGLayout:
+    """The QG archive is the same resolver at a different set of conventions.
+
+    Kept in one module rather than two because the conventions are the part that
+    differs -- where the weights sit, which cases exist, which stats file --
+    and duplicating the resolver per case study is how the two drift apart.
+    """
+
+    @pytest.fixture
+    def qg_tree(self, tmp_path, monkeypatch):
+        exp = tmp_path / "experiments"
+        (exp / "qg" / "runQ" / "checkpoints").mkdir(parents=True)
+        monkeypatch.setattr(archive, "ROOT", tmp_path)
+        monkeypatch.setattr(archive, "EXPERIMENTS", exp)
+        return exp
+
+    def test_archive_dir_is_per_system(self, qg_tree):
+        assert archive.QG.archive_dir == qg_tree / "qg"
+        assert archive.L96.archive_dir == qg_tree / "l96"
+
+    def test_finished_run_prefers_the_bare_state_dict(self, qg_tree):
+        run = qg_tree / "qg" / "runQ"
+        (run / "checkpoints" / "stage1_best.ckpt").write_bytes(b"x")
+        (run / "stage1_best.pt").write_bytes(b"x")
+        assert archive.QG.resolve_checkpoint("runQ").name == "stage1_best.pt"
+
+    def test_interrupted_run_falls_back_to_lightnings_own(self, qg_tree):
+        (qg_tree / "qg" / "runQ" / "checkpoints" / "stage1_last.ckpt").write_bytes(b"x")
+        assert archive.QG.resolve_checkpoint("runQ").name == "stage1_last.ckpt"
+
+    def test_only_s0_estimates_exist(self, qg_tree):
+        """QG runs evaluate S0 in-training; the S0/S1 table comes from a
+        separate cross-scenario evaluation, not from per-run arrays."""
+        with pytest.raises(ValueError):
+            archive.QG.resolve_estimates("runQ", "s1", required=False)
+
+    def test_stats_kept_with_the_archive_are_found(self, qg_tree):
+        """The breakage this fixed: checkpoints reachable from master, and the
+        normalization they are meaningless without reachable only from the
+        worktree that trained them."""
+        stats = qg_tree / "qg" / "qg_psi_norm_stats.pt"
+        stats.write_bytes(b"x")
+        assert archive.QG.resolve_norm_stats(None) == stats
+
+    def test_stats_key_selects_which_file(self, qg_tree):
+        (qg_tree / "custom_forcing.pt").write_bytes(b"x")
+
+        class Cfg:
+            data = {"norm_stats_path": "experiments/psi.pt",
+                    "forcing_norm_stats_path": "experiments/custom_forcing.pt"}
+        got = archive.QG.resolve_norm_stats(Cfg(), key="forcing_norm_stats_path")
+        assert got == qg_tree / "custom_forcing.pt"
+
+    def test_l96_module_functions_still_resolve_l96(self, qg_tree):
+        """The module-level API stayed L96's, so no existing caller changed."""
+        (qg_tree / "l96" / "runL").mkdir(parents=True)
+        (qg_tree / "l96" / "runL" / "estimates_s0.npz").write_bytes(b"x")
+        assert archive.resolve_estimates("runL", "s0").parent.parent.name == "l96"
