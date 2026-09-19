@@ -50,7 +50,10 @@ choice (`"scenario"`), not a property of the checkpoint (trained `"true"`/
 meaningless.
 
 **Verification:**
-- `pytest tests/ -m "not slow"` — 1003 passed, 3 skipped.
+- CI's own invocation, `pytest tests/ --deselect tests/test_joint_estimation.py
+  -m "not slow"` — 876 passed, 5 skipped, 35 deselected (13m44s), matching the
+  `pytest` check on the PR. (`test_joint_estimation.py` is CI's one standing
+  exclusion, tracked in `docs/scoping/refactor_plan.md`.)
 - `ruff check` on every touched file — clean.
 - Architecture read from each archived run matches the literals it replaces, and
   all four checkpoints `load_state_dict(strict=True)` into the model built from
