@@ -16,14 +16,21 @@ makes a Hydra-trained run indistinguishable from today's as far as evaluation is
 concerned. The plan therefore adopts the existing resolved-config schema as the
 Hydra schema rather than designing a new one.
 
-The cost centre is not the entry point but the **67 sbatch scripts** that pass
-the 37 CLI flags, most of which are the reproducible record of experiments
-already run — which rules out a hard cut and argues for a translation shim.
-Staged as four independently revertible PRs; PR 3 is the one that pays, because
-wiring `training/resume.py` in needs exactly the `DictConfig` the schema
-defines, and that closes the gap that cost the Q5 sweep three 24-hour jobs.
+The caller set that must move with the entry point is **16 sbatch scripts**, all
+tracked and none building a flag name dynamically, so the conversion is
+mechanical and lands in the same PR as the entry point; a missed script fails
+loudly, because Hydra rejects an unrecognized `--flag`. Staged as three
+independently revertible PRs; PR 3 is the one that pays, because wiring
+`training/resume.py` in needs exactly the `DictConfig` the schema defines, and
+that closes the gap that cost the Q5 sweep three 24-hour jobs.
 
-**Verification:** Documentation only. Claims checked against the tree: 67 sbatch
-scripts call `train_qg_neural.py`, 37 `add_argument` calls, 13 QG experiment
-configs, `model.hidden_channels` read by nothing, `train.py` pinned at
-`version_base="1.3"`.
+**Verification:** Documentation only. Claims checked against the tree:
+`grep -l train_qg_neural.py batch/*.sbatch` → 16 scripts, 37 `add_argument`
+calls, 13 QG experiment configs, `model.hidden_channels` read by nothing,
+`train.py` pinned at `version_base="1.3"`.
+
+**Correction (same day, pre-merge):** the first draft said 67 scripts and built
+the A-vs-B recommendation on it. That count came from `grep -rl ... batch/`,
+which swept in 51 job logs under `batch/logs/` that echo the command line they
+ran. Caught in review. At the real count the hard cut is the better option, so
+the recommendation was re-derived rather than restated.

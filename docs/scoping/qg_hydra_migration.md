@@ -55,35 +55,39 @@ Two things must not drift and are worth stating as invariants:
 | config root | none (flat per-experiment file) | `config/qg_default.yaml` + groups `data/`, `model/`, `training/` |
 | 13 experiment configs | flat YAML, read by `OmegaConf.load` | `# @package _global_` + `defaults: [/qg_default, _self_]`, as L96's already are |
 | schema | none | `conf/qg_schema.py` dataclasses, registered in the `ConfigStore` |
-| 67 sbatch scripts | `--nx 64 --epochs 200 ...` | `data.nx=64 training.epochs=200 ...` |
+| 16 sbatch scripts | `--nx 64 --epochs 200 ...` | `data.nx=64 training.epochs=200 ...` |
 | `LitModel` | QG has its own `QGNeuralLightning` | unchanged (out of scope) |
 
-The 67 sbatch scripts are the cost centre, and most of them are the reproducible
-record of experiments already run. That rules out a hard cut.
+The 16 sbatch scripts are the only caller set that has to move in lockstep with
+the entry point. All 16 are tracked, and none builds a flag name dynamically --
+shell variables appear only as flag *values* (`--cache-dir "$CACHE_DIR"`), so
+the conversion is mechanical.
 
 ## 2. Three options
 
-**A — hard cut.** Hydra only; rewrite all 67 batch scripts and 13 configs in one
-PR. Cleanest end state, largest blast radius, and it invalidates every command
-line recorded in `PLAN.md` and in past changelog entries.
+**A — hard cut (recommended).** Hydra only; convert the 16 batch scripts in the
+same PR as the entry point, since after the cut the old flags stop working and
+the two have to move together. What makes this safe at this size is that a
+missed script **fails loudly**: Hydra rejects an unrecognized `--flag` outright,
+so a forgotten conversion dies at submit time rather than silently training with
+default values. The cost is one mechanical pass over 16 tracked files.
 
-**B — bridge (recommended).** `@hydra.main` becomes the entry point; a
-translation shim maps the legacy `--flag value` form onto Hydra overrides,
-prints a one-line deprecation notice, and is deleted once the batch scripts are
-converted. Old command lines keep working throughout; new work is Hydra-native
-from day one. The shim is ~40 lines and one table (`--cols-per-day` ->
-`data.cols_per_day`), which is exactly the table the flags already are.
+**B — bridge.** `@hydra.main` plus a shim mapping the legacy `--flag value` form
+onto Hydra overrides, deleted once the scripts are converted. Worth ~40 lines of
+translation plus a later deletion only if the caller set is large or the
+conversion is not mechanical. Neither holds here, so B is the **fallback** --
+adopt it if PR 3 turns up a script that cannot be converted by inspection.
 
 **C — schemas only.** Keep argparse, adopt `conf/qg_schema.py` for validation
 alone. Cheapest, and it does fix the `cond_mode: true` YAML-boolean trap
 (`data/qg_neural.py` carries a bespoke error message for it today) — but no
 composition, no group defaults, no `--multirun`, so the capacity sweep and the
-obs-density sweeps stay hand-rolled. Not recommended except as a fallback if B
-stalls.
+obs-density sweeps stay hand-rolled. Not recommended except as a way to bank
+the schema benefits if the rest of the migration is deferred.
 
-## 3. Staging (B)
+## 3. Staging (A)
 
-Four PRs, each independently revertible, each leaving the tree runnable.
+Three PRs, each independently revertible, each leaving the tree runnable.
 
 **PR 1 — schema, no behaviour change.** Add `conf/qg_schema.py` mirroring the
 sections `write_resolved_config()` already writes; register in the `ConfigStore`;
@@ -97,8 +101,9 @@ experiment configs as `defaults`-composing overrides. Assert per config that
 composition reproduces the *current* effective values field by field — the
 migration's real test, and a mechanical one.
 
-**PR 3 — entry point.** `train_qg_neural.py` becomes `@hydra.main` with the
-legacy-flag shim. `version_base="1.3"` (so `hydra.job.chdir` stays `False`, §4).
+**PR 3 — entry point and callers.** `train_qg_neural.py` becomes `@hydra.main`;
+the 16 sbatch scripts convert in the same PR. `version_base="1.3"` (so
+`hydra.job.chdir` stays `False`, §4).
 Wire in `training/resume.py` at the same time: `resolve_experiment_dir()` and
 `ckpt_path=resume_ckpt_path(1)` need a `DictConfig` with `model`/`data`/
 `training`, which is exactly what PR 1 defines. **This is the PR that pays for
@@ -106,8 +111,8 @@ the migration** — it closes the gap that cost the Q5 sweep three 24-hour jobs 
 2026-09-16 (small/M/large reached epochs 359/253/257 of 400, `stage1_last.ckpt`
 intact and unusable, because `trainer.fit()` is called with no `ckpt_path`).
 
-**PR 4 — batch scripts.** Convert the 67 sbatch scripts, delete the shim. Can
-be split by directory or left to attrition; nothing else depends on it.
+If PR 3 grows uncomfortable, split the script conversion out behind option B's
+shim rather than landing a half-converted caller set.
 
 ## 4. Hazards
 
