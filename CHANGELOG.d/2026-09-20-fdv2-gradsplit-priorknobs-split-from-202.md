@@ -24,11 +24,13 @@ was already known to depend on trueprior, being valid only for
 multiplier, `subgrad+state+xtau` and `_CFM_ONLY_UPDATE_INPUTS`, and the
 `gradsplit_prior_scale`/`prior_residual`/`prior_dropout`/`prior_output_init_std`/
 `detach_var_cost_grad` constructor knobs); `models/monai_unet_adapter.py`
-(`monai_output_init_std`); `conf/schema.py`, `train.py`,
-`evaluation/neural_inference.py`, `eval_neural_l96.py`, `eval_fdv1_l96.py`
+(`monai_output_init_std`); `conf/schema.py`; `train.py`; `eval_fdv1_l96.py`
 (`--batch-size` was never forwarded); 10 experiment configs + batch scripts;
-`tests/test_fourdvarnet.py`, `tests/test_fourdvarnet_monai.py`,
-`tests/test_neural_inference.py`.
+`tests/test_fourdvarnet.py`, `tests/test_fourdvarnet_monai.py`. The
+`evaluation/neural_inference.py` / `eval_neural_l96.py` /
+`tests/test_neural_inference.py` changes in #202 belong to the **trueprior**
+layer (`e0b4639`, eval-pipeline support for `subgrad+state+trueprior`) and are
+deliberately not here.
 
 **Merge conflicts resolved (3, all unions).** Master gained `qg_T`/`qg_ny`/`qg_nx`
 parameters on `_build_backbone_unet` and `FourDVarNetSolver.__init__` after #202
@@ -53,9 +55,20 @@ autodiff" from "unmixed beats summed" for the H4 question in
 
 **Verification:** `pytest tests/test_fourdvarnet.py tests/test_fourdvarnet_monai.py
 tests/test_neural_inference.py -q -m "not slow"` (fdv-monai-proto) — **178
-passed**. `ruff check` on every touched module — **8 errors, all pre-existing**,
-verified by running ruff over master's own copies of the two offending files
-(`evaluation/neural_inference.py` F541 x5, `tests/test_fourdvarnet_monai.py`
-E402 x3) and getting an identical 8-for-8 result; this layer introduces none.
-QG regression check (`-k qg`) run separately because the `qg_T`/`qg_ny`/`qg_nx`
-union was the one resolution that could plausibly break an unrelated case study.
+passed** (`test_neural_inference.py` is not modified here but is run as a
+regression check, since `train.py`/`conf/schema.py` feed it). Lint reproduced
+with CI's exact command — `git diff --name-only --diff-filter=ACMR
+origin/master HEAD -- '*.py' | xargs ruff check` — **All checks passed** after
+the `# noqa` below. QG regression check (`-k qg`) run separately because the `qg_T`/`qg_ny`/`qg_nx`
+union was the one resolution that could plausibly break an unrelated case study
+-- 241 passed, 725 deselected.
+
+**One lint fix, deliberately in scope.** `tests/test_fourdvarnet_monai.py:6-8`
+carried three pre-existing `E402`s from its `pytest.importorskip("monai")`
+guard. They were invisible before because CI lints **changed files only**
+(`ci.yml`) and nothing had touched that file; adding tests to it surfaced them.
+The imports cannot move above the `importorskip` -- collecting the module would
+then raise `ImportError` instead of skipping when monai is absent -- so the fix
+is `# noqa: E402` plus a comment saying why, not a reordering. Five other test
+modules use the same guard without tripping E402, so no repo-wide
+`per-file-ignores` was added.

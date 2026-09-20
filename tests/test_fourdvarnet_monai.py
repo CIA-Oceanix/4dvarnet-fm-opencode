@@ -3,9 +3,12 @@ import torch
 
 monai = pytest.importorskip("monai")
 
-from models.fourdvarnet import FourDVarNetSolver
-from models.monai_unet_adapter import MonaiUNet1D
-from models.unet import UNet1D
+# E402 is expected here and must not be "fixed" by moving these up: the
+# importorskip above has to run first, or collecting this module raises
+# ImportError instead of skipping when monai is absent.
+from models.fourdvarnet import FourDVarNetSolver  # noqa: E402
+from models.monai_unet_adapter import MonaiUNet1D  # noqa: E402
+from models.unet import UNet1D  # noqa: E402
 
 
 class _MockBatch:
