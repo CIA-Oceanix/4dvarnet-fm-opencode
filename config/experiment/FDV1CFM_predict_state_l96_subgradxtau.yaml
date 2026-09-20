@@ -1,0 +1,69 @@
+# @package _global_
+# Same as FDV1CFM_predict_state_l96.yaml (FourDVarNetPredictStateCFM, M-tier
+# UNet1D, K_inner=5, N_outer=10, 400 epochs), but with ONE change:
+# update_input: subgrad+state+xtau instead of obs+state.
+#
+# New update_input mode (models/fourdvarnet.py, 2026-09-15), FourDVarNetPredictStateCFM
+# only: extends "subgrad+state"'s existing [obs-x, x-Phi(x), x] with a fourth
+# channel g_flow = x - beta_tau*x_tau, per reports/notes_4dvarnet_fm.pdf's
+# "energy-informed parameterization" (Sec. 3.3) -- the paper's third
+# residual term for the CFM inner-refinement operator R's inputs is
+# (alpha_tau^2*sigma_0^2)^-1 * (beta_tau*x^(k) - beta_tau^2*x_tau), which is
+# ill-conditioned as alpha_tau->0 (tau->1, dividing by a vanishing squared
+# term). This mode feeds the un-prefactored core residual instead (dropping
+# the (alpha_tau^2*sigma_0^2)^-1 scaling entirely) -- bounded/well-
+# conditioned everywhere on tau in [0,1] since x/x_tau are both state-scale
+# and beta_tau in [0,1].
+#
+# x_tau is the CFM's own outer flow-time conditioning value (this class's
+# forward() x_t argument, held fixed across the whole K_inner unroll --
+# distinct from the evolving inner-iteration estimate x); beta_tau =
+# self.interpolant.beta(tau) using the OUTER tau, not the inner iteration's
+# own tau_k. FourDVarNetSolver structurally rejects this mode (no outer
+# flow-time exists there at all) -- CFM-only by construction
+# (_CFM_ONLY_UPDATE_INPUTS).
+#
+# Tests whether adding this flow-consistency channel (beyond subgrad+state's
+# own obs+prior residuals) helps FDV1-CFM's mu=E[x1|x_tau,y] estimation, the
+# CFM-native analog of the whole subgrad+state-vs-grad+state investigation
+# this branch has been running for the plain (non-CFM) unrolled solver.
+# unet_backbone stays UNet1D (the only backbone FourDVarNetPredictStateCFM
+# supports today -- no monai option exists for this class), so this is NOT
+# directly comparable to the S-tier MonaiUNet1D runs elsewhere in this
+# investigation; comparable only to the existing M-tier UNet1D
+# FDV1CFM_predict_state_l96 baseline.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet_cfm
+  state_dim: 24
+  param_dim: 0
+  fdv_cfm:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    K_inner: 5
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    update_input: subgrad+state+xtau
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: false

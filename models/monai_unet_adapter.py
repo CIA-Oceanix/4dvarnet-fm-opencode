@@ -104,6 +104,7 @@ class MonaiUNet1D(nn.Module):
         use_obs: bool = True,
         output_dim: int = None,
         dropout: float = 0.1,
+        output_init_std: float = 0.0,
     ):
         super().__init__()
         _patch_resblock_for_1d()
@@ -130,6 +131,41 @@ class MonaiUNet1D(nn.Module):
             for module in self.backbone.modules():
                 if isinstance(module, _dmu.DiffusionUNetResnetBlock):
                     module.dropout = nn.Dropout(dropout)
+        if output_init_std > 0:
+            # DiffusionModelUNet's final output conv is zero_module()-
+            # initialized by MONAI itself (self.backbone.out[-1], a
+            # GroupNorm -> SiLU -> zero-weighted Convolution sequence) --
+            # safe/standard for an ordinary diffusion target (compared
+            # against a real, externally-supplied, nonzero label every
+            # step, so the zero-init gradient at that layer is nonzero from
+            # step 1 and training escapes it immediately). NOT safe when
+            # this network is used as models.fourdvarnet's prior_residual
+            # operator: there, Phi(x)=x+f(x) and prior_cost=||x-Phi(x)||^2
+            # algebraically collapses to ||f(x)||^2 -- a pure self-penalty
+            # on this network's own output with an exact critical point at
+            # f(x)=0, i.e. AT the zero-init starting point. Every gradient
+            # path that could move this layer's weight away from 0 (the aux
+            # prior_cost loss, the per-iteration g_prior signal, and the
+            # deep double-backward path from the outer supervised loss) is
+            # then provably zero too (each is proportional to f(x) and/or
+            # to this very weight, chain-rule), so the layer is a permanent
+            # fixed point, confirmed empirically on a real trained
+            # checkpoint (models/fourdvarnet.py::FourDVarNetSolver's
+            # prior_residual, job 53509, 2026-09-14: the final conv's
+            # weight norm was still bit-for-bit 0.0 after 300+ epochs).
+            # Overriding zero_module's exact-zero init here with a small
+            # nonzero std breaks that fixed point (2*f(x) is then nonzero
+            # from step 1, same mechanism that makes zero-init safe for an
+            # ordinary externally-targeted diffusion loss) -- the caller
+            # (FourDVarNetSolver) only ever passes this for prior_unet when
+            # prior_residual=True; self.unet (the main solver) is
+            # unaffected (its own supervised loss compares against the
+            # true state directly, no such self-referential collapse).
+            final_conv = self.backbone.out[-1]
+            conv_module = final_conv.conv if hasattr(final_conv, "conv") else final_conv
+            nn.init.normal_(conv_module.weight, mean=0.0, std=output_init_std)
+            if conv_module.bias is not None:
+                nn.init.zeros_(conv_module.bias)
 
     def forward(
         self,

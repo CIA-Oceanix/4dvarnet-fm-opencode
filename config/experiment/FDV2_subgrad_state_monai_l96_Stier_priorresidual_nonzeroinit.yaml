@@ -1,0 +1,76 @@
+# @package _global_
+# Same base as FDV2_subgrad_state_monai_l96_Stier.yaml (the config behind
+# subgrad+state-Stier(monai), the best standalone neural mean-estimate
+# model in this whole investigation -- S-tier MonaiUNet1D, init_state_var=
+# 0.1, aux_var_cost_weight=0.01), plus TWO additions:
+#
+#   1. prior_residual=true -- Phi(x) = x + prior_unet(x, tau) instead of the
+#      bare backbone output.
+#
+#   2. prior_output_init_std=0.1 -- overrides prior_unet's final output
+#      conv's zero_module() init with N(0, 0.1). See the sibling
+#      FDV2_grad_state_monai_l96_Stier_priorresidual_nonzeroinit.yaml's
+#      header for the full derivation of why exact zero-init is a permanent
+#      dead end under prior_residual=true (prior_cost=||f(x)||^2 self-
+#      cancellation).
+#
+# Unlike the grad+state sibling, NOT adding prior_dropout=0.0 here:
+# subgrad+state's g_prior=x-Phi(x) is a hand-written proxy, never calls
+# torch.autograd.grad at all -- no double-backward exists for this mode, so
+# there's no analogous "extra mask noise in a higher-order computation"
+# concern to decouple prior_unet's dropout from. dropout stays shared
+# (0.1) between self.unet and prior_unet, same as the original config.
+#
+# IMPORTANT: this is an ABLATION, not a fix for a known problem.
+# subgrad+state-Stier(monai)'s own prior_unet (prior_residual=false, this
+# config's own baseline) was checked directly and is NOT stuck -- its final
+# conv weight norm is 5.30 (clearly trained), because subgrad+state's
+# g_prior is LINEAR in Phi(x) (constant slope -1, never vanishes regardless
+# of Phi(x)'s magnitude) and prior_residual=false means prior_cost=
+# ||x-Phi(x)||^2 never collapses to a self-referential ||f(x)||^2 form in
+# the first place. This run tests whether prior_residual's Jacobian-anchor
+# benefit (established for grad+state) ALSO helps a scheme that was never
+# broken to begin with -- may help, hurt, or be a no-op; genuinely unknown.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: true
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    prior_residual: true
+    prior_output_init_std: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

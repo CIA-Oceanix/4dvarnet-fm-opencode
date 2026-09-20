@@ -313,6 +313,48 @@ class FourDVarNetConfig:
     # std ~ 0.316 in this normalized state space), sampled fresh every
     # forward() call, independent of update_input.
     init_state_var: float = 0.0
+    # 1.0 (default, no-op): multiplies gradsplit+state's g_prior channel
+    # AFTER normalization/soft-clipping. Diagnostic knob -- forcing it near 0
+    # (e.g. 1e-4) makes the fed tensor functionally close to obs+state's own
+    # cat([x, obs_clean]), to test whether a training plateau traces back to
+    # g_prior's contribution specifically. No effect on any other
+    # update_input mode.
+    gradsplit_prior_scale: float = 1.0
+    # False (default, backward-compatible): Phi(x) = prior_unet(x, tau), the
+    # bare backbone output. True: Phi(x) = x + prior_unet(x, tau), an
+    # explicit residual/identity anchor around the whole backbone (not just
+    # MONAI's internal zero-init, which only holds at initialization). Added
+    # after a Jacobian decomposition of gradsplit+state's real prior_cost
+    # gradient found the Jacobian term dominating and nearly orthogonal to
+    # the residual term on a plateaued checkpoint -- see _prior_ae's
+    # docstring in models/fourdvarnet.py.
+    prior_residual: bool = False
+    # None (default): prior_unet uses the same dropout as the main solver
+    # unet -- today's behavior. Set to decouple them, e.g. dropout for the
+    # main solver unet only (prior_unet's own forward is repeatedly re-run
+    # inside torch.autograd.grad(..., create_graph=True) for
+    # grad-only/grad+state/gradsplit+state, so dropout there adds fresh mask
+    # noise into that higher-order computation at every unrolled iteration).
+    prior_dropout: Optional[float] = None
+    # 0.0 (default, no-op): overrides prior_unet's (monai backbone only)
+    # final output conv's zero_module init with N(0, prior_output_init_std)
+    # instead of exact zero. Only meaningful alongside prior_residual=true --
+    # exact zero-init is a provable permanent dead end there (both prior_cost
+    # and the per-iteration g_prior signal are proportional to this layer's
+    # output, which is why the layer can never receive a nonzero gradient
+    # once it starts at exactly zero -- see models/monai_unet_adapter.py's
+    # MonaiUNet1D.__init__ docstring for the full derivation).
+    prior_output_init_std: float = 0.0
+    # False (default, backward-compatible; grad-only/grad+state only):
+    # create_graph=not detach_var_cost_grad for the per-iteration combined
+    # torch.autograd.grad(var_cost, x, ...) call. Does NOT change what's fed
+    # to the solver UNet (still the real, Jacobian-including gradient) --
+    # only whether the outer supervised loss can later differentiate
+    # through it into prior_unet's weights/prior_weight (which then train
+    # only via the aux prior_cost loss instead). See
+    # models/fourdvarnet.py::_build_update_input's docstring for the full
+    # derivation.
+    detach_var_cost_grad: bool = False
 
 
 @dataclass

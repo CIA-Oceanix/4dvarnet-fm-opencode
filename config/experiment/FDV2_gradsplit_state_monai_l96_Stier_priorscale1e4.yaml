@@ -1,0 +1,64 @@
+# @package _global_
+# DIAGNOSTIC ablation for FDV2_gradsplit_state_monai_l96_Stier.yaml: same
+# config exactly, but gradsplit_prior_scale=1e-4 (down from the default
+# 1.0). This multiplies g_prior AFTER normalization/soft-clipping, so the
+# tensor actually fed to the solver UNet becomes cat([g_obs, ~0, x]) --
+# functionally close to "obs+state"'s own cat([x, obs_clean]), since g_obs
+# is proportional to (x-obs) at observed times, the same information
+# "obs+state" gets directly (just via a real gradient of obs_cost rather
+# than the raw obs value itself).
+#
+# Purpose: the trainable-prior_weight run of this config (job 53440, killed
+# once prior_weight was shown to have no effect) and the fixed-prior_weight
+# rerun (job 53447) both plateaued/oscillated around val_loss 3.5-4.7
+# through epoch 10, well behind subgrad+state's clean descent at the same
+# tier and settings. This isolates whether that persistent plateau traces
+# back to g_prior's own contribution specifically, by comparing against a
+# config where it's been silenced almost entirely -- if THIS run trains
+# like a healthy obs+state/subgrad+state-style descent, g_prior (or its
+# normalization/soft-clip treatment) is implicated; if it plateaus the same
+# way, something else (e.g. the two-real-gradient double-autograd-call
+# per iteration itself) is the more likely cause.
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 24
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: gradsplit+state
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    grad_clip_range: 5.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    gradsplit_prior_scale: 1.0e-4
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
