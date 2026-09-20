@@ -29,28 +29,49 @@ a subtree split of this prefix yields `main.tex`, `refs.bib`, `sections/`,
 
 Overleaf's git bridge is **not on the free tier**. If you have it:
 
-1. In Overleaf, create a **blank project** (don't upload anything yet).
+1. In Overleaf, create a **blank project**; the first `push` populates it.
 2. *Menu → Git* → copy the URL, `https://git.overleaf.com/<project-id>`.
-3. Get a git token: *Account Settings → Git integration*. It is used as the
-   **password**; any username works.
+3. *Account Settings → Git integration* → generate a token, and put it in a
+   `0600` file (**not** in the remote URL — that writes it into `.git/config`
+   in plaintext, and `init` rejects such a URL):
+
+```bash
+umask 077 && printf '%s' '<your-token>' > ~/.config/overleaf-token
+```
+
 4. From anywhere in this repo:
 
 ```bash
 docs/papers/p1_structural_hypotheses/sync-overleaf.sh init https://git.overleaf.com/<project-id>
+docs/papers/p1_structural_hypotheses/sync-overleaf.sh status   # config + drift
 docs/papers/p1_structural_hypotheses/sync-overleaf.sh push     # repo  -> Overleaf
 docs/papers/p1_structural_hypotheses/sync-overleaf.sh pull     # Overleaf -> repo
 ```
 
-Edit in Overleaf, `pull` to bring changes back; edit here, `push` to send them.
-`pull` uses `--squash`, so one merge commit per sync rather than every Overleaf
-autosave.
+`scripts/overleaf-askpass.sh` supplies the credentials from that file, so the
+token never reaches a command line, your shell history, or `.git/config`.
 
-**Do not put the token in the URL** — it would land in `.git/config` in
-plaintext. Let git prompt for it and cache it:
+#### Two Overleaf quirks this works around
 
-```bash
-git config --global credential.helper 'cache --timeout=86400'
-```
+Both were established against a live project on 2026-09-20, and both break the
+obvious `git subtree push` approach:
+
+1. **The branch is `main`,** not `master`.
+2. **Overleaf refuses force pushes,** server-side:
+   `remote: hint: You can't git push --force to a Overleaf project.`
+
+(2) is fatal to `git subtree push`: a subtree split shares no ancestor with
+whatever Overleaf already has — a fresh project ships with a starter
+`main.tex` — so it can only land via a force, which is rejected.
+
+So `push` does not push the split history at all. It takes the split's *tree*,
+commits it with Overleaf's current head as the parent, and pushes that: an
+ordinary fast-forward, always legal, and it survives Overleaf autosaves that
+land between syncs.
+
+`pull` checks the remote tree into the prefix rather than using `git subtree
+pull`, which would drag Overleaf's per-keystroke autosave history into this
+repo. It leaves the result staged for you to review and commit.
 
 ### Option B — zip upload (free tier; one-way)
 
