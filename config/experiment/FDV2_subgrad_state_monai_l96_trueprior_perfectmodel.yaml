@@ -1,0 +1,91 @@
+# @package _global_
+# "subgrad+state+trueprior" (2026-09-15, models/fourdvarnet.py): the TRUE
+# known L96 ODE (Lorenz96Dynamics) as Phi instead of a learned prior_unet --
+# tests whether a "true"/physical prior can match/beat the DA baselines
+# under this same unrolled-solver framework, as a control on how much of
+# subgrad+state's benefit comes from a LEARNED differentiable prior vs. the
+# differentiable-prior mechanism itself.
+#
+# g_prior is the time-shifted dynamical-consistency residual
+# x[t+1] - Phi_ode(x[t]) (weak-constraint-4DVar style), not the pointwise
+# x-Phi(x) used by learned priors -- the true ODE is a genuine evolution
+# operator, not an autoencoder-like map, so only the time-shifted form is a
+# meaningful "is x consistent with the known dynamics" signal.
+#
+# "PERFECT MODEL" variant (this config): Phi always reads the window's TRUE
+# forcing/params (batch.true_forcing/batch.true_params), never the
+# DA-biased ones, both at train AND eval time -- i.e. this only targets the
+# S0 (true params/forcing at inference) evaluation config, deliberately not
+# yet testing how a trained solver degrades under S1's noisier params
+# (a separate "exposure" variant, training with noisy_da_bias mixed in, is
+# left for a follow-up once this one is checked against the DA baselines).
+#
+# state_dim=40 (NOT 24): Lorenz96Dynamics needs the FULL physical state
+# (NO=8 slow + NO*J=32 fast = 40) to be well-defined -- it cannot operate on
+# the 24-dim observed-subspace state every other FourDVarNetSolver config
+# uses. obs_var_indices (auto-derived by train.py's model_factory from
+# data.NO/J/obs_j) bridges the 24-dim sparse observations into this 40-dim
+# working space; obs_mask becomes genuinely per-channel (not just per-time)
+# via _embed_obs_to_full_state. Eval scoring must still restrict to the
+# 24-dim observed subspace (obs_var_indices) for apples-to-apples RMSE/EV
+# comparison against every other benchmark row -- see the dedicated
+# eval script for this scheme (not the shared prepare_dataset/BatchDict
+# path), not yet written as of this config.
+#
+# No prior_unet exists for this mode at all (Phi is the true ODE, zero
+# learnable parameters) -- aux_var_cost_weight/prior_residual/
+# prior_output_init_std/detach_var_cost_grad are all meaningless here and
+# deliberately omitted; trainable_prior_weight=false since prior_weight has
+# no gradient source in this branch (no _prior_cost call at all -- see
+# _build_update_input's "subgrad+state+trueprior" branch), avoiding a dead
+# trainable parameter.
+#
+# hidden_channels=[32,64,128]/monai_num_res_blocks=1 (S-tier, same as
+# subgrad+state-Stier's own best standalone config) -- these are generic
+# conv channel widths, independent of state_dim (only the first/last conv's
+# in/out channel counts change with state_dim).
+defaults:
+  - /lorenz96_default
+  - _self_
+
+model:
+  model_type: fourdvarnet
+  state_dim: 40
+  param_dim: 0
+  fdv:
+    hidden_channels: [32, 64, 128]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state+trueprior
+    R_var: 0.5
+    prior_weight: 1.0
+    clip_range: 50.0
+    trainable_prior_weight: false
+    init_state_var: 0.1
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 1
+    full_state_target: true
+
+training:
+  stage1:
+    epochs: 400
+    lr: 0.001
+    gradient_clip_val: 10.0
+    use_cosine_scheduler: true
+  stage2:
+    epochs: 0
+
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  full_state_target: true
+  with_params: true
+  with_true_forcing: true
+  param_names: ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]

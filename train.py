@@ -78,7 +78,8 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_interval=100, R_var=0.5, param_names=("F",),
                          obs_var_indices=None, use_biased_params=False,
                          resample_bias_draws=False, bias_max=0.2, norm_stats=None,
-                         noisy_da_bias=False, noisy_da_max=1.5, obs_density_cfg=None):
+                         noisy_da_bias=False, noisy_da_max=1.5, obs_density_cfg=None,
+                         with_true_forcing=False):
     # obs_density_cfg (see make_collate_fm) is TRAINING-only augmentation --
     # val must stay at full canonical density so its loss/metrics remain
     # comparable across epochs and against the eval protocol
@@ -90,12 +91,16 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                  obs_var_indices=obs_var_indices,
                  use_biased_params=use_biased_params,
                  resample_bias_draws=resample_bias_draws, bias_max=bias_max,
-                 noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max)
+                 noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max,
+                 with_true_forcing=with_true_forcing)
     return {
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
-                            shuffle=True, collate_fn=make_collate_fm(norm_stats, obs_density_cfg), **kw),
+                            shuffle=True,
+                            collate_fn=make_collate_fm(norm_stats, obs_density_cfg,
+                                                        with_true_forcing=with_true_forcing),
+                            **kw),
         "val": DataLoader(FlowMatchingDataset(datasets["val"], **fm_kw),
-                          collate_fn=make_collate_fm(norm_stats),
+                          collate_fn=make_collate_fm(norm_stats, with_true_forcing=with_true_forcing),
                           shuffle=False, **kw),
     }
 
@@ -333,6 +338,23 @@ def model_factory(cfg: DictConfig, device: torch.device):
     elif model_type == "fourdvarnet":
         from models.fourdvarnet import FourDVarNetSolver
         fdv = cfg.model.fdv
+        # full_state_target=True (default False, backward-compatible; only
+        # meaningful for update_input="subgrad+state+trueprior"): recomputes
+        # the SAME obs_var_indices formula used at data-loading time (see
+        # the "with_params"/"dataloader_obs_var_indices" block above) from
+        # cfg.data.NO/J/obs_j directly -- must match exactly, since it says
+        # which of state_dim's (here the FULL physical state) channels
+        # observation actually covers.
+        model_obs_var_indices = None
+        true_dynamics_dt = None
+        if fdv.get("full_state_target", False):
+            fdc = cfg.data
+            fNO, fJ, fobs_j = fdc.get("NO", 8), fdc.get("J", 4), fdc.get("obs_j", 2)
+            if fobs_j < fJ:
+                fX_idx = list(range(fNO))
+                fY_idx = [fNO + k * fJ + j for k in range(fNO) for j in range(fobs_j)]
+                model_obs_var_indices = tuple(fX_idx + fY_idx)
+            true_dynamics_dt = fdc.dt
         model = FourDVarNetSolver(
             state_dim=cfg.model.state_dim,
             hidden_channels=fdv.hidden_channels,
@@ -359,6 +381,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             prior_dropout=fdv.get("prior_dropout", None),
             prior_output_init_std=fdv.get("prior_output_init_std", 0.0),
             detach_var_cost_grad=fdv.get("detach_var_cost_grad", False),
+            obs_var_indices=model_obs_var_indices,
+            true_dynamics_dt=true_dynamics_dt,
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
@@ -386,7 +410,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
 
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
-                     param_dim=4, use_biased_params=False, obs_var_indices=None):
+                     param_dim=4, use_biased_params=False, obs_var_indices=None,
+                     with_true_forcing=False):
     from data.dataloader import FlowMatchingBatch, _l96_biased_param_vector
     states = w["true_state"].unsqueeze(0).to(device)
     if obs_var_indices is not None and states.shape[-1] != len(obs_var_indices):
@@ -394,14 +419,17 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
     obs = w["obs"].unsqueeze(0).to(device)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
-    if param_dim == 0:
+    true_forcing = w["forcing_true"].unsqueeze(0).to(device) if with_true_forcing else None
+    if param_dim == 0 and not with_true_forcing:
         return FlowMatchingBatch(states, obs, mask, forcing)
-    if use_biased_params:
-        params = torch.tensor([_l96_biased_param_vector(w)],
-                              dtype=torch.float32, device=device)
-    else:
-        params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
-                              dtype=torch.float32, device=device)
+    params = None
+    if param_dim > 0:
+        if use_biased_params:
+            params = torch.tensor([_l96_biased_param_vector(w)],
+                                  dtype=torch.float32, device=device)
+        else:
+            params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
+                                  dtype=torch.float32, device=device)
     if param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
         from data.dataloader import _l96_true_param_vector
         true_param_vec = _l96_true_param_vector(w)
@@ -409,7 +437,8 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
         true_param_vec = [w.get(f"true_{nm}", w.get(nm, 0.0)) for nm in param_names]
     true_params = torch.tensor([true_param_vec],
                                dtype=torch.float32, device=device)
-    return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params)
+    return FlowMatchingBatch(states, obs, mask, forcing, params=params, true_params=true_params,
+                             true_forcing=true_forcing)
 
 
 def _eval_true_param_list(w, param_names):
@@ -421,7 +450,7 @@ def _eval_true_param_list(w, param_names):
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
                    param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                   obs_var_indices=None, use_biased_params=False):
+                   obs_var_indices=None, use_biased_params=False, with_true_forcing=False):
     rmse_list = []
     param_list = []
     true_param_list = []
@@ -429,7 +458,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
-                                 obs_var_indices=obs_var_indices)
+                                 obs_var_indices=obs_var_indices,
+                                 with_true_forcing=with_true_forcing)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
@@ -497,13 +527,14 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 def save_trajectories(model, dataset, device, model_type, save_path,
                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None, use_biased_params=False):
+                      obs_var_indices=None, use_biased_params=False, with_true_forcing=False):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
-                                 obs_var_indices=obs_var_indices)
+                                 obs_var_indices=obs_var_indices,
+                                 with_true_forcing=with_true_forcing)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet"):
@@ -702,12 +733,24 @@ def main(cfg: DictConfig):
                 "min_keep": dc.get("obs_density_min_keep", 0),
             }
             logger.info(f"data.obs_density_augment=True: {obs_density_cfg}")
+        # full_state_target=True (default False, backward-compatible): pass
+        # obs_var_indices=None to FlowMatchingDataset specifically (NOT to
+        # base_cfg above, which still needs the real obs_var_indices to
+        # generate 24D obs/obs_mask) -- FlowMatchingDataset.__getitem__ only
+        # slices `true_state` to obs_var_indices when given one, so this
+        # keeps `states`/`true_state` at the FULL physical state dimension
+        # (e.g. 40D for NO=8,J=4) while obs/obs_mask stay 24D as generated.
+        # For models (like FourDVarNetSolver's subgrad+state+trueprior) that
+        # need the true full state to run the actual physical dynamics
+        # in-line, which cannot operate on a partially-observed subspace.
+        dataloader_obs_var_indices = None if dc.get("full_state_target", False) else obs_var_indices
         loaders = make_l96_dataloaders(
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond")),
-            obs_var_indices=obs_var_indices,
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond")
+                        or dc.get("with_params", False)),
+            obs_var_indices=dataloader_obs_var_indices,
             use_biased_params=(model_type in ("param_head", "param_head_unet")
                                or dc.get("use_biased_params", False)),
             resample_bias_draws=dc.get("resample_bias_draws", False),
@@ -716,6 +759,7 @@ def main(cfg: DictConfig):
             noisy_da_bias=dc.get("noisy_da_bias", False),
             noisy_da_max=dc.get("noisy_da_max", 1.5),
             obs_density_cfg=obs_density_cfg,
+            with_true_forcing=dc.get("with_true_forcing", False),
         )
     else:
         loaders = make_experiment_dataloaders(
@@ -814,6 +858,11 @@ def main(cfg: DictConfig):
     NO = dc.get("NO", 8)
     J = dc.get("J", 4)
     obs_j_local = dc.get("obs_j", 2)
+    # subgrad+state+trueprior (full_state_target=True) needs the window's true
+    # forcing/params at eval time too -- model.sample() differentiates through
+    # the actual L96 ODE, which requires them regardless of param_dim (see
+    # _make_eval_batch).
+    eval_with_true_forcing = dc.get("with_true_forcing", False)
     for key in test_keys:
         if key not in datasets:
             continue
@@ -821,14 +870,16 @@ def main(cfg: DictConfig):
             m, s, prmse = evaluate_model(model, datasets[key], device, model_type,
                                          return_params=True, param_names=param_names,
                                          param_dim=param_dim, obs_var_indices=obs_var_indices,
-                                         use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                                         use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                                         with_true_forcing=eval_with_true_forcing)
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
             m, s = evaluate_model(model, datasets[key], device, model_type,
                                   param_names=param_names, param_dim=param_dim,
                                   obs_var_indices=obs_var_indices,
-                                  use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                                  use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                                  with_true_forcing=eval_with_true_forcing)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -840,7 +891,8 @@ def main(cfg: DictConfig):
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
                               param_names=param_names, param_dim=param_dim,
                               obs_var_indices=obs_var_indices,
-                              use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                              use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                              with_true_forcing=eval_with_true_forcing)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 

@@ -355,6 +355,17 @@ class FourDVarNetConfig:
     # models/fourdvarnet.py::_build_update_input's docstring for the full
     # derivation.
     detach_var_cost_grad: bool = False
+    # False (default, backward-compatible; only meaningful alongside
+    # update_input="subgrad+state+trueprior"): tells train.py's
+    # model_factory to compute obs_var_indices/true_dynamics_dt from
+    # cfg.data (NO/J/obs_j/dt) and pass them to FourDVarNetSolver, and tells
+    # the data-loading path to leave `states`/`true_state` at the FULL
+    # physical state dimension (obs_var_indices=None passed to
+    # FlowMatchingDataset there) instead of pre-slicing to the observed
+    # subspace -- the true L96 dynamics needs every fast-Y component to be
+    # well-defined at all (see models/fourdvarnet.py's
+    # _true_ode_prior_residual docstring).
+    full_state_target: bool = False
 
 
 @dataclass
