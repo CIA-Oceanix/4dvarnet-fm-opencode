@@ -1,0 +1,269 @@
+\section{Evidence}
+\label{sec:evidence}
+
+\subsection{The price of H2, with a built-in control}
+\label{sec:price}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{scheme} & \textbf{\Sz{} RMSE} & \textbf{\So{} RMSE} & $\So/\Sz$ & \textbf{EV \Sz{} $\to$ \So{}} \\
+\midrule
+Strong-4D-Var          & 0.8116 & 1.4617 & \textbf{1.801} & $0.748 \to 0.233$ \\
+ETKF                   & 0.8883 & 1.4998 & \textbf{1.688} & $0.692 \to 0.215$ \\
+EnKF                   & 0.9131 & 1.5381 & \textbf{1.684} & $0.676 \to 0.172$ \\
+\addlinespace
+DirectUNet-M           & 0.5064 & 0.5072 & 1.002 & $0.899 \to 0.898$ \\
+FDV1-S                 & 0.4012 & 0.3994 & 0.996 & $0.936 \to 0.936$ \\
+subgrad+state-S\,+\,SDA3 & 0.3411 & 0.3403 & 0.997 & $0.952 \to 0.952$ \\
+\bottomrule
+\end{tabular}
+\caption{Lorenz-96, 200 windows, pooled RMSE and explained variance.
+\textbf{The three blocks are different method classes and the last three rows'
+ratios must be read through Table~\ref{tab:classes}}: DirectUNet and FDV1 are
+model-free, so their $\So/\Sz \approx 1$ is definitional. Only the classical
+block's degradation is a measurement of model-error cost.
+Source: \texttt{reports/l96/outputs/l96\_consolidated\_benchmark.md}.}
+\label{tab:price}
+\end{table}
+
+Classical DA degrades by $1.68$--$1.80\times$ from \Sz{} to \So{}, and explained
+variance falls from $\sim$0.7 to $\sim$0.2. That is the unbuffered cost of H2:
+the model \emph{is} the prior, so a parameter bias is not a perturbed input but
+a corrupted prior, compounding over a 500-step window.
+
+\subsubsection{Why conditioned learned estimators absorb it: parameter
+conditioning is nearly inert}
+\label{sec:inert}
+
+A conditioning ladder was built to test precisely this. Its \Sz{} numbers are the
+interesting part.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+\textbf{scheme} & \textbf{conditioning} & \textbf{\Sz{}} & \textbf{\So{}} & $\So/\Sz$ \\
+\midrule
+SDA1 & none (unconditional prior)             & 0.5532 & 0.5521 & 0.998 \\
+SDA2 & \emph{true} params $+$ corrupted forcing & 0.5588 & 0.5610 & 1.004 \\
+SDA3 & \emph{noisy} params                     & \textbf{0.5365} & 0.5355 & 0.998 \\
+\bottomrule
+\end{tabular}
+\caption{Lorenz-96 conditioning ladder, pooled RMSE. Conditioning on \emph{true}
+physical parameters is 1.0\% \emph{worse} than not conditioning at all;
+conditioning on \emph{noisy} ones is 3.0\% better.}
+\label{tab:ladder}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{family} & \textbf{unconditional} & \textbf{$+$ model-information conditioning} & \textbf{effect} \\
+\midrule
+SDA (guided)             & 0.5532 & 0.5588 (true params)       & $+1.0\%$ worse \\
+SDA (non-monai, guided)  & 0.7185 & 0.7074 (mixed)             & $-1.5\%$ better \\
+VanillaCFM ($\tau{=}0$)  & 0.6329 & 0.6389 (corrupted forcing) & $+0.9\%$ worse \\
+SDA (guided)             & 0.5532 & 0.5365 (\emph{noisy} params) & $-3.0\%$ better \\
+\bottomrule
+\end{tabular}
+\caption{Within-family comparisons only --- backbones and normalisation differ
+between families, so absolute levels are not comparable across rows.}
+\label{tab:families}
+\end{table}
+
+Conditioning on model information moves \Sz{} skill by at most $\sim$1.5\%, and
+the sign is not consistent across families. It is, to a good approximation,
+\emph{inert}. The one variant that reliably helps is \emph{noisy} conditioning,
+which looks like regularisation rather than information use.
+
+This is the sharpest available statement of the thesis. The learned schemes are
+robust to corrupted model parameters largely \emph{because they barely depend on
+them} --- the observations carry the information. Classical DA has no such
+fallback. H2 binds not because model information is unhelpful, but because DA
+has no way to down-weight it.
+
+\paragraph{The training-exposure control has been run.}
+One might object that the learned schemes see \So{}-level error during training.
+The configuration trained at zero forcing/state bias --- the only one that never
+does --- gives \Sz{} 0.7046 / \So{} 0.7033, ratio 0.998, indistinguishable from
+its \So{}-exposed sibling (0.997). Removing training-time exposure entirely
+leaves the invariance intact.
+\caveat{This control has no counterpart in the canonical benchmark table, which
+is scoped to a single backbone family. It is cited to its own run artefact.}
+
+\subsection{H3b: ODE sensitivity is not a proxy for posterior sensitivity}
+\label{sec:sensitivity}
+
+Write the model-uncertainty pair as $(\theta, z)$ --- physical parameters and
+forcings. Two different sensitivities are in play, and \emph{classical DA cannot
+separate them}:
+
+\begin{description}[leftmargin=2em,style=nextline]
+  \item[Model sensitivity, $\partial \xv_{\mathrm{ODE}} / \partial(\theta,z)$.]
+    How much the \emph{free-running} trajectory moves. In a chaotic system this
+    is Lyapunov-amplified and large; Section~\ref{sec:price}'s
+    $1.68$--$1.80\times$ is an instance of it.
+  \item[Posterior sensitivity,
+        $\partial\, p(\xv \mid \yv, \theta, z) / \partial(\theta,z)$ at fixed $\yv$.]
+    How much the actual object of inference moves.
+\end{description}
+
+Classical DA conflates the two \textbf{by construction}, because its estimator
+\emph{is} the ODE: every route from $(\theta,z)$ to the analysis passes through
+the integration, so the analysis inherits the model sensitivity whether or not
+the posterior has it. Its \Sz{}$\to$\So{} degradation therefore measures
+\emph{its own estimator's} sensitivity, and cannot be read as a measurement of
+how much $(\theta,z)$ uncertainty matters for $p(\xv \mid \yv, \theta, z)$.
+
+A conditioned amortised estimator measures the other quantity directly: it takes
+$(\theta,z)$ as inputs at fixed $\yv$, so perturbing the conditioning while
+holding the observations fixed is a finite-difference estimate of posterior
+sensitivity. Across three families that perturbation moves skill by
+$\leq 1.5\%$, and full corruption by $\sim 0.2\%$.
+
+\paragraph{Consequence.}
+The standard practice of assessing parameter and forcing uncertainty by
+\emph{propagating it through the model} systematically \textbf{overstates} its
+effect on the posterior whenever the observations are informative, and the
+overstatement is exactly the gap between the two sensitivities --- here,
+$1.68$--$1.80\times$ against $\leq 1.5\%$.
+
+\paragraph{Prediction.}
+Posterior sensitivity should \emph{grow} as observations sparsify, since less of
+$(\theta,z)$ is screened off by $\yv$. Section~\ref{sec:marginal}'s collapse is
+the shadow of the same mechanism: at low density DA has nothing but the model,
+so model error and observation sparsity \emph{compound rather than add}.
+\needsrun{Experiment D7 --- both sensitivities on one grid of observation density
+$\times$ perturbation amplitude. The crossover density is the paper's second
+deliverable number.}
+
+\subsection{H2 $\times$ S-a: model error destroys the marginal value of observations}
+\label{sec:marginal}
+
+This is the paper's spine, and the finding that makes S-a more than a restatement
+of Section~\ref{sec:price}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{method} & \textbf{\Sz{}: gain from $2\times$ obs} & \textbf{\So{}: same gain} & \textbf{collapse} \\
+\midrule
+Strong-4D-Var & $0.9701 \to 0.7788$ (\textbf{19.7\%}) & $1.4751 \to 1.4276$ (\textbf{3.2\%})  & $\mathbf{6.2\times}$ \\
+ETKF          & $1.0973 \to 0.8815$ (19.7\%)          & $1.6367 \to 1.4680$ (10.3\%)          & $1.9\times$ \\
+EnKF          & $1.0927 \to 0.9046$ (17.2\%)          & $1.6503 \to 1.5022$ (9.0\%)           & $1.9\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Lorenz-96, \emph{temporal} observation density doubled
+(\texttt{obs\_interval} $200 \to 100$, i.e.\ 15 $\to$ 30 observations per
+window). A separate configuration from Table~\ref{tab:price} --- all five
+parameters randomised $\pm 20\%$ --- so the two tables must not be cross-quoted.
+Source: \texttt{reports/l96/outputs/s0\_s1\_obs\_density\_da\_baselines.md}.}
+\label{tab:marginal}
+\end{table}
+
+Under model error, doubling the observations buys strong-constraint 4D-Var
+3.2\%. In the fast-variable subspace the story is starker still: explained
+variance on the observed fast variables goes $+0.417 \to -0.011$ at the sparser
+density, and $+0.622 \to +0.047$ at the denser one.
+
+\textbf{H2 does not merely set an error floor; it decouples the analysis from the
+observations.} A method whose prior is a wrong model cannot be rescued by more
+data --- which is exactly the regime of sparse-observation geophysical DA.
+
+\subsubsection{Corollary: the adjoint's value is conditional on model fidelity}
+\label{sec:adjoint}
+
+Table~\ref{tab:marginal} read down a different column. Strong-4D-Var is the only
+classical baseline here that uses a \emph{gradient of the dynamics}; EnKF and
+ETKF are gradient-free. At \Sz{} the adjoint method and the best ensemble filter
+convert extra observations into skill at an \emph{identical} rate (19.7\% each).
+Under model error the adjoint method's return collapses $3.3\times$ harder than
+either gradient-free filter's.
+
+The gradient is not neutral under model error: it is the mechanism by which a
+\emph{wrong} model is trusted most thoroughly, because the descent direction is
+computed through the very dynamics that are wrong.
+
+\paragraph{This is a claim about marginal value, not about levels.}
+Strong-4D-Var remains the best classical method at every density in both
+scenarios of this configuration (e.g.\ \So{} at the sparser density: 1.4751
+against ETKF's 1.6367). ``The adjoint stops helping'' would be false. What
+collapses is $\mathrm{d}\,\text{skill}/\mathrm{d}\,\text{density}$.
+
+\subsection{H3a: the choice of state variable changes DA skill at identical physics}
+\label{sec:representation}
+
+In the QG testbed, a \texttt{psi\_state} variant integrates the same dynamics
+with the streamfunction as the state variable. The $q$-space physics is
+bit-identical --- free forecasts agree to $\sim 10^{-6}$ relative --- and only
+the representation differs, and with it the observation operator, which becomes
+a trivial index lookup.
+
+The result: \texttt{psi\_state} gives the \emph{best per-field streamfunction
+analysis} ($\psi_1, \psi_2$ EV $\approx 0.98$) and a \emph{degenerate potential
+vorticity field} ($q$ EV $= -3.2$ against the $q$-state reference $+0.34$),
+because the inversion $q \approx \nabla^2 \psi$ amplifies high-wavenumber
+$\psi$-analysis error by $K^2$. At matched observation noise the $\psi$-state
+$q$-field EV is 0.583 against the $q$-state 0.752.
+
+This is H3a in one experiment: identical dynamics, identical information, and a
+large skill difference produced purely by which variable is called ``the
+state''. The ODE representation is not a neutral container.
+\caveat{The headline $-3.2$ is partly a metric choice: the aggregate score
+reports the $q$ field. Per-field numbers are given above and should be the ones
+quoted.}
+
+\subsection{H1 $+$ H3a: the ensemble-Kalman class carries a non-Gaussian deficit
+by construction}
+\label{sec:nongaussian}
+
+Write any inversion operator in the exact additive partition
+$\Psiop = \Psimean + \PsiG + \PsiNG$, with $\PsiG$ an affine gain term and
+$\PsiNG$ the residual. For EnKF, ETKF and ensemble smoothers, $\PsiNG \equiv 0$
+--- the Gaussian update \emph{is} the method. This is not a tuning deficiency; it
+is a statement about the class.
+
+The measured consequence is that \emph{no scheme evaluated is simultaneously
+accurate and calibrated}. The only configuration carrying a full non-Gaussian
+branch is 20--25\% over-dispersive (spread/skill ratio relative to target
+$1.20 / 1.22 / 1.24$ at $N = 6 / 10 / 30$ --- stable in $N$, hence a sampler
+property rather than a sample-size artefact), while every scheme that closes the
+RMSE gap does so by importing a deterministic mean and collapses to ratios
+$0.28$--$0.59$ against a target of $0.967$.
+
+\subsection{Localisation and inflation as H3a symptoms, and the tuning evidence}
+\label{sec:tuning}
+
+The QG study found the localisation radius was untuned \emph{even at the
+reference observation density}, and that its optimum moves with density
+(radius $6.0 \to 2.0$ for $\leq 32$ observed columns, $1.0$ at 64; ridge
+parameter $1.0 \to 0.1$). Localisation is a patch for an ensemble's inability to
+represent the covariance at finite $N$ --- an H3a cost --- and the fact that its
+optimum tracks the \emph{observation configuration} is a small, clean instance of
+what H1 forecloses.
+
+This work also does double duty as fairness evidence: the tuning sensitivity of
+the classical baselines was mapped, not assumed. A second study, sweeping the
+background- and model-error variance scalings of 4D-Var, returned a
+\textbf{negative} result --- the existing defaults were already best. We report
+both.
+
+\subsection{A motivating ordering that is not yet evidence}
+\label{sec:ordering}
+
+At \Sz{} on Lorenz-96, sequential filters (ETKF 0.8883, EnKF 0.9131) are worse
+than the window variational method (Strong-4D-Var 0.8116), which is in turn far
+worse than window-amortised learned estimators (0.3411--0.5064). This is
+suggestive of H1 but \textbf{confounded}: amortisation, learning and capacity all
+vary at once.
+\needsrun{Experiment D1 --- filter vs.\ window-smoother vs.\ window-amortised at
+matched model, matched observations and matched compute. This is what turns the
+ordering into evidence for H1.}

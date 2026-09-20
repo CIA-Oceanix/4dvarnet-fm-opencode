@@ -1,0 +1,77 @@
+\section{Limitations and threats to validity}
+\label{sec:limitations}
+
+We state these rather than cash them in.
+
+\paragraph{The \Sz{}/\So{} axis means different things for different method
+classes.}
+Two issues, in descending severity. First, \So{} is a \emph{no-op} for
+model-free learned rows: they receive no parameters and run no forward model, so
+their $\So/\Sz \approx 1.00$ carries no information about robustness and is never
+tabled as such (Table~\ref{tab:classes}). Second, and applying even to the
+\emph{conditioned} rows, being handed biased parameters is not the same exposure
+as \emph{integrating} a biased model for a 500-step window: one is an input
+perturbation, the other compounds through time. Experiment D2 exists to put both
+on a common axis. Section~\ref{sec:marginal}'s intra-classical result needs
+neither caveat and stands on its own.
+
+\paragraph{``Your baselines were under-tuned.''}
+The standard reply to any DA-versus-learned comparison. Our mitigation is
+evidential rather than rhetorical: the localisation and inflation sensitivity
+studies of Section~\ref{sec:tuning}, and the 4D-Var variance-scaling study that
+returned a negative result. Both are reported as an appendix rather than left as
+separate notes.
+
+\paragraph{Different configurations must not be cross-quoted.}
+Table~\ref{tab:price} and Table~\ref{tab:marginal} come from different
+experimental configurations --- different observation counts, different
+parameter-randomisation breadth. Ratios from one are not comparable to
+absolute levels in the other, and we do not compare them.
+
+\paragraph{The circularity objection.}
+An amortised estimator needs a simulator to generate its training data. If that
+simulator is the truth model, the comparison has handed it the truth --- and in
+operations there is no truth model. This is the deepest objection to this line of
+work and we do not claim to fully answer it. Our framing is therefore about
+\emph{where prior information enters and what it costs}, not ``learned beats
+physical''. The honest arm is a hybrid trained on a biased model and tested
+against a different truth.
+\todo{A self-supervised training objective --- a weak-constraint variational cost
+evaluated on the estimator's own output, with no ground-truth supervision at all
+--- is now implemented and is a direct, if partial, answer to this objection. It
+has not been run. Decide whether it belongs in this paper or the companion.}
+
+\paragraph{H2 as a strawman.}
+No practitioner believes model fidelity is the only route to skill. We state H2
+as \emph{binding}, not naive; D0 and D2 measure how weak the available buffers
+are rather than assuming they are absent.
+
+\paragraph{Idealised testbeds.}
+Both systems are idealised. That is what makes ``matched everything'' definable
+precisely enough for a marginal-value measurement to be meaningful, but a
+referee will reasonably ask about transfer to operational systems. We own this
+in scope rather than over-claim.
+
+\section{Positioning}
+\label{sec:positioning}
+
+\todo{Every citation below is from memory and must be verified against the
+literature before a bibliography exists. No reference in \texttt{refs.bib} has
+been checked.}
+
+The DA review literature frames the field's standard commitments; the
+assimilation-in-the-unstable-subspace line gives the closest existing account of
+\emph{why} DA's effective degrees of freedom are limited; weak-constraint 4D-Var
+is the canonical relaxation of H2; innovation-based diagnostics supply the
+standard consistency checks --- whose assumptions are violated when the estimator
+is trained to fit the observations. On the learned side, the DA-with-learned-
+model-error-correction line and the score-based / flow-based assimilation line
+are the nearest neighbours.
+
+\paragraph{The gap.}
+The model-error literature asks how to \emph{correct} the model; the
+unstable-subspace literature explains the dimensionality of the analysis; the
+learned-DA literature proposes hybrids. As far as our survey goes, none of them
+\emph{measures the marginal value of observations as a function of model error},
+or attributes the deficit to named components of the inference operator.
+Section~\ref{sec:marginal} is, on that reading, an unreported effect.

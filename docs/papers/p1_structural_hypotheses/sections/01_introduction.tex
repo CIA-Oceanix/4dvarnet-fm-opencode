@@ -1,0 +1,74 @@
+\section{Introduction}
+\label{sec:intro}
+
+Operational data assimilation (DA) is built on commitments so standard that they
+are seldom stated as hypotheses at all. The analysis is produced by cycling:
+propagate a state estimate, update it when observations arrive, repeat. Skill is
+understood to follow model fidelity, so model development and DA development are
+the same programme. The state is a point in the phase space of a differential
+equation, and its uncertainty is a perturbation of that point --- a covariance,
+or an ensemble. Prior errors travel by the same integration that carries the
+signal.
+
+Each of these buys something real, and none is foolish. Together, we argue, they
+also explain two symptoms that the field observes repeatedly and treats as
+tuning problems:
+
+\begin{description}[leftmargin=2em,style=nextline]
+  \item[\textnormal{\textbf{S-a --- the marginal value of observations.}}]
+    DA converts additional sparse observations into skill inefficiently, and the
+    inefficiency worsens sharply under model error. The quantity of interest is
+    not RMSE at a given observation density but
+    $\mathrm{d}\,\text{skill}/\mathrm{d}\,\text{density}$, measured at matched
+    everything.
+  \item[\textnormal{\textbf{S-b --- posterior quality.}}]
+    DA's posterior characterisation is structurally impoverished, not merely
+    mis-calibrated: spread/skill ratios miss their reliability target in ways
+    that no inflation parameter repairs, because the deficit is a property of
+    the estimator class.
+\end{description}
+
+\paragraph{What this paper is, and is not.}
+This is a \emph{diagnosis} paper. We propose no new assimilation method. That is
+a deliberate choice rather than a limitation of scope: a method paper invites
+the reply ``your baseline was under-tuned'', whereas the claim here concerns
+what the standard baselines cannot do \emph{however well tuned}. We therefore
+report the tuning-sensitivity studies (Section~\ref{sec:tuning}) as evidence
+that the baselines were mapped rather than assumed, including one that returned
+a negative result.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=2em]
+  \item We state four structural hypotheses (\textbf{H1}--\textbf{H3b},
+    Section~\ref{sec:hypotheses}) in a form that admits falsification, and show
+    that each can be relaxed \emph{separately} so that the resulting change in
+    skill can be attributed to a named commitment.
+  \item We show that model error \emph{collapses the marginal value of
+    observations} rather than adding a constant error offset
+    (Section~\ref{sec:marginal}): a $6.2\times$ collapse for strong-constraint
+    4D-Var against $1.9\times$ for ensemble filters. To the best of our survey
+    this effect is unreported.
+  \item We show that the ODE representation's sensitivity to model parameters is
+    \emph{not} a proxy for the posterior's sensitivity to the same parameters
+    (Section~\ref{sec:sensitivity}), and that classical DA conflates the two by
+    construction because its estimator \emph{is} the model. The consequence is
+    methodological: assessing parameter uncertainty by propagating it through
+    the model systematically overstates its effect on the posterior whenever the
+    observations are informative.
+  \item We show that the choice of state variable, at bit-identical physics,
+    changes analysis skill substantially and predictably
+    (Section~\ref{sec:representation}).
+  \item We record a corollary about gradient-based assimilation
+    (Section~\ref{sec:adjoint}): the value of the adjoint is conditional on
+    model fidelity. At matched conditions the adjoint method and the best
+    ensemble filter convert extra observations into skill at an identical rate;
+    under model error the adjoint method's return collapses $3.3\times$ harder.
+\end{enumerate}
+
+\paragraph{Testbeds.}
+All figures are from this study's own runs on two systems: a two-scale
+Lorenz-96 model and a two-layer quasi-geostrophic (QG) channel. Both are
+idealised. We take that as the price of being able to define ``matched
+everything'' precisely enough for a marginal-value measurement to mean
+something, and we return to the question of transfer in
+Section~\ref{sec:limitations}.

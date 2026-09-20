@@ -1,0 +1,69 @@
+\section{Experimental setup}
+\label{sec:setup}
+
+\subsection{Testbeds}
+
+\paragraph{Two-scale Lorenz-96.}
+Eight slow variables coupled to $J$ fast variables each, integrated with RK4.
+The assimilation window is 500 steps. Observations cover a 24-dimensional
+subspace; the full physical state is 40-dimensional. Every window draws its own
+physical parameters, randomised by $\pm 20\%$, so that no method can memorise a
+single parameter setting.
+
+\paragraph{Two-layer quasi-geostrophic channel.}
+A Phillips-type two-layer channel, integrated in potential vorticity $q$ with a
+spectral inversion for the streamfunction $\psi$, forced by a moving-storm wind
+stress curl. Observations are sparse meridional columns, each observed once per
+day at its own randomly sampled intra-day step.
+
+\subsection{The model-error axis: \Sz{} and \So{}}
+\label{sec:s0s1}
+
+Two scenarios are used throughout:
+\begin{description}[leftmargin=2em,style=nextline]
+  \item[\Sz{} (perfect model).] The assimilating model's parameters equal those
+    used to generate the truth for that window.
+  \item[\So{} (model error).] The assimilating model's parameters carry an
+    additional $\pm 10\%$ bias. The truth is drawn from the same distribution in
+    both scenarios; only the \emph{model handed to the estimator} changes.
+\end{description}
+
+\paragraph{A caveat that must be stated rather than cashed in.}
+The \Sz{}/\So{} axis prices model error \emph{only for methods that run a forward
+model at inference}. A learned estimator that receives no parameters and
+integrates nothing is definitionally unaffected, and its $\So/\Sz \approx 1.00$
+is not a robustness result. We therefore separate three method classes
+throughout (Table~\ref{tab:classes}) and never table a model-free ratio as
+cross-class robustness evidence.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}p{0.22\textwidth}p{0.36\textwidth}p{0.34\textwidth}@{}}
+\toprule
+\textbf{class} & \textbf{what \So{} changes for it} & \textbf{a ratio $\approx 1.00$ means} \\
+\midrule
+classical DA (4D-Var, EnKF/ETKF) & integrates a biased forward model; the bias
+compounds through the integration & n/a --- they degrade by $1.68$--$1.80\times$ \\
+model-free learned & nothing: no parameters, no forward model & \emph{definitional};
+carries no information \\
+conditioned learned & the conditioning inputs are biased or corrupted & a genuine
+robustness result \\
+\bottomrule
+\end{tabular}
+\caption{What \So{} means depends on whether, and how, a method consumes model
+information. This distinction governs every cross-class statement below.}
+\label{tab:classes}
+\end{table}
+
+\subsection{Metrics}
+RMSE is reported pooled over all windows and timesteps
+($\sqrt{\overline{(\cdot)^2}}$), the same convention for every method. Explained
+variance (EV) is reported per field. For ensemble methods the spread/skill ratio
+is compared against the finite-ensemble reliability target
+$\sqrt{(N-1)/(N+1)}$, and proper ensemble CRPS / energy scores are computed at a
+single uniform ensemble-size convention ($N=30$).
+
+\needsrun{Rank histograms are the primary posterior-diagnostic figure for a DA
+readership and are not yet implemented anywhere in the codebase. This is the
+largest new-code item remaining (experiment D5).}
