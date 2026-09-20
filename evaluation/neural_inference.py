@@ -204,11 +204,11 @@ def load_checkpoint(checkpoint_path: str, config_path: Optional[str] = None) -> 
         ):
             if not config_path:
                 raise ValueError(
-                    f"Checkpoint's state UNet doesn't match UNet1D's expected "
-                    f"key names (likely unet_backbone != 'unet1d', e.g. "
-                    f"'monai') -- pass --config to reconstruct the "
-                    f"architecture directly; shape inference cannot recover "
-                    f"a non-UNet1D backbone's config."
+                    "Checkpoint's state UNet doesn't match UNet1D's expected "
+                    "key names (likely unet_backbone != 'unet1d', e.g. "
+                    "'monai') -- pass --config to reconstruct the "
+                    "architecture directly; shape inference cannot recover "
+                    "a non-UNet1D backbone's config."
                 )
             cfg = OmegaConf.load(config_path)
             OmegaConf.set_struct(cfg, False)
