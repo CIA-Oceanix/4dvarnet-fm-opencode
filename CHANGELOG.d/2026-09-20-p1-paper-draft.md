@@ -33,6 +33,17 @@ against strong-constraint and filtering methods only. `L96Weak4DVar` landed in
 `UNVERIFIED`, and no `\cite` commands are used yet. It must be checked entry by
 entry before submission.
 
+**Overleaf sync.** The paper is a subdirectory of a large repo, but Overleaf
+needs `main.tex` at the project root. `sync-overleaf.sh` bridges that with
+`git subtree` (verified: a split of this prefix yields `main.tex`/`refs.bib`/
+`sections/` at top level). `init`/`push`/`pull`/`status` subcommands, a
+clean-tree guard before the history-rewriting operations, `--squash` on pull so
+Overleaf autosaves do not flood this history, and a refusal to accept a URL with
+embedded credentials -- the token belongs in a credential helper, not in
+`.git/config`. The git bridge needs a paid Overleaf plan; the README documents
+the zip fallback and is explicit that re-uploading a zip discards Overleaf-side
+edits, so co-authors editing there require the git route.
+
 **Verification:** `pdflatex -interaction=nonstopmode -halt-on-error main.tex`
 succeeds; three passes give 11 pages with **zero** undefined references or
 citations. Build artefacts are gitignored and none is committed.

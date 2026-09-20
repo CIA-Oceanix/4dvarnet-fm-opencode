@@ -19,14 +19,60 @@ no undefined references.
 
 ## Getting it into Overleaf
 
-Three options, best first.
+The wrinkle: this paper lives in a **subdirectory** of a large repo, but
+Overleaf needs `main.tex` at the **project root**. `git subtree` bridges that —
+it rewrites this directory's history as though it were its own repo. Verified:
+a subtree split of this prefix yields `main.tex`, `refs.bib`, `sections/`,
+`README.md` at top level, which is exactly what Overleaf expects.
 
-1. **Overleaf git sync** (needs a paid Overleaf account). Create an empty
-   Overleaf project, take its git URL from *Menu → Git*, and push this
-   directory's contents to it. Two-way sync afterwards.
-2. **Zip upload.** `zip -r p1.zip . -x '*.git*'` from this directory, then
-   Overleaf *New Project → Upload Project*. One-way; re-upload to update.
-3. **Copy-paste** `main.tex` plus the `sections/` files into a blank project.
+### Option A — two-way git sync (recommended; needs a paid Overleaf plan)
+
+Overleaf's git bridge is **not on the free tier**. If you have it:
+
+1. In Overleaf, create a **blank project** (don't upload anything yet).
+2. *Menu → Git* → copy the URL, `https://git.overleaf.com/<project-id>`.
+3. Get a git token: *Account Settings → Git integration*. It is used as the
+   **password**; any username works.
+4. From anywhere in this repo:
+
+```bash
+docs/papers/p1_structural_hypotheses/sync-overleaf.sh init https://git.overleaf.com/<project-id>
+docs/papers/p1_structural_hypotheses/sync-overleaf.sh push     # repo  -> Overleaf
+docs/papers/p1_structural_hypotheses/sync-overleaf.sh pull     # Overleaf -> repo
+```
+
+Edit in Overleaf, `pull` to bring changes back; edit here, `push` to send them.
+`pull` uses `--squash`, so one merge commit per sync rather than every Overleaf
+autosave.
+
+**Do not put the token in the URL** — it would land in `.git/config` in
+plaintext. Let git prompt for it and cache it:
+
+```bash
+git config --global credential.helper 'cache --timeout=86400'
+```
+
+### Option B — zip upload (free tier; one-way)
+
+```bash
+cd docs/papers/p1_structural_hypotheses
+zip -r ../p1.zip . -x '.git*' -x '*.aux' -x '*.log' -x '*.pdf'
+```
+
+Then Overleaf *New Project → Upload Project*. To update, re-upload — which
+**discards Overleaf-side edits**, so only use this if Overleaf is a read-only
+view or you are the sole editor.
+
+### Option C — copy-paste
+
+`main.tex` plus `sections/` into a blank project. Fine for a one-off look;
+no sync.
+
+### Which to choose
+
+If co-authors will edit in Overleaf, you need **A** — otherwise their edits
+have no route back and will be overwritten. If Overleaf is just for rendering a
+PDF to circulate, **B** is enough.
 
 To switch to the AGU/JAMES template, replace the `\documentclass` line in
 `main.tex` with `\documentclass{agujournal2019}` (Overleaf has the template
