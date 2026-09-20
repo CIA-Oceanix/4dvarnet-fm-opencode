@@ -25,7 +25,7 @@ Read **top to bottom**; only the first is current.
 
 | doc | status |
 |---|---|
-| **`da_paper_structural_hypotheses.md`** | **CURRENT**, SCOPING v1 2026-09-17. Diagnosis paper: three structural hypotheses of classical DA (sequential; model fidelity as the route to skill; ODE state representation) and how they explain DA's limited return on sparse observations and its impoverished posteriors. |
+| **`da_paper_structural_hypotheses.md`** | **CURRENT**, SCOPING v2 2026-09-20. Diagnosis paper: the structural hypotheses of classical DA — four argued (**H1** Markovianity; **H2** model fidelity as the route to skill; **H3a** ODE state representation; **H3b** autoregressive error propagation) and how they explain DA's limited return on sparse observations and its impoverished posteriors. v2 re-cut the hypothesis set — no evidence changed. It also names **H4** (the value of gradients/adjoints) but keeps only its classical corollary C7; the constructive half is **assigned to P2, which has not yet accepted it** (§10 decision 6). |
 | **`p2_unrolled_solvers_and_flows.md`** | **CURRENT**, SCOPING v1 2026-09-18. Method paper, sequel to the 4DVarNet line: an unrolled variational solver is the degenerate (`Ψ_mean`-only) member of the conditional-flow family; the continuous blend; the negatives. **S0 only.** |
 
 **The three-paper split is now settled** (P2 §9): the ML doc owns
