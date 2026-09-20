@@ -1,0 +1,101 @@
+% ============================================================================
+%  P1 -- "The structural hypotheses that bound data assimilation"
+%  Target venue: JAMES (AGU).
+%
+%  This file compiles standalone with `article`. To switch to the AGU class on
+%  Overleaf, replace the \documentclass line with
+%      \documentclass{agujournal2019}
+%  and move \title/\authors into AGU's own macros. Everything else is portable.
+%
+%  SOURCE OF TRUTH: docs/scoping/da_paper_structural_hypotheses.md (SCOPING v2).
+%  Every number below is traceable to this repo's own runs; the provenance of
+%  each table is given in its caption. Do not edit numbers here without
+%  re-deriving them from reports/l96/outputs/ or reports/qg/outputs/.
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{graphicx}
+
+\hypersetup{colorlinks=true,linkcolor=NavyBlue,citecolor=ForestGreen,urlcolor=NavyBlue}
+
+% --- drafting macros ---------------------------------------------------------
+% \todo{...}     work still to do before submission
+% \needsrun{...} a claim that is BLOCKED on an experiment not yet run
+% \caveat{...}   a claim that is evidenced but carries a stated limitation
+\newcommand{\todo}[1]{\textcolor{BrickRed}{\textbf{[TODO: #1]}}}
+\newcommand{\needsrun}[1]{\textcolor{BrickRed}{\textbf{[NEEDS RUN: #1]}}}
+\newcommand{\caveat}[1]{\textcolor{Sepia}{\textbf{[CAVEAT: #1]}}}
+
+% --- notation ----------------------------------------------------------------
+\newcommand{\xv}{\mathbf{x}}
+\newcommand{\yv}{\mathbf{y}}
+\newcommand{\Hop}{\mathcal{H}}
+\newcommand{\Mop}{\mathcal{M}}
+\newcommand{\Psiop}{\widetilde{\Psi}}
+\newcommand{\Psimean}{\Psiop_{\mathrm{mean}}}
+\newcommand{\PsiG}{\Psiop_{\mathrm{G}}}
+\newcommand{\PsiNG}{\Psiop_{\mathrm{NG}}}
+\newcommand{\Sz}{\textsf{S0}}
+\newcommand{\So}{\textsf{S1}}
+
+\title{The structural hypotheses that bound data assimilation:\\
+       why more observations stop helping under model error}
+\author{\todo{author list and affiliations}}
+\date{Draft --- \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Data assimilation rests on a small number of commitments that are rarely written
+down as hypotheses: that the joint inference problem factorises into a sequence
+of simpler ones; that skill is bounded by, and increasing in, the fidelity of the
+dynamical model; that the state is a point in the phase space of a differential
+equation; and that prior errors are propagated by the same integration that
+propagates the signal. Each buys something real. We argue that together they
+explain two persistent and widely observed symptoms: that data assimilation
+converts additional sparse observations into skill inefficiently, and that its
+posterior characterisation is structurally impoverished rather than merely
+mis-tuned.
+%
+Using two idealised but complete testbeds --- a two-scale Lorenz-96 system and a
+two-layer quasi-geostrophic channel --- we show that model error does not simply
+raise the error floor: it \emph{decouples the analysis from the observations}.
+Under a $\pm$10\% parameter bias, doubling the observation count buys
+strong-constraint 4D-Var a 3.2\% RMSE reduction against 19.7\% in the
+perfect-model case, a $6.2\times$ collapse in the marginal value of data, while
+gradient-free ensemble filters lose a factor of only $1.9$.
+%
+We further show that the sensitivity of the free-running model to parameter
+perturbations is \emph{not} a proxy for the sensitivity of the posterior to the
+same perturbations; that identical physics expressed in a different state
+variable produces large and predictable skill differences; and that the
+ensemble-Kalman class carries a non-Gaussian deficit by construction rather than
+by tuning.
+%
+This is a diagnosis paper. We do not propose a new assimilation method; we
+measure what the standard ones cannot do however well tuned, and attribute each
+deficit to a named hypothesis.
+\end{abstract}
+
+\input{sections/01_introduction}
+\input{sections/02_hypotheses}
+\input{sections/03_setup}
+\input{sections/04_evidence}
+\input{sections/05_claims}
+\input{sections/06_limitations}
+\input{sections/07_conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

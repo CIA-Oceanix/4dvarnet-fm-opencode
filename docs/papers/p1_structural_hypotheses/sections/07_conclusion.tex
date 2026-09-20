@@ -1,0 +1,40 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+Data assimilation's standard commitments are not errors. They buy streaming
+operation, physical interpretability, tractable propagation, and a prior that
+transfers. What we have tried to show is that they also \emph{bind}, in a way
+that is measurable and attributable.
+
+The headline is that model error does not simply add an error floor. It
+decouples the analysis from the observations: under a modest parameter bias, the
+return on doubling the observation count falls by a factor of six for
+strong-constraint 4D-Var, and the explained variance in the fast-variable
+subspace goes to zero. In the sparse-observation regime that characterises
+geophysical assimilation, that is the difference between a system that improves
+with more data and one that does not.
+
+Two further results sharpen the mechanism. The sensitivity of the free-running
+model to parameter perturbations is not the sensitivity of the posterior to the
+same perturbations, and classical DA cannot tell them apart because its
+estimator \emph{is} the model --- which means the routine practice of pricing
+parameter uncertainty by propagating it forward overstates its cost whenever the
+observations are informative. And the representation is not a neutral container:
+identical physics in a different state variable changes analysis skill
+substantially, in a direction predictable from the conditioning of the map
+between representations.
+
+We have deliberately not proposed a replacement. The value of a diagnosis is
+that it says what a class of methods cannot do however well tuned, and the
+evidence here is arranged so that each deficit attaches to a named hypothesis
+rather than to an implementation.
+
+\todo{Revisit once D0 has run. If weak-constraint 4D-Var closes most of the
+marginal-value gap, the conclusion becomes a statement about strong-constraint
+and filtering methods specifically --- narrower, but better supported, and worth
+stating plainly rather than hedging.}
+
+\section*{Open science statement}
+All figures derive from simulation code and experiment configurations in the
+accompanying repository; no external dataset is used. \todo{Add the archive DOI
+and the commit hash used for the final numbers.}
