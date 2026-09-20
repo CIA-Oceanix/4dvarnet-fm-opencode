@@ -383,6 +383,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             detach_var_cost_grad=fdv.get("detach_var_cost_grad", False),
             obs_var_indices=model_obs_var_indices,
             true_dynamics_dt=true_dynamics_dt,
+            loss_type=fdv.get("loss_type", "mse"),
+            var_cost_Q_var=fdv.get("var_cost_Q_var", 0.05),
         )
     elif model_type == "fourdvarnet_cfm":
         from models.fourdvarnet import FourDVarNetPredictStateCFM
