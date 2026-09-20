@@ -736,6 +736,215 @@ class Strong4DVar:
         return results
 
 
+class L96Weak4DVar:
+    """Strong/Weak-constraint 4D-Var for the L96 two-scale case study,
+    mirroring ``evaluation/run_qg_baselines.py::QG4DVar``'s whitened-control
+    + gradient-safety design -- deliberately NOT this module's own
+    ``Weak4DVar``/``Strong4DVar``.
+
+    Investigation (2026-09-16/17): this module's plain ``Weak4DVar`` --
+    raw-physical-unit ``q`` divided by a fixed ``Q_var`` in the loss, zero
+    gradient clipping, no NaN recovery -- diverges catastrophically on L96's
+    two-scale chaotic dynamics as soon as a free per-step model-error
+    control ``q`` is introduced over a real (``da_window_steps=500``)
+    window: plain Adam (``opt_steps=150, lr=0.02``, this project's own
+    established default) gives RMSE~12-26 (values far outside L96's normal
+    range, consistent with repeatedly hitting the ``clip_range`` clamp);
+    LBFGS with ``Strong4DVar``'s own *validated* settings
+    (``max_iter=10, lr=0.2`` -- confirmed by reproducing that class's own
+    ~0.81-1.0 RMSE with a from-scratch reimplementation) diverges to
+    outright NaN on the very first outer step. The SAME settings applied to
+    the strong-constraint (``x0``-only, no free ``q``) case work fine in
+    both classes. So the failure is isolated specifically to the raw-unit,
+    unclipped, unrecoverable weak-constraint optimization -- not the L96
+    dynamics, not the observation setup, not "weak-constraint DA is
+    impossible on chaotic systems" in general.
+
+    ``QG4DVar`` (used in production for the QG case study) never hits this:
+    it whitens both controls (``x0 = xb + L*w`` with ``L =
+    b_var_scale*sigma``; weak-mode ``q_t = dynamics.step(q_{t-1}) +
+    Lq*u_t`` with ``Lq = q_var_scale*sigma``, ``sigma = xb.std()``) so
+    gradients act on unit-scale variables instead of raw physical units
+    with unrelated column-to-column scales; it sanitizes Adam gradients
+    every step (``nan_to_num`` then ``clamp(-grad_clip, grad_clip)``); and
+    it resets the controls to zero (falling back to the pure
+    background/dynamics forecast for that window) the moment the loss or
+    any parameter goes non-finite, instead of letting a single NaN cascade
+    through every later window via ``current_bg``. This class ports all
+    three mechanisms to L96, keeping ``dynamics``/``obs_operator`` as
+    ``Lorenz96Dynamics``/``ObsOperator`` instances (this module's own,
+    unchanged) rather than QG's spectral-inversion machinery.
+    """
+
+    def __init__(self, dt, dynamics, obs_operator, da_window_steps=500,
+                 b_var_scale=1.0, q_var_scale=1.0, optimizer="adam",
+                 opt_steps=150, max_iter=10, lr=0.2, mode="weak",
+                 grad_clip=100.0, r_var=0.5, device=None):
+        self.dt = dt
+        self.dynamics = dynamics
+        self.obs_operator = obs_operator
+        self.da_window_steps = int(da_window_steps)
+        self.b_var_scale = float(b_var_scale)
+        self.q_var_scale = float(q_var_scale)
+        self.optimizer = optimizer
+        self.opt_steps = int(opt_steps)
+        self.max_iter = int(max_iter)
+        self.lr = float(lr)
+        self.mode = mode
+        self.grad_clip = float(grad_clip)
+        self.r_var = float(r_var)
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.state_dim = dynamics.state_dim
+        # Diagnostics (2026-09-17): how often/when the NaN-reset safety net
+        # actually fires, to distinguish "stable AND learning a real
+        # correction" from "stable only because it keeps resetting to the
+        # pure background/dynamics forecast" -- reset_step_indices[i] is
+        # the Adam step index (0-based; None for an LBFGS reset, which has
+        # no single triggering step) at which sub-window i's reset fired,
+        # or absent (no entry) if that sub-window never reset.
+        self.n_subwindows = 0
+        self.n_resets = 0
+        self.reset_step_indices = []
+
+    def _forward_strong(self, x0, win, force, params):
+        traj = [x0]
+        for t in range(1, win):
+            traj.append(self.dynamics.step(traj[-1], force[t - 1], **params))
+        return torch.stack(traj)
+
+    def _forward_weak(self, x0, u, win, force, Lq, params):
+        traj = [x0]
+        for t in range(1, win):
+            s = self.dynamics.step(traj[-1], force[t - 1], **params) + Lq * u[t]
+            s = torch.clamp(s, -self.dynamics.clip_range, self.dynamics.clip_range)
+            traj.append(s)
+        return torch.stack(traj)
+
+    def _obs_cost(self, traj, win_obs, win_mask, start):
+        H = self.obs_operator
+        Jo = torch.zeros((), device=self.device, dtype=torch.float32)
+        for t in range(traj.shape[0]):
+            if win_mask[t]:
+                diff = H(traj[t], index=start + t) - win_obs[t]
+                Jo = Jo + torch.sum(diff ** 2)
+        return Jo
+
+    def _reset_nan(self, params, step_index=None):
+        self.n_resets += 1
+        self.reset_step_indices.append(step_index)
+        with torch.no_grad():
+            for p in params:
+                p.fill_(0.0)
+
+    def _optimize(self, loss_fn, params):
+        """Mirrors QG4DVar._optimize exactly: Adam sanitizes/clips every
+        gradient and resets controls to zero on a non-finite loss; LBFGS's
+        closure skips backward() on a non-finite loss (returning it as-is
+        so LBFGS's own line search rejects the step) and resets afterward
+        if any control ended up non-finite regardless."""
+        self.n_subwindows += 1
+        if self.optimizer == "lbfgs":
+            opt = torch.optim.LBFGS(params, lr=self.lr, max_iter=self.max_iter,
+                                    line_search_fn="strong_wolfe")
+
+            def closure():
+                opt.zero_grad()
+                J = loss_fn()
+                if not torch.isfinite(J).all():
+                    return J
+                J.backward()
+                return J
+
+            opt.step(closure)
+            if any(not torch.isfinite(p).all() for p in params):
+                self._reset_nan(params, step_index=None)
+            return
+        opt = torch.optim.Adam(params, lr=self.lr)
+        for step_i in range(self.opt_steps):
+            opt.zero_grad()
+            J = loss_fn()
+            if not torch.isfinite(J).all():
+                self._reset_nan(params, step_index=step_i)
+                break
+            J.backward()
+            for p in params:
+                if p.grad is not None:
+                    p.grad = torch.nan_to_num(p.grad.detach(), nan=0.0, posinf=0.0, neginf=0.0)
+                    p.grad = torch.clamp(p.grad, -self.grad_clip, self.grad_clip)
+            opt.step()
+
+    def _solve_window(self, xb, win_obs, win_mask, start, win_force, params):
+        sd = self.state_dim
+        win = win_obs.shape[0]
+        sigma = float(xb.std().clamp_min(1e-12))
+        L = self.b_var_scale * sigma
+
+        if self.mode == "strong":
+            w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+
+            def loss_fn():
+                x0 = xb + L * w_ctrl
+                traj = self._forward_strong(x0, win, win_force, params)
+                Jb = 0.5 * torch.sum(w_ctrl ** 2)
+                Jo = self._obs_cost(traj, win_obs, win_mask, start)
+                return 0.5 * Jo / self.r_var + Jb
+
+            self._optimize(loss_fn, [w_ctrl])
+            x0 = xb + L * w_ctrl.detach()
+            return self._forward_strong(x0, win, win_force, params).detach()
+
+        Lq = self.q_var_scale * sigma
+        w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
+        u = torch.zeros((win, sd), device=self.device, requires_grad=True)
+
+        def loss_fn():
+            x0 = xb + L * w_ctrl
+            traj = self._forward_weak(x0, u, win, win_force, Lq, params)
+            Jb = 0.5 * torch.sum(w_ctrl ** 2)
+            Jq = 0.5 * torch.sum(u[1:] ** 2)
+            Jo = self._obs_cost(traj, win_obs, win_mask, start)
+            return 0.5 * Jo / self.r_var + Jb + Jq
+
+        self._optimize(loss_fn, [w_ctrl, u])
+        x0 = xb + L * w_ctrl.detach()
+        return self._forward_weak(x0, u.detach(), win, win_force, Lq, params).detach()
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None,
+                   F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1, fast_weights=None, **kwargs):
+        obs = observations.to(self.device)
+        mask = obs_mask.to(self.device)
+        force = forcing.to(self.device)
+        params = dict(F=F, c1=c1, h=h, hx=hx, eps=eps)
+        if fast_weights is not None:
+            params["fast_weights"] = fast_weights
+        params.update(kwargs)
+
+        num_steps = obs.shape[0]
+        sd = self.state_dim
+        win = self.da_window_steps
+        num_windows = max(1, num_steps // win)
+        analysis = torch.zeros(num_steps, sd, device=self.device)
+
+        interp_obs = _interp_observations(obs.unsqueeze(0), mask.unsqueeze(0))[0]
+        current_bg = _init_bg_from_obs(interp_obs[0], self.obs_operator, sd, 1.5, self.device)
+
+        for wnd in range(num_windows):
+            start = wnd * win
+            end = min(start + win, num_steps)
+            if end - start < 2:
+                break
+            traj = self._solve_window(
+                current_bg, obs[start:end], mask[start:end], start, force[start:end], params)
+            analysis[start:end] = traj
+            current_bg = traj[-1].detach()
+
+        analysis_np = analysis.detach().cpu().numpy()
+        ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref = _safe_ref(ref, analysis_np, self.obs_operator)
+        rmse = np.sqrt(np.mean((analysis_np - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=analysis_np, rmse=rmse)
+
+
 class ETKF:
     def __init__(
         self,
