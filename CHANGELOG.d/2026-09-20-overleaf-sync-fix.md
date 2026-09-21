@@ -41,20 +41,41 @@ terminal, so `credential.helper cache` never gets populated and any interactive
 `read` fails too. A file-based `GIT_ASKPASS` is the only route that works
 non-interactively without embedding the secret somewhere durable.
 
-**Verification — read this carefully, it is partial.**
-- `status` and `init`: exercised against the live project; `status` correctly
-  reported the remote, the token file, and drift.
-- The **push mechanism** is verified: running its exact commands by hand
-  (`subtree split` → `rev-parse ^{tree}` → `commit-tree -p overleaf/main` →
-  `push`) is how the 11-page draft reached the Overleaf project, confirmed by
-  diffing the remote's `main.tex` against the repo's (identical) and listing all
-  11 source files on the remote.
-- **`push` and `pull` as implemented in the script are NOT verified end to end.**
-  The token was rotated mid-test — correctly, because it had been pasted into a
-  chat transcript — and the replacement was not available before this landed.
-  The failure mode observed afterwards is an *auth rejection*, not a prompt
-  failure, which does confirm the askpass path reaches Overleaf and presents a
-  credential. **Someone should run `push` and `pull` once with a valid token
-  before relying on them.**
-- `bash -n` clean on both scripts; `pdflatex` still gives 11 pages with the new
-  author line.
+**Two further bugs, found only by finally running the thing (2026-09-21).**
+
+1. **`pull` was destructive.** It did `rm -rf "$PREFIX"` before re-populating
+   from the remote tree. The `rm` failed -- "directory not empty", this repo is
+   on NFS where an open file leaves a `.nfs*` entry -- `set -e` aborted, and the
+   paper directory was left **gutted with nothing restored**; all 12 files were
+   recovered with `git reset --hard`. The rm was never needed: the index can be
+   repointed at the remote tree and checked out without deleting anything first.
+   Fixed, and the fix immediately proved itself -- a later failure mid-`pull`
+   left the worktree completely intact.
+2. **The sync was unscoped, so it mirrored `sync-overleaf.sh` itself.** That
+   script lives inside `$PREFIX`, so a `pull` would overwrite it with whatever
+   Overleaf held: it clobbered itself. `README.md` and `.gitignore` were also
+   being pushed into a LaTeX project for no reason.
+
+Both are fixed by `SYNC_PATHS=(main.tex refs.bib sections)`: `push` mirrors only
+those, `pull` only writes or deletes within them. That also removes `git subtree`
+entirely -- `HEAD:$PREFIX` is already a tree rooted at the paper directory, so
+filtering it is enough; no split, no synthetic history to reconcile.
+
+A third, smaller one: `mktemp` creates a 0-byte file and git rejects that as an
+index ("index file smaller than expected"), so the scratch index needs
+`mktemp -u`.
+
+**Verification — end to end against the live Overleaf project.**
+
+| test | result |
+|---|---|
+| `init`, `status` | remote, token and drift reported correctly |
+| `push` | `feacffd..429de3f`, then `94950bc..01c6e45` |
+| `push` again | short-circuits: "already matches ... nothing to push" |
+| `pull`, trees equal | short-circuits: "nothing to pull" |
+| `pull`, trees differ | applied an Overleaf-side edit to `main.tex`; **`sync-overleaf.sh`, `README.md`, `.gitignore` untouched** |
+| remote contents | exactly the 9 LaTeX files -- no script, no README, no `.gitignore` |
+| empty token file | `status` now reports `(EMPTY -- auth will fail)` rather than "present" |
+
+The Overleaf project and the repo are reconciled: `drift: none`. `bash -n` clean
+on both scripts; `pdflatex` still gives 11 pages.
