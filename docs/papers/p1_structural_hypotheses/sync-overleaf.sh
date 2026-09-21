@@ -26,8 +26,9 @@
 # ordinary fast-forward, always legal, and it survives Overleaf autosaves that
 # land between syncs.
 #
-# The paper is a subdirectory here but must be the project ROOT on Overleaf;
-# `git subtree split` is what bridges that.
+# The paper is a subdirectory here but must be the project ROOT on Overleaf.
+# That needs no `git subtree split` at all: `HEAD:$PREFIX` IS a tree whose root
+# is the paper directory. We filter it to SYNC_PATHS and push that tree.
 # ---------------------------------------------------------------------------
 #
 # Auth: a git token (Overleaf -> Account Settings -> Git integration) in a 0600
@@ -41,6 +42,13 @@ set -euo pipefail
 PREFIX="docs/papers/p1_structural_hypotheses"
 REMOTE="overleaf"
 BRANCH="${OVERLEAF_BRANCH:-main}"
+
+# ONLY these top-level entries of $PREFIX are mirrored to Overleaf. Everything
+# else in the directory is repo-side tooling that has no business in a LaTeX
+# project -- and, critically, sync-overleaf.sh itself lives in $PREFIX, so an
+# unscoped pull would overwrite this script with whatever Overleaf holds. It
+# would clobber itself.
+SYNC_PATHS=(main.tex refs.bib sections)
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -63,7 +71,24 @@ fetch_remote() {
     git fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>/dev/null || true
 }
 
-split_sha() { git subtree split --prefix="$PREFIX" HEAD 2>/dev/null | tail -1; }
+# The tree we mirror: $PREFIX at HEAD, filtered to SYNC_PATHS. Overleaf needs
+# these at the project ROOT, which is exactly what HEAD:$PREFIX already is --
+# no `git subtree split` needed, and no synthetic history to reconcile.
+local_tree() {
+    local idx; idx="$(mktemp)"
+    (
+        export GIT_INDEX_FILE="$idx"
+        git read-tree "HEAD:$PREFIX"
+        # drop everything that is not in SYNC_PATHS
+        git ls-files | while read -r f; do
+            local keep=no top="${f%%/*}"
+            for w in "${SYNC_PATHS[@]}"; do [ "$top" = "$w" ] && keep=yes; done
+            [ "$keep" = no ] && git update-index --force-remove "$f"
+        done
+        git write-tree
+    )
+    rm -f "$idx"
+}
 
 case "${1:-}" in
     init)
@@ -79,9 +104,8 @@ case "${1:-}" in
 
     push)
         have_remote; require_clean; fetch_remote
-        SPLIT="$(split_sha)"
-        [ -n "$SPLIT" ] || die "subtree split produced nothing for $PREFIX"
-        TREE="$(git rev-parse "$SPLIT^{tree}")"
+        TREE="$(local_tree)"
+        [ -n "$TREE" ] || die "could not build a tree for $PREFIX"
 
         if git rev-parse --verify -q "refs/remotes/$REMOTE/$BRANCH" >/dev/null; then
             PARENT="$(git rev-parse "refs/remotes/$REMOTE/$BRANCH")"
@@ -109,22 +133,42 @@ Source: $PREFIX")"
         git rev-parse --verify -q "refs/remotes/$REMOTE/$BRANCH" >/dev/null \
             || die "remote branch '$BRANCH' not found -- has anything been pushed yet?"
         REMOTE_TREE="$(git rev-parse "refs/remotes/$REMOTE/$BRANCH^{tree}")"
-        LOCAL_TREE="$(git rev-parse "$(split_sha)^{tree}")"
+        LOCAL_TREE="$(local_tree)"
         if [ "$REMOTE_TREE" = "$LOCAL_TREE" ]; then
             echo "$PREFIX already matches Overleaf -- nothing to pull."
             exit 0
         fi
-        echo "Overleaf differs from $PREFIX. Applying its contents to the working tree:"
+        echo "Overleaf differs from $PREFIX. Applying its contents:"
         git diff --stat "$LOCAL_TREE" "$REMOTE_TREE" | sed 's/^/  /'
-        # Check out the remote tree INTO the prefix. Deliberately not
-        # `git subtree pull`: that merges Overleaf's unrelated history into this
-        # repo, and Overleaf's history is one autosave commit per keystroke-ish.
-        # We want its content, not its log.
-        git rm -rq --cached "$PREFIX" >/dev/null
-        rm -rf "${REPO_ROOT:?}/$PREFIX"
-        git read-tree --prefix="$PREFIX/" "$REMOTE_TREE"
-        git checkout -- "$PREFIX"
-        echo
+
+        # Index-based, and scoped to SYNC_PATHS. Deliberately NOT `git subtree
+        # pull` (it would merge Overleaf's per-keystroke autosave history into
+        # this repo -- we want its content, not its log), and deliberately NOT
+        # `rm -rf "$PREFIX"` before re-populating. An earlier version did the
+        # latter; on 2026-09-20 the rm failed ("directory not empty" -- this repo
+        # is on NFS, where an open file leaves a .nfs* entry), `set -e` aborted,
+        # and the paper directory was left GUTTED with nothing restored.
+        # Never remove the worktree copy before the replacement is in hand.
+        local_idx="$(mktemp)"
+        (
+            export GIT_INDEX_FILE="$local_idx"
+            git read-tree --prefix="$PREFIX/" "$REMOTE_TREE"
+            git checkout-index -f -a
+        )
+        rm -f "$local_idx"
+
+        # Delete files under SYNC_PATHS that Overleaf no longer has. Scoped, so
+        # sync-overleaf.sh / README.md / .gitignore are never touched.
+        remote_files="$(git ls-tree -r --name-only "$REMOTE_TREE")"
+        for w in "${SYNC_PATHS[@]}"; do
+            [ -e "$PREFIX/$w" ] || continue
+            find "$PREFIX/$w" -type f 2>/dev/null | while read -r f; do
+                rel="${f#"$PREFIX/"}"
+                grep -qxF "$rel" <<<"$remote_files" || { echo "  removed $rel"; rm -f "$f"; }
+            done
+        done
+        git add -- "$PREFIX"
+
         echo "Working tree updated. Review with 'git diff --cached -- $PREFIX', then commit."
         ;;
 
@@ -134,14 +178,16 @@ Source: $PREFIX")"
         echo -n "remote: "; git remote get-url "$REMOTE" 2>/dev/null || echo "(not configured)"
         echo -n "token:  "
         TF="${OVERLEAF_TOKEN_FILE:-$HOME/.config/overleaf-token}"
-        [ -r "$TF" ] && echo "$TF (present)" || echo "$TF (MISSING)"
+        if [ ! -r "$TF" ]; then echo "$TF (MISSING)"
+        elif [ ! -s "$TF" ]; then echo "$TF (EMPTY -- auth will fail)"
+        else echo "$TF (present)"; fi
         echo -n "local changes under prefix: "
         [ -z "$(git status --porcelain -- "$PREFIX")" ] && echo "none" || { echo; git status --short -- "$PREFIX"; }
         if git remote get-url "$REMOTE" >/dev/null 2>&1; then
             fetch_remote
             if git rev-parse --verify -q "refs/remotes/$REMOTE/$BRANCH" >/dev/null; then
                 R="$(git rev-parse "refs/remotes/$REMOTE/$BRANCH^{tree}")"
-                L="$(git rev-parse "$(split_sha)^{tree}" 2>/dev/null || echo none)"
+                L="$(local_tree 2>/dev/null || echo none)"
                 [ "$R" = "$L" ] && echo "drift:  none (Overleaf matches $PREFIX)" \
                                 || echo "drift:  DIFFERS -- run push or pull"
             else
