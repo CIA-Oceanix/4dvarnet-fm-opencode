@@ -99,7 +99,7 @@ $\Phi$, and no other route carries prior information. A parameter bias is
 therefore not a perturbed input but a corrupted prior, compounding over a
 500-step window. That is the mechanism behind the classical block.
 
-\subsubsection{Conditioning on model information is nearly inert}
+\subsection{Conditioning on model information is nearly inert}
 \label{sec:inert}
 
 If the learned schemes are robust to \So{}, the obvious question is whether they
@@ -153,7 +153,7 @@ but falls to 0.9490 under \So{}. Q3 and Q4, conditioned on \emph{noisy} model
 information, hold (0.9798 $\to$ 0.9763; 0.9824 $\to$ 0.9808). Conditioning on
 \emph{true} model information is again the fragile choice, exactly as on L96.
 
-\subsubsection{ODE sensitivity is not posterior sensitivity}
+\subsection{ODE sensitivity is not posterior sensitivity}
 \label{sec:sensitivity}
 
 Two distinct sensitivities are in play, and classical DA cannot separate them:
@@ -213,7 +213,7 @@ data --- exactly the regime of sparse-observation geophysical DA. This is also
 H3b's shadow: at low density DA has nothing but the model, so model error and
 observation sparsity \emph{compound rather than add}.
 
-\subsubsection{Weak-constraint 4D-Var bounds the claim}
+\subsection{Weak-constraint 4D-Var bounds the claim}
 \label{sec:weak4dvar}
 
 Weak-constraint 4D-Var frees a per-step model-error term and is therefore the
