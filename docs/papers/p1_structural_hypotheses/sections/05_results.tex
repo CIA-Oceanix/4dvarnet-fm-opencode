@@ -239,30 +239,77 @@ grid. The implementation exists; the benchmark run does not. Single
 highest-value outstanding experiment, because it is the only one that can widen
 or narrow the paper's headline claim.}
 
-\subsection{The state variable changes skill at identical physics}
+\subsection{The representation decides which fields are reconstructed, and model
+error widens the trade}
 \label{sec:representation}
 
-The QG \texttt{psi\_state} variant integrates the same dynamics with the
-streamfunction as the state variable. The $q$-space physics is bit-identical ---
-free forecasts agree to $\sim 10^{-6}$ relative --- and only the representation
-differs, and with it the observation operator, which becomes a trivial index
-lookup.
+The cleanest manipulation available in this study. The QG \texttt{psi\_state}
+variant integrates the \emph{same} dynamics with the streamfunction as the state
+variable instead of potential vorticity. The $q$-space physics is bit-identical
+--- free forecasts agree to $\sim 10^{-6}$ relative --- so nothing changes except
+which variable is called ``the state'', and with it the observation operator,
+which becomes a trivial index lookup.
 
-It gives the \emph{best per-field streamfunction analysis}
-($\psi_1,\psi_2$ EV $\approx 0.98$) and a \emph{degenerate potential-vorticity
-field} ($q$ EV $=-3.2$ against the $q$-state reference $+0.34$), because
-$q \approx \nabla^2\psi$ amplifies high-wavenumber $\psi$-analysis error by
-$K^2$. At matched observation noise the $\psi$-state $q$-field EV is 0.583
-against the $q$-state 0.752.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llccc@{}}
+\toprule
+\textbf{scenario} & \textbf{state variable} & \textbf{$\psi$ EV} & \textbf{$q$ EV} & \textbf{$q$ layer 2} \\
+\midrule
+\multirow{2}{*}{\Sz{} (error-free)} & $q$-state (default) & $+0.968$ & $\mathbf{+0.752}$ & $+0.688$ \\
+                                    & $\psi$-state        & $\mathbf{+0.977}$ & $+0.583$ & $+0.403$ \\
+\addlinespace
+\multirow{2}{*}{\So{} (model error)} & $q$-state (default) & $+0.328$ & $\mathbf{+0.428}$ & $+0.304$ \\
+                                     & $\psi$-state        & $\mathbf{+0.606}$ & $\mathbf{-2.925}$ & $\mathbf{-4.664}$ \\
+\bottomrule
+\end{tabular}
+\caption{QG, explained variance, identical physics in two state variables.
+Swapping to $\psi$-state \emph{improves} the streamfunction analysis and
+\emph{degrades} the potential-vorticity analysis --- and \textbf{model error
+widens the trade by an order of magnitude}. Source:
+\texttt{reports/qg/outputs/qg\_psi\_state\_report.md}.}
+\label{tab:representation}
+\end{table}
 
-Identical dynamics, identical information, and a large skill difference produced
-purely by which variable is called ``the state''. The representation is not a
-neutral container. Table~\ref{tab:overview-robust}'s negative variational
-$q$-scores are the same effect seen from the other side: a scheme that fits
-$\psi$ well can be arbitrarily bad in $q$, because the map between the two
-representations amplifies exactly the error it leaves behind.
-\caveat{The headline $-3.2$ is partly a metric choice --- the aggregate score
-reports the $q$ field. The per-field numbers above are the ones to quote.}
+The mechanism is the map between the two representations: $q \approx \nabla^2\psi$
+amplifies high-wavenumber $\psi$-analysis error by $K^2$, so a scheme that fits
+$\psi$ well can be arbitrarily bad in $q$ while remaining, by its own metric,
+excellent.
+
+\textbf{The size of the trade is the result, not its sign.} At \Sz{} the swap
+buys $+0.009$ on $\psi$ and costs $-0.169$ on $q$. At \So{} it buys $+0.278$ and
+costs $-3.353$. The representation choice is nearly free when the model is
+correct and catastrophic when it is not, which places this result on the paper's
+main axis rather than beside it: H3a and H2 are not independent, because the
+error the representation amplifies is exactly the error model discrepancy
+creates.
+
+\paragraph{The same effect across the classical schemes.}
+This is not confined to a single controlled swap. In
+Table~\ref{tab:overview-robust} the variational schemes --- which optimise a
+$\psi$-observation cost --- carry \emph{negative} $q$ scores at \Sz{}
+($-0.126$, $-0.034$) falling to $-0.857$ and $-0.501$ at \So{}, while the
+ensemble filters, updating in $q$, hold near $+0.4$. The learned schemes, trained
+to reconstruct the target field directly rather than inheriting it through an
+inversion, are best of all on $q$ ($0.60$--$0.67$). Which field a scheme
+reconstructs well tracks the representation it works in, not how much information
+the observations carry --- the observations are identical across every row.
+
+\paragraph{What is missing: the same manipulation on the learned side.}
+The controlled evidence here is all on the DA side, where the state variable is
+an explicit modelling choice. The learned schemes have a representation too ---
+the space their inputs and outputs are expressed in --- but no equivalent
+controlled swap has been run.
+\caveat{An existing L96 per-channel normalisation ablation reports that
+retraining in a normalised space \emph{degrades} skill substantially (explained
+variance $0.857 \to 0.027$). That result is not used here: it was measured on a
+different backbone from the schemes in this paper, whose best configurations
+\emph{do} normalise, so it cannot be reconciled without a matched rerun.}
+\needsrun{A representation swap for the learned schemes matched to the QG
+$\psi/q$ design --- same architecture, same data, same training budget, output
+space varied --- to establish whether the effect is a property of DA or of
+inverse problems generally.}
 
 \subsection{The non-Gaussian deficit, and what blending buys}
 \label{sec:nongaussian}
