@@ -75,7 +75,7 @@ fetch_remote() {
 # these at the project ROOT, which is exactly what HEAD:$PREFIX already is --
 # no `git subtree split` needed, and no synthetic history to reconcile.
 local_tree() {
-    local idx; idx="$(mktemp)"
+    local idx; idx="$(mktemp -u)"
     (
         export GIT_INDEX_FILE="$idx"
         git read-tree "HEAD:$PREFIX"
@@ -149,7 +149,7 @@ Source: $PREFIX")"
         # is on NFS, where an open file leaves a .nfs* entry), `set -e` aborted,
         # and the paper directory was left GUTTED with nothing restored.
         # Never remove the worktree copy before the replacement is in hand.
-        local_idx="$(mktemp)"
+        local_idx="$(mktemp -u)"
         (
             export GIT_INDEX_FILE="$local_idx"
             git read-tree --prefix="$PREFIX/" "$REMOTE_TREE"
