@@ -61,16 +61,6 @@ separates the two.}
 \label{tab:overview-gap}
 \end{table}
 
-Two observations set up everything that follows. First, the degradation is not a
-uniform error floor: it varies from $1.68\times$ to $2.74\times$ across systems
-and, on QG's potential-vorticity field, turns a positive skill score negative.
-Second, the schemes that do not degrade are precisely those whose prior is not an
-integrated model. The rest of this section asks \emph{why}, and attributes each
-part of the answer to a named hypothesis.
-
-\subsection{The model is the prior: H2's unbuffered cost}
-\label{sec:price}
-
 \begin{table}[t]
 \centering
 \small
@@ -88,16 +78,27 @@ CFM-M         & 0.4810 & 0.4784 & 0.995 & all three \\
 DirectUNet\,$+$\,SDA3 & \textbf{0.4204} & 0.4183 & 0.995 & composed \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96, 200 windows, pooled RMSE --- the detailed view behind
-Table~\ref{tab:overview-gap}. The lower block's ratios are definitional for the
-model-free rows (Table~\ref{tab:classes}).}
+\caption{Lorenz-96 in full, 200 windows, pooled RMSE --- the per-scheme view
+behind Tables~\ref{tab:overview-robust} and~\ref{tab:overview-gap}, with each
+scheme's occupied operator slots from Table~\ref{tab:zeroing}. The lower block's
+ratios are definitional for the model-free rows (Table~\ref{tab:classes}).}
 \label{tab:price}
 \end{table}
 
-By~\eqref{eq:ssm} the model \emph{is} the prior: $\pi_{\xv_1}$ is defined through
-$\Phi$, and no other route carries prior information. A parameter bias is
-therefore not a perturbed input but a corrupted prior, compounding over a
-500-step window. That is the mechanism behind the classical block.
+\textbf{Occupying more operator slots does not by itself buy accuracy.} SDA3
+fills all three and is the \emph{weakest} learned scheme here (0.5365);
+DirectUNet fills $\Psimean$ alone and beats it (0.5064); CFM fills all three and
+beats both (0.4810). The slots determine what a scheme \emph{can represent}, not
+how well it estimates --- which is why Section~\ref{sec:nongaussian} finds
+accuracy and calibration traded against each other rather than improving
+together.
+
+Two observations set up everything that follows. First, the degradation is not a
+uniform error floor: it varies from $1.68\times$ to $2.74\times$ across systems
+and, on QG's potential-vorticity field, turns a positive skill score negative.
+Second, the schemes that do not degrade are precisely those whose prior is not an
+integrated model. The rest of this section asks \emph{why}, and attributes each
+part of the answer to a named hypothesis.
 
 \subsection{Conditioning on model information is nearly inert}
 \label{sec:inert}
