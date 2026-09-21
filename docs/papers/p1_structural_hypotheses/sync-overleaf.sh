@@ -21,14 +21,15 @@
 #      starter main.tex), so subtree push can only land via a force -- which is
 #      rejected -- or a merge Overleaf has no way to make.
 #
-# So `push` does not push the split history at all. It takes the split's TREE,
-# commits it with Overleaf's current head as parent, and pushes that: an
+# So `push` does not push any synthetic history at all. It takes the TREE we
+# want Overleaf to have, commits it with Overleaf's current head as parent, and
+# pushes that: an
 # ordinary fast-forward, always legal, and it survives Overleaf autosaves that
 # land between syncs.
 #
 # The paper is a subdirectory here but must be the project ROOT on Overleaf.
 # That needs no `git subtree split` at all: `HEAD:$PREFIX` IS a tree whose root
-# is the paper directory. We filter it to SYNC_PATHS and push that tree.
+# is the paper directory. We filter out NO_SYNC and push that tree.
 # ---------------------------------------------------------------------------
 #
 # Auth: a git token (Overleaf -> Account Settings -> Git integration) in a 0600
@@ -43,12 +44,18 @@ PREFIX="docs/papers/p1_structural_hypotheses"
 REMOTE="overleaf"
 BRANCH="${OVERLEAF_BRANCH:-main}"
 
-# ONLY these top-level entries of $PREFIX are mirrored to Overleaf. Everything
-# else in the directory is repo-side tooling that has no business in a LaTeX
-# project -- and, critically, sync-overleaf.sh itself lives in $PREFIX, so an
-# unscoped pull would overwrite this script with whatever Overleaf holds. It
-# would clobber itself.
-SYNC_PATHS=(main.tex refs.bib sections)
+# Everything in $PREFIX is mirrored to Overleaf EXCEPT these -- repo-side
+# tooling with no business in a LaTeX project. sync-overleaf.sh in particular
+# lives in $PREFIX, so mirroring it would let a pull overwrite this script with
+# whatever Overleaf holds: it would clobber itself.
+#
+# A deny-list, not an allow-list, and deliberately so. An earlier version named
+# the files TO sync; the moment a previous_draft.tex was uploaded in Overleaf
+# (2026-09-21) it fell outside that list, so `pull` fetched it while local_tree
+# ignored it -- permanent drift, and a next `push` that would have silently
+# DELETED it from Overleaf. A paper directory gains .tex files, .bib files and
+# figures over time; the set that must NOT travel is the stable one.
+NO_SYNC=(sync-overleaf.sh README.md .gitignore)
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -71,7 +78,7 @@ fetch_remote() {
     git fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>/dev/null || true
 }
 
-# The tree we mirror: $PREFIX at HEAD, filtered to SYNC_PATHS. Overleaf needs
+# The tree we mirror: $PREFIX at HEAD, minus NO_SYNC. Overleaf needs
 # these at the project ROOT, which is exactly what HEAD:$PREFIX already is --
 # no `git subtree split` needed, and no synthetic history to reconcile.
 local_tree() {
@@ -79,11 +86,8 @@ local_tree() {
     (
         export GIT_INDEX_FILE="$idx"
         git read-tree "HEAD:$PREFIX"
-        # drop everything that is not in SYNC_PATHS
-        git ls-files | while read -r f; do
-            local keep=no top="${f%%/*}"
-            for w in "${SYNC_PATHS[@]}"; do [ "$top" = "$w" ] && keep=yes; done
-            [ "$keep" = no ] && git update-index --force-remove "$f"
+        for f in "${NO_SYNC[@]}"; do
+            git update-index --force-remove "$f" 2>/dev/null || true
         done
         git write-tree
     )
@@ -141,7 +145,7 @@ Source: $PREFIX")"
         echo "Overleaf differs from $PREFIX. Applying its contents:"
         git diff --stat "$LOCAL_TREE" "$REMOTE_TREE" | sed 's/^/  /'
 
-        # Index-based, and scoped to SYNC_PATHS. Deliberately NOT `git subtree
+        # Index-based, and NO_SYNC-aware. Deliberately NOT `git subtree
         # pull` (it would merge Overleaf's per-keystroke autosave history into
         # this repo -- we want its content, not its log), and deliberately NOT
         # `rm -rf "$PREFIX"` before re-populating. An earlier version did the
@@ -157,15 +161,15 @@ Source: $PREFIX")"
         )
         rm -f "$local_idx"
 
-        # Delete files under SYNC_PATHS that Overleaf no longer has. Scoped, so
+        # Delete files Overleaf no longer has. NO_SYNC entries are skipped, so
         # sync-overleaf.sh / README.md / .gitignore are never touched.
         remote_files="$(git ls-tree -r --name-only "$REMOTE_TREE")"
-        for w in "${SYNC_PATHS[@]}"; do
-            [ -e "$PREFIX/$w" ] || continue
-            find "$PREFIX/$w" -type f 2>/dev/null | while read -r f; do
-                rel="${f#"$PREFIX/"}"
-                grep -qxF "$rel" <<<"$remote_files" || { echo "  removed $rel"; rm -f "$f"; }
-            done
+        git ls-files -- "$PREFIX" | while read -r f; do
+            rel="${f#"$PREFIX/"}"
+            skip=no
+            for n in "${NO_SYNC[@]}"; do [ "$rel" = "$n" ] && skip=yes; done
+            [ "$skip" = yes ] && continue
+            grep -qxF "$rel" <<<"$remote_files" || { echo "  removed $rel"; rm -f "$f"; }
         done
         git add -- "$PREFIX"
 
