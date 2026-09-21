@@ -217,24 +217,27 @@ data --- exactly the regime of sparse-observation geophysical DA. This is also
 H3b's shadow: at low density DA has nothing but the model, so model error and
 observation sparsity \emph{compound rather than add}.
 
-\subsection{Weak-constraint 4D-Var bounds the claim}
+\paragraph{Weak-constraint 4D-Var bounds this claim.}
 \label{sec:weak4dvar}
+Weak-constraint 4D-Var frees a per-step model-error term and is therefore the one
+classical scheme \emph{permitted} to know the model is wrong --- the honest
+ceiling for the family. It has been run on two of the three systems, and on both
+it is the strongest classical scheme under model error: on L63 it beats
+strong-constraint by 22\% at \So{} (1.633 against 2.100), and on QG it leads on
+both fields at \So{} ($\psi$ 0.9468 against 0.9314; $q$ $-0.501$ against
+$-0.857$). The gap in Table~\ref{tab:overview-gap} is therefore not an artefact
+of comparing against a strawman: the classical family is represented by its best
+member.
 
-Weak-constraint 4D-Var frees a per-step model-error term and is therefore the
-classical method \emph{permitted} to know the model is wrong. It is the honest
-ceiling for the family, and it has been run on two of the three systems: on L63
-it is the best scheme in both scenarios (Table~\ref{tab:overview-robust}),
-beating strong-constraint by 22\% under model error; on QG it leads
-strong-constraint at \So{} on both fields.
-
-This sharpens rather than weakens the argument --- the residual gap in
-Table~\ref{tab:overview-gap} is not an artefact of comparing against a strawman
---- but it also bounds what may be claimed. The marginal-value collapse of
+It also bounds what may be claimed here. \textbf{The collapse in
 Table~\ref{tab:marginal} is established for strong-constraint and filtering
-methods; the corresponding weak-constraint measurement does not exist.
-\needsrun{Weak-constraint 4D-Var on Lorenz-96, across the observation-density
-grid. The implementation exists; the benchmark run does not. This is the single
-highest-value outstanding experiment.}
+methods only}; weak-constraint 4D-Var is the formulation that explicitly relaxes
+H2, and the corresponding measurement on the density grid does not exist --- L96
+is the one system where it has not been run at all.
+\needsrun{Weak-constraint 4D-Var on Lorenz-96 across the observation-density
+grid. The implementation exists; the benchmark run does not. Single
+highest-value outstanding experiment, because it is the only one that can widen
+or narrow the paper's headline claim.}
 
 \subsection{The state variable changes skill at identical physics}
 \label{sec:representation}
