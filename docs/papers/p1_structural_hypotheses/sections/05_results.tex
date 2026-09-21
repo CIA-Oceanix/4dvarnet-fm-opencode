@@ -390,9 +390,75 @@ dispersion. \textbf{Accuracy and calibration are being traded against each other
 through the same mechanism}, and the partition~\eqref{eq:partition} is what makes
 that visible: the trade is not between schemes but between which slots are filled
 generatively and which are imported.
-\needsrun{A calibrated comparison across all classes at one uniform ensemble
-convention, with rank histograms. Several benchmark cells are still single-pass
-point estimates.}
+Within the blend family this trade has been mapped, and it is a genuine Pareto
+surface rather than a single operating point.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llccc@{}}
+\toprule
+\textbf{configuration} & \textbf{slots} & \textbf{RMSE} & \textbf{spread/skill} & \textbf{vs.\ target $0.967$} \\
+\midrule
+mean-only ($\lambda_0 = 1$)      & $\Psimean$   & $0.4934$ & $0.000$ & no dispersion at all \\
+cold ($\lambda_0 = 0$, sampler alone) & all three & $0.5686$ & $1.202$ & $24\%$ over \\
+warm start ($\tau_0 = 0.3$)      & composed     & $0.4268$ & $0.284$ & $71\%$ under \\
+blend ($\lambda_0 = 0.5$, $p=1$) & composed     & $\mathbf{0.4202}$ & $\mathbf{0.380}$ & $61\%$ under \\
+\bottomrule
+\end{tabular}
+\caption{Lorenz-96, $N=30$. Accuracy and dispersion move in opposition across the
+blend family: the sampler alone is the \emph{only} configuration near the
+reliability target and the \emph{worst} on RMSE. The continuous blend dominates
+the hard warm start on both axes simultaneously, which is the one place the trade
+is not strictly adversarial. \textbf{These values come from the sampler study's
+own configuration} (variance-weighted guidance, $N_\mathrm{outer}=50$) and are
+not cross-quotable with Table~\ref{tab:price}.}
+\label{tab:calibration}
+\end{table}
+
+\paragraph{What is missing is the half the structural claim rests on.}
+Table~\ref{tab:calibration} covers the generative family. It contains \emph{no
+ensemble-Kalman row} --- and C4, the claim that the ensemble-Kalman class carries
+a structural ceiling because $\PsiNG \equiv 0$, is a claim about precisely those
+schemes. EnKF and ETKF are ensemble methods with a spread that is directly
+measurable, and it has not been measured here.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{scheme} & \textbf{slots} & \textbf{RMSE} & \textbf{spread/skill} & \textbf{CRPS} & \textbf{rank hist.} \\
+\midrule
+EnKF   & $\Psimean + \PsiG$ & $0.9131$ & \emph{pending} & \emph{pending} & \emph{pending} \\
+ETKF   & $\Psimean + \PsiG$ & $0.8883$ & \emph{pending} & \emph{pending} & \emph{pending} \\
+\addlinespace
+SDA3   & all three & $0.5365$ & \emph{pending} & \emph{pending} & \emph{pending} \\
+CFM    & all three & $0.4810$ & \emph{pending} & \emph{pending} & \emph{pending} \\
+DirectUNet\,$+$\,SDA3 & composed & $0.4204$ & \emph{pending} & \emph{pending} & \emph{pending} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Planned: one calibration protocol across every class}, at a
+uniform $N=30$, on the configuration of Table~\ref{tab:price} so that accuracy
+and dispersion are read from the same runs. Strong-4D-Var and DirectUNet are
+omitted as deterministic point estimators, for which spread is undefined --- that
+is itself the content of Table~\ref{tab:zeroing}'s first two rows. \needsrun{The
+ensemble-Kalman rows are the ones C4 depends on; no rank-histogram diagnostic
+exists anywhere in the codebase, and it is the primary reliability figure for
+this readership.}}
+\label{tab:calibration-planned}
+\end{table}
+
+\textbf{Stated plainly: C4 is currently argued from construction, not from
+measurement.} That $\PsiNG \equiv 0$ for the ensemble-Kalman class is a
+mathematical fact about the update (Section~\ref{sec:zeroing}), and the
+consequence for accuracy is visible throughout Section~\ref{sec:overview}. But
+the consequence for \emph{calibration} --- the part that makes it symptom S-b
+rather than a restatement of S-a --- is asserted rather than shown. Filling
+Table~\ref{tab:calibration-planned} is what would settle whether the
+ensemble-Kalman class is badly calibrated in the specific way the missing
+non-Gaussian branch predicts, or merely under-dispersive in the ordinary way that
+inflation is designed to fix.
 
 \subsection{A motivating ordering that is not yet evidence}
 \label{sec:ordering}
