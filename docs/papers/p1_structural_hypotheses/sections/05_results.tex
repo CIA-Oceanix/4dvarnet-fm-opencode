@@ -313,10 +313,61 @@ retraining in a normalised space \emph{degrades} skill substantially (explained
 variance $0.857 \to 0.027$). That result is not used here: it was measured on a
 different backbone from the schemes in this paper, whose best configurations
 \emph{do} normalise, so it cannot be reconciled without a matched rerun.}
-\needsrun{A representation swap for the learned schemes matched to the QG
-$\psi/q$ design --- same architecture, same data, same training budget, output
-space varied --- to establish whether the effect is a property of DA or of
-inverse problems generally.}
+The experiment is well defined, because the existing QG network is already one
+arm of it. Its supervision target is the two-layer streamfunction, and $q$ is
+obtained by spectrally inverting the predicted $\psi$ --- structurally the same
+path as the DA $\psi$-state variant, and subject to the same $K^2$
+amplification. What is missing is the $q$-output arm. One complication makes the
+design a $2\times 2$ rather than a straight swap: the network carries an optional
+auxiliary $q$-loss (weight $1/\mathrm{Var}(q)$), which supervises the inverted
+field directly and so partially decouples \emph{output space} from \emph{what is
+supervised}. Both must be varied to attribute the effect to either.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+\textbf{scenario} & \textbf{output space} & \textbf{aux $q$-loss} & \textbf{$\psi$ EV} & \textbf{$q$ EV} & \textbf{$q$ layer 2} & \textbf{spread/skill} \\
+\midrule
+\multirow{4}{*}{\Sz{}}
+  & $\psi$ (existing) & \checkmark & $0.9805$ & $0.6238$ & \emph{pending} & \emph{pending} \\
+  & $\psi$            & ---        & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+  & $q$               & n/a        & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+  & $q$ $+$ aux $\psi$-loss & \checkmark & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+\addlinespace
+\multirow{4}{*}{\So{}}
+  & $\psi$ (existing) & \checkmark & $0.9805$ & $0.6238$ & \emph{pending} & \emph{pending} \\
+  & $\psi$            & ---        & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+  & $q$               & n/a        & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+  & $q$ $+$ aux $\psi$-loss & \checkmark & \emph{pending} & \emph{pending} & \emph{pending} & \emph{pending} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Planned: the representation swap on the learned side}, matched
+to Table~\ref{tab:representation} --- same architecture, data, and training
+budget, with only the output space and the auxiliary loss varied. The two filled
+rows are the existing obs-only network (Q1); they are identical across scenarios
+\emph{by construction}, since that configuration receives no model information
+(Table~\ref{tab:classes}). \needsrun{Six cells' worth of training runs.}}
+\label{tab:representation-planned}
+\end{table}
+
+\textbf{The prediction, stated in advance.} If the effect is a property of
+inverse problems rather than of DA specifically, the $q$-output arm should beat
+the $\psi$-output arm on $q$ and lose to it on $\psi$, and the gap should widen
+between \Sz{} and \So{} as it does in Table~\ref{tab:representation}. If instead
+the auxiliary loss accounts for most of the difference --- that is, if
+$\psi$-output \emph{with} a $q$-loss matches $q$-output --- then the operative
+choice is what is \emph{supervised}, not what is \emph{represented}, and H3a is a
+weaker hypothesis than the DA result suggests. The existing numbers already hint
+at the second reading: the $\psi$-output network reaches $q$ EV $0.62$--$0.67$
+where the DA $\psi$-state variant collapses to $0.583$ and then $-2.925$, and the
+one structural difference between them is that $q$-loss.
+
+A spread/skill column is included because the swap should also be read against
+Section~\ref{sec:nongaussian}: if changing the output space moves calibration as
+well as accuracy, the representation is not separable from the dispersion
+question either.
 
 \subsection{The non-Gaussian deficit, and what blending buys}
 \label{sec:nongaussian}
