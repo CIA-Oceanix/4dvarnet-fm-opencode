@@ -154,32 +154,35 @@ but falls to 0.9490 under \So{}. Q3 and Q4, conditioned on \emph{noisy} model
 information, hold (0.9798 $\to$ 0.9763; 0.9824 $\to$ 0.9808). Conditioning on
 \emph{true} model information is again the fragile choice, exactly as on L96.
 
-\subsection{ODE sensitivity is not posterior sensitivity}
+\paragraph{Consequence: ODE sensitivity is not posterior sensitivity.}
 \label{sec:sensitivity}
-
 Two distinct sensitivities are in play, and classical DA cannot separate them:
 the \emph{model} sensitivity $\partial \xv_{\mathrm{ODE}}/\partial(\thv,\zv)$ of
 the free-running trajectory, Lyapunov-amplified and large; and the
 \emph{posterior} sensitivity $\partial\, p(\xv_1\mid\Cv)/\partial(\thv,\zv)$ at
-fixed $\yv$.
+fixed $\yv$. Classical DA conflates them \textbf{by construction}, because its
+estimator \emph{is} the model: by~\eqref{eq:ssm} every route from $(\thv,\zv)$ to
+the analysis passes through $\Phi$. Its \Sz{}$\to$\So{} degradation therefore
+measures \emph{its own estimator's} sensitivity, and cannot be read as a
+measurement of how much $(\thv,\zv)$ uncertainty matters for the posterior.
 
-Classical DA conflates them \textbf{by construction}, because its estimator
-\emph{is} the model: by~\eqref{eq:ssm} every route from $(\thv,\zv)$ to the
-analysis passes through $\Phi$. Its \Sz{}$\to$\So{} degradation therefore measures
-\emph{its own estimator's} sensitivity, and cannot be read as a measurement of
-how much $(\thv,\zv)$ uncertainty matters for the posterior.
+The ladder above measures the other quantity directly: a conditioned amortised
+estimator takes $(\thv^{*},\zv^{*})$ as inputs at fixed $\yv$, so perturbing the
+conditioning while holding the observations fixed is a finite-difference estimate
+of posterior sensitivity. It moves skill by $\leq 1.5\%$, and full corruption by
+$\sim 0.2\%$, against the $1.68$--$1.80\times$ by which the classical schemes
+degrade over the same perturbation.
 
-A conditioned amortised estimator measures the other quantity directly: it takes
-$(\thv^{*},\zv^{*})$ as inputs at fixed $\yv$, so perturbing the conditioning
-while holding observations fixed is a finite-difference estimate of posterior
-sensitivity. That perturbation moves skill by $\leq 1.5\%$
-(Section~\ref{sec:inert}), and full corruption by $\sim 0.2\%$.
-
-\paragraph{Consequence.}
-Assessing parameter and forcing uncertainty by \emph{propagating it through the
-model} systematically \textbf{overstates} its effect on the posterior whenever
-the observations are informative, and the overstatement is exactly the gap
-between the two sensitivities --- here $1.68$--$1.80\times$ against $\leq 1.5\%$.
+\textbf{Assessing parameter and forcing uncertainty by propagating it through the
+model therefore overstates its effect on the posterior whenever the observations
+are informative}, and the overstatement is exactly the gap between the two
+sensitivities. This is an inference from the two measurements above rather than a
+separate experiment; a direct measurement would sweep both sensitivities over one
+grid of observation density $\times$ perturbation amplitude, and would also test
+the prediction that posterior sensitivity \emph{grows} as observations sparsify,
+since less of $(\thv,\zv)$ is then screened off by $\yv$.
+\needsrun{Both sensitivities on one density $\times$ amplitude grid. The
+crossover density would be the paper's second headline number.}
 
 \subsection{Model error destroys the marginal value of observations}
 \label{sec:marginal}
