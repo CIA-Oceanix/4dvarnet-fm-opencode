@@ -1,7 +1,74 @@
 \section{Results}
 \label{sec:results}
 
-\subsection{The price of H2}
+\subsection{Overview: the two symptoms across three systems}
+\label{sec:overview}
+
+We begin with the headline, in two parts. The first is an \emph{intra-classical}
+statement and needs no cross-class comparison: each scheme is its own control,
+and no objection about the tuning of one family against another applies to it.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{system} & \textbf{metric} & \textbf{Strong-4D-Var} & \textbf{Weak-4D-Var} & \textbf{EnKF} & \textbf{ETKF} \\
+\midrule
+L63 & RMSE $\Sz\!\to\!\So$ & $0.767 \to 2.100$ & $0.642 \to 1.633$ & $0.881 \to 2.267$ & $0.878 \to 2.271$ \\
+    & \emph{degradation}   & $2.74\times$ & $2.54\times$ & $2.57\times$ & $2.59\times$ \\
+\addlinespace
+L96 & RMSE $\Sz\!\to\!\So$ & $0.8116 \to 1.4617$ & \emph{not run} & $0.9131 \to 1.5381$ & $0.8883 \to 1.4998$ \\
+    & \emph{degradation}   & $1.80\times$ & --- & $1.68\times$ & $1.69\times$ \\
+\addlinespace
+QG  & $\psi$ EV $\Sz\!\to\!\So$ & $0.9714 \to 0.9314$ & $0.9660 \to 0.9468$ & $0.9584 \to 0.9410$ & $0.9593 \to 0.9424$ \\
+    & $q$ EV $\Sz\!\to\!\So$ & $\mathbf{-0.126 \to -0.857}$ & $-0.034 \to -0.501$ & $0.500 \to 0.413$ & $0.498 \to 0.412$ \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Classical DA is not robust to model error, on all three
+systems.} Each scheme is compared against itself, so no cross-class caveat
+applies. Note the QG potential-vorticity row: both variational schemes are
+\emph{negative} at \Sz{} --- worse than predicting the climatological mean ---
+and Strong-4D-Var reaches $-0.857$ under model error, while the ensemble filters
+hold near $0.4$. Sources: \texttt{reports/l63/outputs/s0\_s1\_synthesis.md},
+\texttt{reports/l96/outputs/l96\_consolidated\_benchmark.md},
+\texttt{reports/qg/outputs/qg\_neural\_report.md}.}
+\label{tab:overview-robust}
+\end{table}
+
+The second part compares across classes, and therefore carries the caveat of
+Table~\ref{tab:classes}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{system} & \textbf{metric} & \textbf{best classical} $\Sz$ / $\So$ & \textbf{best learned} $\Sz$ / $\So$ \\
+\midrule
+L96 & RMSE ($\downarrow$) & $0.8116$ / $1.4617$ \emph{(Strong-4D-Var)} & $\mathbf{0.4204}$ / $\mathbf{0.4183}$ \emph{(DirectUNet$+$SDA3)} \\
+QG  & $\psi$ EV ($\uparrow$) & $0.9714$ / $0.9468$ & $\mathbf{0.9827}$ / $\mathbf{0.9808}$ \emph{(Q2 / Q4)} \\
+QG  & $q$ EV ($\uparrow$) & $0.500$ / $0.413$ \emph{(EnKF)} & $\mathbf{0.6745}$ / $\mathbf{0.6744}$ \emph{(Q4)} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Learned schemes outperform at \Sz{} and, unlike the classical
+family, hold under \So{}.} \emph{L63 is absent by necessity: it carries no
+learned schemes} (Table~\ref{tab:coverage}), so the robustness statement above
+spans three systems while this one spans two. The near-invariance of the learned
+columns must be read through Table~\ref{tab:classes} --- for a model-free scheme
+it is definitional, for a conditioned one it is a result. Section~\ref{sec:inert}
+separates the two.}
+\label{tab:overview-gap}
+\end{table}
+
+Two observations set up everything that follows. First, the degradation is not a
+uniform error floor: it varies from $1.68\times$ to $2.74\times$ across systems
+and, on QG's potential-vorticity field, turns a positive skill score negative.
+Second, the schemes that do not degrade are precisely those whose prior is not an
+integrated model. The rest of this section asks \emph{why}, and attributes each
+part of the answer to a named hypothesis.
+
+\subsection{The model is the prior: H2's unbuffered cost}
 \label{sec:price}
 
 \begin{table}[t]
@@ -21,57 +88,18 @@ CFM-M         & 0.4810 & 0.4784 & 0.995 & all three \\
 DirectUNet\,$+$\,SDA3 & \textbf{0.4204} & 0.4183 & 0.995 & composed \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96, 200 windows, pooled RMSE. \textbf{The two blocks are
-different method classes} and the lower ratios must be read through
-Table~\ref{tab:classes}: DirectUNet and CFM are model-free, so their
-$\So/\Sz \approx 1$ is definitional. Only the classical block's degradation
-measures the cost of model error. Source:
-\texttt{reports/l96/outputs/l96\_consolidated\_benchmark.md}.}
+\caption{Lorenz-96, 200 windows, pooled RMSE --- the detailed view behind
+Table~\ref{tab:overview-gap}. The lower block's ratios are definitional for the
+model-free rows (Table~\ref{tab:classes}).}
 \label{tab:price}
 \end{table}
 
-Classical DA degrades by $1.68$--$1.80\times$ from \Sz{} to \So{}. That is the
-unbuffered cost of H2: by~\eqref{eq:ssm} the model \emph{is} the prior, so a
-parameter bias is not a perturbed input but a corrupted prior, compounding over
-a 500-step window.
+By~\eqref{eq:ssm} the model \emph{is} the prior: $\pi_{\xv_1}$ is defined through
+$\Phi$, and no other route carries prior information. A parameter bias is
+therefore not a perturbed input but a corrupted prior, compounding over a
+500-step window. That is the mechanism behind the classical block.
 
-\subsection{Weak-constraint 4D-Var, the formulation that relaxes H2}
-\label{sec:weak4dvar}
-
-Lorenz-63 is small enough to afford the weak-constraint formulation, which frees
-a per-step model-error term and is therefore the classical method permitted to
-know that the model is wrong.
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{scheme} & \textbf{\Sz{}} & \textbf{\So{}} \\
-\midrule
-Weak-4D-Var   & \textbf{0.642} & \textbf{1.633} \\
-Strong-4D-Var & 0.767 & 2.100 \\
-EnKF          & 0.881 & 2.267 \\
-ETKF          & 0.878 & 2.271 \\
-\bottomrule
-\end{tabular}
-\caption{Lorenz-63 state RMSE. Weak-4D-Var is best in both scenarios, and under
-model error it beats strong-constraint by 22\%.
-Source: \texttt{reports/l63/outputs/s0\_s1\_synthesis.md}.}
-\label{tab:weak4dvar}
-\end{table}
-
-This is the honest ceiling for the classical family, and it sharpens rather than
-weakens the argument. Relaxing H2 \emph{within} the classical framework buys a
-great deal --- so the residual gap to the learned schemes is not an artefact of
-comparing against a strawman. It also bounds what C1 may claim: the
-marginal-value collapse reported in Section~\ref{sec:marginal} is established for
-strong-constraint and filtering methods, and the corresponding weak-constraint
-measurement on Lorenz-96 does not yet exist.
-\needsrun{Weak-constraint 4D-Var on Lorenz-96 across the observation-density
-grid. The implementation exists; the benchmark run does not.}
-
-\subsection{Conditioning on model information is nearly inert}
+\subsubsection{Conditioning on model information is nearly inert}
 \label{sec:inert}
 
 If the learned schemes are robust to \So{}, the obvious question is whether they
@@ -96,41 +124,43 @@ parameters is 1.0\% \emph{worse} than not conditioning at all; conditioning on
 \end{table}
 
 Across three independent families the effect of model-information conditioning
-on \Sz{} skill is at most $\sim$1.5\%, and \emph{the sign is not consistent}: the
-SDA family gives $+1.0\%$ (worse) for true parameters and $-3.0\%$ (better) for
-noisy ones, a non-monai SDA variant gives $-1.5\%$, and a $\tau{=}0$ CFM
-conditioned on corrupted forcing gives $+0.9\%$ (worse). Conditioning is, to a
-good approximation, \emph{inert}; the one variant that reliably helps is the
-noisy one, which looks like regularisation rather than information use.
+on \Sz{} skill is at most $\sim$1.5\%, and \emph{the sign is not consistent}:
+$+1.0\%$ (worse) for true parameters, $-3.0\%$ (better) for noisy ones, $-1.5\%$
+for a non-monai SDA variant, and $+0.9\%$ (worse) for a $\tau{=}0$ CFM
+conditioned on corrupted forcing. Conditioning is, to a good approximation,
+\emph{inert}; the one variant that reliably helps is the noisy one, which looks
+like regularisation rather than information use.
 
 This is the sharpest available statement of the thesis. The learned schemes are
 robust to corrupted model parameters largely \emph{because they barely depend on
 them} --- the observations carry the information. Classical DA has no such
-fallback: its prior \emph{is} the integrated model. H2 binds not because model
-information is unhelpful, but because DA cannot down-weight it.
+fallback. H2 binds not because model information is unhelpful, but because DA
+cannot down-weight it.
 
 \paragraph{The training-exposure control has been run.}
 The configuration trained with zero forcing/state bias --- the only one never
 exposed to \So{}-level error in training --- gives \Sz{} 0.7046 / \So{} 0.7033,
-ratio 0.998, indistinguishable from its exposed sibling (0.997). Removing
-training-time exposure entirely leaves the invariance intact.
+ratio 0.998, indistinguishable from its exposed sibling (0.997).
 \caveat{This control has no counterpart in the canonical benchmark table, which
 is scoped to one backbone family; it is cited to its own run artefact.}
 
-\paragraph{The same ladder on QG.} The QG DirectUNet variants repeat the pattern
-at a different scale and resolution: the oracle-conditioned variant attains the
-best \Sz{} explained variance (0.9827) but falls to 0.9490 under \So{}, while the
-noisy-conditioned variants hold (0.9798 $\to$ 0.9763, and 0.9824 $\to$ 0.9808).
-Conditioning on \emph{true} model information is again the fragile choice.
+\paragraph{QG separates the definitional case from the real one.}
+The QG DirectUNet ladder makes Table~\ref{tab:classes}'s caveat concrete. Q1 is
+obs-only, so its \So{} numbers are \emph{bit-identical} to its \Sz{} numbers
+($\psi$ EV 0.9805 both) --- definitional, and carrying no robustness
+information. Q2 is oracle-conditioned and is the best scheme at \Sz{} (0.9827)
+but falls to 0.9490 under \So{}. Q3 and Q4, conditioned on \emph{noisy} model
+information, hold (0.9798 $\to$ 0.9763; 0.9824 $\to$ 0.9808). Conditioning on
+\emph{true} model information is again the fragile choice, exactly as on L96.
 
-\subsection{ODE sensitivity is not posterior sensitivity}
+\subsubsection{ODE sensitivity is not posterior sensitivity}
 \label{sec:sensitivity}
 
 Two distinct sensitivities are in play, and classical DA cannot separate them:
 the \emph{model} sensitivity $\partial \xv_{\mathrm{ODE}}/\partial(\thv,\zv)$ of
 the free-running trajectory, Lyapunov-amplified and large; and the
-\emph{posterior} sensitivity
-$\partial\, p(\xv_1\mid\Cv)/\partial(\thv,\zv)$ at fixed $\yv$.
+\emph{posterior} sensitivity $\partial\, p(\xv_1\mid\Cv)/\partial(\thv,\zv)$ at
+fixed $\yv$.
 
 Classical DA conflates them \textbf{by construction}, because its estimator
 \emph{is} the model: by~\eqref{eq:ssm} every route from $(\thv,\zv)$ to the
@@ -168,8 +198,7 @@ EnKF          & $1.0927 \to 0.9046$ (17.2\%)          & $1.6503 \to 1.5022$ (9.0
 \caption{Lorenz-96, \emph{temporal} observation density doubled (15 $\to$ 30
 observations per window). A separate configuration from Table~\ref{tab:price}
 --- all five parameters randomised $\pm 20\%$ --- so the two must not be
-cross-quoted. Source:
-\texttt{reports/l96/outputs/s0\_s1\_obs\_density\_da\_baselines.md}.}
+cross-quoted.}
 \label{tab:marginal}
 \end{table}
 
@@ -183,6 +212,25 @@ observations.} A method whose prior is a wrong model cannot be rescued by more
 data --- exactly the regime of sparse-observation geophysical DA. This is also
 H3b's shadow: at low density DA has nothing but the model, so model error and
 observation sparsity \emph{compound rather than add}.
+
+\subsubsection{Weak-constraint 4D-Var bounds the claim}
+\label{sec:weak4dvar}
+
+Weak-constraint 4D-Var frees a per-step model-error term and is therefore the
+classical method \emph{permitted} to know the model is wrong. It is the honest
+ceiling for the family, and it has been run on two of the three systems: on L63
+it is the best scheme in both scenarios (Table~\ref{tab:overview-robust}),
+beating strong-constraint by 22\% under model error; on QG it leads
+strong-constraint at \So{} on both fields.
+
+This sharpens rather than weakens the argument --- the residual gap in
+Table~\ref{tab:overview-gap} is not an artefact of comparing against a strawman
+--- but it also bounds what may be claimed. The marginal-value collapse of
+Table~\ref{tab:marginal} is established for strong-constraint and filtering
+methods; the corresponding weak-constraint measurement does not exist.
+\needsrun{Weak-constraint 4D-Var on Lorenz-96, across the observation-density
+grid. The implementation exists; the benchmark run does not. This is the single
+highest-value outstanding experiment.}
 
 \subsection{The state variable changes skill at identical physics}
 \label{sec:representation}
@@ -202,7 +250,10 @@ against the $q$-state 0.752.
 
 Identical dynamics, identical information, and a large skill difference produced
 purely by which variable is called ``the state''. The representation is not a
-neutral container.
+neutral container. Table~\ref{tab:overview-robust}'s negative variational
+$q$-scores are the same effect seen from the other side: a scheme that fits
+$\psi$ well can be arbitrarily bad in $q$, because the map between the two
+representations amplifies exactly the error it leaves behind.
 \caveat{The headline $-3.2$ is partly a metric choice --- the aggregate score
 reports the $q$ field. The per-field numbers above are the ones to quote.}
 
@@ -228,8 +279,8 @@ through the same mechanism}, and the partition~\eqref{eq:partition} is what make
 that visible: the trade is not between schemes but between which slots are filled
 generatively and which are imported.
 \needsrun{A calibrated comparison across all classes at one uniform ensemble
-convention, with rank histograms. Several cells of the benchmark are still
-single-pass point estimates.}
+convention, with rank histograms. Several benchmark cells are still single-pass
+point estimates.}
 
 \subsection{A motivating ordering that is not yet evidence}
 \label{sec:ordering}
@@ -238,15 +289,14 @@ At \Sz{} on Lorenz-96 the schemes order by how much of the window they treat at
 once: sequential filters (ETKF 0.8883, EnKF 0.9131) are worse than the window
 variational method (Strong-4D-Var 0.8116), which is in turn far worse than the
 window-amortised learned schemes (0.4204--0.5365). Read against
-Table~\ref{tab:zeroing}, the ordering is not monotone in the number of operator
-slots occupied --- EnKF fills $\PsiG$ and still trails a $\Psimean$-only
-variational scheme --- which is itself informative: \emph{how much of the problem
-is solved jointly} matters here more than which posterior components are
-representable.
+Table~\ref{tab:zeroing}, the ordering is \emph{not} monotone in the number of
+operator slots occupied --- EnKF fills $\PsiG$ and still trails a
+$\Psimean$-only variational scheme --- which is itself informative: how much of
+the problem is solved \emph{jointly} matters here more than which posterior
+components are representable.
 
 This is suggestive of H1 but \textbf{confounded}: amortisation, learning and
 capacity all vary at once, and the learned schemes see a training set the
 classical ones do not.
 \needsrun{Filter vs.\ window-smoother vs.\ window-amortised at matched model,
-matched observations and matched compute. This is what turns the ordering into
-evidence for H1.}
+matched observations and matched compute.}
