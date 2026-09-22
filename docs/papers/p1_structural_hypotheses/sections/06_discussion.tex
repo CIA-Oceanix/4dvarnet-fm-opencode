@@ -24,10 +24,22 @@
     configuration. A configuration-distribution-aware estimator dominates both
     configuration-specific and configuration-agnostic ones (0.473 / 1.081 at
     full / zero fast-variable density, against 0.486 / 1.292 and 0.537 / 1.082).
-  \item[\textbf{C4 (H1 $+$ H3a $\Rightarrow$ S-b).}]
-    The ensemble-Kalman class carries $\PsiNG \equiv 0$ by construction, so its
-    posterior characterisation has a \emph{structural} ceiling --- and the
-    alternatives measured here buy calibration or accuracy, never both.
+  \item[\textbf{C4 (H1 $+$ H3a $\Rightarrow$ S-b) --- \emph{not supported as
+    originally stated}.}]
+    The intended claim was that the ensemble-Kalman class, carrying
+    $\PsiNG \equiv 0$ by construction, has a structurally impoverished posterior.
+    \textbf{The dispersion measurements refute the obvious form of this}
+    (Section~\ref{sec:nongaussian}): ETKF and EnKF are the best-calibrated
+    schemes measured (spread/RMSE $1.127$, $1.089$ against a target of $0.967$),
+    while every scheme with a full non-Gaussian branch is under-dispersed by a
+    factor of two or more. The reconciliation is that spread/RMSE is a
+    second-moment diagnostic and $\PsiNG$ is not a second-moment object --- a
+    Gaussian update can match the spread exactly and still be wrong about the
+    posterior's shape. That is a coherent position but an untested one, because
+    the diagnostic that would test it (rank histograms) does not exist in this
+    codebase. \textbf{C4 is therefore downgraded to an open question}, and S-b
+    rests for now on the accuracy/dispersion trade being unresolved by
+    \emph{every} class rather than on a deficit specific to one.
   \item[\textbf{C5 (attribution).}]
     Each hypothesis can be relaxed separately and the resulting change
     attributed to a named term of~\eqref{eq:partition}. This is what makes the
