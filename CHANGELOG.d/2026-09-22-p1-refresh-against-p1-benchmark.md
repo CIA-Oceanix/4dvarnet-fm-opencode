@@ -38,7 +38,7 @@ it points the other way:
 | PredictStateCFM-M | 0.400 |
 
 The class that zeroes `Psi_NG` is the **best**-calibrated; every scheme with a
-full non-Gaussian branch is under-dispersed by 2x or more. §5.5 is rewritten
+full non-Gaussian branch is under-dispersed by 1.8x-2.4x. §5.5 is rewritten
 around this: the accuracy/dispersion trade is real and stark, but runs opposite
 to what the operator partition suggests.
 
@@ -58,3 +58,13 @@ such.
 **Verification:** `pdflatex` x3 -- 16 pages, 0 undefined references; every `\ref`
 checked against a matching `\label`, none dangling; swept for the 15 superseded
 values, none remain outside the explicit caveat.
+
+**Correction after review.** The first version of this change said every scheme
+with a full non-Gaussian branch is under-dispersed "by a factor of two or more".
+Only two of the four are: `0.967/0.535 = 1.81x` for VanillaCFM-M and
+`0.967/0.550 = 1.76x` for SDA2-M, against `2.32x` for SDA1-M and `2.42x` for
+PredictStateCFM-M. The overstatement landed on **VanillaCFM-M, the paper's
+headline best-learned scheme** -- the one row where it mattered most. Corrected
+to `1.8x-2.4x` in the caption, in C4, and here. The other ratios in the refresh
+were re-derived and are correct (`0.8662/0.3445 = 2.51x` for the accuracy gap;
+`1.703`/`1.691` for the DA degradation).
