@@ -1,0 +1,36 @@
+# @package _global_
+# Random-obs-times arm of P1_directunet_monaiM_noaug_l96 (P1 recipe: monai + normalize + cosine +
+# 400 epochs, no obs-density augmentation). Only change: data.obs_times_random,
+# i.e. TRAINING obs are the same 30 obs times per window as the regular grid but
+# one stratified random step per 100-step block, redrawn every batch with fresh
+# noise. Val/test keep the regular grid, so rows compare directly with P1_directunet_monaiM_noaug_l96.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  loss: {use_gradient: true, gradient_weight: 0.1}
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  obs_density_augment: false
+  obs_times_random: true
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt

@@ -79,7 +79,7 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
                          obs_var_indices=None, use_biased_params=False,
                          resample_bias_draws=False, bias_max=0.2, norm_stats=None,
                          noisy_da_bias=False, noisy_da_max=1.5, obs_density_cfg=None,
-                         with_true_forcing=False):
+                         with_true_forcing=False, obs_times_cfg=None):
     # obs_density_cfg (see make_collate_fm) is TRAINING-only augmentation --
     # val must stay at full canonical density so its loss/metrics remain
     # comparable across epochs and against the eval protocol
@@ -97,7 +97,8 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
         "train": DataLoader(FlowMatchingDataset(datasets["train"], **fm_kw),
                             shuffle=True,
                             collate_fn=make_collate_fm(norm_stats, obs_density_cfg,
-                                                        with_true_forcing=with_true_forcing),
+                                                        with_true_forcing=with_true_forcing,
+                                                        obs_times_cfg=obs_times_cfg),
                             **kw),
         "val": DataLoader(FlowMatchingDataset(datasets["val"], **fm_kw),
                           collate_fn=make_collate_fm(norm_stats, with_true_forcing=with_true_forcing),
@@ -735,6 +736,10 @@ def main(cfg: DictConfig):
                 "min_keep": dc.get("obs_density_min_keep", 0),
             }
             logger.info(f"data.obs_density_augment=True: {obs_density_cfg}")
+        obs_times_cfg = None
+        if dc.get("obs_times_random", False):
+            obs_times_cfg = {"R_var": dc.R_var}
+            logger.info(f"data.obs_times_random=True (stratified, train only): {obs_times_cfg}")
         # full_state_target=True (default False, backward-compatible): pass
         # obs_var_indices=None to FlowMatchingDataset specifically (NOT to
         # base_cfg above, which still needs the real obs_var_indices to
@@ -762,6 +767,7 @@ def main(cfg: DictConfig):
             noisy_da_max=dc.get("noisy_da_max", 1.5),
             obs_density_cfg=obs_density_cfg,
             with_true_forcing=dc.get("with_true_forcing", False),
+            obs_times_cfg=obs_times_cfg,
         )
     else:
         loaders = make_experiment_dataloaders(

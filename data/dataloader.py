@@ -228,7 +228,7 @@ def collate_fm(batch):
 
 
 def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None = None,
-                     with_true_forcing: bool = False):
+                     with_true_forcing: bool = False, obs_times_cfg: dict | None = None):
     """Return a ``collate_fm``-compatible collate fn that additionally
     z-score normalizes ``states``/``obs`` when ``norm_stats`` is given, and/or
     applies TRAINING-time fast-Y observation-density augmentation when
@@ -253,16 +253,33 @@ def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None
     length, which ``with_params``'s own variable-length suffix already
     makes ambiguous.
 
-    ``norm_stats is None and obs_density_cfg is None and not with_true_forcing``
-    reproduces plain ``collate_fm`` exactly.
+    ``obs_times_cfg`` (optional dict, key ``R_var``) replaces the regular obs
+    grid of every window with the same number of obs times drawn at
+    stratified random positions, redrawn every batch (see
+    ``data.obs_times.resample_obs_times``). Applied before density
+    augmentation and normalization; requires ``states`` in the observed
+    subspace (same last dim as ``obs``).
+
+    ``norm_stats is None and obs_density_cfg is None and not with_true_forcing
+    and obs_times_cfg is None`` reproduces plain ``collate_fm`` exactly.
     """
-    if norm_stats is None and obs_density_cfg is None and not with_true_forcing:
+    if (norm_stats is None and obs_density_cfg is None and not with_true_forcing
+            and obs_times_cfg is None):
         return collate_fm
 
     from data.normalization import normalize
 
     def _collate(batch):
         fm_batch = _collate_fm_impl(batch, with_true_forcing=with_true_forcing)
+        if obs_times_cfg is not None:
+            from data.obs_times import resample_obs_times
+            if fm_batch.states.shape[-1] != fm_batch.obs.shape[-1]:
+                raise ValueError(
+                    f"obs_times_cfg requires states in the observed subspace, got states dim "
+                    f"{fm_batch.states.shape[-1]} vs obs dim {fm_batch.obs.shape[-1]}"
+                )
+            fm_batch.obs, fm_batch.obs_mask = resample_obs_times(
+                fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"])
         if obs_density_cfg is not None:
             from data.obs_density import (
                 NUM_FAST,
