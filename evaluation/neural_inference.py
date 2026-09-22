@@ -1084,3 +1084,22 @@ def run_inference(
                                   trueprior_phi_source=phi_source_by_case.get(case, "true"))
         for case, dl in dataloaders.items()
     }
+
+
+def eval_norm_stats(cfg):
+    """Per-channel norm stats for `cfg`, or None when the run is unnormalized.
+
+    Every evaluation path that feeds a model from `prepare_dataset` must pass the
+    result as `norm_stats=`, and must convert model outputs back to physical
+    units before scoring. Omitting it on a `data.normalize: true` checkpoint
+    feeds the model RAW observations it never saw in training and then scores its
+    normalized-space output against raw truth -- both halves wrong. The symptom
+    is an RMSE near 1.5-1.9 instead of ~0.35. Note `make_collate_eval`
+    normalizes `obs` ONLY: `true_state` stays raw, so it is the MODEL side that
+    needs converting, never the truth.
+    """
+    if not cfg.data.get("normalize", False):
+        return None
+    from data.normalization import load_norm_stats
+    from evaluation.archive import resolve_norm_stats
+    return load_norm_stats(str(resolve_norm_stats(cfg, required=True)))

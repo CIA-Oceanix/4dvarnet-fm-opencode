@@ -492,7 +492,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             param_list.append(params.detach().cpu().numpy()[0])
             tp = _eval_true_param_list(w, param_names)
             true_param_list.append(np.array(tp))
-        elif model_type == "predict_state_cfm":
+        elif model_type in ("predict_state_cfm", "monai_predict_state_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -552,7 +552,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
         elif model_type in ("param_head", "param_head_unet"):
             pred, _ = model(batch)
             pred = pred.detach().cpu().numpy()[0]
-        elif model_type == "predict_state_cfm":
+        elif model_type in ("predict_state_cfm", "monai_predict_state_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
