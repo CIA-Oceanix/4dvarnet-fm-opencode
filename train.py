@@ -173,6 +173,21 @@ def model_factory(cfg: DictConfig, device: torch.device):
             num_res_blocks=mvc.get("num_res_blocks", 2),
             norm_num_groups=mvc.get("norm_num_groups", 32),
         )
+    elif model_type == "monai_predict_state_cfm":
+        from models.monai_unet_adapter import MonaiPredictStateCFM
+        mps = cfg.model.monai_predict_state_cfm
+        model = MonaiPredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mps.hidden_channels,
+            N_outer=mps.N_outer,
+            sigma_prior=mps.sigma_prior,
+            dropout=mps.dropout,
+            train_tau_0_only=mps.get("train_tau_0_only", False),
+            param_dim=cfg.model.get("param_dim", 4),
+            cond_extra_dim=mps.get("cond_extra_dim", 0),
+            num_res_blocks=mps.get("num_res_blocks", 2),
+            norm_num_groups=mps.get("norm_num_groups", 32),
+        )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
         jc = cfg.model.joint_cfm

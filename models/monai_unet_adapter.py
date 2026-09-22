@@ -38,7 +38,7 @@ from monai.networks.nets import DiffusionModelUNet
 
 from models.interpolant import LinearInterpolant
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
-from models.vanilla_cfm import VanillaCFM
+from models.vanilla_cfm import PredictStateCFM, VanillaCFM
 
 _PATCHED_1D_RESBLOCK = False
 
@@ -253,6 +253,47 @@ class MonaiVanillaCFM(VanillaCFM):
             num_res_blocks=num_res_blocks,
             norm_num_groups=norm_num_groups,
             use_obs=True,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
+
+
+class MonaiPredictStateCFM(PredictStateCFM):
+    """MonaiUNet1D-backed drop-in for PredictStateCFM (V3): identical
+    mean-prediction contract -- the network returns ``mu = E[x1|x_tau,y]`` and
+    ``sample`` integrates ``v = (mu - x)/(1 - tau)`` -- with only the backbone
+    construction differing. Everything else is inherited unchanged, since
+    ``forward``/``compute_loss``/``sample`` only ever call ``self.unet(...)``
+    and ``MonaiUNet1D.forward`` matches ``UNet1D``'s ``(x, obs=, tau=)``
+    signature and return shape.
+
+    Subclassing (rather than composing) keeps the
+    ``isinstance(model, (PredictStateCFM, TweedieCFM))`` dispatch in
+    ``evaluation/neural_inference.py`` and the ``psi_of`` mu-predicting path in
+    ``evaluation/psi_decomposition.py`` working with no changes on either side
+    -- the same reason ``MonaiVanillaCFM`` subclasses ``VanillaCFM``.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
+                 N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False,
+                 param_dim=4, cond_extra_dim=0, num_res_blocks=2, norm_num_groups=32):
+        nn.Module.__init__(self)
+        self.cond_extra_dim = cond_extra_dim
+        self.param_dim = param_dim
+        self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
+        self.time_emb_dim = time_emb_dim
+        self.unet = MonaiUNet1D(
+            state_dim=state_dim,
+            obs_dim=state_dim + cond_extra_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            output_dim=state_dim,
             dropout=dropout,
         )
         self.interpolant = LinearInterpolant(nu=1.0)

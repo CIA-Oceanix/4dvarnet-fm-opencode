@@ -1,0 +1,39 @@
+# @package _global_
+# tau=0-only arm of A2_predictstatecfm_monaiM_l96 (P1 recipe: monai + normalize +
+# cosine + 400 epochs, no obs-density augmentation); train_tau_0_only is the ONLY
+# change. Training always sees tau=0, so the network maps (x0 ~ N(0, 0.5^2), y)
+# -> E[x1 | y] in one pass, and sampling returns that single-pass mu: a
+# DirectUNet-like point estimator that still takes a random input state. Compares
+# against P1 DirectUNet-M (no random input) to separate the effect of the random
+# initial condition from the flow itself. Not a generative flow: no CRPS column.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_predict_state_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_predict_state_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: true
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  obs_density_augment: false
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
