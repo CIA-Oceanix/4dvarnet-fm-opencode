@@ -69,6 +69,10 @@ class DataConfig:
     obs_density_augment: bool = False
     obs_density_full_prob: float = 0.4
     obs_density_min_keep: int = 0
+    # Training-time random obs times (data/obs_times.py): same obs count per
+    # window as the regular grid, one stratified random step per block,
+    # redrawn every batch -- val/test keep the regular grid.
+    obs_times_random: bool = False
 
     # Device
     device: str = "cpu"
