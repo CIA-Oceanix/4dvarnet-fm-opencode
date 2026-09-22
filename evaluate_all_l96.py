@@ -30,7 +30,8 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
-                  obs_j=2, s1_j=None, eval_j=None, obs_interval=100, fw_randomized=False):
+                  obs_j=2, s1_j=None, eval_j=None, obs_interval=100, fw_randomized=False,
+                  da_fast_weights=False):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -46,7 +47,8 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        s1_j=s1_j,
                                        eval_j=eval_j,
                                        obs_interval=obs_interval,
-                                       fw_randomized=fw_randomized)
+                                       fw_randomized=fw_randomized,
+                                       da_fast_weights=da_fast_weights)
     return results
 
 
@@ -112,6 +114,8 @@ def main():
                              '\'{"fast_weights": {"randomized": true, "noise": 0.2}}\'')
     parser.add_argument("--data-cache-tag", type=str, default="",
                         help="Suffix for the dataset .pt cache filename (parallel-safe reruns)")
+    parser.add_argument("--da-fast-weights", action="store_true",
+                        help="pass each window's fast_weights (S0 true, S1 *_da) to the DA model")
     args = parser.parse_args()
 
     randomize = json.loads(args.randomize) if args.randomize else {}
@@ -202,7 +206,8 @@ def main():
                                       s1_j=args.s1_j,
                                       eval_j=args.eval_j,
                                       obs_interval=args.obs_interval,
-                                      fw_randomized="fast_weights" in randomize)
+                                      fw_randomized="fast_weights" in randomize,
+                                      da_fast_weights=args.da_fast_weights)
 
     print("\n── L96 S0/S1 Comparison Table ──")
     headers = ["Case"]
