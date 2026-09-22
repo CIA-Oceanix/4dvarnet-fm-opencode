@@ -18,8 +18,8 @@ and no objection about the tuning of one family against another applies to it.
 L63 & RMSE $\Sz\!\to\!\So$ & $0.767 \to 2.100$ & $0.642 \to 1.633$ & $0.881 \to 2.267$ & $0.878 \to 2.271$ \\
     & \emph{degradation}   & $2.74\times$ & $2.54\times$ & $2.57\times$ & $2.59\times$ \\
 \addlinespace
-L96 & RMSE $\Sz\!\to\!\So$ & $0.8116 \to 1.4617$ & \emph{not run} & $0.9131 \to 1.5381$ & $0.8883 \to 1.4998$ \\
-    & \emph{degradation}   & $1.80\times$ & --- & $1.68\times$ & $1.69\times$ \\
+L96 & RMSE $\Sz\!\to\!\So$ & $0.7383 \to 1.4369$ & \emph{not run} & $0.8943 \to 1.5123$ & $0.8662 \to 1.4748$ \\
+    & \emph{degradation}   & $\mathbf{1.95\times}$ & --- & $1.69\times$ & $1.70\times$ \\
 \addlinespace
 QG  & $\psi$ EV $\Sz\!\to\!\So$ & $0.9714 \to 0.9314$ & $0.9660 \to 0.9468$ & $0.9584 \to 0.9410$ & $0.9593 \to 0.9424$ \\
     & $q$ EV $\Sz\!\to\!\So$ & $\mathbf{-0.126 \to -0.857}$ & $-0.034 \to -0.501$ & $0.500 \to 0.413$ & $0.498 \to 0.412$ \\
@@ -46,7 +46,7 @@ Table~\ref{tab:classes}.
 \toprule
 \textbf{system} & \textbf{metric} & \textbf{best classical} $\Sz$ / $\So$ & \textbf{best learned} $\Sz$ / $\So$ \\
 \midrule
-L96 & RMSE ($\downarrow$) & $0.8116$ / $1.4617$ \emph{(Strong-4D-Var)} & $\mathbf{0.4204}$ / $\mathbf{0.4183}$ \emph{(DirectUNet$+$SDA3)} \\
+L96 & RMSE ($\downarrow$) & $0.7383$ / $1.4369$ \emph{(Strong-4D-Var)} & $\mathbf{0.3445}$ / $\mathbf{0.3391}$ \emph{(VanillaCFM-M)} \\
 QG  & $\psi$ EV ($\uparrow$) & $0.9714$ / $0.9468$ & $\mathbf{0.9827}$ / $\mathbf{0.9808}$ \emph{(Q2 / Q4)} \\
 QG  & $q$ EV ($\uparrow$) & $0.500$ / $0.413$ \emph{(EnKF)} & $\mathbf{0.6745}$ / $\mathbf{0.6744}$ \emph{(Q4)} \\
 \bottomrule
@@ -64,34 +64,36 @@ separates the two.}
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{@{}lrrrc@{}}
+\begin{tabular}{@{}lrrrcc@{}}
 \toprule
-\textbf{scheme} & \textbf{\Sz{}} & \textbf{\So{}} & $\So/\Sz$ & \textbf{slots occupied} \\
+\textbf{scheme} & \textbf{\Sz{}} & \textbf{\So{}} & $\So/\Sz$ & \textbf{slots} & \textbf{spread/RMSE} \\
 \midrule
-Strong-4D-Var & 0.8116 & 1.4617 & \textbf{1.801} & $\Psimean$ \\
-ETKF          & 0.8883 & 1.4998 & \textbf{1.688} & $\Psimean + \PsiG$ \\
-EnKF          & 0.9131 & 1.5381 & \textbf{1.684} & $\Psimean + \PsiG$ \\
+Strong-4D-Var & 0.7383 & 1.4369 & \textbf{1.946} & $\Psimean$ & --- \\
+ETKF          & 0.8662 & 1.4748 & \textbf{1.703} & $\Psimean + \PsiG$ & $1.127$ \\
+EnKF          & 0.8943 & 1.5123 & \textbf{1.691} & $\Psimean + \PsiG$ & $1.089$ \\
 \addlinespace
-SDA3          & 0.5365 & 0.5355 & 0.998 & all three \\
-DirectUNet-M  & 0.5064 & 0.5072 & 1.002 & $\Psimean$ \\
-CFM-M         & 0.4810 & 0.4784 & 0.995 & all three \\
-DirectUNet\,$+$\,SDA3 & \textbf{0.4204} & 0.4183 & 0.995 & composed \\
+SDA1-M        & 0.5063 & 0.5049 & 0.997 & all three & $0.416$ \\
+DirectUNet-M  & 0.4699 & 0.4706 & 1.002 & $\Psimean$ & $0.978$\,\textsuperscript{$\dagger$} \\
+PredictStateCFM-M & 0.3584 & 0.3554 & 0.992 & all three & $0.400$ \\
+VanillaCFM-M  & \textbf{0.3445} & 0.3391 & 0.984 & all three & $0.535$ \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96 in full, 200 windows, pooled RMSE --- the per-scheme view
-behind Tables~\ref{tab:overview-robust} and~\ref{tab:overview-gap}, with each
-scheme's occupied operator slots from Table~\ref{tab:zeroing}. The lower block's
-ratios are definitional for the model-free rows (Table~\ref{tab:classes}).}
+\caption{Lorenz-96 at the P1 protocol, pooled RMSE, M tier throughout.
+\textsuperscript{$\dagger$}DirectUNet's column is a predicted/true \emph{variance}
+ratio, not an ensemble spread --- it is a single forward pass, so it has no
+dispersion in the sense the other rows report. The lower block's $\So/\Sz$ is
+definitional for the model-free rows (Table~\ref{tab:classes}). Source:
+\texttt{reports/l96/outputs/p1\_l96\_benchmark.md}.}
 \label{tab:price}
 \end{table}
 
-\textbf{Occupying more operator slots does not by itself buy accuracy.} SDA3
-fills all three and is the \emph{weakest} learned scheme here (0.5365);
-DirectUNet fills $\Psimean$ alone and beats it (0.5064); CFM fills all three and
-beats both (0.4810). The slots determine what a scheme \emph{can represent}, not
-how well it estimates --- which is why Section~\ref{sec:nongaussian} finds
-accuracy and calibration traded against each other rather than improving
-together.
+\textbf{Occupying more operator slots does not by itself buy accuracy.} SDA1
+fills all three and is the \emph{weakest} learned scheme here (0.5063);
+DirectUNet fills $\Psimean$ alone and beats it (0.4699); the conditional flows
+fill all three and beat both (0.3445--0.3584). The slots determine what a scheme
+\emph{can represent}, not how well it estimates --- and
+Section~\ref{sec:nongaussian} shows the same non-monotonicity in the dispersion
+column, in the opposite direction.
 
 Two observations set up everything that follows. First, the degradation is not a
 uniform error floor: it varies from $1.68\times$ to $2.74\times$ across systems
@@ -109,28 +111,33 @@ use $\thv^{*}$ at all.
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{@{}llrrr@{}}
+\begin{tabular}{@{}llrrrr@{}}
 \toprule
-\textbf{scheme} & \textbf{conditioning} & \textbf{\Sz{}} & \textbf{\So{}} & $\So/\Sz$ \\
+\textbf{scheme} & \textbf{conditioning} & \textbf{\Sz{}} & \textbf{\So{}} & $\So/\Sz$ & \textbf{vs.\ SDA1} \\
 \midrule
-SDA1 & none (unconditional prior) & 0.5532 & 0.5521 & 0.998 \\
-SDA2 & \emph{true} $\thv$ $+$ corrupted $\zv^{*}$ & 0.5588 & 0.5610 & 1.004 \\
-SDA3 & \emph{noisy} $\thv^{*}$ & \textbf{0.5365} & 0.5355 & 0.998 \\
+SDA1-M & none (unconditional prior) & \textbf{0.5063} & 0.5049 & 0.997 & --- \\
+SDA2-M & \emph{true} $\thv$ $+$ corrupted $\zv^{*}$ & 0.5129 & 0.5130 & 1.000 & $+1.3\%$ \\
+SDA3-M & \emph{noisy} $\thv^{*}$ & 0.5228 & 0.5229 & 1.000 & $+3.3\%$ \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96 conditioning ladder, pooled RMSE. Conditioning on \emph{true}
-parameters is 1.0\% \emph{worse} than not conditioning at all; conditioning on
-\emph{noisy} ones is 3.0\% better.}
+\caption{Lorenz-96 conditioning ladder at the P1 protocol, M tier, pooled RMSE.
+\textbf{Both forms of model-information conditioning are worse than none.}
+Source: \texttt{reports/l96/outputs/p1\_l96\_benchmark.md}.}
 \label{tab:ladder}
 \end{table}
 
-Across three independent families the effect of model-information conditioning
-on \Sz{} skill is at most $\sim$1.5\%, and \emph{the sign is not consistent}:
-$+1.0\%$ (worse) for true parameters, $-3.0\%$ (better) for noisy ones, $-1.5\%$
-for a non-monai SDA variant, and $+0.9\%$ (worse) for a $\tau{=}0$ CFM
-conditioned on corrupted forcing. Conditioning is, to a good approximation,
-\emph{inert}; the one variant that reliably helps is the noisy one, which looks
-like regularisation rather than information use.
+Conditioning on model information moves \Sz{} skill by at most a few percent,
+and it does not help: relative to the unconditional prior, true parameters cost
+$1.3\%$ and noisy ones $3.3\%$. Conditioning is, to a good approximation,
+\emph{inert} --- and to the extent it does anything, it is mildly harmful.
+
+\caveat{An earlier evaluation of the same ladder, at a different protocol,
+reported the opposite sign for the noisy variant (SDA3 $3.0\%$ \emph{better}
+than SDA1, against $3.3\%$ worse here). That the sign of a ${\sim}3\%$ effect
+flips between protocols is itself the finding: the effect is smaller than the
+checkpoint-selection noise the benchmark measures at $15$--$21\%$ for this
+family. The inertness conclusion is robust; any claim about the \emph{direction}
+of the conditioning effect is not, and the draft no longer makes one.}
 
 This is the sharpest available statement of the thesis. The learned schemes are
 robust to corrupted model parameters largely \emph{because they barely depend on
@@ -369,104 +376,86 @@ Section~\ref{sec:nongaussian}: if changing the output space moves calibration as
 well as accuracy, the representation is not separable from the dispersion
 question either.
 
-\subsection{The non-Gaussian deficit, and what blending buys}
+\subsection{Dispersion: the prediction from \texorpdfstring{$\PsiNG$}{Psi-NG} is
+not the one the data shows}
 \label{sec:nongaussian}
 
-Table~\ref{tab:zeroing} predicts that the ensemble-Kalman class cannot represent
-$\PsiNG$ at any tuning. The measured consequence is that \emph{no scheme
-evaluated is simultaneously accurate and calibrated}. The only configuration
-carrying a full non-Gaussian branch is 20--25\% over-dispersive --- spread/skill
-relative to target $1.20 / 1.22 / 1.24$ at $N = 6/10/30$, stable in $N$ and hence
-a sampler property rather than a sample-size artefact --- while every scheme that
-closes the RMSE gap does so by importing a deterministic $\Psimean$ and collapses
-to ratios $0.28$--$0.59$ against a target of $0.967$.
-
-Blending is where this becomes a design choice rather than an accident.
-DirectUNet\,$+$\,SDA3 is the most accurate scheme in Table~\ref{tab:price}
-(0.4204, against 0.5064 for its own $\Psimean$ alone and 0.5365 for the sampler
-alone), so composing the slots demonstrably buys accuracy. But it buys it by
-importing a deterministic mean, which is precisely the move that collapses
-dispersion. \textbf{Accuracy and calibration are being traded against each other
-through the same mechanism}, and the partition~\eqref{eq:partition} is what makes
-that visible: the trade is not between schemes but between which slots are filled
-generatively and which are imported.
-Within the blend family this trade has been mapped, and it is a genuine Pareto
-surface rather than a single operating point.
+Table~\ref{tab:zeroing} says the ensemble-Kalman class cannot represent $\PsiNG$
+at any tuning. The natural expectation is that this shows up as worse posterior
+characterisation. \textbf{Measured on spread/RMSE, the opposite is true.}
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{@{}llccc@{}}
+\begin{tabular}{@{}llcc@{}}
 \toprule
-\textbf{configuration} & \textbf{slots} & \textbf{RMSE} & \textbf{spread/skill} & \textbf{vs.\ target $0.967$} \\
+\textbf{scheme} & \textbf{slots} & \textbf{\Sz{} RMSE} & \textbf{spread/RMSE} \\
 \midrule
-mean-only ($\lambda_0 = 1$)      & $\Psimean$   & $0.4934$ & $0.000$ & no dispersion at all \\
-cold ($\lambda_0 = 0$, sampler alone) & all three & $0.5686$ & $1.202$ & $24\%$ over \\
-warm start ($\tau_0 = 0.3$)      & composed     & $0.4268$ & $0.284$ & $71\%$ under \\
-blend ($\lambda_0 = 0.5$, $p=1$) & composed     & $\mathbf{0.4202}$ & $\mathbf{0.380}$ & $61\%$ under \\
+ETKF              & $\Psimean + \PsiG$ & 0.8662 & $\mathbf{1.127}$ \\
+EnKF              & $\Psimean + \PsiG$ & 0.8943 & $\mathbf{1.089}$ \\
+\addlinespace
+VanillaCFM-M      & all three & $\mathbf{0.3445}$ & 0.535 \\
+PredictStateCFM-M & all three & 0.3584 & 0.400 \\
+SDA1-M            & all three & 0.5063 & 0.416 \\
+SDA2-M            & all three & 0.5129 & 0.550 \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96, $N=30$. Accuracy and dispersion move in opposition across the
-blend family: the sampler alone is the \emph{only} configuration near the
-reliability target and the \emph{worst} on RMSE. The continuous blend dominates
-the hard warm start on both axes simultaneously, which is the one place the trade
-is not strictly adversarial. \textbf{These values come from the sampler study's
-own configuration} (variance-weighted guidance, $N_\mathrm{outer}=50$) and are
-not cross-quotable with Table~\ref{tab:price}.}
+\caption{Lorenz-96, \Sz{}, M tier. Reliability target for $N=30$ is
+$\sqrt{(N-1)/(N+1)} = 0.967$. \textbf{The two classes fail in opposite
+directions}: the ensemble filters are mildly \emph{over}-dispersed and closest to
+the target; every scheme carrying a full non-Gaussian branch is substantially
+\emph{under}-dispersed --- by $1.8\times$ to $2.4\times$ relative to the
+target. Source:
+\texttt{reports/l96/outputs/p1\_l96\_benchmark.md}.}
 \label{tab:calibration}
 \end{table}
 
-\paragraph{What is missing is the half the structural claim rests on.}
-Table~\ref{tab:calibration} covers the generative family. It contains \emph{no
-ensemble-Kalman row} --- and C4, the claim that the ensemble-Kalman class carries
-a structural ceiling because $\PsiNG \equiv 0$, is a claim about precisely those
-schemes. EnKF and ETKF are ensemble methods with a spread that is directly
-measurable, and it has not been measured here.
+The accuracy/dispersion trade is real and stark --- the best-calibrated schemes
+are the least accurate and vice versa, with no scheme good at both --- but it
+does not run in the direction the operator partition suggests. The class that
+zeroes $\PsiNG$ is the better-calibrated one.
 
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{@{}llcccc@{}}
-\toprule
-\textbf{scheme} & \textbf{slots} & \textbf{RMSE} & \textbf{spread/skill} & \textbf{CRPS} & \textbf{rank hist.} \\
-\midrule
-EnKF   & $\Psimean + \PsiG$ & $0.9131$ & \emph{pending} & \emph{pending} & \emph{pending} \\
-ETKF   & $\Psimean + \PsiG$ & $0.8883$ & \emph{pending} & \emph{pending} & \emph{pending} \\
-\addlinespace
-SDA3   & all three & $0.5365$ & \emph{pending} & \emph{pending} & \emph{pending} \\
-CFM    & all three & $0.4810$ & \emph{pending} & \emph{pending} & \emph{pending} \\
-DirectUNet\,$+$\,SDA3 & composed & $0.4204$ & \emph{pending} & \emph{pending} & \emph{pending} \\
-\bottomrule
-\end{tabular}
-\caption{\textbf{Planned: one calibration protocol across every class}, at a
-uniform $N=30$, on the configuration of Table~\ref{tab:price} so that accuracy
-and dispersion are read from the same runs. Strong-4D-Var and DirectUNet are
-omitted as deterministic point estimators, for which spread is undefined --- that
-is itself the content of Table~\ref{tab:zeroing}'s first two rows. \needsrun{The
-ensemble-Kalman rows are the ones C4 depends on; no rank-histogram diagnostic
-exists anywhere in the codebase, and it is the primary reliability figure for
-this readership.}}
-\label{tab:calibration-planned}
-\end{table}
+\paragraph{What this does and does not license.}
+It does not rescue the ensemble-Kalman class: at \Sz{} it is $2.5\times$ less
+accurate than a conditional flow, and under model error it degrades by
+$1.7\times$ while the flows do not
+(Table~\ref{tab:overview-robust}). What it does is refute a specific inference
+--- that a missing $\PsiNG$ must show up as a dispersion deficit.
 
-\textbf{Stated plainly: C4 is currently argued from construction, not from
-measurement.} That $\PsiNG \equiv 0$ for the ensemble-Kalman class is a
-mathematical fact about the update (Section~\ref{sec:zeroing}), and the
-consequence for accuracy is visible throughout Section~\ref{sec:overview}. But
-the consequence for \emph{calibration} --- the part that makes it symptom S-b
-rather than a restatement of S-a --- is asserted rather than shown. Filling
-Table~\ref{tab:calibration-planned} is what would settle whether the
-ensemble-Kalman class is badly calibrated in the specific way the missing
-non-Gaussian branch predicts, or merely under-dispersive in the ordinary way that
-inflation is designed to fix.
+The reconciliation is that \textbf{spread/RMSE is a second-moment diagnostic, and
+$\PsiNG$ is not a second-moment object.} A Gaussian update can match the
+posterior's spread exactly and still be wrong about its \emph{shape}: skewness,
+tail weight, multimodality. Nothing in Table~\ref{tab:calibration} can see that.
+The diagnostic that can --- the rank histogram, which tests the full predictive
+distribution rather than its variance --- \textbf{does not exist anywhere in the
+codebase}.
+
+So the honest position is that C4 as originally stated is not supported by the
+evidence available, and the evidence that would decide it has not been produced.
+We state it that way rather than leaning on the construction argument alone.
+\needsrun{Rank histograms across all classes at a uniform $N=30$. This is the
+single experiment that would settle C4 in either direction, and it is the
+paper's largest new-code item.}
+
+\paragraph{Blending, on a separate protocol.}
+A sweep over the deterministic/generative blend measured the trade within one
+family: mean-only gives RMSE $0.4934$ at spread/RMSE $0.000$; the sampler alone
+$0.5686$ at $1.202$; a hard warm start $0.4268$ at $0.284$; and a continuous
+blend $(\lambda_0 = 0.5, p = 1)$ $\mathbf{0.4202}$ at $\mathbf{0.380}$ ---
+dominating the warm start on \emph{both} axes, the one place the trade is not
+adversarial.
+\caveat{These come from the sampler study's own configuration
+(variance-weighted guidance, $N_\mathrm{outer} = 50$) and are not comparable with
+Table~\ref{tab:calibration}, which is the P1 protocol. The blended schemes were
+not re-run under P1, so blending is reported as a within-family result only.}
 
 \subsection{A motivating ordering that is not yet evidence}
 \label{sec:ordering}
 
 At \Sz{} on Lorenz-96 the schemes order by how much of the window they treat at
-once: sequential filters (ETKF 0.8883, EnKF 0.9131) are worse than the window
-variational method (Strong-4D-Var 0.8116), which is in turn far worse than the
-window-amortised learned schemes (0.4204--0.5365). Read against
+once: sequential filters (ETKF 0.8662, EnKF 0.8943) are worse than the window
+variational method (Strong-4D-Var 0.7383), which is in turn far worse than the
+window-amortised learned schemes (0.3445--0.5063). Read against
 Table~\ref{tab:zeroing}, the ordering is \emph{not} monotone in the number of
 operator slots occupied --- EnKF fills $\PsiG$ and still trails a
 $\Psimean$-only variational scheme --- which is itself informative: how much of
