@@ -1,0 +1,49 @@
+# @package _global_
+# PredictStateCFM L RETRY at lr=0.0005 (half the original), cosine annealing RETAINED.
+#
+# A2_predictstatecfm_monaiL_l96 (lr 1e-3) blew up in training: val_loss fell
+# 0.178 -> 0.106 by epoch 3, then jumped 6x to 0.618 at epoch 10 and spent the
+# remaining 390 epochs crawling back to 0.235 -- still 23x worse than the same
+# model at M tier (0.0104). Train and val moved together, so this is an
+# optimization blow-up, not overfitting. Checkpoint selection saved epoch 3, and
+# the ens30 eval of that checkpoint scored RMSE 1.2102 (vs 0.3584 at M).
+#
+# ONLY the initial LR changes. use_cosine_scheduler stays true and T_max still
+# tracks max_epochs=400 (training/lightning_module.py:99), so this is the same
+# schedule shape starting from a lower peak -- not a different scheduler.
+# gradient_clip_val stays 10.0 so the retry isolates a single variable.
+#
+# Note VanillaCFM L trained cleanly at lr 1e-3 (best val 0.01516 @ 356), so the
+# instability is specific to the endpoint-target (mu = E[x1|x_tau,y]) objective at
+# this capacity, not to the L tier in general.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_predict_state_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_predict_state_cfm:
+    hidden_channels: [128, 256, 512]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.0005, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  obs_density_augment: false
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt

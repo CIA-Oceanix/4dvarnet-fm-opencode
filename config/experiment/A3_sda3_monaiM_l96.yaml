@@ -1,0 +1,49 @@
+# @package _global_
+# SDA3 (params+forcing conditioned prior, noisy DA bias) at M tier -- the tier wave 1 measured as SDA1's best under GUIDED ens30
+# evaluation (M 0.5444 < L 0.5741 < S+ 0.6756; M better in 100% of windows vs S+
+# and 94% vs L). Note training val_loss ranked the tiers in the OPPOSITE order at
+# the top (L best) -- SDA's val_loss is the velocity-matching MSE of a prior,
+# while RMSE/CRPS measure the posterior after guidance. Do not select SDA tiers
+# on val_loss. See docs/results/l96_default_config_benchmark_synthesis.md F5.
+#
+# Adds cosine annealing, which NO previous SDA run has ever had (the key was
+# unset in every SDA config and they all ran before the 2026-09-10 default flip).
+#
+# obs_density_augment is absent by design: UnconditionalPriorCFM/ConditionalPriorCFM
+# compute_cfm_loss (models/sda.py:49,131) use only batch.states -- observations
+# enter solely as a guidance cost in sample(), so density augmentation is
+# structurally inert for this family.
+#
+# EVALUATE WITH eval_sda_l96.py (--guidance-weight, --r-var 0.5), NEVER
+# eval_neural_l96.py: the unguided sampler returns climatological spread.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 24
+  param_dim: 8
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  train_forcing_state_bias: 0.1
+  param_names: [F, c1, hx, eps, w1, w2, w3, w4]
+  noisy_da_bias: true
+  noisy_da_max: 1.5
+  normalize: true
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt

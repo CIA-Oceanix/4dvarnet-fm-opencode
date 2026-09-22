@@ -1,0 +1,46 @@
+# @package _global_
+# DirectUNet M at the P1 default configuration: monai + normalize + cosine +
+# 400 epochs, NO obs-density augmentation.
+#
+# Supersedes L1b_monai_unet_s0s1_norm*_cosine, which matches this config on EVERY
+# field (tier, lr 1e-3, clip 10.0, cosine, normalize, no aug, gradient loss) except
+# the epoch budget: those ran 200 epochs while every CFM/SDA row runs 400. The
+# effect was measured on a matched pair (DirectUNet M + aug, cosine, normalized,
+# 200 vs 400 epochs): RMSE 0.4593 -> 0.4367, i.e. -4.9%, paired t=-14.5, better in
+# 84% of windows. Small, but it is the baseline the headline claim rests on, so it
+# is removed rather than footnoted.
+#
+# NOT produced by resuming the 200-epoch checkpoints: CosineAnnealingLR uses
+# T_max=max_epochs (training/lightning_module.py:99), so those runs already
+# annealed to LR~0 at epoch 200. Resuming would either restart the cosine (an
+# SGDR-style warm restart -- a different recipe) or train 200 epochs at LR~0.
+# A fresh 400-epoch run is the only way to match the other families' schedule.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_direct_unet
+  state_dim: 24
+  param_dim: 0
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  loss: {use_gradient: true, gradient_weight: 0.1}
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  obs_density_augment: false
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
