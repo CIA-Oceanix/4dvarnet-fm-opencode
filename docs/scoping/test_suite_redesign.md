@@ -58,9 +58,26 @@ assert result.rmse.mean() == pytest.approx(0.725394, rel=1e-4)
 
 This is strictly stronger than any threshold. A bound catches catastrophe; a
 golden value catches *any* numerical change -- a changed default, a reordered
-operation, a silent dtype shift -- and costs the same to run. Determinism was
-verified for ETKF, Strong4DVar and L96Weak4DVar: repeated runs agree to all
-printed digits.
+operation, a silent dtype shift -- and costs the same to run.
+
+**Determinism is not portability, and the difference has a measured cost.** The
+first CI run of this file went red. Four of the five DA schemes reproduced their
+value exactly on the runner; `L96Weak4DVar` returned **1.921647 against a local
+1.072387** -- a 79% difference, not float noise. It is the only one of the five
+that runs an iterative optimiser over a free per-step model-error control through
+a chaotic unroll: the largest control space, with the most Lyapunov amplification
+between iterations, so a platform-level difference of 1e-16 in an early gradient
+lands somewhere else after five steps.
+
+**This bounds the technique rather than invalidating it.** Pinning a value
+requires the computation to reproduce across machines; an iterative optimisation
+through chaotic dynamics does not. Such schemes keep every other Tier A check --
+contract, same-machine determinism, masked-window handling -- and their numerics
+move to Tier B, where a multi-window mean is stable enough to assert on. The
+wrong fix is a wider tolerance: at 79% no tolerance is meaningful, and one loose
+enough to pass would detect nothing.
+
+Verified reproducible across machines: ETKF, EnKF, Strong4DVar, Weak4DVar.
 
 ## 3. Proposed tiers
 
@@ -69,9 +86,10 @@ printed digits.
 - **A1. Numerical golden-value regression.** *(implemented, this PR)* One test
   per scheme on a tiny L96 (`NO=2, J=4` -> 10-dim state, 20-step window, fixed
   seed), asserting a stored RMSE, plus contract, determinism and
-  fully-masked-window checks for each. Measured cost: **21 tests in 29 s** for
+  fully-masked-window checks for each. Measured cost: **20 tests in 32 s** for
   the five DA baselines (a single assimilation pass is ~1 s; the file makes
-  about 30 of them).
+  about 30 of them). Four schemes carry a pinned value; `L96Weak4DVar` carries
+  every other check, for the portability reason in §2.
 - **A2. Scenario-wiring tests.** Assert that `S1` actually differs from `S0` --
   that `param_bias` reaches the DA model's parameters and not the truth. This is
   the class of bug that silently invalidates every model-error number in the
