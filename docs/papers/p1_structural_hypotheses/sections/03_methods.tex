@@ -1,0 +1,112 @@
+\section{Conditional flow matching as a generic representation of posteriors}
+\label{sec:methods}
+
+This section introduces the instrument used throughout the paper. We do
+\emph{not} propose a new assimilation scheme. We use the conditional-flow
+representation because it is generic enough to contain every method compared
+here as a special case, which turns ``method A is better than method B'' into
+the sharper question of \emph{which components of the posterior each method is
+able to represent at all}.
+
+\subsection{The conditional flow}
+
+Let $\tau \in [0,1]$ be an abstract transport variable, distinct from physical
+time $t$. Define a linear probability path from a Gaussian base sample
+$\xv_0 \sim \mathcal{N}(0,\sigma_0^2 \mathbb{I})$ to a target
+$\xv_1 \sim p(\xv_1 \mid \Cv)$:
+\begin{equation}
+  \label{eq:interpolant}
+  \xv_\tau = \alpha_\tau \xv_0 + \beta_\tau \xv_1 ,
+  \qquad \alpha_0 = 1,\ \beta_0 = 0,\ \alpha_1 = 0,\ \beta_1 = 1 ,
+\end{equation}
+with the optimal-transport schedule $\alpha_\tau = 1-\tau$,
+$\beta_\tau = \tau$. Differentiating~\eqref{eq:interpolant} gives an ODE whose
+flow generates the target posterior:
+\begin{equation}
+  \label{eq:ode}
+  \frac{\mathrm{d}\xv_\tau}{\mathrm{d}\tau}
+  = \frac{\dot\alpha_\tau}{\alpha_\tau}\,\xv_\tau
+  + \left(\dot\beta_\tau - \beta_\tau\frac{\dot\alpha_\tau}{\alpha_\tau}\right)
+    \Psiop\!\left(\xv_\tau, \Cv, \tau\right),
+  \qquad
+  \Psiop\!\left(\xv_\tau, \Cv, \tau\right) \;\triangleq\; \mathbb{E}\!\left[\xv_1 \mid \xv_\tau, \Cv\right].
+\end{equation}
+
+Everything method-specific is carried by the single operator $\Psiop$: the
+posterior-mean estimate of the target given a partially noised state and the
+context. \textbf{$\Psiop$ is the object this paper measures.}
+
+\subsection{The partition}
+\label{sec:partition}
+
+$\Psiop$ admits an exact additive decomposition,
+\begin{equation}
+  \label{eq:partition}
+  \Psiop\!\left(\xv_\tau, \Cv, \tau\right)
+  = \underbrace{\Psimean(\Cv)}_{\text{conditional mean}}
+  + \underbrace{\PsiG(\xv_\tau, \Cv, \tau)}_{\text{affine gain}}
+  + \underbrace{\PsiNG(\xv_\tau, \Cv, \tau)}_{\text{non-Gaussian residual}},
+\end{equation}
+with $\Psimean(\Cv) = \mathbb{E}[\xv_1 \mid \Cv]$ independent of $\xv_\tau$,
+$\PsiG$ the $L^2$ projection of $\Psiop - \Psimean$ onto functions affine in
+$\xv_\tau$, and $\PsiNG$ the remainder. Defining $\PsiG$ as an $L^2$ projection
+makes the three terms orthogonal, so the decomposition is unique and the
+attribution in Section~\ref{sec:results} is well posed.
+
+\paragraph{The non-Gaussian branch vanishes at both ends.}
+At $\tau=0$, $\xv_\tau \perp \xv_1$, so $\Psiop = \mathbb{E}[\xv_1\mid\Cv] = \Psimean$
+and the affine gain is zero; hence $\PsiNG(0)=0$. At $\tau=1$, $\xv_\tau = \xv_1$
+and $\Psimean + \PsiG = \xv_1$ exactly; hence $\PsiNG(1)=0$. The non-Gaussian
+term is therefore a \emph{bump} on $(0,1)$, pinned to zero at both boundaries.
+
+\subsection{What each method class can represent}
+\label{sec:zeroing}
+
+The value of~\eqref{eq:partition} as a diagnostic is that the classical schemes
+are not merely different points in a hypothesis space --- they \emph{identically
+zero} named terms.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{method class} & $\Psimean$ & $\PsiG$ & $\PsiNG$ \\
+\midrule
+Optimal interpolation, 4D-Var & $\hat{\xv}(\Cv)$, constant in $\xv_\tau$ & $\mathbf{0}$ & $\mathbf{0}$ \\
+DirectUNet (deterministic regression) & $\hat{\xv}(\Cv)$, constant in $\xv_\tau$ & $\mathbf{0}$ & $\mathbf{0}$ \\
+EnKF / ETKF / ensemble smoothers & ensemble mean & \checkmark\ (the Kalman gain \emph{is} $K_\tau$) & $\mathbf{0}$ \emph{by construction} \\
+CFM, score-based assimilation (SDA) & \checkmark & \checkmark & \checkmark \\
+DirectUNet\,$+$\,SDA (blending) & imported, deterministic & \checkmark & \checkmark \\
+\bottomrule
+\end{tabular}
+\caption{What each class of scheme can represent. The zeros are structural, not
+symptoms of tuning: a Gaussian update \emph{is} the ensemble-Kalman method, and a
+deterministic estimator ignores its state argument by definition.}
+\label{tab:zeroing}
+\end{table}
+
+Two consequences frame the rest of the paper.
+
+\paragraph{A deterministic estimator is a degenerate flow.}
+Read any deterministic estimator $\hat{\xv}(\Cv)$ as an operator that ignores its
+state argument, $\Psiop_{\det}(\xv_\tau,\Cv) = \hat{\xv}(\Cv)$. Substituting
+into~\eqref{eq:ode} and integrating gives exactly
+$\xv_\tau = (1-\tau)\,\xv_0 + \tau\,\hat{\xv}$. 4D-Var, optimal interpolation and
+a supervised regression network are therefore \emph{the same member} of this
+family, differing only in how $\hat{\xv}$ is computed. This is why the paper can
+place them on one axis without apology.
+
+\paragraph{The ensemble-Kalman class has a structural ceiling.}
+$\PsiNG \equiv 0$ is not a deficiency of a particular implementation or
+inflation setting: it is what it means to be an ensemble-Kalman method. Any
+posterior feature living in $\PsiNG$ is therefore unreachable for that class at
+\emph{any} tuning --- which is the precise form of symptom S-b, and what
+Section~\ref{sec:nongaussian} measures.
+
+\paragraph{Blending composes the slots.}
+Warm-starting a generative sampler from a deterministic estimate --- the
+DirectUNet\,$+$\,SDA schemes evaluated here --- is not an unprincipled trick. In
+this representation it is the statement that $\Psimean$ may be supplied by one
+scheme while $\PsiG$ and $\PsiNG$ are supplied by another. Section~\ref{sec:results}
+measures what that composition buys and what it costs.

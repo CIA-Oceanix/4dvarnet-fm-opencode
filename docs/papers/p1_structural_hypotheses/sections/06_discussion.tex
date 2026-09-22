@@ -1,0 +1,143 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Claims}
+\label{sec:claims}
+
+\begin{description}[leftmargin=2.2em,style=nextline]
+  \item[\textbf{C1 (H2, headline).}]
+    Because the model \emph{is} the prior, model error enters the analysis
+    unbuffered, and its cost is not a constant offset: it \emph{collapses the
+    marginal value of observations} ($6.2\times$ for strong-constraint 4D-Var).
+    This is the mechanism behind DA's limited return on sparse observations.
+    \caveat{Established for strong-constraint and filtering methods. Lorenz-63
+    shows weak-constraint 4D-Var recovers much of the loss
+    (Section~\ref{sec:weak4dvar}); the corresponding Lorenz-96 measurement on the
+    density grid does not yet exist, so C1 is stated for the strong-constraint
+    and filtering families and not for the classical framework as a whole.}
+  \item[\textbf{C2 (H3a).}]
+    The state representation fixes the conditioning of the inverse problem.
+    Identical physics in a different state variable produces large, predictable
+    skill differences via $q\approx\nabla^2\psi$ and its $K^2$ amplification.
+  \item[\textbf{C3 (H1).}]
+    Markovian factorisation forecloses adaptation to the observation
+    configuration. A configuration-distribution-aware estimator dominates both
+    configuration-specific and configuration-agnostic ones (0.473 / 1.081 at
+    full / zero fast-variable density, against 0.486 / 1.292 and 0.537 / 1.082).
+  \item[\textbf{C4 (H1 $+$ H3a $\Rightarrow$ S-b).}]
+    The ensemble-Kalman class carries $\PsiNG \equiv 0$ by construction, so its
+    posterior characterisation has a \emph{structural} ceiling --- and the
+    alternatives measured here buy calibration or accuracy, never both.
+  \item[\textbf{C5 (attribution).}]
+    Each hypothesis can be relaxed separately and the resulting change
+    attributed to a named term of~\eqref{eq:partition}. This is what makes the
+    paper a diagnosis rather than a benchmark.
+  \item[\textbf{C6 (H2 $\times$ H3b).}]
+    The representation's sensitivity to $(\thv,\zv)$ is \emph{not a proxy} for
+    the sensitivity of $p(\xv_1\mid\Cv)$ to $(\thv,\zv)$. DA conflates them
+    because its estimator is the model; a conditioned amortised estimator
+    separates them; and the gap is large --- $1.68$--$1.80\times$ against
+    $\leq 1.5\%$.
+\end{description}
+
+\subsection{Limitations and threats to validity}
+\label{sec:limitations}
+
+\paragraph{The \Sz{}/\So{} axis means different things per class.}
+\So{} is a \emph{no-op} for model-free learned schemes; their $\So/\Sz\approx 1.00$
+carries no information and is never tabled as robustness
+(Table~\ref{tab:classes}). Even for conditioned schemes, being handed biased
+parameters is not the same exposure as \emph{integrating} a biased model for 500
+steps: one is an input perturbation, the other compounds. Section~\ref{sec:marginal}'s
+intra-classical result needs neither caveat.
+
+\paragraph{``Your baselines were under-tuned.''}
+The standard reply to any DA-versus-learned comparison. Our mitigation is
+evidential: localisation and inflation sensitivity studies found the QG
+localisation radius untuned \emph{even at the reference density}, with an optimum
+that moves with observation density --- itself an instance of what H1 forecloses
+--- and a 4D-Var variance-scaling sweep returned a \emph{negative} result, the
+existing defaults already being best. Section~\ref{sec:weak4dvar} is the stronger
+answer: the classical family is represented by its best member, not its most
+convenient one.
+
+\paragraph{Uneven scheme coverage.}
+Only Lorenz-96 carries all five classes (Table~\ref{tab:coverage}). Cross-class
+claims are made there; the other two systems carry specific arguments. This is a
+design choice, but it does mean the generality of the cross-class ordering rests
+on one system.
+
+\paragraph{Different configurations must not be cross-quoted.}
+Tables~\ref{tab:price} and~\ref{tab:marginal} come from different configurations
+--- different observation counts, different randomisation breadth. Ratios from
+one are not comparable to levels in the other.
+
+\paragraph{The circularity objection.}
+An amortised estimator needs a simulator to generate its training data. If that
+simulator is the truth model, the comparison has handed it the truth --- and in
+operations there is no truth model. This is the deepest objection to this line of
+work and we do not claim to answer it fully. The framing is therefore about
+\emph{where prior information enters and what it costs}, not ``learned beats
+physical''.
+\todo{A self-supervised objective --- a weak-constraint variational cost
+evaluated on the estimator's own output, with no ground-truth supervision --- is
+implemented and is a direct, if partial, answer. Not yet run; decide whether it
+belongs here or in the companion paper.}
+
+\paragraph{Idealised testbeds.}
+All three systems are idealised. That is what makes ``matched everything''
+definable precisely enough for a marginal-value measurement to mean anything,
+but transfer to operational systems is an open question we do not test.
+
+\subsection{Positioning}
+\label{sec:positioning}
+
+\todo{Every citation is from memory and must be verified before a bibliography
+exists. Nothing in \texttt{refs.bib} has been checked, and no \texttt{$\backslash$cite}
+commands are used yet.}
+
+The DA review literature frames the field's standard commitments; the
+assimilation-in-the-unstable-subspace line gives the closest existing account of
+\emph{why} DA's effective degrees of freedom are limited; weak-constraint 4D-Var
+is the canonical relaxation of H2; innovation-based diagnostics supply the
+standard consistency checks, whose assumptions are violated when the estimator is
+trained to fit the observations. On the learned side, the
+DA-with-learned-model-error-correction line and the score-based and flow-based
+assimilation line are the nearest neighbours.
+
+\paragraph{The gap.}
+The model-error literature asks how to \emph{correct} the model; the
+unstable-subspace literature explains the dimensionality of the analysis; the
+learned-DA literature proposes hybrids. As far as our survey goes, none of them
+\emph{measures the marginal value of observations as a function of model error},
+or attributes the deficit to named components of the inference operator.
+Section~\ref{sec:marginal} is, on that reading, an unreported effect.
+
+\subsection{Open experiments}
+\label{sec:open}
+
+\todo{This list is provisional. It was drawn up against the previous,
+hypothesis-ordered outline; it should be re-derived from the structure above now
+that the results lead with the cross-system overview, and pruned to what the
+paper actually needs rather than everything that could be measured.}
+
+\begin{description}[leftmargin=2.2em,style=nextline]
+  \item[\textbf{Weak-constraint 4D-Var on Lorenz-96.}] Bounds C1. Implemented;
+    the benchmark run does not exist. Highest value, lowest cost.
+  \item[\textbf{H1 isolated.}] Filter vs.\ window-smoother vs.\ window-amortised
+    at matched model, observations and compute --- what turns
+    Section~\ref{sec:ordering}'s ordering into evidence.
+  \item[\textbf{Model-error dose--response.}] Sweep model error continuously
+    rather than the binary \Sz{}/\So{}, giving the \emph{same} biased parameters
+    to the classical forward model and to the learned conditioning inputs.
+  \item[\textbf{The marginal-value surface.}] Observation density $\times$ model
+    error for every class on matched axes. The classical study varies
+    \emph{temporal} density and the learned one \emph{channel} density; these are
+    different axes and must share one protocol before being tabled together.
+  \item[\textbf{Posterior diagnostics.}] Rank histograms and spread/skill against
+    $\sqrt{(N-1)/(N+1)}$ across all classes at one ensemble convention.
+  \item[\textbf{The two sensitivities on one grid.}] Model sensitivity and
+    posterior sensitivity over observation density $\times$ perturbation
+    amplitude; the crossover density is the paper's second deliverable number
+    after Section~\ref{sec:marginal}'s collapse factor.
+\end{description}
