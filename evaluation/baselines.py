@@ -945,6 +945,18 @@ class L96Weak4DVar:
         return BaselineResult(trajectory=analysis_np, rmse=rmse)
 
 
+def _expand_batch_params(params: dict, B: int, N: int) -> dict:
+    """Repeat per-window params over the N members of each window's ensemble:
+    1-D ``(B,)`` scalars -> ``(B*N,)`` and 2-D ``(B, k)`` vectors (per-window
+    ``fast_weights``) -> ``(B*N, k)``; anything else passes through."""
+    out = {}
+    for k, v in params.items():
+        if isinstance(v, torch.Tensor) and (v.dim() == 1 or (v.dim() == 2 and v.shape[0] == B)):
+            v = v.unsqueeze(1).expand(B, N, *v.shape[1:]).reshape(B * N, *v.shape[1:])
+        out[k] = v
+    return out
+
+
 class ETKF:
     def __init__(
         self,
@@ -1196,7 +1208,7 @@ class ETKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
-            step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
+            step_params = _expand_batch_params(params, B0, N)
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
@@ -1490,7 +1502,7 @@ class EnKF:
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
             B0, N, D = ensemble.shape
-            step_params = {k: (v.unsqueeze(1).expand(B0, N).reshape(B0 * N) if isinstance(v, torch.Tensor) and v.dim() == 1 else v) for k, v in params.items()}
+            step_params = _expand_batch_params(params, B0, N)
             ensemble = self.dynamics.step(
                 ensemble.reshape(B0 * N, D),
                 W.unsqueeze(1).expand(*((B0, N) + W.shape[1:])).reshape(B0 * N, *W.shape[1:]),
