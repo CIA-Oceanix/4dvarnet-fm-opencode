@@ -1524,7 +1524,11 @@ class EnKF:
 
                 def _h(x):
                     return x[..., idx] if idx is not None else H(x)
-                y_t = observations[:, t]
+                obs_b = obs_mask[:, t].nonzero(as_tuple=True)[0]
+                full_ensemble = ensemble
+                ensemble = full_ensemble[obs_b]
+                Bt = ensemble.shape[0]
+                y_t = observations[obs_b, t]
                 mean_e = torch.mean(ensemble, dim=1)
                 A = ensemble - mean_e.unsqueeze(1)
                 H_ens = _h(ensemble)
@@ -1543,7 +1547,7 @@ class EnKF:
                     Ph, cross_cov.transpose(1, 2)
                 ).solution.transpose(1, 2)
                 for n in range(self.N_ensemble):
-                    perturbed = y_t + torch.randn((B, od_t), device=self.device) * np.sqrt(self.R_var)
+                    perturbed = y_t + torch.randn((Bt, od_t), device=self.device) * np.sqrt(self.R_var)
                     ensemble[:, n] += (K @ (perturbed - _h(ensemble[:, n])).unsqueeze(-1)).squeeze(-1)
 
                 mean_e = torch.mean(ensemble, dim=1)
@@ -1551,6 +1555,8 @@ class EnKF:
                 nan_mask = torch.isnan(ensemble).any(dim=-1)
                 if nan_mask.any():
                     ensemble = torch.nan_to_num(ensemble)
+                full_ensemble[obs_b] = ensemble
+                ensemble = full_ensemble
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()

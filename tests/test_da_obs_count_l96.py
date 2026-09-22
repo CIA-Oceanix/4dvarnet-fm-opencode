@@ -105,3 +105,23 @@ def test_batched_etkf_accepts_per_window_fast_weights():
     kw = {k: torch.full((B,), v) for k, v in dict(F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1).items()}
     res = etkf.assimilate_batch(obs, mask, torch.zeros(B, T), torch.randn(B, T, 40), fast_weights=fw, **kw)
     assert len(res) == B and all(np.isfinite(r.trajectory).all() for r in res)
+
+
+def test_batched_enkf_windows_with_different_obs_times_do_not_collapse():
+    from evaluation.baselines import EnKF, ObsOperator
+    from models.lorenz96_dynamics import Lorenz96Dynamics
+    torch.manual_seed(0)
+    T, B = 40, 2
+    enkf = EnKF(N_ensemble=10, dt=0.001, inflation=1.0, dynamics=Lorenz96Dynamics(dt=0.001),
+                obs_operator=ObsOperator(40, IDX), NO=8, J=4)
+    truth = torch.randn(B, T, 40)
+    obs = torch.full((B, T, 24), float("nan"))
+    mask = torch.zeros(B, T, dtype=torch.bool)
+    for b, times in enumerate(([0, 10, 25], [0, 17, 33])):
+        mask[b, times] = True
+        obs[b, times] = truth[b, times][:, list(IDX)]
+    kw = {k: torch.full((B,), v) for k, v in dict(F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1).items()}
+    res = enkf.assimilate_batch(obs, mask, torch.zeros(B, T), truth, **kw)
+    for r in res:
+        assert np.isfinite(r.trajectory).all()
+        assert r.ensemble_variance[-1].mean() > 1e-3
