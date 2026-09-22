@@ -1,0 +1,49 @@
+# @package _global_
+# SDA1 unconditional prior, M tier, at the default configuration
+# (monai + cosine + normalize), per docs/scoping/monai_default_config_benchmark_plan.md.
+#
+# Fixes two defects in SDA1_monai_prior_l96_norm: it had NO cosine annealing
+# (the key was unset and it ran 2026-09-08, before the default flipped to True),
+# and its M tier was inherited from the DirectUNet complexity sweep rather than
+# measured for SDA -- its own config header says so. This S+/M/L set measures it.
+#
+# obs_density_augment is deliberately FALSE, and this is not an omission:
+# UnconditionalPriorCFM.compute_cfm_loss (models/sda.py:49) uses only
+# batch.states -- batch.obs appears nowhere in SDA training, only in sample(),
+# where observations enter as a guidance cost. Density augmentation masks
+# observations, so it is structurally INERT for this family. Setting it true
+# would perturb the data stream for no effect on the objective and would falsely
+# imply these rows are "augmented" in the sense the other families are.
+#
+# Note also that SDA is a VELOCITY-target CFM (v_target = states - x0), unlike
+# PredictStateCFM/FDV-CFM which regress the endpoint -- its val_loss is on a
+# different quantity and is not comparable across families.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_sda_prior
+  state_dim: 24
+  param_dim: 0
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  obs_density_augment: false
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
