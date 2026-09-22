@@ -1,0 +1,6 @@
+## 2026-09-22: monai PredictStateCFM on master + tau=0-only PredictStateCFM-M arm
+
+**Summary:** `model_type: monai_predict_state_cfm` was only dispatched by the evaluation/trajectory paths on master (#235), not by `model_factory` or `LitModel`, so the merged `A2_predictstatecfm_monai*` configs raised `Unknown model_type`. Ports `MonaiPredictStateCFM` and both dispatch entries from the WIP P1 worktree (commit 739a3c1), and adds a tau=0-only arm (job 54694).
+**Files modified:** `models/monai_unet_adapter.py` — `MonaiPredictStateCFM`; `train.py` — `model_factory` entry; `training/lightning_module.py` — training/sampling dispatch; `config/experiment/A2_predictstatecfm_monaiM_tau0_l96.yaml` — P1 recipe + `train_tau_0_only: true` only; `batch/run_l96_a2_ps_m_tau0_train.sbatch`; `tests/test_monai_unet_adapter.py` — factory + tau=0 train/sample tests.
+**Rationale:** The tau=0-only model is a single-pass point estimator that still takes a random N(0, 0.5^2) input state; against P1 DirectUNet-M (no random input) it isolates how much of the CFM/DirectUNet gap comes from the random initial condition rather than the flow.
+**Verification:** `pytest tests/test_monai_unet_adapter.py` — 12 passed; `ruff check` clean; 2-epoch smoke train+eval of the new config.

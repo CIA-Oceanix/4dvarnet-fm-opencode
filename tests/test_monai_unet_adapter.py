@@ -121,3 +121,40 @@ def test_monai_direct_unet_forwards_dropout():
                           norm_num_groups=8, dropout=0.5)
     assert _n_resblock_dropouts(md.monai_unet) > 0, \
         "MonaiDirectUNet must forward its dropout arg to MonaiUNet1D"
+
+
+def _psc_batch(B=2, T=32, D=4):
+    from types import SimpleNamespace
+    return SimpleNamespace(obs=torch.randn(B, T, D), forcing=torch.randn(B, T),
+                           params=None, states=torch.randn(B, T, D))
+
+
+def test_model_factory_builds_monai_predict_state_cfm_with_tau0_flag():
+    from omegaconf import OmegaConf
+
+    from models.monai_unet_adapter import MonaiPredictStateCFM
+    from models.vanilla_cfm import PredictStateCFM
+    from train import model_factory
+    cfg = OmegaConf.create({"model": {
+        "model_type": "monai_predict_state_cfm", "state_dim": 4, "param_dim": 0,
+        "monai_predict_state_cfm": {"hidden_channels": [16, 32], "N_outer": 3, "sigma_prior": 0.5,
+                                    "dropout": 0.0, "train_tau_0_only": True, "cond_extra_dim": 0,
+                                    "num_res_blocks": 1, "norm_num_groups": 8}}})
+    m = model_factory(cfg, torch.device("cpu"))
+    assert isinstance(m, MonaiPredictStateCFM) and isinstance(m, PredictStateCFM)
+    assert m.train_tau_0_only
+
+
+def test_monai_predict_state_cfm_tau0_trains_and_samples_in_one_pass():
+    from models.monai_unet_adapter import MonaiPredictStateCFM
+    m = MonaiPredictStateCFM(state_dim=4, hidden_channels=[16, 32], N_outer=5, dropout=0.0,
+                             train_tau_0_only=True, param_dim=0, num_res_blocks=1, norm_num_groups=8)
+    batch = _psc_batch()
+    taus = []
+    orig = m.forward
+    m.forward = lambda x, b, tau: (taus.append(tau.clone()), orig(x, b, tau))[1]
+    m.compute_loss(batch).backward()
+    with torch.no_grad():
+        out = m.sample(batch)
+    assert out.shape == batch.obs.shape
+    assert len(taus) == 2 and all(torch.all(t == 0) for t in taus)
