@@ -63,6 +63,7 @@ sampler) and observation density (P1's *density × model-error* grid vs P2's
 | `cond_extra_dim_plan.md` | **No `Status:` line** — unclassified, filed here on its `_plan` name alone. |
 | `refactor_plan.md` | Contributor-facing codebase refactor plan (added by #215). Phase 0 (CI gates the whole `tests/` tree) done; Phases 1-4 open. Not a science doc — filed here because it is a forward-looking plan. |
 | `joint_additional_metrics_plan.md` | **No `Status:` line** — unclassified, filed here on its `_plan` name alone. |
+| `cfm_tau_consistency_next_steps.md` | **DRAFT**, v1 2026-09-23. Training arms (low-τ sampling, bootstrapped low-τ targets, B4 penalty) against the two τ-consistency defects measured in `docs/results/cfm_tau_consistency.md`. Nothing implemented; decisions in §5. |
 | `qg_hydra_migration.md` | **DRAFT**, v1 2026-09-19. Moving QG's argparse entry point onto Hydra without orphaning the archived checkpoints. Nothing implemented; three staged PRs proposed. Not a science doc. |
 | `refactor_plan.md` | **CURRENT.** Contributor-facing refactor (codebase structure, not science). Phase 0 landed 2026-09-17; Phases 1-4 not started. |
 
