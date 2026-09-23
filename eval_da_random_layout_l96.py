@@ -56,7 +56,7 @@ def covers_da_windows(mask: torch.Tensor, da_window_steps: int) -> bool:
 
 
 def draw_layout(truth_obs: torch.Tensor, n_obs_range, fast_range, seed: int,
-                da_window_steps: int) -> tuple[torch.Tensor, torch.Tensor]:
+                da_window_steps: int, r_var: float = R_VAR) -> tuple[torch.Tensor, torch.Tensor]:
     """(T, od) obs and (T,) mask for one window's observed-space truth, with
     at least one obs time in every DA window."""
     T = truth_obs.shape[0]
@@ -65,7 +65,7 @@ def draw_layout(truth_obs: torch.Tensor, n_obs_range, fast_range, seed: int,
     g = torch.Generator().manual_seed(seed)
     for _ in range(MAX_REDRAWS):
         obs, mask = resample_obs_variable(
-            truth_obs.unsqueeze(0), torch.zeros(1, T, dtype=torch.bool), R_VAR,
+            truth_obs.unsqueeze(0), torch.zeros(1, T, dtype=torch.bool), r_var,
             tuple(n_obs_range), tuple(fast_range), num_slow=NUM_SLOW, generator=g, first_step=True)
         if covers_da_windows(mask[0], da_window_steps):
             return obs[0], mask[0]
@@ -73,7 +73,8 @@ def draw_layout(truth_obs: torch.Tensor, n_obs_range, fast_range, seed: int,
 
 
 def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fast_range,
-               obs_var_indices, da_window_steps: int, cases=tuple(CASES)) -> tuple[dict, dict]:
+               obs_var_indices, da_window_steps: int, cases=tuple(CASES),
+               r_var: float = R_VAR) -> tuple[dict, dict]:
     """Window dicts with their obs replaced (window-major, draw-minor) and the
     per-run layout record {case: {n_obs, k, obs, obs_mask, window_index}}."""
     idx = list(obs_var_indices)
@@ -86,7 +87,8 @@ def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fa
             w = datasets[key][wi]
             for d in range(n_draws):
                 obs, mask = draw_layout(w["true_state"][:, idx].float(), n_obs_range, fast_range,
-                                        _layout_seed(case, wi, n_obs_range, fast_range, d), da_window_steps)
+                                        _layout_seed(case, wi, n_obs_range, fast_range, d), da_window_steps,
+                                        r_var)
                 items.append(dict(w, obs=obs.to(w["true_state"].dtype), obs_mask=mask))
                 rec["n_obs"].append(int(mask.sum()))
                 rec["k"].append(int(torch.isfinite(obs[0, NUM_SLOW:]).sum()))
@@ -136,6 +138,8 @@ def main() -> None:
     p.add_argument("--da-window-steps", type=int, default=500)
     p.add_argument("--methods", nargs="+", default=list(METHODS), choices=METHODS)
     p.add_argument("--cases", nargs="+", default=list(CASES), choices=list(CASES))
+    p.add_argument("--r-var", type=float, default=R_VAR,
+                   help="obs noise variance for the drawn layouts AND the DA's R (default 0.5)")
     p.add_argument("--data-cache", default=DEFAULT_CACHE)
     p.add_argument("--device", default=None)
     args = p.parse_args()
@@ -148,8 +152,10 @@ def main() -> None:
     idx = np.array(obs_var_indices)
     (lo, hi), (flo, fhi) = args.n_obs_range, args.fast_range
     cell, layouts = build_cell(datasets, windows, args.n_draws, (lo, hi), (flo, fhi), obs_var_indices,
-                               args.da_window_steps, args.cases)
+                               args.da_window_steps, args.cases, args.r_var)
     tag = f"_rlayout_n{lo}-{hi}_k{flo}-{fhi}_w{args.n_windows}_d{args.n_draws}"
+    if args.r_var != R_VAR:
+        tag += f"_r{args.r_var:g}"
     if set(args.cases) != set(CASES):
         tag += "_" + "".join(sorted(args.cases))
     print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation {args.inflation}, {len(cell['test_s0'])} runs per case")
@@ -161,16 +167,16 @@ def main() -> None:
     fill = make_fast_ring_fill(8, 4, 2)
     run_and_cache_baselines(
         cell, device, batch_size=200, da_window_steps=args.da_window_steps,
-        enkf_config={"inflation": args.inflation, "init_fill": fill},
-        etkf_config={"inflation": args.inflation, "init_fill": fill},
-        strong_config={"max_iter": 10, "lr": 0.2, "init_fill": fill},
+        enkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
+        etkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
+        strong_config={"max_iter": 10, "lr": 0.2, "init_fill": fill, "R_var": args.r_var},
         suffix=tag, exclude_methods=["Weak-4DVar"] + [m for m in METHODS if m not in args.methods],
         obs_j=2, obs_interval=None, fw_randomized=True, da_fast_weights=True,
     )
     z = load_trajectories(tag, args.inflation, args.da_window_steps, args.cases, args.methods)
 
     summary = {"n_obs_range": [lo, hi], "fast_range": [flo, fhi], "windows": [int(w) for w in windows],
-               "n_draws": args.n_draws, "inflation": args.inflation, "N_ensemble": 30,
+               "n_draws": args.n_draws, "inflation": args.inflation, "N_ensemble": 30, "r_var": args.r_var,
                "da_fast_weights": True, "step0_observed": True, "init_fill": "fast_ring_linear",
                "da_window_steps": args.da_window_steps, "cases_run": list(args.cases), "min_obs_per_da_window": 1,
                "source": _param_suffix(tag, args.inflation), "cases": {}}

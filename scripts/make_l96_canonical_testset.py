@@ -68,12 +68,12 @@ def fingerprint(windows) -> dict:
     return out
 
 
-def parse_tag(tag: str) -> tuple[tuple[int, int], tuple[int, int], int, int]:
-    m = re.fullmatch(r"rlayout_n(\d+)-(\d+)_k(\d+)-(\d+)_w(\d+)_d(\d+)", tag)
+def parse_tag(tag: str) -> tuple[tuple[int, int], tuple[int, int], int, int, float]:
+    m = re.fullmatch(r"rlayout_n(\d+)-(\d+)_k(\d+)-(\d+)_w(\d+)_d(\d+)(?:_r([\d.]+))?", tag)
     if m is None:
         raise ValueError(f"unrecognized layout tag {tag!r}")
-    a, b, c, d, w, n = (int(x) for x in m.groups())
-    return (a, b), (c, d), w, n
+    a, b, c, d, w, n = (int(x) for x in m.groups()[:6])
+    return (a, b), (c, d), w, n, float(m.group(7)) if m.group(7) else 0.5
 
 
 def load_layouts(layout_dir: str, tag: str) -> tuple[dict, list[str]]:
@@ -108,7 +108,7 @@ def main() -> None:
     p.add_argument("--output", default=None)
     args = p.parse_args()
 
-    n_range, k_range, n_windows, n_draws = parse_tag(args.tag)
+    n_range, k_range, n_windows, n_draws, r_var = parse_tag(args.tag)
     layouts, layout_files = load_layouts(args.layout_dir, args.tag)
     datasets = torch.load(args.data_cache, weights_only=False)
     idx = list(make_obs_j_indices(8, 4, 2))
@@ -127,7 +127,8 @@ def main() -> None:
             w = ds[int(wi)]
             d = j % n_draws
             obs, mask = draw_layout(w["true_state"][:, idx].float(), n_range, k_range,
-                                    _layout_seed(case, int(wi), n_range, k_range, d), args.da_window_steps)
+                                    _layout_seed(case, int(wi), n_range, k_range, d), args.da_window_steps,
+                                    r_var)
             if not (torch.equal(mask, rec["obs_mask"][j])
                     and torch.equal(torch.isnan(obs), torch.isnan(rec["obs"][j]))
                     and torch.equal(torch.nan_to_num(obs), torch.nan_to_num(rec["obs"][j]))):
@@ -157,7 +158,7 @@ def main() -> None:
     manifest = {
         "testset": os.path.abspath(path), "sha256": sha256_file(path), "tag": args.tag,
         "n_obs_range": list(n_range), "fast_range": list(k_range), "n_windows": n_entries,
-        "window_index": [int(w) for w in expected_index], "n_draws": n_draws,
+        "window_index": [int(w) for w in expected_index], "n_draws": n_draws, "r_var": r_var,
         "source_cache": os.path.abspath(args.data_cache), "source_cache_sha256": sha256_file(args.data_cache),
         "source_layouts": {os.path.basename(f): sha256_file(f) for f in layout_files},
         "fields": manifest_cases,
