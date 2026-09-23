@@ -57,12 +57,12 @@ def check_learned(result_dir: str, testset: str, truths: dict) -> list[str]:
 
 def check_da(path: str, manifest: dict) -> list[str]:
     errors = []
-    n = manifest["n_windows"]
+    expected = np.array(manifest.get("window_index", range(manifest["n_windows"])))
     with np.load(path) as z:
         for case in CASES:
             key = f"{case}_window_index"
-            if key in z.files and not np.array_equal(z[key], np.arange(n)):
-                errors.append(f"{path}: {case} windows are not 0..{n - 1}")
+            if key in z.files and not np.array_equal(z[key], expected):
+                errors.append(f"{path}: {case} window order differs from the test set's")
     tag = os.path.basename(path).replace("per_window", "layouts").replace(".npz", ".pt")
     lp = os.path.join(os.path.dirname(path), tag)
     if tag in manifest["source_layouts"]:
