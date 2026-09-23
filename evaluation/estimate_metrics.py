@@ -224,6 +224,41 @@ def evaluate_ensemble_npz(path: str) -> dict:
     return evaluate_ensemble_estimates(data["members"], data["truth"])
 
 
+def ensemble_window_scores(members: np.ndarray, truth: np.ndarray) -> dict:
+    """Per-window, per-channel ``(W, D)`` scores of a ``(W, T, D, M)`` ensemble
+    against ``(W, T, D)`` truth, with the P1 benchmark formulas: ``rmse`` of
+    the ensemble mean over time, ensemble ``crps`` (sorted-member form) and
+    ``spread`` (member std, ddof=1) averaged over time. Enough to rebuild every
+    reported ensemble metric without storing the members."""
+    m = members.astype(np.float64)
+    t = truth.astype(np.float64)
+    M = m.shape[-1]
+    rmse = np.sqrt(((m.mean(-1) - t) ** 2).mean(axis=1))
+    mae = np.abs(m - t[..., None]).mean(axis=(1, 3))
+    coeff = 2 * np.arange(M) - M + 1
+    pairwise = (2 * np.einsum("k,wtdk->wtd", coeff, np.sort(m, axis=-1)) / (M * M)).mean(axis=1)
+    spread = m.std(axis=-1, ddof=1).mean(axis=1)
+    return {"rmse": rmse, "crps": mae - 0.5 * pairwise, "spread": spread}
+
+
+def save_members_or_scores(out_dir, case: str, members: np.ndarray, truth: np.ndarray,
+                           mode: str = "full") -> str:
+    """``mode="full"``: ``members_{case}.npz`` (members + truth, GBs);
+    ``mode="scores"``: ``scores_{case}.npz`` from :func:`ensemble_window_scores`
+    plus truth-free metadata (KBs). Returns the written path."""
+    from pathlib import Path
+    out_dir = Path(out_dir)
+    if mode == "full":
+        path = out_dir / f"members_{case}.npz"
+        np.savez_compressed(path, members=members, truth=truth)
+    elif mode == "scores":
+        path = out_dir / f"scores_{case}.npz"
+        np.savez_compressed(path, n_members=members.shape[-1], **ensemble_window_scores(members, truth))
+    else:
+        raise ValueError(f"unknown members-file mode {mode!r}")
+    return str(path)
+
+
 def save_estimates(path: str, trajectories: np.ndarray, truth: np.ndarray) -> None:
     """Save estimate + truth arrays to a scheme-agnostic ``.npz``."""
     np.savez_compressed(path, trajectories=trajectories, truth=truth)
