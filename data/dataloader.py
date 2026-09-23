@@ -294,7 +294,8 @@ def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None
                 fm_batch.obs, fm_batch.obs_mask = resample_obs_variable(
                     fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"],
                     n_obs_range=tuple(obs_times_cfg["n_obs_range"]),
-                    fast_range=tuple(obs_times_cfg["fast_range"]))
+                    fast_range=tuple(obs_times_cfg["fast_range"]),
+                    first_step=obs_times_cfg.get("first_step", False))
             else:
                 raise ValueError(f"unknown obs_times_cfg mode {mode!r}")
         if obs_density_cfg is not None:

@@ -1,0 +1,15 @@
+# @package _global_
+# DirectUNet-M under the L96 benchmark default (config/l96_benchmark_default.yaml).
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: monai_direct_unet
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  loss: {use_gradient: true, gradient_weight: 0.1}

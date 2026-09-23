@@ -166,3 +166,44 @@ def test_collate_variable_mode():
                                                  "n_obs_range": [5, 50], "fast_range": [4, 16]})(items)
     counts = batch.obs_mask.sum(1)
     assert torch.all((counts >= 5) & (counts <= 50))
+
+
+def test_resample_obs_variable_first_step_keeps_count():
+    from data.obs_times import resample_obs_variable
+    states = torch.randn(32, T, D)
+    mask = torch.zeros(32, T, dtype=torch.bool)
+    g = torch.Generator().manual_seed(4)
+    _, m = resample_obs_variable(states, mask, R_VAR, (10, 300), (4, 16), generator=g, first_step=True)
+    assert torch.all(m[:, 0])
+    g = torch.Generator().manual_seed(4)
+    _, m_free = resample_obs_variable(states, mask, R_VAR, (10, 300), (4, 16), generator=g)
+    torch.testing.assert_close(m.sum(1), m_free.sum(1))
+    assert not torch.all(m_free[:, 0])
+
+
+def test_reobserve_windows_fixed_is_deterministic_and_in_range():
+    from data.obs_times import reobserve_windows_fixed
+    idx = tuple(range(8)) + tuple(8 + k * 4 + j for k in range(8) for j in range(2))
+
+    def windows():
+        g = torch.Generator().manual_seed(0)
+        return [{"true_state": torch.randn(T, 40, generator=g), "obs": None, "obs_mask": None}
+                for _ in range(6)]
+
+    a, b = windows(), windows()
+    for ws in (a, b):
+        reobserve_windows_fixed(ws, idx, R_VAR, (10, 300), (4, 16), seed=7, first_step=True)
+    for x, y in zip(a, b):
+        assert torch.equal(x["obs_mask"], y["obs_mask"])
+        torch.testing.assert_close(x["obs"], y["obs"], equal_nan=True)
+        n = int(x["obs_mask"].sum())
+        assert 10 <= n <= 300 and x["obs_mask"][0] and x["obs"].shape == (T, 24)
+        k = (~torch.isnan(x["obs"][x["obs_mask"], 8:])).sum(1)
+        assert torch.all(k == k[0]) and 4 <= int(k[0]) <= 16
+    assert len({int(w["obs_mask"].sum()) for w in a}) > 1
+
+
+def test_new_obs_flags_default_off():
+    from conf.schema import DataConfig
+    d = DataConfig()
+    assert not d.obs_first_step and not d.val_obs_random_layout and not d.obs_random_layout
