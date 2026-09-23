@@ -124,3 +124,19 @@ def test_strong4dvar_missing_channels_are_not_fit_to_zero():
     traj = sv.assimilate_batch(obs, mask, torch.zeros(1, 60), truth, **_kw(1))[0].trajectory
     assert np.isfinite(traj).all()
     assert traj[20:, 8:].mean() > 4.0
+
+
+def test_draw_layout_covers_every_da_window():
+    from eval_da_random_layout_l96 import covers_da_windows, draw_layout
+    truth = torch.randn(3000, 24)
+    for seed in range(40):
+        obs, mask = draw_layout(truth, (6, 11), (4, 16), seed, 500)
+        assert mask[0] and covers_da_windows(mask, 500)
+        assert 6 <= int(mask.sum()) <= 11
+    assert not covers_da_windows(torch.tensor([True] + [False] * 999), 500)
+
+
+def test_draw_layout_refuses_counts_below_the_number_of_da_windows():
+    from eval_da_random_layout_l96 import draw_layout
+    with pytest.raises(ValueError):
+        draw_layout(torch.randn(3000, 24), (5, 50), (4, 16), 0, 500)
