@@ -37,6 +37,10 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
     generalization study. Combined multiplicatively with the temporal
     ``obs_mask`` rather than slicing (a per-timestep-varying subset can't be
     expressed as a fixed slice of the channel dimension).
+
+    NaN entries of ``y`` never contribute, even at an observed time: a
+    partially observed row is scored only on its observed channels rather
+    than against a zero-imputed value.
     """
     if obs_indices is not None and obs_channel_mask is not None:
         raise ValueError("obs_indices and obs_channel_mask are mutually exclusive")
@@ -44,7 +48,7 @@ def guided_obs_cost(x_hat_1: torch.Tensor, y: torch.Tensor,
         x_hat_1 = x_hat_1[..., obs_indices]
         y = y[..., obs_indices]
     y_clean = torch.nan_to_num(y, nan=0.0)
-    mask = obs_mask.to(x_hat_1.dtype).unsqueeze(-1)
+    mask = obs_mask.to(x_hat_1.dtype).unsqueeze(-1) * (~torch.isnan(y)).to(x_hat_1.dtype)
     if obs_channel_mask is not None:
         mask = mask * obs_channel_mask.to(x_hat_1.dtype)
     sq_diff = (x_hat_1 - y_clean) ** 2 * mask
