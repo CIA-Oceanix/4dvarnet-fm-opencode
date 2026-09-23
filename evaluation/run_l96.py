@@ -251,7 +251,7 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
                              obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
-                             fw_randomized=False):
+                             fw_randomized=False, da_fast_weights=False):
     if s1_j is None:
         s1_j = obs_j
     if eval_j is None:
@@ -274,6 +274,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         param_suffix += f"_int{obs_interval}"
     if fw_randomized:
         param_suffix += "_fw"
+    if da_fast_weights:
+        param_suffix += "_dafw"
     cache_path = os.path.join(EXP_DIR, f"l96_baselines{dws_suffix}{param_suffix}.json")
 
     partial = {}
@@ -344,6 +346,9 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                              obs_interval=obs_interval, obs_var_indices=obs_var_indices)
     cfg_s1 = Lorenz96Config(case=2, param_bias=0.15, forcing_state_bias=0.1, T_max=3.0, seed=131,
                              obs_interval=obs_interval, obs_var_indices=obs_var_indices)
+    if da_fast_weights:
+        for c in (cfg_s0, cfg_s1):
+            c.randomize = {"fast_weights": {"randomized": True}}
     cfg_map = {"s0": cfg_s0, "s1": cfg_s1}
 
     if "config" not in partial:
