@@ -43,6 +43,30 @@ def make_obs_j_indices(NO, J_truth, J_obs):
     return tuple(X_idx + Y_idx)
 
 
+def make_fast_ring_fill(NO: int = 8, J_truth: int = 4, J_obs: int = 2):
+    """``init_fill`` for the DA baselines: fills the NaN fast channels of an
+    observed-space vector ``(..., NO + NO*J_obs)`` (layout of
+    :func:`make_obs_j_indices`) by linear interpolation along the periodic
+    fast ring (``Y[k, j]`` at position ``k*J_truth + j`` of ``NO*J_truth``)
+    from the fast channels observed in the same vector. Slow channels and
+    fully observed or fully missing rows are left as they are."""
+    pos = np.array([k * J_truth + j for k in range(NO) for j in range(J_obs)], dtype=float)
+    period = NO * J_truth
+
+    def fill(v: torch.Tensor) -> torch.Tensor:
+        flat = v.reshape(-1, v.shape[-1])
+        fast = flat[:, NO:].detach().cpu().numpy().astype(np.float64)
+        for row in fast:
+            seen = np.isfinite(row)
+            if seen.any() and not seen.all():
+                row[~seen] = np.interp(pos[~seen], pos[seen], row[seen], period=period)
+        out = flat.clone()
+        out[:, NO:] = torch.from_numpy(fast).to(out)
+        return out.reshape(v.shape)
+
+    return fill
+
+
 def _per_window_params(w, cfg, da_J=None):
     params = {}
     for k in _L96_SCALAR_PARAMS:

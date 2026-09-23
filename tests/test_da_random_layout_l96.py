@@ -1,0 +1,126 @@
+import numpy as np
+import pytest
+import torch
+
+from data.obs_times import resample_obs_variable, stratified_obs_times
+from evaluation.baselines import ETKF, EnKF, ObsOperator, Strong4DVar, _channel_obs_mask, _obs0_for_init
+from evaluation.run_l96 import make_fast_ring_fill, make_obs_j_indices
+from models.lorenz96_dynamics import Lorenz96Dynamics
+
+IDX = make_obs_j_indices(8, 4, 2)
+PARAMS = dict(F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1)
+
+
+def _kw(B):
+    return {k: torch.full((B,), v) for k, v in PARAMS.items()}
+
+
+def test_stratified_pin_first_observes_step0_and_stays_stratified():
+    g = torch.Generator().manual_seed(0)
+    t = stratified_obs_times(64, 3000, 20, generator=g, pin_first=True)
+    assert (t[:, 0] == 0).all()
+    assert (t.diff(dim=1) > 0).all()
+    assert ((t // 150) == torch.arange(20)).all()
+
+
+def test_resample_obs_variable_pin_first_step0_has_window_k():
+    g = torch.Generator().manual_seed(1)
+    states = torch.randn(16, 3000, 24)
+    obs, mask = resample_obs_variable(states, torch.zeros(16, 3000, dtype=torch.bool), 0.5,
+                                      (5, 50), (4, 16), generator=g, pin_first=True)
+    assert mask[:, 0].all()
+    for b in range(16):
+        rows = torch.isfinite(obs[b, mask[b]])
+        assert rows[:, :8].all()
+        k = rows[:, 8:].sum(dim=1)
+        assert (k == k[0]).all() and 4 <= int(k[0]) <= 16
+        assert 5 <= int(mask[b].sum()) <= 50
+
+
+def test_fast_ring_fill_interpolates_along_periodic_ring():
+    fill = make_fast_ring_fill(8, 4, 2)
+    pos = np.array([k * 4 + j for k in range(8) for j in range(2)], dtype=float)
+    v = torch.cat([torch.arange(8.0) * 10, torch.tensor(pos)]).float()
+    v[8 + np.array([3, 4, 5])] = float("nan")
+    v[8 + 15] = float("nan")
+    out = fill(v.unsqueeze(0))[0]
+    assert torch.equal(out[:8], torch.arange(8.0) * 10)
+    assert torch.allclose(out[8 + np.array([3, 4, 5])], torch.tensor(pos[[3, 4, 5]]).float())
+    assert out[8 + 15].item() == pytest.approx(28.0 + (29.0 - 28.0) / (32.0 - 28.0) * (0.0 - 28.0))
+    assert torch.isfinite(out).all()
+
+
+def test_obs0_for_init_rejects_missing_channels_without_fill():
+    v = torch.randn(2, 24)
+    v[0, 12] = float("nan")
+    with pytest.raises(ValueError):
+        _obs0_for_init(v, None)
+    assert torch.isfinite(_obs0_for_init(v, make_fast_ring_fill())).all()
+
+
+def test_channel_obs_mask_requires_time_and_finite_value():
+    obs = torch.randn(1, 3, 4)
+    obs[0, 1, 2] = float("nan")
+    m = _channel_obs_mask(obs, torch.tensor([[True, True, False]]))
+    assert m[0, 0].all() and not m[0, 2].any()
+    assert m[0, 1].tolist() == [True, True, False, True]
+
+
+def _s1_setup(T=60, times=(0, 20, 40)):
+    torch.manual_seed(0)
+    dyn = Lorenz96Dynamics(dt=0.001, NO=8, J=2, h=1.0, hx=1.0, eps=0.1, coupling_exponent=1.0)
+    truth = torch.randn(1, T, 24)
+    mask = torch.zeros(1, T, dtype=torch.bool)
+    mask[:, list(times)] = True
+    obs = torch.full((1, T, 24), float("nan"))
+    obs[:, list(times)] = truth[:, list(times)] + 0.3 * torch.randn(1, len(times), 24)
+    return dyn, truth, obs, mask
+
+
+@pytest.mark.parametrize("cls", [ETKF, EnKF])
+def test_missing_channels_equal_reduced_obs_operator(cls, monkeypatch):
+    """Channels NaN in the obs rows give exactly the analysis of an operator
+    that does not observe them (EnKF: obs perturbations zeroed so both runs
+    are deterministic)."""
+    dyn, truth, obs, mask = _s1_setup()
+    drop = [9, 14, 20]
+    keep = [c for c in range(24) if c not in drop]
+    obs_nan = obs.clone()
+    obs_nan[:, 1:, drop] = float("nan")
+    ens0 = truth[0, 0] + 0.5 * torch.randn(12, 24)
+    if cls is EnKF:
+        monkeypatch.setattr(torch, "randn", lambda *s, device=None, dtype=None, **k: torch.zeros(
+            *(s[0] if len(s) == 1 and isinstance(s[0], tuple) else s), device=device, dtype=dtype))
+    common = dict(N_ensemble=12, dt=0.001, inflation=1.2, dynamics=dyn, NO=8, J=2, init_ensemble=ens0)
+    full = cls(obs_operator=ObsOperator(24, list(range(24))), **common)
+    red = cls(obs_operator=ObsOperator(24, keep), **common)
+    a = full.assimilate_batch(obs_nan, mask, torch.zeros(1, 60), truth, **_kw(1))[0].trajectory
+    b = red.assimilate_batch(obs[..., keep], mask, torch.zeros(1, 60), truth, **_kw(1))[0].trajectory
+    np.testing.assert_allclose(a, b, rtol=1e-4, atol=1e-5)
+
+
+def test_batched_enkf_missing_channels_do_not_leak_across_windows():
+    dyn, truth, obs, mask = _s1_setup()
+    truth2 = torch.cat([truth, truth + 0.1])
+    obs2 = torch.cat([obs, obs + 0.1])
+    obs2[0, 20:, 12:18] = float("nan")
+    mask2 = mask.repeat(2, 1)
+    ens0 = truth[0, 0] + 0.5 * torch.randn(12, 24)
+    enkf = EnKF(N_ensemble=12, dt=0.001, inflation=1.2, dynamics=dyn, NO=8, J=2, init_ensemble=ens0,
+                obs_operator=ObsOperator(24, list(range(24))))
+    res = enkf.assimilate_batch(obs2, mask2, torch.zeros(2, 60), truth2, **_kw(2))
+    for r in res:
+        assert np.isfinite(r.trajectory).all()
+        assert r.ensemble_variance[-1].mean() > 1e-3
+
+
+def test_strong4dvar_missing_channels_are_not_fit_to_zero():
+    dyn, truth, obs, mask = _s1_setup()
+    truth = truth + 5.0
+    obs = obs + 5.0
+    obs[:, 1:, 8:] = float("nan")
+    sv = Strong4DVar(da_window_steps=60, dt=0.001, max_iter=10, lr=0.2, dynamics=dyn,
+                     obs_operator=ObsOperator(24, list(range(24))))
+    traj = sv.assimilate_batch(obs, mask, torch.zeros(1, 60), truth, **_kw(1))[0].trajectory
+    assert np.isfinite(traj).all()
+    assert traj[20:, 8:].mean() > 4.0

@@ -25,10 +25,13 @@ def stratified_obs_times(
     n_obs: int,
     device=None,
     generator: torch.Generator | None = None,
+    pin_first: bool = False,
 ) -> torch.Tensor:
     """``(B, n_obs)`` long tensor of strictly increasing time indices, one
     drawn uniformly inside each of ``n_obs`` contiguous blocks of
     ``[0, num_steps)`` (block edges ``floor(k * num_steps / n_obs)``).
+    ``pin_first`` fixes the first block's draw to step 0 (DA evaluation:
+    the background is built from the step-0 obs).
     """
     if not 1 <= n_obs <= num_steps:
         raise ValueError(f"n_obs={n_obs} out of range [1, {num_steps}]")
@@ -37,6 +40,8 @@ def stratified_obs_times(
     starts, widths = edges[:-1], edges[1:] - edges[:-1]
     u = torch.rand(batch_size, n_obs, device=device, generator=generator)
     offsets = torch.minimum((u * widths).long(), widths - 1)
+    if pin_first:
+        offsets[:, 0] = 0
     return starts + offsets
 
 
@@ -92,6 +97,7 @@ def resample_obs_variable(
     fast_range: tuple[int, int],
     num_slow: int = 8,
     generator: torch.Generator | None = None,
+    pin_first: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Fresh ``(obs, obs_mask)`` with a random observing system per window:
     ``n_obs`` uniform in ``n_obs_range`` (inclusive) at stratified random times,
@@ -115,7 +121,8 @@ def resample_obs_variable(
     n_obs = torch.randint(lo, hi + 1, (B,), device=device, generator=generator)
     new_mask = torch.zeros(B, T, dtype=torch.bool, device=device)
     for b in range(B):
-        t_idx = stratified_obs_times(1, T, int(n_obs[b]), device=device, generator=generator)[0]
+        t_idx = stratified_obs_times(1, T, int(n_obs[b]), device=device, generator=generator,
+                                     pin_first=pin_first)[0]
         new_mask[b, t_idx] = True
     keep_k = torch.randint(flo, fhi + 1, (B, 1), device=device, generator=generator).expand(B, T)
     fast_keep = random_variable_keep_mask((B, T), num_fast, keep_k, device=device, generator=generator)
