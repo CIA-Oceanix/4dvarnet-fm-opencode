@@ -43,6 +43,35 @@ def make_obs_j_indices(NO, J_truth, J_obs):
     return tuple(X_idx + Y_idx)
 
 
+L96_DA_INFLATION = {"s0": 1.5, "s1": 2.0}
+
+
+def parse_case_inflation(value) -> float | dict:
+    """ETKF/EnKF inflation: one number for both cases (``2.0``) or per case
+    (``"s0=1.5,s1=2.0"`` or a dict); per-case values must name s0 and s1."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and "=" not in value:
+        return float(value)
+    if isinstance(value, str):
+        value = dict(item.split("=", 1) for item in value.split(","))
+    out = {k.strip(): float(v) for k, v in value.items()}
+    if set(out) != {"s0", "s1"}:
+        raise ValueError(f"per-case inflation needs exactly s0 and s1, got {sorted(out)}")
+    return out
+
+
+def inflation_tag(inflation) -> str:
+    if isinstance(inflation, dict):
+        return "_".join(f"{c}-{inflation[c]}" for c in sorted(inflation))
+    return str(inflation)
+
+
+def _case_cfg(cfg: dict, case_name: str) -> dict:
+    inflation = cfg.get("inflation")
+    return {**cfg, "inflation": inflation[case_name]} if isinstance(inflation, dict) else cfg
+
+
 def make_fast_ring_fill(NO: int = 8, J_truth: int = 4, J_obs: int = 2):
     """``init_fill`` for the DA baselines: fills the NaN fast channels of an
     observed-space vector ``(..., NO + NO*J_obs)`` (layout of
@@ -287,9 +316,9 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     dws_suffix = f"_dws{N}"
     param_suffix = suffix
     if enkf_config and enkf_config.get("inflation", 1.0) != 1.0:
-        param_suffix += f"_inf{enkf_config['inflation']}"
+        param_suffix += f"_inf{inflation_tag(enkf_config['inflation'])}"
     if etkf_config and etkf_config.get("inflation", 1.0) != 1.0:
-        param_suffix += f"_etkf_inf{etkf_config['inflation']}"
+        param_suffix += f"_etkf_inf{inflation_tag(etkf_config['inflation'])}"
     if obs_j is not None and obs_j < 4:
         param_suffix += f"_obsj{obs_j}"
     if s1_j != obs_j:
@@ -359,11 +388,11 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
         if "EnKF" not in exclude:
             pool["EnKF"] = EnKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
                                   dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
-                                  **enkf_cfg)
+                                  **_case_cfg(enkf_cfg, case_name))
         if "ETKF" not in exclude:
             pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
                                   dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
-                                  **etkf_cfg)
+                                  **_case_cfg(etkf_cfg, case_name))
         baseline_pool[case_name] = pool
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,

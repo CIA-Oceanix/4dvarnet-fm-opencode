@@ -143,3 +143,20 @@ def test_build_cell_restricts_cases_and_keeps_layouts_independent_of_case_select
     assert set(s0) == {"test_s0"} and set(lay_s0) == {"s0"}
     assert torch.equal(lay_s0["s0"]["obs_mask"], lay_both["s0"]["obs_mask"])
     assert torch.equal(torch.nan_to_num(lay_s0["s0"]["obs"]), torch.nan_to_num(lay_both["s0"]["obs"]))
+
+
+def test_parse_case_inflation_accepts_scalar_and_per_case():
+    from evaluation.run_l96 import L96_DA_INFLATION, parse_case_inflation
+    assert parse_case_inflation("2.0") == 2.0 and parse_case_inflation(1.5) == 1.5
+    assert parse_case_inflation("s0=1.5,s1=2.0") == {"s0": 1.5, "s1": 2.0} == L96_DA_INFLATION
+    with pytest.raises(ValueError):
+        parse_case_inflation("s0=1.5")
+
+
+def test_per_case_inflation_reaches_each_case_and_keeps_scalar_cache_names():
+    from evaluation.run_l96 import _case_cfg, inflation_tag
+    cfg = {"inflation": {"s0": 1.5, "s1": 2.0}, "init_fill": None}
+    assert _case_cfg(cfg, "s0")["inflation"] == 1.5 and _case_cfg(cfg, "s1")["inflation"] == 2.0
+    assert _case_cfg({"inflation": 2.0}, "s0") == {"inflation": 2.0}
+    assert inflation_tag(2.0) == "2.0"
+    assert inflation_tag({"s1": 2.0, "s0": 1.5}) == "s0-1.5_s1-2.0"

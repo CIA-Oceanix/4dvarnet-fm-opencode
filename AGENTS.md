@@ -180,6 +180,11 @@ Always run tests after making changes.
   2026-09-10 "FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default"
   entry before reverting this default on sight.
 
+- **L96 DA benchmark inflation (as of 2026-09-23):** ETKF/EnKF use inflation **1.5 on S0 and 2.0
+  on S1** (`evaluation/run_l96.py::L96_DA_INFLATION`, the default of `evaluate_all_l96.py` and
+  `eval_da_random_layout_l96.py`). The earlier single value 2.0 is S1-tuned and over-disperses S0; see
+  the 2026-09-23 "L96 DA benchmark default inflation per case" changelog entry before changing it.
+
 ## When Making Model Changes
 
 - Update the corresponding config in `config/experiment/` if training parameters change

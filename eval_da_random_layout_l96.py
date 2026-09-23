@@ -33,7 +33,8 @@ import torch
 
 from data.obs_times import resample_obs_variable
 from eval_da_obs_count_l96 import CASES, DEFAULT_CACHE, R_VAR, per_window_metrics
-from evaluation.run_l96 import (EXP_DIR, _baseline_traj_path, make_fast_ring_fill, make_obs_j_indices,
+from evaluation.run_l96 import (EXP_DIR, L96_DA_INFLATION, _baseline_traj_path, inflation_tag,
+                                make_fast_ring_fill, make_obs_j_indices, parse_case_inflation,
                                 run_and_cache_baselines)
 
 OUT_DIR = os.path.join(EXP_DIR, "l96_da_random_layout")
@@ -98,16 +99,16 @@ def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fa
     return cell, layouts
 
 
-def _param_suffix(tag: str, inflation: float) -> str:
-    inf = f"_inf{inflation}_etkf_inf{inflation}" if inflation != 1.0 else ""
+def _param_suffix(tag: str, inflation: float | dict) -> str:
+    inf = f"_inf{inflation_tag(inflation)}_etkf_inf{inflation_tag(inflation)}" if inflation != 1.0 else ""
     return f"{tag}{inf}_obsj2_fw_dafw"
 
 
-def _traj_path(tag: str, inflation: float, da_window_steps: int) -> str:
+def _traj_path(tag: str, inflation: float | dict, da_window_steps: int) -> str:
     return os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws{da_window_steps}{_param_suffix(tag, inflation)}.npz")
 
 
-def load_trajectories(tag: str, inflation: float, da_window_steps: int, cases, methods) -> dict:
+def load_trajectories(tag: str, inflation: float | dict, da_window_steps: int, cases, methods) -> dict:
     """``{case_Method_key: array}`` from the combined npz, or from the
     per-method files ``run_and_cache_baselines`` leaves when not every case ran."""
     combined = _traj_path(tag, inflation, da_window_steps)
@@ -129,7 +130,8 @@ def main() -> None:
     p.add_argument("--fast-range", type=int, nargs=2, default=[4, 16])
     p.add_argument("--n-windows", type=int, default=200)
     p.add_argument("--n-draws", type=int, default=1)
-    p.add_argument("--inflation", type=float, default=2.0)
+    p.add_argument("--inflation", type=parse_case_inflation, default=L96_DA_INFLATION,
+                   help="ETKF/EnKF inflation, one value or per case 's0=1.5,s1=2.0' (default)")
     p.add_argument("--da-window-steps", type=int, default=500)
     p.add_argument("--methods", nargs="+", default=list(METHODS), choices=METHODS)
     p.add_argument("--cases", nargs="+", default=list(CASES), choices=list(CASES))
@@ -151,7 +153,7 @@ def main() -> None:
         tag += "_" + "".join(sorted(args.cases))
     print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation {args.inflation}, {len(cell['test_s0'])} runs per case")
 
-    out_tag = f"{tag}_inf{args.inflation}"
+    out_tag = f"{tag}_inf{inflation_tag(args.inflation)}"
     os.makedirs(OUT_DIR, exist_ok=True)
     torch.save(layouts, os.path.join(OUT_DIR, f"layouts{out_tag}.pt"))
 
