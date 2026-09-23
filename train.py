@@ -765,8 +765,20 @@ def main(cfg: DictConfig):
         elif dc.get("obs_random_layout", False):
             obs_times_cfg = {"R_var": dc.R_var, "mode": "variable",
                              "n_obs_range": list(dc.get("obs_n_range", [5, 50])),
-                             "fast_range": list(dc.get("obs_fast_range", [4, 16]))}
+                             "fast_range": list(dc.get("obs_fast_range", [4, 16])),
+                             "first_step": bool(dc.get("obs_first_step", False))}
             logger.info(f"data.obs_random_layout=True (train only): {obs_times_cfg}")
+        if dc.get("val_obs_random_layout", False):
+            from data.obs_times import reobserve_windows_fixed
+            val_idx = obs_var_indices if obs_var_indices is not None else tuple(range(base_cfg.obs_dim))
+            reobserve_windows_fixed(
+                datasets["val"], val_idx, R_var=dc.R_var,
+                n_obs_range=tuple(dc.get("obs_n_range", [5, 50])),
+                fast_range=tuple(dc.get("obs_fast_range", [4, 16])),
+                seed=int(dc.get("val_obs_seed", 20260923)),
+                first_step=bool(dc.get("obs_first_step", False)))
+            logger.info("data.val_obs_random_layout=True: val windows re-observed once "
+                        "(fixed seed) with the random observing system")
         # full_state_target=True (default False, backward-compatible): pass
         # obs_var_indices=None to FlowMatchingDataset specifically (NOT to
         # base_cfg above, which still needs the real obs_var_indices to
@@ -810,6 +822,11 @@ def main(cfg: DictConfig):
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
 
     # Model
+    train_seed = cfg.training.get("seed", None)
+    if train_seed is not None:
+        import pytorch_lightning as pl
+        pl.seed_everything(int(train_seed), workers=True)
+        logger.info(f"training.seed={train_seed}: model init, batch order and per-batch obs draws seeded")
     print(f"  Creating model (type={model_type})...")
     model = model_factory(cfg, device)
     param_dim = cfg.model.get("param_dim", 4)

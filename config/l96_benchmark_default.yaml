@@ -10,6 +10,11 @@
 #     3000/n_obs-step block)
 #   - k ~ U{4..16} observed fast channels, drawn once per window (random subset
 #     per obs time); the 8 slow channels are always observed
+#   - step 0 always observed (obs_first_step), as in the random test set and
+#     the DA baselines, which initialize from it
+# Validation windows are re-observed ONCE with a fixed seed from the same
+# distribution (val_obs_random_layout), so val_loss and stage1_best checkpoint
+# selection measure a random observing system, not the regular grid.
 # Frozen per-window training obs (the P1 setting) are an artefact, not an
 # option: they cost DirectUNet-M ~20% RMSE.
 #
@@ -28,6 +33,7 @@ model:
   param_dim: 0
 training:
   stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  seed: null
   stage2: {epochs: 0}
   batch_size: 16
 data:
@@ -43,4 +49,7 @@ data:
   obs_random_layout: true
   obs_n_range: [10, 300]
   obs_fast_range: [4, 16]
+  obs_first_step: true
+  val_obs_random_layout: true
+  val_obs_seed: 20260923
   test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
