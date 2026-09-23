@@ -118,6 +118,8 @@ def main():
                              '\'{"fast_weights": {"randomized": true, "noise": 0.2}}\'')
     parser.add_argument("--data-cache-tag", type=str, default="",
                         help="Suffix for the dataset .pt cache filename (parallel-safe reruns)")
+    parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
+                        help="test cases to run (e.g. --cases s0 to redo only S0)")
     parser.add_argument("--da-fast-weights", action="store_true",
                         help="pass each window's fast_weights (S0 true, S1 *_da) to the DA model")
     args = parser.parse_args()
@@ -198,6 +200,8 @@ def main():
     print(f"  test_s1: {len(datasets['test_s1'])} windows")
     print(f"  Dataset prep: {time.time() - t0:.1f}s")
 
+    datasets = {k: v for k, v in datasets.items()
+                if not k.startswith("test_") or k[len("test_"):] in args.cases}
     baseline_results = run_baselines(datasets, device,
                                       da_window_steps=args.da_window_steps,
                                       enkf_inflation=args.enkf_inflation,
