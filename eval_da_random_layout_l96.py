@@ -64,7 +64,7 @@ def draw_layout(truth_obs: torch.Tensor, n_obs_range, fast_range, seed: int,
     for _ in range(MAX_REDRAWS):
         obs, mask = resample_obs_variable(
             truth_obs.unsqueeze(0), torch.zeros(1, T, dtype=torch.bool), R_VAR,
-            tuple(n_obs_range), tuple(fast_range), num_slow=NUM_SLOW, generator=g, pin_first=True)
+            tuple(n_obs_range), tuple(fast_range), num_slow=NUM_SLOW, generator=g, first_step=True)
         if covers_da_windows(mask[0], da_window_steps):
             return obs[0], mask[0]
     raise RuntimeError(f"no DA-window-covering layout in {MAX_REDRAWS} draws")

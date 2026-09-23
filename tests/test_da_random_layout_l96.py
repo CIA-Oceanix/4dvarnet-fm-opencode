@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from data.obs_times import resample_obs_variable, stratified_obs_times
+from data.obs_times import resample_obs_variable
 from evaluation.baselines import ETKF, EnKF, ObsOperator, Strong4DVar, _channel_obs_mask, _obs0_for_init
 from evaluation.run_l96 import make_fast_ring_fill, make_obs_j_indices
 from models.lorenz96_dynamics import Lorenz96Dynamics
@@ -15,19 +15,11 @@ def _kw(B):
     return {k: torch.full((B,), v) for k, v in PARAMS.items()}
 
 
-def test_stratified_pin_first_observes_step0_and_stays_stratified():
-    g = torch.Generator().manual_seed(0)
-    t = stratified_obs_times(64, 3000, 20, generator=g, pin_first=True)
-    assert (t[:, 0] == 0).all()
-    assert (t.diff(dim=1) > 0).all()
-    assert ((t // 150) == torch.arange(20)).all()
-
-
-def test_resample_obs_variable_pin_first_step0_has_window_k():
+def test_resample_obs_variable_first_step_step0_has_window_k():
     g = torch.Generator().manual_seed(1)
     states = torch.randn(16, 3000, 24)
     obs, mask = resample_obs_variable(states, torch.zeros(16, 3000, dtype=torch.bool), 0.5,
-                                      (5, 50), (4, 16), generator=g, pin_first=True)
+                                      (5, 50), (4, 16), generator=g, first_step=True)
     assert mask[:, 0].all()
     for b in range(16):
         rows = torch.isfinite(obs[b, mask[b]])

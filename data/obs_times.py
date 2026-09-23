@@ -25,13 +25,10 @@ def stratified_obs_times(
     n_obs: int,
     device=None,
     generator: torch.Generator | None = None,
-    pin_first: bool = False,
 ) -> torch.Tensor:
     """``(B, n_obs)`` long tensor of strictly increasing time indices, one
     drawn uniformly inside each of ``n_obs`` contiguous blocks of
     ``[0, num_steps)`` (block edges ``floor(k * num_steps / n_obs)``).
-    ``pin_first`` fixes the first block's draw to step 0 (DA evaluation:
-    the background is built from the step-0 obs).
     """
     if not 1 <= n_obs <= num_steps:
         raise ValueError(f"n_obs={n_obs} out of range [1, {num_steps}]")
@@ -40,8 +37,6 @@ def stratified_obs_times(
     starts, widths = edges[:-1], edges[1:] - edges[:-1]
     u = torch.rand(batch_size, n_obs, device=device, generator=generator)
     offsets = torch.minimum((u * widths).long(), widths - 1)
-    if pin_first:
-        offsets[:, 0] = 0
     return starts + offsets
 
 
@@ -97,7 +92,7 @@ def resample_obs_variable(
     fast_range: tuple[int, int],
     num_slow: int = 8,
     generator: torch.Generator | None = None,
-    pin_first: bool = False,
+    first_step: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Fresh ``(obs, obs_mask)`` with a random observing system per window:
     ``n_obs`` uniform in ``n_obs_range`` (inclusive) at stratified random times,
@@ -105,7 +100,8 @@ def resample_obs_variable(
     every obs time of that window ``k`` of the fast channels (columns
     ``num_slow:``) are observed, the subset redrawn per obs time; slow
     channels are always observed. ``obs_mask`` (B, T) marks times with any obs, so
-    dropped fast channels are NaN inside an observed row.
+    dropped fast channels are NaN inside an observed row. ``first_step=True``
+    moves the first block's obs to step 0 (same obs count).
     """
     from data.obs_density import random_variable_keep_mask
 
@@ -121,8 +117,9 @@ def resample_obs_variable(
     n_obs = torch.randint(lo, hi + 1, (B,), device=device, generator=generator)
     new_mask = torch.zeros(B, T, dtype=torch.bool, device=device)
     for b in range(B):
-        t_idx = stratified_obs_times(1, T, int(n_obs[b]), device=device, generator=generator,
-                                     pin_first=pin_first)[0]
+        t_idx = stratified_obs_times(1, T, int(n_obs[b]), device=device, generator=generator)[0]
+        if first_step:
+            t_idx[0] = 0
         new_mask[b, t_idx] = True
     keep_k = torch.randint(flo, fhi + 1, (B, 1), device=device, generator=generator).expand(B, T)
     fast_keep = random_variable_keep_mask((B, T), num_fast, keep_k, device=device, generator=generator)
@@ -133,3 +130,27 @@ def resample_obs_variable(
     obs = torch.full_like(states, float("nan"))
     obs[keep] = states[keep] + noise[keep]
     return obs, new_mask.reshape(obs_mask.shape).to(obs_mask.dtype)
+
+
+def reobserve_windows_fixed(
+    dataset,
+    obs_var_indices,
+    R_var: float,
+    n_obs_range: tuple[int, int],
+    fast_range: tuple[int, int],
+    seed: int,
+    first_step: bool = False,
+) -> None:
+    """Replace, in place, every window's ``obs``/``obs_mask`` of ``dataset``
+    with one draw of :func:`resample_obs_variable`, seeded per window
+    (``seed + i``) so the result is identical across epochs and runs -- a
+    fixed random observing system, e.g. for validation-based checkpoint
+    selection under the random-layout training default."""
+    for i in range(len(dataset)):
+        w = dataset[i]
+        states = w["true_state"][:, list(obs_var_indices)].unsqueeze(0)
+        gen = torch.Generator(device=states.device).manual_seed(seed + i)
+        obs, mask = resample_obs_variable(states, torch.zeros(1, states.shape[1], dtype=torch.bool),
+                                          R_var, n_obs_range, fast_range, generator=gen,
+                                          first_step=first_step)
+        w["obs"], w["obs_mask"] = obs[0], mask[0]

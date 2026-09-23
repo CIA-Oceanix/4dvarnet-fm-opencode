@@ -83,6 +83,14 @@ class DataConfig:
     obs_random_layout: bool = False
     obs_n_range: List[int] = field(default_factory=lambda: [5, 50])
     obs_fast_range: List[int] = field(default_factory=lambda: [4, 16])
+    # obs_random_layout: always observe step 0 (first stratified block's obs
+    # moved to t=0); applies to train and, if enabled, val.
+    obs_first_step: bool = False
+    # Re-observe val windows ONCE (seed val_obs_seed + window index) with the
+    # random observing system, so val_loss / stage1_best selection is measured
+    # on a fixed random layout instead of the regular grid.
+    val_obs_random_layout: bool = False
+    val_obs_seed: int = 20260923
 
     # Device
     device: str = "cpu"
@@ -448,6 +456,9 @@ class TrainingConfig:
     stage2: StageConfig = field(default_factory=lambda: StageConfig(epochs=400, lr=1e-3, gradient_clip_val=1.0))
     batch_size: int = 32
     loss: LossConfig = field(default_factory=LossConfig)
+    # Seeds model init, batch order and per-batch obs draws (set after data
+    # generation, which has its own seeds); None keeps runs unseeded.
+    seed: Optional[int] = None
 
 
 @dataclass

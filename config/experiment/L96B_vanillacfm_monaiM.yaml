@@ -1,0 +1,17 @@
+# @package _global_
+# VanillaCFM-M under the L96 benchmark default (config/l96_benchmark_default.yaml).
+# train_tau_0_only: false -- a generative flow, not a tau=0 point estimator.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: monai_vanilla_cfm
+  monai_vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
