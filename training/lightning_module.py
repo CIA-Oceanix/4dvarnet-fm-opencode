@@ -1,3 +1,6 @@
+import copy
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -18,9 +21,14 @@ class LitModel(pl.LightningModule):
         max_epochs: int = None,
         obs_weight_lr_scale: float = 1.0,
         prior_unet_lr_scale: float = 1.0,
+        ema_decay: Optional[float] = None,
+        teacher_start_epoch: int = 0,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
+        self.ema_decay = ema_decay
+        self.teacher_start_epoch = teacher_start_epoch
+        self._teacher_box: list = []
         self.model = model
         self.model_type = model_type
         self.stage = stage
@@ -100,7 +108,36 @@ class LitModel(pl.LightningModule):
             return {"optimizer": optimizer, "lr_scheduler": scheduler}
         return optimizer
 
+    @property
+    def teacher(self) -> Optional[nn.Module]:
+        """EMA copy of the model, kept outside the module tree so it never enters the
+        state_dict or checkpoints (a resumed run re-seeds it from the resumed weights)."""
+        return self._teacher_box[0] if self._teacher_box else None
+
+    def _init_teacher(self) -> None:
+        if self.ema_decay is None or self._teacher_box:
+            return
+        teacher = copy.deepcopy(self.model).eval()
+        teacher.requires_grad_(False)
+        self._teacher_box.append(teacher)
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        teacher = self.teacher
+        if teacher is None:
+            return
+        with torch.no_grad():
+            for p_t, p in zip(teacher.parameters(), self.model.parameters()):
+                p_t.lerp_(p.detach(), 1.0 - self.ema_decay)
+            for b_t, b in zip(teacher.buffers(), self.model.buffers()):
+                b_t.copy_(b)
+
+    def _active_teacher(self) -> Optional[nn.Module]:
+        if not self.model.training or self.current_epoch < self.teacher_start_epoch:
+            return None
+        return self.teacher
+
     def on_train_start(self):
+        self._init_teacher()
         if self._frozen:
             return
         if self.model_type == "tweedie":
@@ -166,7 +203,7 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_param_loss(batch) if self.stage == 2 \
                 else self.model.compute_loss(batch)
         elif self.model_type in ("predict_state_cfm", "monai_predict_state_cfm"):
-            loss = self.model.compute_loss(batch)
+            loss = self.model.compute_loss(batch, teacher=self._active_teacher())
         elif self.model_type == "tweedie_cfm":
             loss = self.model.compute_loss(batch)
         elif self.model_type in ("param_head", "param_head_unet"):
@@ -184,6 +221,9 @@ class LitModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss = self._forward_and_loss(batch)
         self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=batch.batch_size)
+        if self.teacher is not None:
+            self.log("teacher_active", float(self._active_teacher() is not None),
+                     on_step=False, on_epoch=True, batch_size=batch.batch_size)
         if getattr(self.model, "_obs_weight_raw", None) is not None:
             self.log("obs_weight", self.model.obs_weight, on_step=False, on_epoch=True, batch_size=batch.batch_size)
         if getattr(self.model, "_prior_weight_raw", None) is not None:
