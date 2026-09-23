@@ -33,7 +33,8 @@ import torch
 
 from data.obs_times import resample_obs_variable
 from eval_da_obs_count_l96 import CASES, DEFAULT_CACHE, R_VAR, per_window_metrics
-from evaluation.run_l96 import EXP_DIR, make_fast_ring_fill, make_obs_j_indices, run_and_cache_baselines
+from evaluation.run_l96 import (EXP_DIR, _baseline_traj_path, make_fast_ring_fill, make_obs_j_indices,
+                                run_and_cache_baselines)
 
 OUT_DIR = os.path.join(EXP_DIR, "l96_da_random_layout")
 METHODS = ("ETKF", "EnKF", "Strong-4DVar")
@@ -70,12 +71,14 @@ def draw_layout(truth_obs: torch.Tensor, n_obs_range, fast_range, seed: int,
 
 
 def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fast_range,
-               obs_var_indices, da_window_steps: int) -> tuple[dict, dict]:
+               obs_var_indices, da_window_steps: int, cases=tuple(CASES)) -> tuple[dict, dict]:
     """Window dicts with their obs replaced (window-major, draw-minor) and the
     per-run layout record {case: {n_obs, k, obs, obs_mask, window_index}}."""
     idx = list(obs_var_indices)
     cell, layouts = {}, {}
     for case, key in CASES.items():
+        if case not in cases:
+            continue
         items, rec = [], {"n_obs": [], "k": [], "obs": [], "obs_mask": [], "window_index": []}
         for wi in windows:
             w = datasets[key][wi]
@@ -95,9 +98,29 @@ def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fa
     return cell, layouts
 
 
-def _traj_path(tag: str, inflation: float, da_window_steps: int) -> str:
+def _param_suffix(tag: str, inflation: float) -> str:
     inf = f"_inf{inflation}_etkf_inf{inflation}" if inflation != 1.0 else ""
-    return os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws{da_window_steps}{tag}{inf}_obsj2_fw_dafw.npz")
+    return f"{tag}{inf}_obsj2_fw_dafw"
+
+
+def _traj_path(tag: str, inflation: float, da_window_steps: int) -> str:
+    return os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws{da_window_steps}{_param_suffix(tag, inflation)}.npz")
+
+
+def load_trajectories(tag: str, inflation: float, da_window_steps: int, cases, methods) -> dict:
+    """``{case_Method_key: array}`` from the combined npz, or from the
+    per-method files ``run_and_cache_baselines`` leaves when not every case ran."""
+    combined = _traj_path(tag, inflation, da_window_steps)
+    if os.path.exists(combined):
+        return dict(np.load(combined))
+    out = {}
+    for case in cases:
+        for method in methods:
+            prefix = f"{case}_{method.replace('-', '_')}"
+            path = _baseline_traj_path(case, method, f"_dws{da_window_steps}", _param_suffix(tag, inflation))
+            with np.load(path) as z:
+                out.update({f"{prefix}_{k}": z[k] for k in z.files})
+    return out
 
 
 def main() -> None:
@@ -109,6 +132,7 @@ def main() -> None:
     p.add_argument("--inflation", type=float, default=2.0)
     p.add_argument("--da-window-steps", type=int, default=500)
     p.add_argument("--methods", nargs="+", default=list(METHODS), choices=METHODS)
+    p.add_argument("--cases", nargs="+", default=list(CASES), choices=list(CASES))
     p.add_argument("--data-cache", default=DEFAULT_CACHE)
     p.add_argument("--device", default=None)
     args = p.parse_args()
@@ -121,8 +145,10 @@ def main() -> None:
     idx = np.array(obs_var_indices)
     (lo, hi), (flo, fhi) = args.n_obs_range, args.fast_range
     cell, layouts = build_cell(datasets, windows, args.n_draws, (lo, hi), (flo, fhi), obs_var_indices,
-                               args.da_window_steps)
+                               args.da_window_steps, args.cases)
     tag = f"_rlayout_n{lo}-{hi}_k{flo}-{fhi}_w{args.n_windows}_d{args.n_draws}"
+    if set(args.cases) != set(CASES):
+        tag += "_" + "".join(sorted(args.cases))
     print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation {args.inflation}, {len(cell['test_s0'])} runs per case")
 
     out_tag = f"{tag}_inf{args.inflation}"
@@ -138,15 +164,17 @@ def main() -> None:
         suffix=tag, exclude_methods=["Weak-4DVar"] + [m for m in METHODS if m not in args.methods],
         obs_j=2, obs_interval=None, fw_randomized=True, da_fast_weights=True,
     )
-    z = np.load(_traj_path(tag, args.inflation, args.da_window_steps))
+    z = load_trajectories(tag, args.inflation, args.da_window_steps, args.cases, args.methods)
 
     summary = {"n_obs_range": [lo, hi], "fast_range": [flo, fhi], "windows": [int(w) for w in windows],
                "n_draws": args.n_draws, "inflation": args.inflation, "N_ensemble": 30,
                "da_fast_weights": True, "step0_observed": True, "init_fill": "fast_ring_linear",
-               "da_window_steps": args.da_window_steps, "min_obs_per_da_window": 1,
-               "source": os.path.basename(_traj_path(tag, args.inflation, args.da_window_steps)), "cases": {}}
+               "da_window_steps": args.da_window_steps, "cases_run": list(args.cases), "min_obs_per_da_window": 1,
+               "source": _param_suffix(tag, args.inflation), "cases": {}}
     arrays = {}
     for case, key in CASES.items():
+        if case not in args.cases:
+            continue
         truth = np.stack([w["true_state"].numpy()[:, idx] for w in cell[key]]).astype(np.float64)
         summary["cases"][case] = {}
         arrays[f"{case}_n_obs"] = layouts[case]["n_obs"]
@@ -156,7 +184,7 @@ def main() -> None:
             k = f"{case}_{method.replace('-', '_')}"
             vkey = f"{k}_ensemble_variance"
             m = per_window_metrics(z[f"{k}_trajectories"].astype(np.float64), truth,
-                                   z[vkey].astype(np.float64) if vkey in z.files else None, idx)
+                                   z[vkey].astype(np.float64) if vkey in z else None, idx)
             summary["cases"][case][method] = {
                 metric: {g: {"mean": float(v.mean()), "std": float(v.std(ddof=1)) if v.size > 1 else 0.0}
                          for g, v in groups.items()}

@@ -140,3 +140,14 @@ def test_draw_layout_refuses_counts_below_the_number_of_da_windows():
     from eval_da_random_layout_l96 import draw_layout
     with pytest.raises(ValueError):
         draw_layout(torch.randn(3000, 24), (5, 50), (4, 16), 0, 500)
+
+
+def test_build_cell_restricts_cases_and_keeps_layouts_independent_of_case_selection():
+    from eval_da_random_layout_l96 import build_cell
+    T = 3000
+    datasets = {key: [{"true_state": torch.randn(T, 40)} for _ in range(2)] for key in ("test_s0", "test_s1")}
+    both, lay_both = build_cell(datasets, [0, 1], 1, (10, 20), (4, 16), IDX, 500)
+    s0, lay_s0 = build_cell(datasets, [0, 1], 1, (10, 20), (4, 16), IDX, 500, cases=("s0",))
+    assert set(s0) == {"test_s0"} and set(lay_s0) == {"s0"}
+    assert torch.equal(lay_s0["s0"]["obs_mask"], lay_both["s0"]["obs_mask"])
+    assert torch.equal(torch.nan_to_num(lay_s0["s0"]["obs"]), torch.nan_to_num(lay_both["s0"]["obs"]))

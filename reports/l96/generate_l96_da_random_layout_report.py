@@ -45,16 +45,17 @@ def load() -> list[dict]:
 
 
 def rmse(s: dict, case: str, method: str) -> dict | None:
-    return s["cases"][case].get(method, {}).get("rmse", {}).get(GROUP)
+    return s["cases"].get(case, {}).get(method, {}).get("rmse", {}).get(GROUP)
 
 
-def is_arm_a(s: dict) -> bool:
-    return s["n_obs_range"][0] < s["n_obs_range"][1] and s["fast_range"] == [4, 16] and s["inflation"] == 2.0
+def is_arm_a(s: dict, inflation: float = 2.0) -> bool:
+    return (s["n_obs_range"][0] < s["n_obs_range"][1] and s["fast_range"] == [4, 16]
+            and s["inflation"] == inflation)
 
 
-def is_grid(s: dict) -> bool:
+def is_grid(s: dict, inflation: float = 2.0) -> bool:
     return (s["n_obs_range"][0] == s["n_obs_range"][1] and s["fast_range"][0] == s["fast_range"][1]
-            and s["inflation"] == 2.0)
+            and s["inflation"] == inflation)
 
 
 def is_infl(s: dict) -> bool:
@@ -139,6 +140,95 @@ def infl_section(infl: list[dict]) -> list[str]:
     return lines + [""]
 
 
+def _cells(grid: list[dict]) -> dict:
+    return {(s["n_obs_range"][0], s["fast_range"][0]): s for s in grid}
+
+
+def s0_inf15_section(arms20: list[dict], arms15: list[dict], grid15: list[dict]) -> list[str]:
+    lines = ["## S0 with inflation 1.5 (ETKF/EnKF)", "",
+             "The inflation check found 1.5 best on S0 at both n_obs 10 and 100 (2.0 is the S1-tuned P1 value). "
+             "Same layouts as the inflation-2.0 runs, so rows are paired; Strong-4DVar has no inflation. "
+             "The P1 regular-grid reference lines are still at inflation 2.0, so on S0 they overstate the cost "
+             "of the random observing system for the filters (a regular-grid S0 rerun at 1.5 is a follow-up).", ""]
+    by_range = {tuple(s["n_obs_range"]): s for s in arms20}
+    for s15 in sorted(arms15, key=lambda s: s["n_obs_range"]):
+        lo, hi = s15["n_obs_range"]
+        s20 = by_range.get((lo, hi))
+        lines += [f"### n_obs U{{{lo}..{hi}}}, {len(s15['windows'])} windows", "",
+                  "| Method | S0 RMSE inf 2.0 | S0 RMSE inf 1.5 | sp/RMSE inf 1.5 | "
+                  + " | ".join(f"n_obs {a}–{b}" for a, b in N_BINS if a <= hi and b >= lo) + " |",
+                  "|---|---|---|---|" + "---|" * sum(1 for a, b in N_BINS if a <= hi and b >= lo)]
+        pw, bins = s15["per_window"], [(a, b) for a, b in N_BINS if a <= hi and b >= lo]
+        for m in ("ETKF", "EnKF"):
+            r15 = rmse(s15, "s0", m)
+            r20 = rmse(s20, "s0", m) if s20 else None
+            sp = s15["cases"]["s0"][m].get("spread", {}).get(GROUP)
+            v, x = pw[f"s0_{m}_rmse_{GROUP}"], pw["s0_n_obs"]
+            cells = [f"{v[(x >= a) & (x <= b)].mean():.3f}" if ((x >= a) & (x <= b)).any() else "–" for a, b in bins]
+            lines.append(f"| {m} | {r20['mean']:.4f} | **{r15['mean']:.4f}** ± {r15['std']:.4f} | "
+                         f"{sp['mean'] / r15['mean']:.3f} | " + " | ".join(cells) + " |" if r20 else
+                         f"| {m} | – | {r15['mean']:.4f} | – | " + " | ".join(cells) + " |")
+        if s20:
+            r = rmse(s20, "s0", "Strong-4DVar")
+            lines.append(f"| Strong-4DVar (no inflation) | {r['mean']:.4f} | {r['mean']:.4f} | – | "
+                         + " | ".join("" for _ in bins) + " |")
+        lines.append("")
+    if grid15:
+        ns = sorted({s["n_obs_range"][0] for s in grid15})
+        ks = sorted({s["fast_range"][0] for s in grid15})
+        cell = _cells(grid15)
+        for m in ("ETKF", "EnKF"):
+            lines += [f"**{m}, S0, inflation 1.5** (grid, RMSE)", "",
+                      "| n_obs | " + " | ".join(f"k={k}" for k in ks) + " |", "|---|" + "---|" * len(ks)]
+            for n in ns:
+                vals = [rmse(cell[(n, k)], "s0", m) if (n, k) in cell else None for k in ks]
+                lines.append(f"| {n} | " + " | ".join(f"{v['mean']:.3f}" if v else "–" for v in vals) + " |")
+            lines.append("")
+    return lines
+
+
+def _plot_k_lines(ax, cell: dict, ns: list[int], ks: list[int], case: str, m: str) -> None:
+    for k in ks:
+        ys = [rmse(cell[(n, k)], case, m) if (n, k) in cell else None for n in ns]
+        pts = [(n, y["mean"]) for n, y in zip(ns, ys) if y]
+        if pts:
+            x, y = zip(*pts)
+            ax.plot(x, y, color=K_COLORS.get(k, INK2), lw=2, marker="o", ms=5, label=f"k={k}")
+
+
+def _style(ax, title: str, xlabel: bool, ylabel: bool) -> None:
+    ax.set_title(title, fontsize=10, color=INK)
+    ax.grid(color=GRID, lw=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(colors=INK2, labelsize=8)
+    if xlabel:
+        ax.set_xlabel("obs times per window (n_obs)", fontsize=9, color=INK2)
+    if ylabel:
+        ax.set_ylabel("RMSE (all observed)", fontsize=9, color=INK2)
+
+
+def s0_tuned_figure(grid20: list[dict], grid15: list[dict], path: Path) -> None:
+    ns = sorted({s["n_obs_range"][0] for s in grid20 + grid15})
+    ks = sorted({s["fast_range"][0] for s in grid20 + grid15})
+    panels = (("ETKF", _cells(grid15), "ETKF · S0 · inflation 1.5"),
+              ("EnKF", _cells(grid15), "EnKF · S0 · inflation 1.5"),
+              ("Strong-4DVar", _cells(grid20), "Strong-4DVar · S0"))
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), sharey=True)
+    for j, (m, cell, title) in enumerate(panels):
+        _plot_k_lines(axes[j], cell, ns, ks, "s0", m)
+        axes[j].axhline(P1_REGULAR["s0"][m], color=INK2, lw=1, ls="--")
+        _style(axes[j], title, True, j == 0)
+    handles, labels = axes[0].get_legend_handles_labels()
+    handles.append(plt.Line2D([], [], color=INK2, lw=1, ls="--"))
+    labels.append("P1 regular grid (30 obs, k=16, inflation 2.0)")
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels), frameon=False, fontsize=9)
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
 def grid_figure(grid: list[dict], path: Path) -> None:
     ns = sorted({s["n_obs_range"][0] for s in grid})
     ks = sorted({s["fast_range"][0] for s in grid})
@@ -154,9 +244,6 @@ def grid_figure(grid: list[dict], path: Path) -> None:
                     continue
                 x, y = zip(*pts)
                 ax.plot(x, y, color=K_COLORS.get(k, INK2), lw=2, marker="o", ms=5, label=f"k={k}")
-                if j == len(METHODS) - 1:
-                    ax.annotate(f"k={k}", (x[-1], y[-1]), xytext=(6, 0), textcoords="offset points",
-                                va="center", fontsize=8, color=INK2)
             ax.axhline(P1_REGULAR[case][m], color=INK2, lw=1, ls="--")
             ax.set_title(f"{m} · {case.upper()}", fontsize=10, color=INK)
             ax.grid(color=GRID, lw=0.8)
@@ -182,6 +269,8 @@ def main() -> None:
     arm_a = [s for s in runs if is_arm_a(s)]
     grid = [s for s in runs if is_grid(s)]
     infl = [s for s in runs if is_infl(s)]
+    arms15 = [s for s in runs if is_arm_a(s, 1.5)]
+    grid15 = [s for s in runs if is_grid(s, 1.5)]
     lines = ["# L96 DA baselines under the random observing system", "",
              "Observing system drawn with the training sampler (`data.obs_random_layout`): n_obs stratified "
              "obs times per window with the first block pinned to step 0 and at least one obs time in every "
@@ -199,8 +288,14 @@ def main() -> None:
         lines += ["![RMSE vs n_obs per k](l96_da_random_layout.png)", ""] + grid_section(grid)
     if infl:
         lines += infl_section(infl)
+    if arms15 or grid15:
+        lines += s0_inf15_section(arm_a, arms15, grid15)
+    if grid15 and grid:
+        s0_tuned_figure(grid, grid15, OUT / "l96_da_random_layout_s0_inf15.png")
+        lines += ["![S0 RMSE vs n_obs per k, ensemble filters at inflation 1.5]"
+                  "(l96_da_random_layout_s0_inf15.png)", ""]
     (OUT / "l96_da_random_layout.md").write_text("\n".join(lines) + "\n")
-    print(f"wrote {OUT / 'l96_da_random_layout.md'} ({len(arm_a)} random-layout, {len(grid)} grid, {len(infl)} inflation runs)")
+    print(f"wrote {OUT / 'l96_da_random_layout.md'} ({len(arm_a)}+{len(arms15)} random-layout, {len(grid)}+{len(grid15)} grid, {len(infl)} inflation runs)")
 
 
 if __name__ == "__main__":
