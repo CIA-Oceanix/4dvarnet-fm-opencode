@@ -33,6 +33,7 @@ import torch
 
 from data.obs_times import resample_obs_variable
 from eval_da_obs_count_l96 import CASES, DEFAULT_CACHE, R_VAR, per_window_metrics
+from evaluation.estimate_metrics import _groups_from_per_window
 from evaluation.run_l96 import (EXP_DIR, L96_DA_INFLATION, _baseline_traj_path, inflation_tag,
                                 make_fast_ring_fill, make_obs_j_indices, parse_case_inflation,
                                 run_and_cache_baselines)
@@ -187,6 +188,9 @@ def main() -> None:
             vkey = f"{k}_ensemble_variance"
             m = per_window_metrics(z[f"{k}_trajectories"].astype(np.float64), truth,
                                    z[vkey].astype(np.float64) if vkey in z else None, idx)
+            if f"{k}_crps" in z:
+                c = z[f"{k}_crps"].astype(np.float64)
+                m["crps"] = _groups_from_per_window(c[..., idx] if c.shape[-1] > len(idx) else c)
             summary["cases"][case][method] = {
                 metric: {g: {"mean": float(v.mean()), "std": float(v.std(ddof=1)) if v.size > 1 else 0.0}
                          for g, v in groups.items()}

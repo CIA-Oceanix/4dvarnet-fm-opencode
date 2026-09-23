@@ -444,6 +444,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             if bl_results[0].ensemble_variance is not None:
                 traj_data["ensemble_variance"] = np.stack(
                     [r.ensemble_variance for r in bl_results], axis=0)
+            if bl_results[0].crps is not None:
+                traj_data["crps"] = np.stack([r.crps for r in bl_results], axis=0)
             np.savez_compressed(_baseline_traj_path(case_name, name, dws_suffix, param_suffix), **traj_data)
 
             rmse_mean = np.mean(m)

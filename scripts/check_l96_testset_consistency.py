@@ -64,12 +64,35 @@ def check_da(path: str, manifest: dict) -> list[str]:
             if key in z.files and not np.array_equal(z[key], np.arange(n)):
                 errors.append(f"{path}: {case} windows are not 0..{n - 1}")
     tag = os.path.basename(path).replace("per_window", "layouts").replace(".npz", ".pt")
-    if tag not in manifest["source_layouts"]:
-        errors.append(f"{path}: its layouts file {tag} is not a source of the canonical test set")
-    else:
-        lp = os.path.join(os.path.dirname(path), tag)
+    lp = os.path.join(os.path.dirname(path), tag)
+    if tag in manifest["source_layouts"]:
         if os.path.exists(lp) and sha256_file(lp) != manifest["source_layouts"][tag]:
             errors.append(f"{path}: {tag} changed since the test set was built")
+    elif not os.path.exists(lp):
+        errors.append(f"{path}: layouts file {tag} missing and not a source of the canonical test set")
+    else:
+        errors += layouts_match_testset(lp, manifest)
+    return errors
+
+
+def layouts_match_testset(layouts_path: str, manifest: dict) -> list[str]:
+    """A DA run whose layouts file is not one of the test set's sources is
+    accepted iff its obs/mask equal the canonical test set's, window by window."""
+    layouts = torch.load(layouts_path, weights_only=False)
+    data = torch.load(manifest["testset"], weights_only=False)
+    errors = []
+    for case, key in CASES.items():
+        if case not in layouts:
+            continue
+        rec = layouts[case]
+        for i in range(manifest["n_windows"]):
+            w = data[key][i]
+            obs = rec["obs"][i].to(w["obs"].dtype)
+            if not (torch.equal(rec["obs_mask"][i].to(w["obs_mask"].dtype), w["obs_mask"])
+                    and torch.equal(torch.isnan(obs), torch.isnan(w["obs"]))
+                    and torch.equal(torch.nan_to_num(obs), torch.nan_to_num(w["obs"]))):
+                errors.append(f"{layouts_path}: {case} window {i} obs differ from the canonical test set")
+                break
     return errors
 
 
