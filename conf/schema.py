@@ -73,6 +73,16 @@ class DataConfig:
     # window as the regular grid, one stratified random step per block,
     # redrawn every batch -- val/test keep the regular grid.
     obs_times_random: bool = False
+    # Fixed-grid control: keep the regular obs times, redraw only the obs
+    # noise every batch (exclusive with obs_times_random).
+    obs_noise_redraw: bool = False
+    # Random observing system per window and batch (data/obs_times.py::
+    # resample_obs_variable): obs count in obs_n_range, stratified times,
+    # obs_fast_range fast-channel count drawn once per window (subset redrawn
+    # per obs time); exclusive with the above.
+    obs_random_layout: bool = False
+    obs_n_range: List[int] = field(default_factory=lambda: [5, 50])
+    obs_fast_range: List[int] = field(default_factory=lambda: [4, 16])
 
     # Device
     device: str = "cpu"

@@ -752,9 +752,21 @@ def main(cfg: DictConfig):
             }
             logger.info(f"data.obs_density_augment=True: {obs_density_cfg}")
         obs_times_cfg = None
+        obs_modes = [k for k in ("obs_times_random", "obs_noise_redraw", "obs_random_layout")
+                     if dc.get(k, False)]
+        if len(obs_modes) > 1:
+            raise ValueError(f"data.{' / data.'.join(obs_modes)} are mutually exclusive")
         if dc.get("obs_times_random", False):
-            obs_times_cfg = {"R_var": dc.R_var}
+            obs_times_cfg = {"R_var": dc.R_var, "mode": "stratified"}
             logger.info(f"data.obs_times_random=True (stratified, train only): {obs_times_cfg}")
+        elif dc.get("obs_noise_redraw", False):
+            obs_times_cfg = {"R_var": dc.R_var, "mode": "noise_only"}
+            logger.info(f"data.obs_noise_redraw=True (regular grid, train only): {obs_times_cfg}")
+        elif dc.get("obs_random_layout", False):
+            obs_times_cfg = {"R_var": dc.R_var, "mode": "variable",
+                             "n_obs_range": list(dc.get("obs_n_range", [5, 50])),
+                             "fast_range": list(dc.get("obs_fast_range", [4, 16]))}
+            logger.info(f"data.obs_random_layout=True (train only): {obs_times_cfg}")
         # full_state_target=True (default False, backward-compatible): pass
         # obs_var_indices=None to FlowMatchingDataset specifically (NOT to
         # base_cfg above, which still needs the real obs_var_indices to

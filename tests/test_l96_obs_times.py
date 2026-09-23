@@ -106,3 +106,63 @@ def test_collate_rejects_full_state_targets():
     items = [(torch.randn(T, 40), obs, mask, f) for _, obs, mask, f in _regular_windows()]
     with pytest.raises(ValueError):
         make_collate_fm(None, obs_times_cfg={"R_var": R_VAR})(items)
+
+
+def test_redraw_obs_noise_keeps_times_and_changes_noise():
+    from data.obs_times import redraw_obs_noise
+    items = _regular_windows()
+    states = torch.stack([it[0] for it in items])
+    mask = torch.stack([it[2] for it in items])
+    old_obs = torch.stack([it[1] for it in items])
+    obs = redraw_obs_noise(states, mask, R_VAR, generator=torch.Generator().manual_seed(3))
+    assert torch.equal(~torch.isnan(obs).any(-1), mask)
+    assert not torch.allclose(obs[mask], old_obs[mask])
+    resid = obs[mask] - states[mask]
+    assert abs(resid.var().item() - R_VAR) < 0.05
+
+
+def test_collate_noise_only_mode_keeps_mask():
+    items = _regular_windows()
+    batch = make_collate_fm(None, obs_times_cfg={"R_var": R_VAR, "mode": "noise_only"})(items)
+    torch.testing.assert_close(batch.obs_mask, torch.stack([it[2] for it in items]))
+    with pytest.raises(ValueError):
+        make_collate_fm(None, obs_times_cfg={"R_var": R_VAR, "mode": "bogus"})(items)
+
+
+def test_resample_obs_variable_counts_and_fast_channels_in_range():
+    from data.obs_times import resample_obs_variable
+    states = torch.randn(64, T, D)
+    mask = torch.zeros(64, T, dtype=torch.bool)
+    obs, new_mask = resample_obs_variable(states, mask, R_VAR, (5, 50), (4, 16),
+                                          generator=torch.Generator().manual_seed(0))
+    counts = new_mask.sum(1)
+    assert counts.min() >= 5 and counts.max() <= 50 and len(counts.unique()) > 10
+    observed = obs[new_mask]
+    assert not torch.isnan(observed[:, :8]).any()
+    n_fast = (~torch.isnan(observed[:, 8:])).sum(1)
+    assert n_fast.min() == 4 and n_fast.max() == 16
+    assert torch.all(torch.isnan(obs[~new_mask]))
+    per_time = (~torch.isnan(obs[..., 8:])).sum(-1)
+    for b in range(64):
+        k = per_time[b][new_mask[b]]
+        assert torch.all(k == k[0])
+    resid = observed[:, :8] - states[new_mask][:, :8]
+    assert abs(resid.var().item() - R_VAR) < 0.05
+
+
+def test_resample_obs_variable_times_are_stratified():
+    from data.obs_times import resample_obs_variable
+    states = torch.randn(8, T, D)
+    _, new_mask = resample_obs_variable(states, torch.zeros(8, T, dtype=torch.bool), R_VAR,
+                                        (20, 20), (16, 16), generator=torch.Generator().manual_seed(1))
+    t = new_mask[0].nonzero().flatten()
+    block = torch.arange(20) * (T // 20)
+    assert torch.all(t >= block) and torch.all(t < block + T // 20)
+
+
+def test_collate_variable_mode():
+    items = _regular_windows()
+    batch = make_collate_fm(None, obs_times_cfg={"R_var": R_VAR, "mode": "variable",
+                                                 "n_obs_range": [5, 50], "fast_range": [4, 16]})(items)
+    counts = batch.obs_mask.sum(1)
+    assert torch.all((counts >= 5) & (counts <= 50))

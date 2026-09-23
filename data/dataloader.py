@@ -253,10 +253,15 @@ def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None
     length, which ``with_params``'s own variable-length suffix already
     makes ambiguous.
 
-    ``obs_times_cfg`` (optional dict, key ``R_var``) replaces the regular obs
-    grid of every window with the same number of obs times drawn at
-    stratified random positions, redrawn every batch (see
-    ``data.obs_times.resample_obs_times``). Applied before density
+    ``obs_times_cfg`` (optional dict, keys ``R_var`` and ``mode``) redraws the
+    training obs every batch: ``mode="stratified"`` (default) replaces the
+    regular obs grid of every window with the same number of obs times at
+    stratified random positions (``data.obs_times.resample_obs_times``);
+    ``mode="noise_only"`` keeps the obs times and redraws only the noise
+    (``data.obs_times.redraw_obs_noise``); ``mode="variable"`` draws a random
+    obs count (``n_obs_range``), stratified times and a random number of
+    observed fast channels per obs time (``fast_range``)
+    (``data.obs_times.resample_obs_variable``). Applied before density
     augmentation and normalization; requires ``states`` in the observed
     subspace (same last dim as ``obs``).
 
@@ -272,14 +277,26 @@ def make_collate_fm(norm_stats: dict | None = None, obs_density_cfg: dict | None
     def _collate(batch):
         fm_batch = _collate_fm_impl(batch, with_true_forcing=with_true_forcing)
         if obs_times_cfg is not None:
-            from data.obs_times import resample_obs_times
+            from data.obs_times import redraw_obs_noise, resample_obs_times, resample_obs_variable
             if fm_batch.states.shape[-1] != fm_batch.obs.shape[-1]:
                 raise ValueError(
                     f"obs_times_cfg requires states in the observed subspace, got states dim "
                     f"{fm_batch.states.shape[-1]} vs obs dim {fm_batch.obs.shape[-1]}"
                 )
-            fm_batch.obs, fm_batch.obs_mask = resample_obs_times(
-                fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"])
+            mode = obs_times_cfg.get("mode", "stratified")
+            if mode == "stratified":
+                fm_batch.obs, fm_batch.obs_mask = resample_obs_times(
+                    fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"])
+            elif mode == "noise_only":
+                fm_batch.obs = redraw_obs_noise(
+                    fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"])
+            elif mode == "variable":
+                fm_batch.obs, fm_batch.obs_mask = resample_obs_variable(
+                    fm_batch.states, fm_batch.obs_mask, R_var=obs_times_cfg["R_var"],
+                    n_obs_range=tuple(obs_times_cfg["n_obs_range"]),
+                    fast_range=tuple(obs_times_cfg["fast_range"]))
+            else:
+                raise ValueError(f"unknown obs_times_cfg mode {mode!r}")
         if obs_density_cfg is not None:
             from data.obs_density import (
                 NUM_FAST,
