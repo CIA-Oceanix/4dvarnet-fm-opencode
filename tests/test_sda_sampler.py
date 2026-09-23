@@ -53,6 +53,19 @@ class TestGuidedObsCost:
         cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5)
         assert torch.allclose(cost, torch.tensor(0.0), atol=1e-6)
 
+    def test_nan_channels_at_observed_steps_are_not_zero_imputed(self):
+        B, T, D = 1, 6, 3
+        obs_mask = torch.zeros(B, T, dtype=torch.bool)
+        obs_mask[:, [1, 3]] = True
+        x_hat_1 = torch.randn(B, T, D) + 10.0
+        y = torch.full((B, T, D), float("nan"))
+        y[:, [1, 3], 0] = x_hat_1[:, [1, 3], 0]
+        cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5)
+        assert torch.allclose(cost, torch.tensor(0.0), atol=1e-6)
+        y[:, 3, 2] = x_hat_1[:, 3, 2] + 1.0
+        cost = guided_obs_cost(x_hat_1, y, obs_mask, R_var=0.5)
+        assert torch.allclose(cost, torch.tensor(1.0 / 0.5), atol=1e-5)
+
     def test_obs_indices_restricts_which_channels_count(self):
         B, T, D = 1, 6, 3
         obs_mask = torch.zeros(B, T, dtype=torch.bool)
