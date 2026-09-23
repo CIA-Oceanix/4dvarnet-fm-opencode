@@ -606,6 +606,8 @@ def main(cfg: DictConfig):
     hcfg = HydraConfig.get()
     if hcfg and hcfg.job.config_name and hcfg.job.config_name.startswith("experiment/"):
         exp_id = hcfg.job.config_name.replace("experiment/", "")
+    if cfg.training.get("seed", None) is not None:
+        exp_id = f"{exp_id}_seed{int(cfg.training.seed)}"
 
     exp_dir = os.path.join(EXP_DIR, exp_id)
     resolve_experiment_dir(exp_dir, cfg, fresh=cfg.get("fresh", False))
