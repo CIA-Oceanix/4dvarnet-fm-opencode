@@ -85,7 +85,7 @@ The random-layout test set (`rlay`, seed 1) reproduces every pattern below.
 
 - **For the benchmark:** the flows' calibration gap at N = 10 is now mostly a sampler budget question.
   - The early-fine default (#253) closes most of it.
-  - **N = 20 with p = 0.5** would bring PSC to 0.86–0.92 and Van to 0.95–1.02 spread/RMSE, with the best CRPS in every row, at twice today's cost.
+  - **N = 20 with p = 0.5** would bring PSC to 0.86–0.92 and Van to 0.95–1.02 spread/RMSE, with the best CRPS for PSC and within 0.4% of the uniform N = 80 best for Van, at twice today’s cost.
   - Worth proposing as the benchmark sampler (a decision; not changed here).
 - **For the τ-consistency plan (v4):**
   - The operator share of defect 2 that T5 targeted is small for the L96B models, so a corrected T5 has even less to gain.
