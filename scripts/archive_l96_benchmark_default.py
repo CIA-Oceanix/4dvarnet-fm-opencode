@@ -26,9 +26,10 @@ BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
 HERE = REPO / "4dvarnet-fm-sda-nanfix/experiments"
 P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
 CANON_EVAL = HERE / "eval_rlayout_n10-100_k4-16_w200"
+CANON_EVAL_FLOW = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
 TESTSET = REPO / "experiments" / "l96_testset_rlayout_n10-100_k4-16_w200_d1.pt"
 
-DET, FLOW, SDA = "ens1_no1", "ens30_no10", "ens30_gw20"
+DET, FLOW, SDA = "ens1_no1", "ens30_no20", "ens30_gw20"
 RUNS = (
     [(f"L96B_directunet_monaiM_seed{s}", BENCH, DET) for s in (1, 2, 3)]
     + [(f"L96B_vanillacfm_monaiM_seed{s}", BENCH, FLOW) for s in (1, 2, 3)]
@@ -64,8 +65,9 @@ def plan(name: str, src: Path, sub: str) -> list[tuple[Path, str]]:
     items += [(run / f, f) for f in ("resolved_config.yaml", "results.json") if (run / f).exists()]
     items += [(run / sub / f"estimates_{c}.npz", f"estimates_{c}.npz") for c in ("s0", "s1")]
     items.append((run / sub / eval_json, eval_json))
-    items += [(CANON_EVAL / name / sub / f"estimates_{c}.npz", f"estimates_rlayout_{c}.npz") for c in ("s0", "s1")]
-    items.append((CANON_EVAL / name / sub / eval_json, f"rlayout_{eval_json}"))
+    canon = CANON_EVAL_FLOW if sub == FLOW else CANON_EVAL
+    items += [(canon / name / sub / f"estimates_{c}.npz", f"estimates_rlayout_{c}.npz") for c in ("s0", "s1")]
+    items.append((canon / name / sub / eval_json, f"rlayout_{eval_json}"))
     return items
 
 

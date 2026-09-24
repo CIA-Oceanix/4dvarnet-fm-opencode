@@ -40,6 +40,13 @@ See `reports/l96/outputs/l96_benchmark_extended.md` for all numbers.
 - **Best scheme: the DirectUNet-M → SDA2-M hybrid** (validation-tuned tau0 0.1, gw 2): best
   RMSE and CRPS on both test sets. Relevant to the conclusion's "most accurate scheme" claim
   (`07_conclusion.tex` L31–33), which should name it.
+- **Flow numbers re-scored with the #257 benchmark sampler** (30 members × 20 early-fine
+  steps, `ens30_no20`; the extended report uses it throughout). Rankings and conclusions
+  are unchanged; flow RMSE drops ~1% (regular S0, 400 ep: PredictStateCFM 0.409 → 0.403,
+  VanillaCFM 0.434 → 0.430), but calibration improves markedly: spread/RMSE 0.53 → 0.70
+  (PredictStateCFM) and 0.62 → 0.79 (VanillaCFM). The under-dispersion range quoted
+  below (≈1.6–2.4×) becomes ≈1.3–1.4× under the benchmark sampler — cite the sampler
+  with any calibration number (`tab:calibration`, C4).
 - **Observing-system dependence**: DA wins at ≤ 10 obs per window (S0), learned schemes from
   ~20 obs on and at every density under S1; learned schemes win at every number of observed
   fast channels. New material for H1 (`02_background.tex` L191–194) and the marginal-value

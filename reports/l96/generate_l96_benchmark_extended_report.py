@@ -45,6 +45,9 @@ SHARED = REPO / "experiments"
 HERE = ROOT / "experiments"
 BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
 P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
+N20 = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
+FLOW_SUB = "ens30_no20"
+FLOW_SAMPLING = {"n_members": 30, "n_outer": 20, "step_power": 0.5}
 REG_TEST = SHARED / "l96_datasets_obsj2_int100_nwin200.pt"
 CAN_TEST = SHARED / "l96_testset_rlayout_n10-100_k4-16_w200_d1.pt"
 CAN = HERE / "eval_rlayout_n10-100_k4-16_w200"
@@ -66,13 +69,14 @@ def seeds(fmt: str, base: Path, sub: str, n=(1, 2, 3)) -> list[Path]:
 
 # (group, label, [regular result dirs], [random-set result dirs])
 def rows() -> list[tuple]:
-    D, FL = "ens1_no1", "ens30_no10"
+    D, FL = "ens1_no1", FLOW_SUB
     R = []
     for lab, fam, base in (("DirectUNet-M", "directunet", BENCH), ("PredictStateCFM-M", "predictstatecfm", HERE),
                            ("VanillaCFM-M", "vanillacfm", BENCH)):
         sub = D if fam == "directunet" else FL
+        can_root = CAN if fam == "directunet" else N20
         R.append(("Benchmark default, 400 ep", lab, seeds(f"L96B_{fam}_monaiM_seed{{s}}", base, sub),
-                  seeds(f"L96B_{fam}_monaiM_seed{{s}}", CAN, sub)))
+                  seeds(f"L96B_{fam}_monaiM_seed{{s}}", can_root, sub)))
     for lab, fam in (("DirectUNet-M", "directunet"), ("PredictStateCFM-M", "predictstatecfm"), ("VanillaCFM-M", "vanillacfm")):
         sub = D if fam == "directunet" else FL
         R.append(("Benchmark default, 1200 ep", lab, seeds(f"L96B_{fam}_monaiM_ep1200_seed{{s}}", HERE, sub),
@@ -89,13 +93,23 @@ def rows() -> list[tuple]:
         R.append(("Hybrid (tau0 0.1, gw 2)", lab, seeds(name, REGE, "tau0.1_gw2"), seeds(name, CAN, "tau0.1_gw2")))
     for lab, name, sub in (("DirectUNet-M", "P1_directunet_monaiM_noaug_l96", D), ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", FL),
                            ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", FL)):
-        R.append(("P1 fixed obs (reference)", lab, [P1 / name / sub], [CAN / name / sub]))
+        R.append(("P1 fixed obs (reference)", lab, [P1 / name / sub], [(CAN if sub == D else N20) / name / sub]))
     return R
 
 
 def done(d: Path) -> bool:
     return any((d / f).exists() for f in ("neural_eval.json", "sda_eval.json", "hybrid_eval.json")) and \
         ((d / "scores_s1.npz").exists() or (d / "estimates_s1.npz").exists())
+
+
+def sampling_errors(d: Path) -> list[str]:
+    """Flow results must be scored with the benchmark sampler (#257)."""
+    j = d / "neural_eval.json"
+    if d.name != FLOW_SUB or not j.exists():
+        return []
+    got = json.load(open(j)).get("sampling", {})
+    bad = {k: got.get(k) for k, v in FLOW_SAMPLING.items() if got.get(k) != v}
+    return [f"{d}: sampling {bad} != benchmark {FLOW_SAMPLING}"] if bad else []
 
 
 def score_dir(d: Path, cache: dict) -> dict:
@@ -164,7 +178,7 @@ def learned_main(cache: dict) -> tuple[list[dict], list[str]]:
         for tag, dirs, path in (("reg", regs, REG_TEST), ("can", cans, CAN_TEST)):
             ok = [d for d in dirs if done(d)]
             for d in ok:
-                errors += check_learned(str(d), str(path), truths[tag])
+                errors += check_learned(str(d), str(path), truths[tag]) + sampling_errors(d)
             if ok:
                 per = [score_dir(d, cache) for d in ok]
                 rec[tag] = {c: {"rmse": np.mean([p[c]["rmse"] for p in per], axis=0),
@@ -245,9 +259,17 @@ def budget_section(cache: dict) -> list[str]:
     return A
 
 
+def pick(d: Path) -> Path | None:
+    """The benchmark-protocol result sub-dir of a run: ens1_no1 (deterministic), ens30_no20 (flows,
+    #257 sampler) or ens30_gw25 (SDA). Never falls back to the old flow protocol (ens30_no10)."""
+    for sub in ("ens1_no1", FLOW_SUB, "ens30_gw25"):
+        if done(d / sub):
+            return d / sub
+    return None
+
+
 def _cell_scores(root: Path, cell: str, name: str, cache: dict, case: str):
-    d = root / cell / name
-    sub = next((p for p in sorted(d.glob("*")) if done(p)), None) if d.exists() else None
+    sub = pick(root / cell / name)
     return None if sub is None else float(np.mean(score_dir(sub, cache)[case]["rmse"]))
 
 
@@ -380,7 +402,7 @@ def binned_canonical(cache: dict) -> list[str]:
     for c in CASES:
         s = {}
         for lab, f in LEARNED_CURVES:
-            dirs = [next(p for p in sorted((CAN / f.format(s=x)).glob("*")) if done(p)) for x in (1, 2, 3)]
+            dirs = [pick(CAN / f.format(s=x)) or pick(N20 / f.format(s=x)) for x in (1, 2, 3)]
             s[lab] = np.mean([score_dir(p, cache)[c]["rmse"] for p in dirs], axis=0)
         s["SDA1-M"] = np.mean([score_dir(CAN / f"B4_sda1_monaiM_l96_seed{x}" / "ens30_gw25", cache)[c]["rmse"] for x in (1, 2, 3)], axis=0)
         hyb = [CAN / f"hybrid_DU{x}_A3_sda2_monaiM_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
@@ -555,10 +577,11 @@ def main() -> None:
          "`_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 "
          "retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on "
          "validation windows; 1200-epoch arms of the benchmark default.\n",
-         "**Flow sampler grid**: every VanillaCFM / PredictStateCFM number here was sampled on the *uniform* Euler "
-         "grid (10 steps), i.e. before #253 made the early-fine grid the default; the run scripts pin "
-         "`--step-power 1` to reproduce them. #253 reports ~2-4% better CRPS with the new default, so the flow "
-         "rows are, if anything, slightly pessimistic. SDA and the hybrid use the SDA sampler and are unaffected.\n"]
+         "**Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark "
+         "protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); "
+         "the report refuses to render a flow result recorded with any other sampling. Only the calibration study "
+         "(section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler "
+         "(10 guided steps).\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")
