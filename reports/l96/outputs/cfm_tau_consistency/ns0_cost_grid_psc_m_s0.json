@@ -1,0 +1,95 @@
+{
+ "checkpoint": "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-fdv-tau-aware/experiments/A2_predictstatecfm_monaiM_l96/checkpoints/stage1_best.ckpt",
+ "model": "MonaiPredictStateCFM",
+ "case": "s0",
+ "n_outer": 10,
+ "x0_zero": {
+  "rmse_mu_k": [
+   0.5944689433879433,
+   0.5500849563489161,
+   0.5249125795271373,
+   0.5146558189500695,
+   0.5105234369620067,
+   0.5090059203091082,
+   0.5086365557383123,
+   0.5087724708387172,
+   0.5091009615611622,
+   0.50956339818597
+  ],
+  "rmse_endpoint": 0.5095633811506889
+ },
+ "steps_members_grid": [
+  {
+   "n_steps": 1,
+   "members": 1,
+   "calls": 1,
+   "rmse_ensmean": 0.45382384806160686
+  },
+  {
+   "n_steps": 1,
+   "members": 4,
+   "calls": 4,
+   "rmse_ensmean": 0.4461129818047466
+  },
+  {
+   "n_steps": 1,
+   "members": 8,
+   "calls": 8,
+   "rmse_ensmean": 0.445103232993014
+  },
+  {
+   "n_steps": 1,
+   "members": 30,
+   "calls": 30,
+   "rmse_ensmean": 0.44417270067039616
+  },
+  {
+   "n_steps": 2,
+   "members": 1,
+   "calls": 2,
+   "rmse_ensmean": 0.43006881817687687
+  },
+  {
+   "n_steps": 2,
+   "members": 4,
+   "calls": 8,
+   "rmse_ensmean": 0.41880499224314144
+  },
+  {
+   "n_steps": 2,
+   "members": 8,
+   "calls": 16,
+   "rmse_ensmean": 0.4172108061529966
+  },
+  {
+   "n_steps": 2,
+   "members": 30,
+   "calls": 60,
+   "rmse_ensmean": 0.41580032851651816
+  },
+  {
+   "n_steps": 3,
+   "members": 1,
+   "calls": 3,
+   "rmse_ensmean": 0.42855757748781226
+  },
+  {
+   "n_steps": 3,
+   "members": 4,
+   "calls": 12,
+   "rmse_ensmean": 0.4128239573857926
+  },
+  {
+   "n_steps": 3,
+   "members": 8,
+   "calls": 24,
+   "rmse_ensmean": 0.41045521181095723
+  },
+  {
+   "n_steps": 3,
+   "members": 30,
+   "calls": 90,
+   "rmse_ensmean": 0.4084972194502811
+  }
+ ]
+}
