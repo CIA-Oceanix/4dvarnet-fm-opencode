@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -536,8 +538,9 @@ class PredictStateCFM(nn.Module):
     """
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1,
-                 train_tau_0_only=False, param_dim=4, cond_extra_dim=0):
+                 train_tau_0_only=False, param_dim=4, cond_extra_dim=0, **tau_options):
         super().__init__()
+        self._init_tau_options(**tau_options)
         self.param_dim = param_dim
         self.cond_extra_dim = cond_extra_dim
         self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
@@ -559,15 +562,80 @@ class PredictStateCFM(nn.Module):
         self.state_dim = state_dim
         self.train_tau_0_only = train_tau_0_only
 
+    def _init_tau_options(self, tau0_frac: float = 0.0, tau0_zero_input: bool = False,
+                          tau_sampling: str = "uniform", tau_low_frac: float = 0.5,
+                          tau_low_max: float = 0.4, boot_frac: float = 0.0,
+                          boot_tau_min: float = 0.0, boot_tau_max: float = 0.0,
+                          boot_dtau_min: float = 0.2, boot_dtau_max: float = 0.5,
+                          boot_alpha: float = 1.0) -> None:
+        """Training-time tau options; every default reproduces the plain CFM loss.
+
+        See docs/scoping/cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
+        tau0_frac: fraction of each batch trained at tau=0 exactly (target x1).
+        tau_sampling: "uniform" or "low_mix" ((1-f) U[0,1] + f U[0, tau_low_max]).
+        boot_*: fraction of each batch whose target at tau ~ U[boot_tau_min, boot_tau_max]
+            is (1-alpha) x1 + alpha sg D_teacher(x_tau', tau'), tau' = tau + U[dtau_min, dtau_max],
+            with (x_tau, x_tau') built by forward noising (pair_from_x1). Without a teacher the
+            target is x1 on the same pairs.
+        tau0_zero_input: feed x=0 whenever tau == 0, in training AND sampling (A1 by construction).
+        """
+        if tau_sampling not in ("uniform", "low_mix"):
+            raise ValueError(f"tau_sampling must be 'uniform' or 'low_mix', got {tau_sampling!r}")
+        if tau0_frac < 0 or boot_frac < 0 or tau0_frac + boot_frac > 1:
+            raise ValueError("need tau0_frac, boot_frac >= 0 and tau0_frac + boot_frac <= 1")
+        if not 0.0 <= boot_tau_min <= boot_tau_max < 1.0:
+            raise ValueError("need 0 <= boot_tau_min <= boot_tau_max < 1")
+        if not 0.0 < boot_dtau_min <= boot_dtau_max:
+            raise ValueError("need 0 < boot_dtau_min <= boot_dtau_max")
+        self.tau0_frac = float(tau0_frac)
+        self.tau0_zero_input = bool(tau0_zero_input)
+        self.tau_sampling = tau_sampling
+        self.tau_low_frac = float(tau_low_frac)
+        self.tau_low_max = float(tau_low_max)
+        self.boot_frac = float(boot_frac)
+        self.boot_tau_min = float(boot_tau_min)
+        self.boot_tau_max = float(boot_tau_max)
+        self.boot_dtau_min = float(boot_dtau_min)
+        self.boot_dtau_max = float(boot_dtau_max)
+        self.boot_alpha = float(boot_alpha)
+
+    def _tau_options_active(self) -> bool:
+        return (self.tau0_frac > 0 or self.boot_frac > 0 or self.tau_sampling != "uniform")
+
     def forward(self, x_t, batch, tau):
         """Forward pass: predict final state mean μ = E[x1|xt,y]."""
+        if self.tau0_zero_input:
+            x_t = x_t * (tau > 0).to(x_t.dtype).view(-1, 1, 1)
         cond = _make_cond(batch.obs, batch.forcing, batch.params,
                           self.param_dim, self.cond_extra_dim)
         μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
         return μ.transpose(1, 2)
 
-    def compute_loss(self, batch):
-        """Compute CFM loss: MSE(μ, x1) where μ = network prediction."""
+    def pair_from_x1(self, x1: torch.Tensor, tau: torch.Tensor,
+                     tau_prime: torch.Tensor) -> tuple:
+        """(x_tau, x_tau') with the exact joint law of the path, for tau < tau'.
+
+        x_tau' = tau' x1 + b(tau') eps, then x_tau = (tau/tau') x_tau' + sqrt(b(tau)^2 -
+        (tau/tau')^2 b(tau')^2) xi, b(t) = (1-t) sigma_prior. Marginally x_tau | x1 ~
+        N(tau x1, b(tau)^2), and x_tau is a further-noised copy of x_tau' (tau=0: pure noise).
+        """
+        s0 = self.sigma_prior
+        view = (-1,) + (1,) * (x1.dim() - 1)
+        t, tp = tau.view(view), tau_prime.view(view)
+        x_tp = tp * x1 + (1.0 - tp) * s0 * torch.randn_like(x1)
+        r = t / tp
+        extra = ((1.0 - t) * s0) ** 2 - (r * (1.0 - tp) * s0) ** 2
+        x_t = r * x_tp + extra.clamp(min=0.0).sqrt() * torch.randn_like(x1)
+        return x_t, x_tp
+
+    def compute_loss(self, batch, teacher: Optional[nn.Module] = None):
+        """Compute CFM loss: MSE(μ, x1) where μ = network prediction.
+
+        In eval mode (validation) the tau options are ignored, so val_loss -- and hence
+        checkpoint selection -- is the plain uniform-tau loss for every arm.
+        """
+        if self.training and self._tau_options_active() and not self.train_tau_0_only:
+            return self._compute_loss_tau_options(batch, teacher)
         B = batch.obs.shape[0]
         device = batch.obs.device
         tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
@@ -575,6 +643,37 @@ class PredictStateCFM(nn.Module):
         x_tau = self.interpolant.mix(x0, batch.states, tau)
         μ_pred = self.forward(x_tau, batch, tau)
         return F.mse_loss(μ_pred, batch.states)
+
+    def _compute_loss_tau_options(self, batch, teacher: Optional[nn.Module]):
+        x1 = batch.states
+        B = x1.shape[0]
+        device = x1.device
+        view = (-1,) + (1,) * (x1.dim() - 1)
+        u = torch.rand(B, device=device)
+        is_boot = u < self.boot_frac
+        is_tau0 = (u >= self.boot_frac) & (u < self.boot_frac + self.tau0_frac)
+        tau = torch.rand(B, device=device)
+        if self.tau_sampling == "low_mix":
+            low = torch.rand(B, device=device) < self.tau_low_frac
+            tau = torch.where(low, tau * self.tau_low_max, tau)
+        tau = torch.where(is_tau0, torch.zeros_like(tau), tau)
+        x0 = torch.randn_like(x1) * self.sigma_prior
+        x_tau = self.interpolant.mix(x0, x1, tau)
+        target = x1
+        if bool(is_boot.any()):
+            tau_b = self.boot_tau_min + (self.boot_tau_max - self.boot_tau_min) * torch.rand(B, device=device)
+            dtau = self.boot_dtau_min + (self.boot_dtau_max - self.boot_dtau_min) * torch.rand(B, device=device)
+            tau_p = (tau_b + dtau).clamp(max=0.99)
+            x_b, x_bp = self.pair_from_x1(x1, tau_b, tau_p)
+            x_tau = torch.where(is_boot.view(view), x_b, x_tau)
+            tau = torch.where(is_boot, tau_b, tau)
+            if teacher is not None:
+                with torch.no_grad():
+                    d_teacher = teacher.forward(x_bp, batch, tau_p)
+                boot_target = (1.0 - self.boot_alpha) * x1 + self.boot_alpha * d_teacher
+                target = torch.where(is_boot.view(view), boot_target, x1)
+        μ_pred = self.forward(x_tau, batch, tau)
+        return F.mse_loss(μ_pred, target)
 
     def sample(self, batch, N_outer=None):
         """Sample trajectories via forward ODE integration.

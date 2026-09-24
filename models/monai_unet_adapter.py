@@ -280,8 +280,10 @@ class MonaiPredictStateCFM(PredictStateCFM):
 
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
                  N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False,
-                 param_dim=4, cond_extra_dim=0, num_res_blocks=2, norm_num_groups=32):
+                 param_dim=4, cond_extra_dim=0, num_res_blocks=2, norm_num_groups=32,
+                 **tau_options):
         nn.Module.__init__(self)
+        self._init_tau_options(**tau_options)
         self.cond_extra_dim = cond_extra_dim
         self.param_dim = param_dim
         self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
