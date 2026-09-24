@@ -141,6 +141,16 @@ class ParamFlowUNet(nn.Module):
         return x.mean(dim=-1)
 
 
+DEFAULT_STEP_POWER = 0.5
+
+
+def flow_tau_grid(n_steps: int, step_power: float = DEFAULT_STEP_POWER) -> list:
+    """Euler grid tau_k = 1 - (1 - k/N)^p. p = 1 is uniform; p = 0.5 (the default since
+    2026-09-24) puts the fine steps early, where the ensemble loses variance
+    (docs/results/cfm_sampler_schedule.md)."""
+    return [1.0 - (1.0 - k / n_steps) ** step_power for k in range(n_steps + 1)]
+
+
 class VanillaCFM(nn.Module):
     def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64, N_outer=10, sigma_prior=0.5, dropout=0.1, train_tau_0_only=False, param_dim=4, cond_extra_dim=0):
         super().__init__()
@@ -177,9 +187,11 @@ class VanillaCFM(nn.Module):
         v_pred = self.forward(x_tau, batch, tau)
         return F.mse_loss(v_pred, v_target)
 
-    def sample(self, batch, N_outer=None):
+    def sample(self, batch, N_outer=None, step_power: Optional[float] = None):
         if N_outer is None:
             N_outer = self.N_outer
+        if step_power is None:
+            step_power = getattr(self, "step_power", DEFAULT_STEP_POWER)
         obs = batch.obs
         B, T, D = obs.shape
         device = obs.device
@@ -187,11 +199,11 @@ class VanillaCFM(nn.Module):
         if self.train_tau_0_only:
             v = self.forward(x, batch, tau=torch.zeros(B, device=device))
             return x + v
-        dt = 1.0 / N_outer
-        for step in range(N_outer):
-            tau = torch.full((B,), step / N_outer, device=device)
+        taus = flow_tau_grid(N_outer, step_power)
+        for t0, t1 in zip(taus[:-1], taus[1:]):
+            tau = torch.full((B,), t0, device=device)
             v = self.forward(x, batch, tau)
-            x = x + dt * v
+            x = x + (t1 - t0) * v
         return x
 
 
@@ -567,7 +579,9 @@ class PredictStateCFM(nn.Module):
                           tau_low_max: float = 0.4, boot_frac: float = 0.0,
                           boot_tau_min: float = 0.0, boot_tau_max: float = 0.0,
                           boot_dtau_min: float = 0.2, boot_dtau_max: float = 0.5,
-                          boot_alpha: float = 1.0) -> None:
+                          boot_alpha: float = 1.0, var_weight: float = 0.0,
+                          var_tau_min: float = 0.05, var_tau_max: float = 0.95,
+                          var_fd_eps: float = 1e-2) -> None:
         """Training-time tau options; every default reproduces the plain CFM loss.
 
         See docs/scoping/cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
@@ -578,6 +592,8 @@ class PredictStateCFM(nn.Module):
             with (x_tau, x_tau') built by forward noising (pair_from_x1). Without a teacher the
             target is x1 on the same pairs.
         tau0_zero_input: feed x=0 whenever tau == 0, in training AND sampling (A1 by construction).
+        var_weight: weight of the second-order consistency loss (T5) on rows with tau in
+            [var_tau_min, var_tau_max]; see variance_terms.
         """
         if tau_sampling not in ("uniform", "low_mix"):
             raise ValueError(f"tau_sampling must be 'uniform' or 'low_mix', got {tau_sampling!r}")
@@ -598,9 +614,54 @@ class PredictStateCFM(nn.Module):
         self.boot_dtau_min = float(boot_dtau_min)
         self.boot_dtau_max = float(boot_dtau_max)
         self.boot_alpha = float(boot_alpha)
+        if var_weight < 0 or not 0.0 < var_tau_min <= var_tau_max < 1.0 or var_fd_eps <= 0:
+            raise ValueError("need var_weight >= 0, 0 < var_tau_min <= var_tau_max < 1, var_fd_eps > 0")
+        self.var_weight = float(var_weight)
+        self.var_tau_min = float(var_tau_min)
+        self.var_tau_max = float(var_tau_max)
+        self.var_fd_eps = float(var_fd_eps)
 
     def _tau_options_active(self) -> bool:
-        return (self.tau0_frac > 0 or self.boot_frac > 0 or self.tau_sampling != "uniform")
+        return (self.tau0_frac > 0 or self.boot_frac > 0 or self.tau_sampling != "uniform"
+                or getattr(self, "var_weight", 0.0) > 0)
+
+    def variance_terms(self, x_tau: torch.Tensor, batch, tau: torch.Tensor,
+                       x1: torch.Tensor) -> tuple:
+        """Per-sample, per-channel sides of the second-order MMSE identity (NS1c / T5):
+
+            E[(x1 - D)^2]  =  (b_tau^2 / tau) * E[dD/dx]   (per coordinate),
+
+        returning (jac, resid), each (B, D): time-averaged (b^2/tau) u * (J u) with a Rademacher
+        u and central finite differences, and time-averaged (x1 - D)^2 with D detached. The
+        passes run with dropout off (restored afterwards), so J u is not dropout noise; jac
+        carries gradients, resid does not.
+        """
+        was_training = self.training
+        self.train(False)
+        try:
+            eps = self.var_fd_eps
+            u = torch.randint(0, 2, x_tau.shape, device=x_tau.device).to(x_tau.dtype) * 2 - 1
+            with torch.no_grad():
+                d0 = self.forward(x_tau, batch, tau)
+            ju = (self.forward(x_tau + eps * u, batch, tau)
+                  - self.forward(x_tau - eps * u, batch, tau)) / (2 * eps)
+        finally:
+            self.train(was_training)
+        t = tau.clamp(min=1e-3).view(-1, 1, 1)
+        w = ((1.0 - t) * self.sigma_prior) ** 2 / t
+        jac = (w * u * ju).mean(dim=1)
+        resid = ((x1 - d0) ** 2).mean(dim=1)
+        return jac, resid
+
+    @torch.no_grad()
+    def variance_ratio(self, batch) -> torch.Tensor:
+        """sum(jac) / sum(resid) of variance_terms at tau ~ U[var_tau_min, var_tau_max] (1 = consistent)."""
+        x1 = batch.states
+        B = x1.shape[0]
+        tau = self.var_tau_min + (self.var_tau_max - self.var_tau_min) * torch.rand(B, device=x1.device)
+        x_tau = self.interpolant.mix(torch.randn_like(x1) * self.sigma_prior, x1, tau)
+        jac, resid = self.variance_terms(x_tau, batch, tau, x1)
+        return jac.sum() / resid.sum().clamp(min=1e-12)
 
     def forward(self, x_t, batch, tau):
         """Forward pass: predict final state mean μ = E[x1|xt,y]."""
@@ -673,17 +734,26 @@ class PredictStateCFM(nn.Module):
                 boot_target = (1.0 - self.boot_alpha) * x1 + self.boot_alpha * d_teacher
                 target = torch.where(is_boot.view(view), boot_target, x1)
         μ_pred = self.forward(x_tau, batch, tau)
-        return F.mse_loss(μ_pred, target)
+        loss = F.mse_loss(μ_pred, target)
+        if self.var_weight > 0 and getattr(self, "var_active", True):
+            in_range = (tau >= self.var_tau_min) & (tau <= self.var_tau_max)
+            if bool(in_range.any()):
+                jac, resid = self.variance_terms(x_tau, batch, tau, x1)
+                per_row = ((jac - resid) ** 2).mean(dim=-1)
+                loss = loss + self.var_weight * per_row[in_range].mean()
+        return loss
 
-    def sample(self, batch, N_outer=None):
+    def sample(self, batch, N_outer=None, step_power: Optional[float] = None):
         """Sample trajectories via forward ODE integration.
 
         The network predicts μ = E[x_τ=1 | x_τ, y]. We sample by integrating forward:
             x_0 ~ N(0, σ²)
-            For τ from 0 to 1: x_τ ← x_τ + dt * (μ_τ - x_τ) / (1 - τ)
+            For τ_k on flow_tau_grid: x ← x + (τ_{k+1} - τ_k) * (μ - x) / (1 - τ_k)
         """
         if N_outer is None:
             N_outer = self.N_outer
+        if step_power is None:
+            step_power = getattr(self, "step_power", DEFAULT_STEP_POWER)
         obs = batch.obs
         B, T, D = obs.shape
         device = obs.device
@@ -693,16 +763,13 @@ class PredictStateCFM(nn.Module):
             μ = self.forward(x0, batch, tau=torch.zeros(B, device=device))
             return μ  # single-step: x0 + (μ - x0)/1 = μ
 
-        # Start from random x_0
         x = torch.randn_like(obs) * self.sigma_prior
-        dt = 1.0 / N_outer
-
-        # Forward integration with tau as tensor (avoid tau=1 division by zero)
-        for step in range(N_outer):
-            tau_step = torch.full((B,), step / N_outer, device=device)
+        taus = flow_tau_grid(N_outer, step_power)
+        for t0, t1 in zip(taus[:-1], taus[1:]):
+            tau_step = torch.full((B,), t0, device=device)
             mu = self.forward(x, batch, tau_step)
             v = (mu - x) / (1.0 - tau_step.clamp(max=0.999).view(B, 1, 1).expand(-1, T, -1))
-            x = x + dt * v
+            x = x + (t1 - t0) * v
 
         return x
 class TweedieCFM(nn.Module):
