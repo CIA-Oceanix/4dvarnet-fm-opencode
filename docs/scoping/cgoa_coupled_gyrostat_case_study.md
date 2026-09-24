@@ -1,9 +1,18 @@
 # Coupled ocean–atmosphere case study from coupled gyrostats (CGOA)
 
-**Status:** SCOPING v1 (2026-09-24). Nothing implemented. Proposes a fourth
+**Status:** SCOPING v2 (2026-09-24). Nothing implemented. Proposes a fourth
 case study, after L63, L96 and QG. It is built **in this repo**, fenced by a
 `cgoa_*` prefix; §7 gives the reasons. **Which paper it serves (P1, P2 or its
 own) is open** — see §9, decision 1.
+
+> **What changed in v2.** Only §5 (implementation), §8 (work packages) and
+> §9 decision 5. The science (§1–§4) is unchanged. v1 mirrored the L96 stack
+> file for file (its own dataset classes, DA driver and sbatch per run). v2 builds
+> CGOA on a few shared pieces instead, extracted in one no-op PR (§5.2), so
+> the next case study does not start by copying L96 either. v2 also corrects
+> v1's claim that `Weak4DVar` "applies unchanged": on two-scale dynamics it
+> is the robust `L96Weak4DVar` design that applies, and even that needs a
+> per-component whitening scale.
 
 ---
 
@@ -221,28 +230,81 @@ inference**. A model-free neural row's S1/S0 ratio is definitional.
 
 ## 5. Implementation in this repo
 
+*Revised in v2. v1 mirrored the L96 layout file for file; see "What changed in
+v2" under the status line.*
+
+**Principle: CGOA is the first case study built on shared pieces, not a fifth
+copy of the per-case stack.** Each existing case study has its own dataset
+module and its own DA driver: `evaluation/run.py` (L63), `evaluation/run_l96.py`
+(L96) and `evaluation/run_qg_baselines.py` (QG, 1337 lines). The three drivers
+repeat the same function names. L96 constants also sit in modules that look
+generic:
+- `evaluation/estimate_metrics.py:12` hard-codes `NO = 8`;
+- `evaluation/run_l96.py`'s `fmt_*` helpers default to `NO=8`;
+- `train.py`'s `_per_group_rmse` hard-codes `NO=8, J=4`.
+
+Mirroring `data/lorenz96.py` and `run_l96.py` would add a fourth copy of each.
+Instead, CGOA adds only what is specific to it. The few generic pieces it needs
+are extracted first (§5.2), in their own PR, so that L96 and QG can adopt them
+later. **No existing L63/L96/QG file moves** — that stays ruled out by
+`docs/scoping/refactor_plan.md` ("What this plan is not").
+
+**Acceptance criterion:** CGOA adds no top-level `eval_*_cgoa.py`, no
+per-experiment sbatch, and no copy of a function that already exists in
+`run_l96.py` or `run_qg_baselines.py`. If it seems to need one, a shared piece is
+missing: extract it rather than copy it.
+
+### 5.1 Case-specific files
+
 **One engine for both tiers.** Both are quadratic ODEs,
 `dx/dt = Σ T_ijk x_j x_k` with `x₀ = 1` carrying the linear and constant terms.
 
 | file | content |
 |---|---|
-| `models/quadratic_ode.py` | `QuadraticTensorDynamics(DynamicsBase)`: sparse `T`, batched `einsum`, RK4, GPU. Autograd supplies the adjoint, so `Strong4DVar` and `Weak4DVar` in `evaluation/baselines.py` apply unchanged. |
-| `models/cgoa_dynamics.py` | Gyrostat builder: blocks, topologies (chain / ring / dense), inertia, the three coupling mechanisms → `T`. Energy and Casimir diagnostics. |
-| `models/maooam_dynamics.py` | Loads the cached qgs tensor into `QuadraticTensorDynamics`. |
+| `models/quadratic_ode.py` | `QuadraticTensorDynamics(DynamicsBase)`: sparse `T`, batched `einsum`, RK4, GPU. **Generic:** L63, single-scale L96 and MAOOAM can all be written in it, and nothing in it is CGOA-specific. `step(state, forcing, **params)` must accept and ignore unknown keywords, because the generic `ETKF`/`EnKF`/`Weak4DVar`/`Strong4DVar` inject L63 defaults (`sigma, rho, beta, c1`) into every call (`evaluation/baselines.py:427`). |
+| `models/cgoa_dynamics.py` | Gyrostat builder: blocks, topologies (chain / ring / dense), inertia, and the three coupling mechanisms → `T`. Energy and Casimir diagnostics. Also exposes **`component_slices`** (`{"atm": slice, "ocean": slice}`, plus `"interface"` for O-sst). Scoring, localization and whitening in §5.2 all read this one piece of metadata. |
+| `models/maooam_dynamics.py` | Loads the cached qgs tensor into `QuadraticTensorDynamics`, with the same `component_slices`. |
 | `scripts/export_maooam_tensor.py` | One-off qgs → `.npz` export (needs qgs, run offline). |
-| `data/cgoa.py` | Config, datasets, window generation, the observation scenarios of §4.1. Mirrors `data/lorenz96.py` (`make_*_s0_s1_datasets`). |
-| `models/dynamics.py` | `get_dynamics()` gains `cgoa` and `maooam`. This closes the "SW/MAOOAM deferred" note at `PLAN.md` (L96 section). |
-| `evaluation/run_cgoa_baselines.py` | ETKF/EnKF/4D-Var, plus a **WCDA variant**: the analysis zeroes the cross-component covariance blocks. |
-| `config/experiment/cgoa/`, `batch/cgoa/`, `reports/cgoa/` | Hydra configs (monai backbones by default), SLURM scripts, reports. |
+| `data/cgoa.py` | `CGOAConfig`, window generation, the observation scenarios of §4.1 and the S0/S1 scenarios of §4.2. **A contract, not a mirror.** It emits the window dict that the DA and neural paths already consume: `true_state`, `obs`, `obs_mask`, `forcing_true`, `forcing_corrupted`, and per-parameter `<k>` / `true_<k>` / `<k>_da` keys (the format of `data/lorenz96.py:303` `_generate_window_dict`). It exposes a single `make_cgoa_s0_s1_datasets(cfg)` and does not copy L96's `RandomParam*`/`RandomBias*` class pair. |
+| `models/dynamics.py` | `get_dynamics()` gains `cgoa` and `maooam`. Today nothing outside `tests/` calls `get_dynamics()`, and QG is absent from it. CGOA should be the first case study whose training and DA **both** build dynamics through it, so the factory stops being dead code. This closes the "SW/MAOOAM deferred" note at `PLAN.md` (L96 section). |
 
-**Tests:**
+### 5.2 Shared pieces CGOA needs — extracted, not copied
+
+| piece | today | change | why CGOA needs it |
+|---|---|---|---|
+| **Robust weak-constraint 4D-Var** | Two copies of one design: `L96Weak4DVar` (`evaluation/baselines.py:762`) and `QG4DVar` (`evaluation/run_qg_baselines.py:707`). The plain `Weak4DVar` diverges on two-scale L96, as the `L96Weak4DVar` docstring records. | Rename `L96Weak4DVar` → `WhitenedWeak4DVar` and keep the old name as an alias, since docs and changelog cite it. Its body is already generic; only the L96 defaults in `assimilate(F=8.0, c1=…)` move to the caller. Replace the scalar whitening scale `sigma = xb.std()` (line 818) with a **per-component** scale taken from `component_slices`. With one component this equals the scalar, so L96 is unchanged. | CGOA is two-scale by design, so the plain `Weak4DVar` should be expected to fail as it did on L96. v1's "applies unchanged" was wrong on this point. A single scalar scale is also wrong when atmosphere and ocean amplitudes differ by orders of magnitude: the ocean control is either frozen or blown up. |
+| **Grouped scoring** | `evaluation/estimate_metrics.py` groups by the hard-coded L96 split (`slow` = first `NO = 8` dims, `obs_fast` = the rest). | `evaluate_estimates(..., groups: dict[str, slice] \| None)`. The default is the current L96 split, so every published L96 number is bit-identical. | CGOA reports atmosphere, ocean and interface separately. R2 needs the slow component's numbers on their own, not pooled with the fast ones. |
+| **SCDA vs WCDA** | — | **Not a new class.** `ETKF`/`EnKF` already accept explicit per-time localization matrices (`loc_Lx_t`, `loc_Ly_t`), which is how QG passes its column localization. Add one helper, `block_localization(component_slices, obs_components)`. For WCDA it zeroes every state–observation pair across components; SCDA passes no cross-component mask. | Q2 becomes a one-argument difference on the same class and the same code path, so the comparison is like-for-like by construction. |
+| **DA driver loop** | Written three times (`run.py`, `run_l96.py`, `run_qg_baselines.py`). | `evaluation/run_cgoa_baselines.py` stays **thin**: it builds windows and methods and nothing else. The loop (assimilate per window → cache → write `estimates_s0/s1.npz` in the archive layout) goes into one generic module, which CGOA uses first. L96 and QG migrate later, in `refactor_plan.md` Phase 3. | DA rows are then scored by `estimate_metrics` exactly like neural rows, which is already the L96 rule. |
+| **Archive** | `evaluation/archive.py` has `RunArchive` entries for `system="l96"` and `"qg"`. | Add `system="cgoa"`. No artifact path is built anywhere else (`docs/archive.md`). | Reports regenerate from the canonical archive (`--check --portable`) from the first run, not after a later consolidation. |
+| **Training** (WP7) | `train.py` handles L96 with `if system == "lorenz96"` branches (lines 667, 776). QG has its own argparse script. | Add CGOA through a dataloader-builder lookup keyed on `data.system`, not a third `if` branch. The model comes from `model_factory`, or from the registry once `refactor_plan.md` Phase 1 lands. **No `train_cgoa.py`.** | Keeps CGOA on the Hydra path, so it gets resume, cosine LR, `resolved_config.yaml` and monai backbones for free. |
+
+The first four rows share one property: each change is **a no-op for the
+existing case studies** (one component, default groups, no mask), so the
+extraction PR is gated by unchanged L96/QG outputs, not by new behaviour.
+
+### 5.3 Configs, scripts, reports
+
+- **Configs:** `config/cgoa_default.yaml`, playing the role `lorenz96_default.yaml` plays for L96, plus Hydra experiments under `config/experiment/cgoa/` (monai backbones by default). Existing flat configs stay where they are.
+- **Batch scripts:** two parameterized scripts, not one per experiment: `batch/cgoa/train.sbatch` (reads `EXPERIMENT=`) and `batch/cgoa/da.sbatch` (reads scenario and method). For contrast, L96 has 138 sbatch files, most of which differ only in `EXPERIMENT=` and log names.
+- **Reports:** `reports/cgoa/`. Its generator reads estimates through `evaluation.archive` only.
+
+### 5.4 Tests
 
 - `tests/test_cgoa_dynamics.py` (fast):
   - the gyrostat-built L63 matches `models/lorenz63_dynamics.py`'s right-hand
     side;
+  - `QuadraticTensorDynamics.step` accepts and ignores the L63 default keywords;
   - `dE/dt = 0` for the unforced, undamped core;
   - Casimirs conserved;
   - the drag term dissipates exactly `γ I_a (y_a − y_o)²`.
+- **Extraction PR (§5.2), gated by no-op checks:**
+  - `tests/test_da_golden_l96.py` passes unchanged.
+  - `WhitenedWeak4DVar` with one component reproduces `L96Weak4DVar` locally. That class is in the golden test's `NO_CROSS_PLATFORM_VALUE`, so CI alone does not pin it.
+  - `evaluate_estimates` with default groups is bit-identical on an archived L96 `estimates_s0.npz`.
+- `block_localization` (fast): with atmosphere-only observations, **WCDA leaves
+  the ocean analysis equal to its forecast** and SCDA does not. This is the
+  cheapest falsifiable check that Q2 compares what it claims to.
 - `tests/test_maooam_parity.py`: skipped without qgs.
 - DA golden values on the Tier A config chosen in WP2, following
   `tests/test_da_golden_l96.py`.
@@ -277,14 +339,15 @@ inference**. A model-free neural row's S1/S0 ratio is definitional.
 | WP | content | PR |
 |---|---|---|
 | WP0 | This note. | this PR |
-| WP1 | `quadratic_ode.py` + `cgoa_dynamics.py` + fast tests; config A0. | 1 |
+| WP1 | `quadratic_ode.py` + `cgoa_dynamics.py` (with `component_slices`) + fast tests; config A0. | 1 |
 | WP2 | Calibration of A1/A2: Lyapunov spectrum, time-scale ratio, energy spectra, attractor statistics. Freeze configs. Record in `docs/results/`. | 1 |
-| WP3 | `data/cgoa.py`, `get_dynamics("cgoa")`, observation and model-error scenarios. | 1 |
-| WP4 | DA baselines, SCDA vs WCDA, golden values. First report, `reports/cgoa/`. | 1 |
-| WP5 | Tier B: tensor export, parity test, `maooam` dataset, baselines. Cross-check against Tondeur et al.'s EnKF regime. | 1–2 |
-| WP6 | Neural rows (DirectUNet, FDV, CFM, SDA; monai), same protocol as L96. | 1+ |
+| WP3 | **Shared-piece extraction (§5.2)**: `WhitenedWeak4DVar` (per-component scale), grouped `evaluate_estimates`, `block_localization`, the generic DA loop, and the `cgoa` archive entry. A no-op for L96/QG, gated by §5.4. Independent of WP1/WP2, so it can run in parallel. | 1 |
+| WP4 | `data/cgoa.py` (window-dict contract), `get_dynamics("cgoa")`, observation and model-error scenarios. | 1 |
+| WP5 | DA baselines through the thin `run_cgoa_baselines.py`: SCDA vs WCDA, golden values, first report in `reports/cgoa/`. Needs WP3 and WP4. | 1 |
+| WP6 | Tier B: tensor export, parity test, `maooam` dataset, baselines. Cross-check against Tondeur et al.'s EnKF regime. | 1–2 |
+| WP7 | Neural rows (DirectUNet, FDV, CFM, SDA; monai) through `train.py`, same protocol as L96. | 1+ |
 
-WP1–WP4 do not depend on any decision in §9 except decision 2.
+WP1–WP5 do not depend on any decision in §9 except decisions 2 and 5.
 
 ## 9. Open decisions
 
@@ -293,13 +356,17 @@ WP1–WP4 do not depend on any decision in §9 except decision 2.
    - P2 (operator family): Q1 and the observation-sparsity axis.
    - A standalone coupled-DA paper built on Q2.
 
-   This decides which WP6 runs are priority.
+   This decides which WP7 runs are priority.
 2. **Tier order.** Tier A first (recommended: controllable, cheap, tests the
    engine), or Tier B first (a published reference, no calibration risk)?
 3. **Backbone for mode-space states** (R3): ring topology plus conv backbones,
    physical-grid observations, or a non-convolutional backbone?
 4. **Scale of A2.** Match L96's `state_dim=40` (recommended, budgets carry
    over), or go larger to stress the method?
+5. **Where the §5.2 extraction lands.** In WP3, as a standalone no-op PR
+   (recommended: reviewable on its own and gated by unchanged L96/QG outputs),
+   or folded into WP5 (fewer PRs, but a behaviour change and a refactor in the
+   same diff)?
 
 ## References
 
