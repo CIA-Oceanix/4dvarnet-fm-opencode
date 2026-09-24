@@ -15,7 +15,37 @@ Line numbers are per file at master `3a9ea31`.
 | NEW-D | P1's L96 DA S0 was **not perfect-model**: per-window `fast_weights` never reached the DA forward model (it summed the fast variables unweighted), and S0 used the S1-tuned inflation 2.0. Fixed: ETKF 0.866 → 0.685, EnKF 0.894 → 0.711, Strong-4DVar 0.738 → 0.703. |
 | NEW-E | SDA needs no retraining for the random set; guidance weight 20 was tuned on SDA1-M on the regular grid only. |
 
-## High priority — the marginal-value headline must be re-run
+## Update 2026-09-24 — results since this audit was written
+
+See `reports/l96/outputs/l96_benchmark_extended.md` for all numbers.
+
+- **Marginal-value headline — re-run done.** With `fast_weights` passed, Strong-4D-Var's
+  collapse *survives and grows*: 20.6% vs 3.2% (6.4×) on the original data configuration at
+  the original inflation, 23.3% vs 3.4% (7.0×) on the benchmark data. The filters' "1.9×"
+  does **not** survive: 1.1× (ETKF 11.9% vs 11.0%, EnKF 10.6% vs 9.9%) with only the fix,
+  1.6–1.7× on the benchmark data at the per-case inflation. The 4D-Var-vs-filters contrast
+  (C1, `tab:marginal`, abstract, conclusion) holds and sharpens; its filter numbers change.
+- **The learned ranking depends on the training budget.** At the benchmark default's 400
+  epochs DirectUNet-M led (0.380 vs 0.409 / 0.434); at 1200 epochs all three families gain
+  9–19% and the gaps largely close (DirectUNet ≈ PredictStateCFM < VanillaCFM). Neither the
+  P1 ranking (flows first) nor the 400-epoch ranking (DirectUNet first) should be quoted
+  without the budget; ~85% of a 3000-window gain is training length.
+- **SDA3's "noisy DA bias" arm was never tested in P1.** Its config inherited
+  `biased: false`, so training windows had DA params equal to the true ones and SDA3 trained
+  bit-identical to SDA2 at the same seed; the P1 SDA2-vs-SDA3 gap (`tab:ladder`, +1.3% vs
+  +3.3%) was initialisation noise. Retrained with the bias active (SDA3-fix, 3 seeds), it is
+  still no better than SDA1/SDA2 — "conditioning is inert" (`05_results.tex` L111–146) now
+  rests on a real SDA3 arm and is **strengthened**; the ladder's SDA3 row must be replaced.
+- **SDA guidance weight**: 25 is validation-optimal for all SDA variants (20 was within ~1%).
+- **Best scheme: the DirectUNet-M → SDA2-M hybrid** (validation-tuned tau0 0.1, gw 2): best
+  RMSE and CRPS on both test sets. Relevant to the conclusion's "most accurate scheme" claim
+  (`07_conclusion.tex` L31–33), which should name it.
+- **Observing-system dependence**: DA wins at ≤ 10 obs per window (S0), learned schemes from
+  ~20 obs on and at every density under S1; learned schemes win at every number of observed
+  fast channels. New material for H1 (`02_background.tex` L191–194) and the marginal-value
+  surface (`06_discussion.tex` L145–148).
+
+## High priority — the marginal-value headline must be re-run (done 2026-09-24, see above)
 
 `main.tex` L78–81, `01_introduction.tex` L68–72, `05_results.tex` L197–225
 (`tab:marginal`), `06_discussion.tex` L8–17 (C1), `07_conclusion.tex` L9–15:

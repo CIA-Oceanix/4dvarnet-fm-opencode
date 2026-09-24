@@ -35,10 +35,10 @@ from scripts.make_l96_canonical_testset import fingerprint, sha256_file  # noqa:
 
 def check_learned(result_dir: str, testset: str, truths: dict) -> list[str]:
     errors = []
-    js = [p for p in (os.path.join(result_dir, "neural_eval.json"), os.path.join(result_dir, "sda_eval.json"))
-          if os.path.exists(p)]
+    js = [os.path.join(result_dir, n) for n in ("neural_eval.json", "sda_eval.json", "hybrid_eval.json")
+          if os.path.exists(os.path.join(result_dir, n))]
     if not js:
-        return [f"{result_dir}: no neural_eval.json / sda_eval.json"]
+        return [f"{result_dir}: no neural_eval.json / sda_eval.json / hybrid_eval.json"]
     ds_path = json.load(open(js[0])).get("dataset", {}).get("path")
     if ds_path is None or os.path.realpath(ds_path) != os.path.realpath(testset):
         errors.append(f"{result_dir}: dataset {ds_path} is not the canonical {testset}")
