@@ -275,6 +275,13 @@ class PredictStateCFMConfig:
     boot_alpha: float = 1.0
     boot_ema_decay: Optional[float] = None
     boot_start_epoch: int = 0
+    var_weight: float = 0.0
+    var_tau_min: float = 0.05
+    var_tau_max: float = 0.95
+    var_fd_eps: float = 1e-2
+    var_start_epoch: int = 0
+    # Sampler: Euler grid tau_k = 1 - (1 - k/N)^step_power (models.vanilla_cfm.DEFAULT_STEP_POWER).
+    step_power: float = 0.5
 
 
 @dataclass

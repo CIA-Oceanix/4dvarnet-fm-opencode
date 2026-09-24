@@ -23,11 +23,13 @@ class LitModel(pl.LightningModule):
         prior_unet_lr_scale: float = 1.0,
         ema_decay: Optional[float] = None,
         teacher_start_epoch: int = 0,
+        var_start_epoch: int = 0,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
         self.ema_decay = ema_decay
         self.teacher_start_epoch = teacher_start_epoch
+        self.var_start_epoch = var_start_epoch
         self._teacher_box: list = []
         self.model = model
         self.model_type = model_type
@@ -120,6 +122,10 @@ class LitModel(pl.LightningModule):
         teacher = copy.deepcopy(self.model).eval()
         teacher.requires_grad_(False)
         self._teacher_box.append(teacher)
+
+    def on_train_epoch_start(self):
+        if getattr(self.model, "var_weight", 0.0) > 0:
+            self.model.var_active = self.current_epoch >= self.var_start_epoch
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         teacher = self.teacher
@@ -241,6 +247,9 @@ class LitModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         loss = self._forward_and_loss(batch)
         self.log("val_loss", loss, prog_bar=True, on_epoch=True, batch_size=batch.batch_size)
+        if getattr(self.model, "var_weight", 0.0) > 0:
+            self.log("val_var_ratio", self.model.variance_ratio(batch), on_epoch=True,
+                     batch_size=batch.batch_size)
         return loss
 
     def forward(self, batch, **kwargs):

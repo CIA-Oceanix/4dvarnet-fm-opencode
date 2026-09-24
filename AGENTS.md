@@ -185,6 +185,14 @@ Always run tests after making changes.
   `eval_da_random_layout_l96.py`). The earlier single value 2.0 is S1-tuned and over-disperses S0; see
   the 2026-09-23 "L96 DA benchmark default inflation per case" changelog entry before changing it.
 
+- **Flow sampler step schedule (as of 2026-09-24):** `VanillaCFM.sample` / `PredictStateCFM.sample`
+  (and their monai subclasses) integrate on the early-fine Euler grid `tau_k = 1 - (1 - k/N)^0.5`
+  (`models.vanilla_cfm.DEFAULT_STEP_POWER`), not the uniform grid. This is a deliberate default: at the
+  same N = 10 it improved CRPS by 4.4% / 2.0% and RMSE slightly on the P1 PSC-M / VanillaCFM-M
+  checkpoints (`docs/results/cfm_sampler_schedule.md`). **Numbers produced before this date used the
+  uniform grid**; reproduce them with `eval_neural_l96.py --step-power 1` (or `model.step_power: 1.0`).
+  `eval_neural_l96.py` records the grid used under `sampling.step_power`.
+
 ## When Making Model Changes
 
 - Update the corresponding config in `config/experiment/` if training parameters change
