@@ -9,6 +9,8 @@
 #SBATCH --output=sbatch_logs/l96_sda_fdv1_hybrids_sda12_%j.out
 #SBATCH --error=sbatch_logs/l96_sda_fdv1_hybrids_sda12_%j.err
 
+export FDV_KEEP_MEMBERS=1  # report-read benchmark rows keep members on /Odyssey (evaluation/members_store.py)
+
 set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-fdv-monai
