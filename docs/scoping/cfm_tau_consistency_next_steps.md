@@ -96,6 +96,13 @@ The flat-in-τ B4 check is reported for the chosen η too, via `probe_tau_consis
 
 ### T5 — second-order (variance) consistency loss (4 runs: 2 values of λ × 2 seeds)
 
+> **Outcome (2026-09-24, `docs/results/cfm_tau_consistency_t5.md`): negative as implemented.**
+> - λ = 10 is inside the noise band, with no calibration change; it scaled the Jacobian term *down* ≈ 10–15% at every τ.
+> - λ = 100 diverged at switch-on.
+> - Cause: the single-probe squared loss is biased; its expectation adds the Hutchinson variance, which rewards shrinking the whole Jacobian.
+> - A corrected T5 (two-probe unbiased product, λ ramp, optionally an autograd JVP) is specified in §5 of that note. It is not launched and needs a decision.
+
+
 - **Loss:** `L = L_CFM + λ · L_var`, where
 
   `L_var = mean_c ( mean_t [ (b_tau²/tau) · u ⊙ (J u) − sg(x1 − D)² ] )²`
