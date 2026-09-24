@@ -70,7 +70,7 @@ The random-layout test set (`rlay`, seed 1) reproduces every pattern below.
 
    | run | CRPS uniform N=10 | early-fine N=10 | early-fine N=20 | uniform N=80 |
    |---|---|---|---|---|
-   | psc400 (3 seeds) | 0.1830–0.1899 | −4.2% to −4.8% | −4.5% to −5.2% | ≈ 0% to +0.2% |
+   | psc400 (3 seeds) | 0.1830–0.1899 | −4.0% to −4.7% | −4.5% to −5.2% | −0.9% to +0.2% |
    | psc1200 | 0.1548 | −5.4% | **−5.9%** | −1.0% |
    | van400 (3 seeds) | 0.1920–0.1995 | −1.5% to −3.0% | −1.5% to −3.9% | −1.6% to −4.2% |
    | van1200 | 0.1528 | −3.1% | −4.3% | −4.4% |
