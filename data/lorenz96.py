@@ -625,6 +625,42 @@ def make_l96_s0_s1_datasets(cfg: Lorenz96Config, *,
     }
 
 
+def _trainval_cache_meta(cfg: Lorenz96Config, kwargs: dict) -> dict:
+    """Everything that determines the generated train/val windows, JSON-stable."""
+    import json
+    keep = {k: v for k, v in kwargs.items() if k not in ("cached_datasets", "num_test_windows")}
+    return json.loads(json.dumps({"cfg": cfg.__dict__, "kwargs": keep}, sort_keys=True, default=repr))
+
+
+def make_l96_s0_s1_trainval_cached(cfg: Lorenz96Config, *, train_cache: str, **kwargs) -> Dict:
+    """``make_l96_s0_s1_trainval`` with the train/val windows cached on disk.
+
+    If ``train_cache`` exists, its train/val windows are reused -- after
+    checking that its recorded generation settings (the full config plus the
+    split arguments) equal the requested ones, raising otherwise rather than
+    silently training on different data. If it does not exist, the splits are
+    generated and saved (written to a temp file, then renamed, so an
+    interrupted write never leaves a truncated cache). Test splits are not
+    cached here (``cached_datasets`` / ``test_cache`` handle those).
+    """
+    import os
+    meta = _trainval_cache_meta(cfg, kwargs)
+    if os.path.exists(train_cache):
+        blob = torch.load(train_cache, weights_only=False)
+        if blob.get("meta") != meta:
+            raise ValueError(f"train_cache {train_cache} was generated with different settings; "
+                             "point data.train_cache at a new file or remove it")
+        cached = dict(kwargs.get("cached_datasets") or {})
+        cached.update({"train": blob["train"], "val": blob["val"]})
+        return make_l96_s0_s1_trainval(cfg, **{**kwargs, "cached_datasets": cached})
+    datasets = make_l96_s0_s1_trainval(cfg, **kwargs)
+    tmp = f"{train_cache}.tmp{os.getpid()}"
+    torch.save({"meta": meta, "train": list(datasets["train"].windows),
+                "val": list(datasets["val"].windows)}, tmp)
+    os.replace(tmp, train_cache)
+    return datasets
+
+
 def make_l96_s0_s1_trainval(cfg: Lorenz96Config, *,
                              num_train_windows: int = 1000,
                              num_val_windows: int = 100,
