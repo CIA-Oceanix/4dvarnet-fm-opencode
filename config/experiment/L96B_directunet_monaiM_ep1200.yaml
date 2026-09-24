@@ -1,0 +1,11 @@
+# @package _global_
+# Step-count control for L96B_directunet_monaiM_ntrain3000: 1000 training
+# windows (the default) but 1200 epochs, i.e. the same ~75k gradient steps as
+# 3000 windows x 400 epochs at batch 16. Cosine annealing follows max_epochs, so
+# the LR anneals over all 1200 epochs. Only stage1.epochs differs from
+# L96B_directunet_monaiM: separates "more data" from "more steps".
+defaults:
+  - /experiment/L96B_directunet_monaiM
+  - _self_
+training:
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
