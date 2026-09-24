@@ -6,6 +6,11 @@ E[x1|y] at that tau), single members, their spread, the cross-tau error
 correlation, uniform / cross-validated optimal averages over tau, and the
 endpoint RMSE vs step count. Pooled all_obs RMSE in physical units.
 See docs/results/cfm_tau_consistency.md.
+
+Opt-in extras (docs/results/cfm_tau_consistency_ns1.md), off by default so the
+default output is unchanged: --x0-zero (NS0a, one deterministic path from x0=0)
+and --steps-grid/--members-grid (NS0c, endpoint ensemble-mean RMSE per N steps x
+M members, cost N*M calls). --skip-main runs only the extras.
 """
 import argparse
 import json
@@ -55,6 +60,10 @@ def main() -> None:
     p.add_argument("--n-sweep", default="1,2,3,5,10,20")
     p.add_argument("--batch-size", type=int, default=25)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--x0-zero", action="store_true")
+    p.add_argument("--steps-grid", default="")
+    p.add_argument("--members-grid", default="")
+    p.add_argument("--skip-main", action="store_true")
     p.add_argument("--out", required=True)
     a = p.parse_args()
     dev = torch.device("cuda")
@@ -75,10 +84,31 @@ def main() -> None:
     member_spread_sq = np.zeros(N)
     sweep_sq = {n: 0.0 for n in sweep}
     n_pts = 0
+    steps_grid = [int(v) for v in a.steps_grid.split(",")] if a.steps_grid else []
+    members_grid = [int(v) for v in a.members_grid.split(",")] if a.members_grid else []
+    zero_mu_sq = np.zeros(N)
+    zero_end_sq = 0.0
+    grid_sq = {(n, m): 0.0 for n in steps_grid for m in members_grid}
     with torch.no_grad():
         for bd in dls[a.case]:
             batch = BatchDict({k: (v.to(dev) if torch.is_tensor(v) else v) for k, v in bd.items()})
             truth = batch.true_state[..., idx].float().cpu().numpy()
+            if a.x0_zero:
+                xN, mus = run_path(model, batch, torch.zeros_like(batch.obs), N, is_psc, record=True)
+                zero_mu_sq += np.array([((dn(m) - truth) ** 2).sum() for m in mus])
+                zero_end_sq += float(((dn(xN) - truth) ** 2).sum())
+            for n in steps_grid:
+                acc = 0.0
+                for i in range(max(members_grid)):
+                    x0 = torch.randn_like(batch.obs) * sigma
+                    xN, _ = run_path(model, batch, x0, n, is_psc, record=False)
+                    acc = acc + dn(xN)
+                    if i + 1 in members_grid:
+                        grid_sq[(n, i + 1)] += float((((acc / (i + 1)) - truth) ** 2).sum())
+            if a.skip_main:
+                n_pts += truth.size
+                print("batch done", flush=True)
+                continue
             mus_all = []
             for _ in range(a.members):
                 x0 = torch.randn_like(batch.obs) * sigma
@@ -98,6 +128,21 @@ def main() -> None:
                 sweep_sq[n] += float((((acc / a.members) - truth) ** 2).sum())
             n_pts += truth.size
             print("batch done", flush=True)
+
+    extras = {}
+    if a.x0_zero:
+        extras["x0_zero"] = dict(rmse_mu_k=np.sqrt(zero_mu_sq / n_pts).tolist(),
+                                 rmse_endpoint=float(np.sqrt(zero_end_sq / n_pts)))
+    if grid_sq:
+        extras["steps_members_grid"] = [dict(n_steps=n, members=m, calls=n * m,
+                                             rmse_ensmean=float(np.sqrt(v / n_pts)))
+                                        for (n, m), v in sorted(grid_sq.items())]
+    if a.skip_main:
+        res = dict(checkpoint=a.checkpoint, model=type(model).__name__, case=a.case,
+                   n_outer=N, **extras)
+        json.dump(res, open(a.out, "w"), indent=1)
+        print(json.dumps(res, indent=1))
+        return
 
     E = np.concatenate(per_window_err, 1)
     K, W = E.shape[0], E.shape[1]
@@ -133,6 +178,7 @@ def main() -> None:
         rmse_optimal_affine_comb_cv=float(np.sqrt(np.mean(cv))),
         optimal_weights_full=w_full.round(3).tolist(),
         rmse_final_vs_nsteps={str(n): float(np.sqrt(sweep_sq[n] / n_pts)) for n in sweep},
+        **extras,
     )
     json.dump(res, open(a.out, "w"), indent=1)
     print(json.dumps(res, indent=1))
