@@ -1,0 +1,95 @@
+{
+ "checkpoint": "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-fdv-tau-aware/experiments/A1_vanillacfm_monaiM_l96/checkpoints/stage1_best.ckpt",
+ "model": "MonaiVanillaCFM",
+ "case": "s0",
+ "n_outer": 10,
+ "x0_zero": {
+  "rmse_mu_k": [
+   0.9414874645120526,
+   0.8845547962110657,
+   0.8321991865599913,
+   0.8129401585534379,
+   0.8048685516385061,
+   0.8001012631223625,
+   0.7977194926093313,
+   0.797574197610758,
+   0.7985773591901483,
+   0.7992676769671375
+  ],
+  "rmse_endpoint": 0.7992676769671375
+ },
+ "steps_members_grid": [
+  {
+   "n_steps": 1,
+   "members": 1,
+   "calls": 1,
+   "rmse_ensmean": 0.4736276685359268
+  },
+  {
+   "n_steps": 1,
+   "members": 4,
+   "calls": 4,
+   "rmse_ensmean": 0.4527546139482058
+  },
+  {
+   "n_steps": 1,
+   "members": 8,
+   "calls": 8,
+   "rmse_ensmean": 0.4493111529361115
+  },
+  {
+   "n_steps": 1,
+   "members": 30,
+   "calls": 30,
+   "rmse_ensmean": 0.44627587070978614
+  },
+  {
+   "n_steps": 2,
+   "members": 1,
+   "calls": 2,
+   "rmse_ensmean": 0.4405620867221151
+  },
+  {
+   "n_steps": 2,
+   "members": 4,
+   "calls": 8,
+   "rmse_ensmean": 0.4182789276125708
+  },
+  {
+   "n_steps": 2,
+   "members": 8,
+   "calls": 16,
+   "rmse_ensmean": 0.41519671437999656
+  },
+  {
+   "n_steps": 2,
+   "members": 30,
+   "calls": 60,
+   "rmse_ensmean": 0.4125649201859697
+  },
+  {
+   "n_steps": 3,
+   "members": 1,
+   "calls": 3,
+   "rmse_ensmean": 0.4400410827569272
+  },
+  {
+   "n_steps": 3,
+   "members": 4,
+   "calls": 12,
+   "rmse_ensmean": 0.4117060066813454
+  },
+  {
+   "n_steps": 3,
+   "members": 8,
+   "calls": 24,
+   "rmse_ensmean": 0.4074435831345243
+  },
+  {
+   "n_steps": 3,
+   "members": 30,
+   "calls": 90,
+   "rmse_ensmean": 0.4034712283646203
+  }
+ ]
+}
