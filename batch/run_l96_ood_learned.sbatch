@@ -30,11 +30,11 @@ for T in "${TAGS[@]}"; do
   DS=$R/experiments/l96_testsets_ood/l96_testset_$T.pt
   case $i in
     0|1|2)
-      MODELS=("1 1 $B/L96B_directunet_monaiM_seed1" "30 10 $H/L96B_predictstatecfm_monaiM_seed1" "30 10 $B/L96B_vanillacfm_monaiM_seed1")
+      MODELS=("1 1 $B/L96B_directunet_monaiM_seed1" "30 20 $H/L96B_predictstatecfm_monaiM_seed1" "30 20 $B/L96B_vanillacfm_monaiM_seed1")
       read -r MEM OUTER EXP <<< "${MODELS[$i]}"; NAME=$(basename $EXP)
       OUT=experiments/eval_ood/$T/$NAME/ens${MEM}_no${OUTER}
       [ -f $OUT/neural_eval.json ] && continue; mkdir -p $OUT
-      python eval_neural_l96.py --step-power 1 --checkpoint $EXP/checkpoints/stage1_best.ckpt --dataset $DS --num-windows 60 \
+      python eval_neural_l96.py --step-power 0.5 --checkpoint $EXP/checkpoints/stage1_best.ckpt --dataset $DS --num-windows 60 \
         --n-members $MEM --n-outer $OUTER --batch-size 20 --members-file scores --output $OUT/neural_eval.json ;;
     3)
       OUT=experiments/eval_ood/$T/B4_sda1_monaiM_l96_seed1/ens30_gw25

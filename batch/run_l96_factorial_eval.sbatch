@@ -25,8 +25,8 @@ B=$R/4dvarnet-fm-bench-default/experiments
 H=$R/4dvarnet-fm-sda-nanfix/experiments
 MODELS=(
   "1 1 $B/L96B_directunet_monaiM_seed1" "1 1 $B/L96B_directunet_monaiM_seed2" "1 1 $B/L96B_directunet_monaiM_seed3"
-  "30 10 $H/L96B_predictstatecfm_monaiM_seed1" "30 10 $H/L96B_predictstatecfm_monaiM_seed2" "30 10 $H/L96B_predictstatecfm_monaiM_seed3"
-  "30 10 $B/L96B_vanillacfm_monaiM_seed1" "30 10 $B/L96B_vanillacfm_monaiM_seed2" "30 10 $B/L96B_vanillacfm_monaiM_seed3"
+  "30 20 $H/L96B_predictstatecfm_monaiM_seed1" "30 20 $H/L96B_predictstatecfm_monaiM_seed2" "30 20 $H/L96B_predictstatecfm_monaiM_seed3"
+  "30 20 $B/L96B_vanillacfm_monaiM_seed1" "30 20 $B/L96B_vanillacfm_monaiM_seed2" "30 20 $B/L96B_vanillacfm_monaiM_seed3"
 )
 read -r MEM OUTER EXP <<< "${MODELS[$SLURM_ARRAY_TASK_ID]}"
 NAME=$(basename "$EXP")
@@ -36,7 +36,7 @@ for n in 10 20 30 50 75 100; do for k in 4 8 12 16; do
   [ -f "$OUT/neural_eval.json" ] && continue
   mkdir -p "$OUT"
   echo "=== ${NAME} ${CELL} | $(date) ==="
-  python eval_neural_l96.py --step-power 1 --checkpoint "$EXP/checkpoints/stage1_best.ckpt" \
+  python eval_neural_l96.py --step-power 0.5 --checkpoint "$EXP/checkpoints/stage1_best.ckpt" \
     --dataset "$R/experiments/l96_testsets_factorial/l96_testset_${CELL}.pt" --num-windows 60 \
     --n-members "$MEM" --n-outer "$OUTER" --batch-size 20 --members-file scores --output "$OUT/neural_eval.json"
 done; done
