@@ -438,7 +438,10 @@ def tuning_section(cache: dict) -> list[str]:
                                                          else '—' for g in gws) + " |")
         du12 = V / rg / "du_alone/L96B_directunet_monaiM_ep1200_seed1"
         if done(du12):
-            A.append(f"\nWith the 1200-epoch DirectUNet-M (alone {fmt(mean2(du12))}), SDA2-M prior:\n")
+            A.append(f"\nWith the 1200-epoch DirectUNet-M (alone {fmt(mean2(du12))}), SDA2-M prior. **tau0 0.05 is not a "
+                     "warm start**: the sampler snaps tau0 to its 10-step grid with `round(tau0 * N_outer)`, and 0.5 "
+                     "rounds to 0, so that row is plain SDA from noise at a far-too-low guidance weight (the tuned SDA "
+                     "weight is 25).\n")
             gws2 = ["1", "2", "5"]
             A += ["| tau0 | " + " | ".join(f"gw {g}" for g in gws2) + " |", "|" + "---|" * 4]
             for t in ("0.05", "0.1", "0.2"):
@@ -490,11 +493,15 @@ def findings(da, learned) -> list[str]:
     row = {(r["group"], r["label"]): r for r in learned}
     m = lambda g, lab, t, c="s0": None if row[(g, lab)][t] is None else float(row[(g, lab)][t][c]["rmse"].mean())  # noqa: E731
     best_da = min(da, key=lambda r: r["reg"]["s0"]["rmse"].mean())
-    h = ("Hybrid (tau0 0.1, gw 2)", "DirectUNet-M(400 ep) -> SDA2-M")
+    h4 = ("Hybrid (tau0 0.1, gw 2)", "DirectUNet-M(400 ep) -> SDA2-M")
+    h12 = ("Hybrid (tau0 0.1, gw 2)", "DirectUNet-M(1200 ep) -> SDA2-M")
+    h = h12 if row[h12]["reg"] is not None and row[h12]["can"] is not None else h4
     A = ["## Findings\n"]
-    A.append(f"1. **Best scheme: the DirectUNet-M -> SDA2-M hybrid** (validation-selected tau0 0.1, gw 2): regular S0 "
-             f"{fmt(m(*h, 'reg'))}, random S0 {fmt(m(*h, 'can'))}, CRPS {fmt(row[h]['reg']['s0']['crps'])} / {fmt(row[h]['can']['s0']['crps'])}. "
-             f"Best DA on regular S0: {best_da['label']} {best_da['reg']['s0']['rmse'].mean():.3f}.")
+    A.append(f"1. **Best scheme: the DirectUNet-M -> SDA2-M hybrid** (validation-selected tau0 0.1, gw 2), with the "
+             f"{'1200' if h == h12 else '400'}-epoch DirectUNet-M as its mean: regular S0 {fmt(m(*h, 'reg'))}, random S0 "
+             f"{fmt(m(*h, 'can'))}, CRPS {fmt(row[h]['reg']['s0']['crps'])} / {fmt(row[h]['can']['s0']['crps'])} -- best RMSE and "
+             f"CRPS on both test sets (400-epoch mean: {fmt(m(*h4, 'reg'))} / {fmt(m(*h4, 'can'))}). A better mean carries "
+             f"straight through the SDA correction. Best DA on regular S0: {best_da['label']} {best_da['reg']['s0']['rmse'].mean():.3f}.")
     A.append("2. **The 400-epoch budget of the benchmark default is too short.** At 1200 epochs every family gains 9-19% "
              f"(regular S0: DirectUNet {fmt(m('Benchmark default, 400 ep', 'DirectUNet-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'DirectUNet-M', 'reg'))}, "
              f"PredictStateCFM {fmt(m('Benchmark default, 400 ep', 'PredictStateCFM-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'PredictStateCFM-M', 'reg'))}, "
