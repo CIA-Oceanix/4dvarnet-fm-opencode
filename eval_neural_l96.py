@@ -26,6 +26,7 @@ from evaluation.estimate_metrics import (
     save_estimates,
 )
 from evaluation.neural_inference import load_model, prepare_dataset, run_inference
+from models.vanilla_cfm import DEFAULT_STEP_POWER
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,6 +48,10 @@ def main():
                         help="Number of stochastic members to sample (CFM; 1 = legacy single sample)")
     parser.add_argument("--n-outer", type=int, default=1,
                         help="Euler integration steps for CFM sampling")
+    parser.add_argument("--step-power", type=float, default=None,
+                        help="CFM Euler grid tau_k = 1-(1-k/N)^p (VanillaCFM/PredictStateCFM). "
+                             "Default: the models' DEFAULT_STEP_POWER (0.5, early-fine, since "
+                             "2026-09-24); 1.0 reproduces the pre-2026-09-24 uniform grid.")
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
@@ -144,6 +149,7 @@ def main():
         model, dataloaders, device, obs_var_indices,
         n_members=args.n_members, n_outer=args.n_outer,
         trueprior_phi_source_s1=args.trueprior_phi_source_s1,
+        step_power=args.step_power,
     )
 
     if norm_stats is not None:
@@ -199,6 +205,7 @@ def main():
         "sampling": {
             "n_members": args.n_members,
             "n_outer": args.n_outer,
+            "step_power": args.step_power if args.step_power is not None else DEFAULT_STEP_POWER,
             "seed": args.seed,
             "cases": list(args.cases),
         },

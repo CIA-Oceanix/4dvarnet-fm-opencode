@@ -829,6 +829,7 @@ def _run_case_inference(
     obs_indices=None,
     obs_density_keep_k: int | None = None,
     trueprior_phi_source: str = "true",
+    step_power: float | None = None,
 ) -> dict:
     """Run a model on a single case dataloader and return state estimates.
 
@@ -937,9 +938,10 @@ def _run_case_inference(
                         pred, params = model.sample(batch_obj, return_params=True)
                 elif isinstance(model, (DirectUNet, MonaiDirectUNet)):
                     pred = model(batch_obj)
-                elif isinstance(model, VanillaCFM):
-                    pred = model.sample(batch_obj, N_outer=n_outer)
-                elif isinstance(model, (PredictStateCFM, TweedieCFM)):
+                elif isinstance(model, (VanillaCFM, PredictStateCFM)):
+                    grid_kw = {} if step_power is None else {"step_power": step_power}
+                    pred = model.sample(batch_obj, N_outer=n_outer, **grid_kw)
+                elif isinstance(model, TweedieCFM):
                     pred = model.sample(batch_obj, N_outer=n_outer)
                 elif isinstance(model, (UnconditionalPriorCFM, ConditionalPriorCFM)):
                     # Neither SDA prior is conditioned on obs by construction
@@ -1043,6 +1045,7 @@ def run_inference(
     obs_density_keep_k: int | None = None,
     trueprior_phi_source_s0: str = "true",
     trueprior_phi_source_s1: str = "true",
+    step_power: float | None = None,
 ) -> dict:
     """Run inference on both S0 and S1, returning per-case estimates.
 
@@ -1081,7 +1084,8 @@ def run_inference(
                                   ens_then_head=ens_then_head, r_var=r_var,
                                   guidance_weight=guidance_weight, obs_indices=obs_indices,
                                   obs_density_keep_k=obs_density_keep_k,
-                                  trueprior_phi_source=phi_source_by_case.get(case, "true"))
+                                  trueprior_phi_source=phi_source_by_case.get(case, "true"),
+                                  step_power=step_power)
         for case, dl in dataloaders.items()
     }
 

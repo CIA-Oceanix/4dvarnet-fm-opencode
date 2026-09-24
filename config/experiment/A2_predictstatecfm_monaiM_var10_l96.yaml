@@ -1,0 +1,45 @@
+# @package _global_
+# T5 (docs/scoping/cfm_tau_consistency_next_steps.md v4): second-order (variance) consistency loss,
+# lambda = 10. L = L_CFM + lambda * mean_c(mean_t[(b^2/tau) u*(J u) - sg(x1 - D)^2])^2 on rows with
+# tau in [0.05, 0.95] of the unchanged uniform-tau batch. On the P1 checkpoint L_var/L_CFM ~ 0.008, so
+# lambda = 10 puts it at ~8% of L_CFM. Base: A2_predictstatecfm_monaiM_l96 (P1 recipe); seed 1 by
+# default, seed 2 via ++training.seed=2. Off for epochs 0-49 (an untrained net has J ~ 0 and
+# residual ~ 1, so the term would swamp L_CFM ~10x); on from epoch 50, as the T2a teacher.
+defaults:
+  - /lorenz96_default
+  - _self_
+model:
+  model_type: monai_predict_state_cfm
+  state_dim: 24
+  param_dim: 0
+  monai_predict_state_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+    var_weight: 10.0
+    var_tau_min: 0.05
+    var_tau_max: 0.95
+    var_fd_eps: 0.01
+    var_start_epoch: 50
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  seed: 1
+data:
+  data_setup: s0_s1
+  obs_j: 2
+  param_dim: 0
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  normalize: true
+  norm_stats_path: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_norm_stats_obsj2.pt
+  obs_density_augment: false
+  test_cache: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
