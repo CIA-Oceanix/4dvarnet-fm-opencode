@@ -260,6 +260,21 @@ class PredictStateCFMConfig:
     dropout: float = 0.1
     train_tau_0_only: bool = False
     cond_extra_dim: int = 0
+    # tau-consistency training options (docs/scoping/cfm_tau_consistency_next_steps.md);
+    # also read from model.monai_predict_state_cfm. Every default is the plain CFM loss.
+    tau0_frac: float = 0.0
+    tau0_zero_input: bool = False
+    tau_sampling: str = "uniform"
+    tau_low_frac: float = 0.5
+    tau_low_max: float = 0.4
+    boot_frac: float = 0.0
+    boot_tau_min: float = 0.0
+    boot_tau_max: float = 0.0
+    boot_dtau_min: float = 0.2
+    boot_dtau_max: float = 0.5
+    boot_alpha: float = 1.0
+    boot_ema_decay: Optional[float] = None
+    boot_start_epoch: int = 0
 
 
 @dataclass
