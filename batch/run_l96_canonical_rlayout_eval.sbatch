@@ -12,7 +12,7 @@
 # Learned schemes on the canonical random-observing-system test set
 # (scripts/make_l96_canonical_testset.py: the P1 200 windows with the exact
 # obs the DA baselines assimilated in eval_da_random_layout_l96.py, n 10-100,
-# k 4-16). P1 protocol per family: deterministic ens1; flows ens30 x 10 steps;
+# k 4-16). Protocol per family: deterministic ens1; flows ens30 x 20 early-fine steps (p = 0.5);
 # SDA guided ens30, 10 steps, gw 20, r_var 0.5. Verify afterwards with
 # scripts/check_l96_testset_consistency.py.
 set -euo pipefail
@@ -27,8 +27,8 @@ B=$R/4dvarnet-fm-bench-default/experiments
 F=$R/4dvarnet-fm-fdv-tau-aware/experiments
 RUNS=(
   "neural 1 1 $B/L96B_directunet_monaiM_seed1" "neural 1 1 $B/L96B_directunet_monaiM_seed2" "neural 1 1 $B/L96B_directunet_monaiM_seed3"
-  "neural 30 10 $B/L96B_vanillacfm_monaiM_seed1" "neural 30 10 $B/L96B_vanillacfm_monaiM_seed2" "neural 30 10 $B/L96B_vanillacfm_monaiM_seed3"
-  "neural 1 1 $F/P1_directunet_monaiM_noaug_l96" "neural 30 10 $F/A1_vanillacfm_monaiM_l96" "neural 30 10 $F/A2_predictstatecfm_monaiM_l96"
+  "neural 30 20 $B/L96B_vanillacfm_monaiM_seed1" "neural 30 20 $B/L96B_vanillacfm_monaiM_seed2" "neural 30 20 $B/L96B_vanillacfm_monaiM_seed3"
+  "neural 1 1 $F/P1_directunet_monaiM_noaug_l96" "neural 30 20 $F/A1_vanillacfm_monaiM_l96" "neural 30 20 $F/A2_predictstatecfm_monaiM_l96"
   "sda 30 10 $F/B4_sda1_monaiSplus_l96" "sda 30 10 $F/B4_sda1_monaiM_l96" "sda 30 10 $F/B4_sda1_monaiL_l96"
   "sda 30 10 $F/A3_sda2_monaiM_l96" "sda 30 10 $F/A3_sda3_monaiM_l96"
 )

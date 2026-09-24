@@ -21,6 +21,9 @@
 # Evaluation: report BOTH the regular 30-time full-density test set
 # (test_cache below) and the random 30-obs / 8-fast re-observed test set
 # (scripts/make_l96_random_obs_testset.py --n-obs 30 --n-fast 8).
+# Flow sampler for scoring (2026-09-24): 30 members x 20 early-fine Euler steps
+# (eval_neural_l96.py --n-members 30 --n-outer 20; tau_k = 1-(1-k/N)^0.5, the
+# models' default grid), eval sub-directory ens30_no20.
 #
 # Everything else = the P1 recipe: normalize, cosine annealing (project
 # default since 2026-09-10), 400 epochs, lr 1e-3, clip 10, batch 16, no

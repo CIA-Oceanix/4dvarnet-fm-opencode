@@ -46,7 +46,7 @@ DA_REG_20 = REPO / "4dvarnet-fm-random-obs-times/experiments/l96_baselines_dws50
 CACHE = HERE / "l96_benchmark_default_metrics.json"
 OUT = ROOT / "reports/l96/outputs"
 CASES = ("s0", "s1")
-DET, FLOW, SDA = "ens1_no1", "ens30_no10", "ens30_gw20"
+DET, FLOW, SDA = "ens1_no1", "ens30_no20", "ens30_gw20"
 
 # (group, label, kind, sub, [(regular dir, canonical dir), ...])
 ROWS = [
@@ -181,7 +181,9 @@ def findings(learned: list[dict], da: list[dict]) -> list[str]:
         "does not survive fair training: P1's DirectUNet was overfitting frozen per-window obs noise.")
     out.append("4. **P1 fixed-obs checkpoints do not transfer**: best on the regular grid for the flows, but "
                + ", ".join(f"{r['label']} x{m(r, 'canonical') / m(r, 'regular'):.1f}" for r in p1)
-               + " on the random set, against x1.25-1.30 for the benchmark-default models.")
+               + " on the random set, against x"
+               + f"{min(m(r, 'canonical') / m(r, 'regular') for r in bench):.2f}-"
+               + f"{max(m(r, 'canonical') / m(r, 'regular') for r in bench):.2f} for the benchmark-default models.")
     out.append(f"5. **SDA needs no retraining to be robust** (random/regular ~1.2): best on the random set "
                f"{best_sda['label']} {m(best_sda, 'canonical'):.3f}, between the benchmark-default models and "
                "DA on RMSE, far ahead of DA under model error, and M is the right size (L is no better).")
@@ -231,6 +233,10 @@ def main() -> None:
              "from the same distribution (checkpoint = `stage1_best` by that val loss). 3 seeds.")
     A.append("- **P1 fixed obs**: the P1 checkpoints -- regular 30-obs grid, noise frozen per window "
              "across epochs.")
+    A.append("- **Flow sampling (VanillaCFM, PredictStateCFM)**: 30 members, 20 early-fine Euler "
+             "steps tau_k = 1-(1-k/20)^0.5 (the models' default grid since 2026-09-24; earlier "
+             "renders of this report used 10 uniform steps, `ens30_no10`). See "
+             "`docs/results/cfm_tau_consistency_l96b.md`.")
     A.append("- **SDA**: the P1 checkpoints unchanged -- the prior and its validation loss never see "
              "observations, so the obs protocol does not apply to training. Guided sampling: 30 "
              "members, 10 steps, guidance weight 20 (tuned on the regular grid), r_var 0.5, with "

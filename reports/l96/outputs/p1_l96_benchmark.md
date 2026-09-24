@@ -10,7 +10,7 @@ Two-scale L96, `obs_interval=100`, `obs_j=2` (24D observed space), 200 shared ca
 |---|---|---|
 | DA baselines | per-window assimilation over dws=500 | RMSE/MAE; spread where an ensemble variance is cached (EnKF/ETKF). No members are stored, so no ensemble CRPS |
 | Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance (1.0 calibrated, ~0.35 collapsed) |
-| Flow matching | `ens30_no10` (30 members, N_outer=10) | ensemble-mean RMSE; proper ensemble CRPS; `spread/RMSE` (1.0 calibrated) |
+| Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper ensemble CRPS; `spread/RMSE` (1.0 calibrated) |
 | SDA | guided `ens30`, `gw=20`, `r_var=0.5` | as above. **Must** use `eval_sda_l96.py`: SDA1 is an unconditional prior and the unguided sampler returns climatological spread |
 | tau=0 mean | `mu(x0, 0, y)` over 30 draws | the flow's implied posterior mean as a point estimator; MAE (= CRPS of a point forecast), NOT comparable to ensemble CRPS |
 
@@ -54,13 +54,13 @@ Source: `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_f
 
 | scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |
 |---|---|---|---|---|---|---|---|---|
-| VanillaCFM-S+ | 1.48 M | 0.4124 ± 0.0913 | 0.4100 ± 0.0864 | 0.994 | 0.2067 ± 0.0505 | 0.2071 ± 0.0479 | 0.555 |  |
-| **VanillaCFM-M** | 5.89 M | **0.3445 ± 0.0732** | 0.3391 ± 0.0720 | 0.984 | 0.1568 ± 0.0331 | 0.1550 ± 0.0326 | 0.535 |  |
-| VanillaCFM-L | 23.5 M | 0.3563 ± 0.0683 | 0.3530 ± 0.0649 | 0.991 | 0.1627 ± 0.0308 | 0.1615 ± 0.0292 | 0.509 |  |
-| PredictStateCFM-S+ | 1.48 M | 0.4124 ± 0.0794 | 0.4120 ± 0.0814 | 0.999 | 0.2083 ± 0.0377 | 0.2093 ± 0.0402 | 0.395 |  |
-| PredictStateCFM-M | 5.89 M | 0.3584 ± 0.0722 | 0.3554 ± 0.0738 | 0.992 | 0.1733 ± 0.0335 | 0.1727 ± 0.0348 | 0.400 |  |
-| PredictStateCFM-L(lr3e-4) | 23.5 M | 0.3508 ± 0.0707 | 0.3459 ± 0.0714 | 0.986 | 0.1677 ± 0.0326 | 0.1660 ± 0.0334 | 0.390 | lr 3e-4 — the standard 1e-3 diverged at this tier |
-| PredictStateCFM-L(lr5e-4) | 23.5 M | 0.3685 ± 0.0691 | 0.3637 ± 0.0666 | 0.987 | 0.1737 ± 0.0314 | 0.1722 ± 0.0312 | 0.400 | lr 5e-4 — the standard 1e-3 diverged at this tier |
+| VanillaCFM-S+ | 1.48 M | 0.4096 ± 0.0917 | 0.4070 ± 0.0870 | 0.994 | 0.2020 ± 0.0495 | 0.2023 ± 0.0469 | 0.639 |  |
+| **VanillaCFM-M** | 5.89 M | **0.3412 ± 0.0734** | 0.3358 ± 0.0727 | 0.984 | 0.1527 ± 0.0320 | 0.1509 ± 0.0318 | 0.614 |  |
+| VanillaCFM-L | 23.5 M | 0.3522 ± 0.0678 | 0.3488 ± 0.0649 | 0.990 | 0.1578 ± 0.0294 | 0.1565 ± 0.0281 | 0.595 |  |
+| PredictStateCFM-S+ | 1.48 M | 0.4079 ± 0.0793 | 0.4073 ± 0.0808 | 0.998 | 0.1986 ± 0.0361 | 0.1994 ± 0.0382 | 0.485 |  |
+| PredictStateCFM-M | 5.89 M | 0.3536 ± 0.0716 | 0.3504 ± 0.0734 | 0.991 | 0.1656 ± 0.0320 | 0.1650 ± 0.0334 | 0.487 |  |
+| PredictStateCFM-L(lr3e-4) | 23.5 M | 0.3459 ± 0.0702 | 0.3412 ± 0.0708 | 0.987 | 0.1605 ± 0.0312 | 0.1589 ± 0.0320 | 0.470 | lr 3e-4 — the standard 1e-3 diverged at this tier |
+| PredictStateCFM-L(lr5e-4) | 23.5 M | 0.3641 ± 0.0685 | 0.3594 ± 0.0662 | 0.987 | 0.1664 ± 0.0299 | 0.1650 ± 0.0298 | 0.488 | lr 5e-4 — the standard 1e-3 diverged at this tier |
 
 ## 4. SDA (score-based prior + guidance)
 
@@ -74,11 +74,11 @@ Source: `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_f
 
 ## Cross-family reading
 
-Best S0 of each family: **flow matching 0.3445**, deterministic 0.4699, SDA 0.5063, DA baselines 0.7383 — flow matching is 27% better than the deterministic baseline and 32% better than SDA, at matched tier, parameter count, schedule and data.
+Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.5063, DA baselines 0.7383 — flow matching is 27% better than the deterministic baseline and 33% better than SDA, at matched tier, parameter count, schedule and data.
 
 - **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by ~1.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
 - **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
-- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.0) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
+- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
 - **SDA's conditioning buys ~1-2% RMSE**, while its guidance weight is worth ~4x more (8% from tuning alone) — consistent with observations entering SDA only through the guidance term.
 - **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is not only about sampling.
 
@@ -97,12 +97,12 @@ Best / median / worst windows, ranked by Strong-4DVar per-window RMSE (the same 
 
 | case | rank | window | 4DVar win-RMSE | Truth-ref ETKF | Strong-4DVar | DirectUNet-M | VanillaCFM-M | SDA1-M |
 |---|---|---|---|---|---|---|---|---|
-| S0 | best | 155 | 0.407 | 0.687 | 0.407 | 0.403 | 0.268 | 0.395 |
-| S0 | median | 187 | 0.794 | 0.939 | 0.794 | 0.535 | 0.329 | 0.570 |
+| S0 | best | 155 | 0.407 | 0.687 | 0.407 | 0.403 | 0.266 | 0.395 |
+| S0 | median | 187 | 0.794 | 0.939 | 0.794 | 0.535 | 0.325 | 0.570 |
 | S0 | worst | 58 | 1.432 | 0.889 | 1.432 | 0.539 | 0.452 | 0.602 |
-| S1 | best | 35 | 0.977 | 0.980 | 0.977 | 0.408 | 0.253 | 0.363 |
-| S1 | median | 198 | 1.482 | 1.507 | 1.482 | 0.500 | 0.322 | 0.499 |
-| S1 | worst | 75 | 1.991 | 2.005 | 1.991 | 0.645 | 0.504 | 0.774 |
+| S1 | best | 35 | 0.977 | 0.980 | 0.977 | 0.408 | 0.249 | 0.363 |
+| S1 | median | 198 | 1.482 | 1.507 | 1.482 | 0.500 | 0.320 | 0.499 |
+| S1 | worst | 75 | 1.991 | 2.005 | 1.991 | 0.645 | 0.497 | 0.774 |
 
 **Observing system.** `obs_mask` is a single 1-D mask over time shared by every dimension, so slow and fast are observed at exactly the same instants: **30 observed timesteps per window** (`obs_interval=100` over T=3000). What differs between them is spatial, not temporal — all 8 slow X are observed, but only 16 of the 32 fast Y (`obs_j=2` of `J=4`), which is why the fast block is 16 rows.
 

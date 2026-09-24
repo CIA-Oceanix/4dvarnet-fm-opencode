@@ -192,6 +192,11 @@ Always run tests after making changes.
   checkpoints (`docs/results/cfm_sampler_schedule.md`). **Numbers produced before this date used the
   uniform grid**; reproduce them with `eval_neural_l96.py --step-power 1` (or `model.step_power: 1.0`).
   `eval_neural_l96.py` records the grid used under `sampling.step_power`.
+- **L96 benchmark flow sampler (as of 2026-09-24):** benchmark flows (VanillaCFM / PredictStateCFM) are
+  scored with **30 members × 20 early-fine steps** (`--n-members 30 --n-outer 20`, p = 0.5), eval
+  sub-directory `ens30_no20` (was `ens30_no10`, uniform). On the benchmark-default checkpoints this gives
+  spread/RMSE ≈ 0.86-1.02 and beats uniform N = 80 on CRPS for PredictStateCFM
+  (`docs/results/cfm_tau_consistency_l96b.md`). SDA keeps its own guided protocol (`ens30_gw20`, 10 steps).
 
 ## When Making Model Changes
 

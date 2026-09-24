@@ -100,7 +100,7 @@ def test_variance_terms_match_an_autograd_jvp():
     ju = torch.autograd.grad(g, v, u)[0]
     w = ((1 - tau) * model.sigma_prior) ** 2 / tau
     exact = (w.view(-1, 1, 1) * u * ju).mean(dim=1)
-    assert torch.allclose(jac, exact, rtol=2e-2, atol=1e-5)
+    assert ((jac - exact).norm() / exact.norm()).item() < 1e-2
 
 
 class _GaussianExact(PredictStateCFM):
