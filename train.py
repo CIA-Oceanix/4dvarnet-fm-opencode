@@ -106,6 +106,28 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
     }
 
 
+PSC_TAU_OPTION_KEYS = ("tau0_frac", "tau0_zero_input", "tau_sampling", "tau_low_frac",
+                       "tau_low_max", "boot_frac", "boot_tau_min", "boot_tau_max",
+                       "boot_dtau_min", "boot_dtau_max", "boot_alpha")
+
+
+def psc_tau_options(section) -> dict:
+    """The PredictStateCFM tau-consistency options present in a model config section."""
+    return {k: section.get(k) for k in PSC_TAU_OPTION_KEYS if section.get(k, None) is not None}
+
+
+def psc_teacher_options(cfg) -> dict:
+    """LitModel EMA-teacher kwargs; empty (no teacher) unless boot_ema_decay is set."""
+    model_type = cfg.model.get("model_type", "")
+    if model_type not in ("predict_state_cfm", "monai_predict_state_cfm"):
+        return {}
+    section = cfg.model.get(model_type, None)
+    if section is None or section.get("boot_ema_decay", None) is None:
+        return {}
+    return {"ema_decay": float(section.boot_ema_decay),
+            "teacher_start_epoch": int(section.get("boot_start_epoch", 0))}
+
+
 def model_factory(cfg: DictConfig, device: torch.device):
     model_type = cfg.model.get("model_type", "tweedie")
     if model_type == "tweedie":
@@ -187,6 +209,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             cond_extra_dim=mps.get("cond_extra_dim", 0),
             num_res_blocks=mps.get("num_res_blocks", 2),
             norm_num_groups=mps.get("norm_num_groups", 32),
+            **psc_tau_options(mps),
         )
     elif model_type == "joint_cfm":
         from models.vanilla_cfm import JointCFM
@@ -287,6 +310,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             train_tau_0_only=psc.get("train_tau_0_only", False),
             param_dim=param_dim,
             cond_extra_dim=psc.cond_extra_dim,
+            **psc_tau_options(psc),
         )
     elif model_type == "tweedie_cfm":
         from models.vanilla_cfm import TweedieCFM
@@ -855,7 +879,8 @@ def main(cfg: DictConfig):
                                use_cosine_scheduler=stage_cfg.get("use_cosine_scheduler", True),
                                max_epochs=epochs_s1,
                                obs_weight_lr_scale=stage_cfg.get("obs_weight_lr_scale", 1.0),
-                               prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0))
+                               prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0),
+                               **psc_teacher_options(cfg))
                 trainer = create_trainer(cfg, 1)
                 trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(1))
                 path = cfg.paths.checkpoint_stage1
