@@ -30,7 +30,7 @@ for TS in regular canonical; do
   if [ "$TS" = regular ]; then DS=$R/experiments/l96_datasets_obsj2_int100_nwin200.pt; OUT="experiments/${NAME}/${SUB}";
   else DS=$R/experiments/l96_testset_rlayout_n10-100_k4-16_w200_d1.pt; OUT="experiments/eval_rlayout_n10-100_k4-16_w200/${NAME}/${SUB}"; fi
   [ -f "$OUT/neural_eval.json" ] && continue; mkdir -p "$OUT"
-  python eval_neural_l96.py --checkpoint "experiments/${NAME}/checkpoints/stage1_best.ckpt" --dataset "$DS" \
+  python eval_neural_l96.py --step-power 1 --checkpoint "experiments/${NAME}/checkpoints/stage1_best.ckpt" --dataset "$DS" \
     --num-windows 200 --n-members ${MEM[$j]} --n-outer ${OUTER[$j]} --batch-size 25 --members-file scores --output "$OUT/neural_eval.json"
 done
 echo "Done: ${NAME} at $(date)"

@@ -34,7 +34,7 @@ for T in "${TAGS[@]}"; do
       read -r MEM OUTER EXP <<< "${MODELS[$i]}"; NAME=$(basename $EXP)
       OUT=experiments/eval_ood/$T/$NAME/ens${MEM}_no${OUTER}
       [ -f $OUT/neural_eval.json ] && continue; mkdir -p $OUT
-      python eval_neural_l96.py --checkpoint $EXP/checkpoints/stage1_best.ckpt --dataset $DS --num-windows 60 \
+      python eval_neural_l96.py --step-power 1 --checkpoint $EXP/checkpoints/stage1_best.ckpt --dataset $DS --num-windows 60 \
         --n-members $MEM --n-outer $OUTER --batch-size 20 --members-file scores --output $OUT/neural_eval.json ;;
     3)
       OUT=experiments/eval_ood/$T/B4_sda1_monaiM_l96_seed1/ens30_gw25

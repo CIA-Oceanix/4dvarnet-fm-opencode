@@ -554,7 +554,11 @@ def main() -> None:
          "**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old "
          "`_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 "
          "retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on "
-         "validation windows; 1200-epoch arms of the benchmark default.\n"]
+         "validation windows; 1200-epoch arms of the benchmark default.\n",
+         "**Flow sampler grid**: every VanillaCFM / PredictStateCFM number here was sampled on the *uniform* Euler "
+         "grid (10 steps), i.e. before #253 made the early-fine grid the default; the run scripts pin "
+         "`--step-power 1` to reproduce them. #253 reports ~2-4% better CRPS with the new default, so the flow "
+         "rows are, if anything, slightly pessimistic. SDA and the hybrid use the SDA sampler and are unaffected.\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")

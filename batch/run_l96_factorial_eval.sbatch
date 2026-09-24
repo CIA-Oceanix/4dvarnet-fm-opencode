@@ -36,7 +36,7 @@ for n in 10 20 30 50 75 100; do for k in 4 8 12 16; do
   [ -f "$OUT/neural_eval.json" ] && continue
   mkdir -p "$OUT"
   echo "=== ${NAME} ${CELL} | $(date) ==="
-  python eval_neural_l96.py --checkpoint "$EXP/checkpoints/stage1_best.ckpt" \
+  python eval_neural_l96.py --step-power 1 --checkpoint "$EXP/checkpoints/stage1_best.ckpt" \
     --dataset "$R/experiments/l96_testsets_factorial/l96_testset_${CELL}.pt" --num-windows 60 \
     --n-members "$MEM" --n-outer "$OUTER" --batch-size 20 --members-file scores --output "$OUT/neural_eval.json"
 done; done

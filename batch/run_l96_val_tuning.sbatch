@@ -59,7 +59,7 @@ else
     read -r NO SIG <<< "$SETTING"
     EXTRA=(); [ "$SIG" != none ] && EXTRA=(--sigma-prior $SIG)
     OUT=experiments/eval_val/$RG/calib/$(basename $EXP)/no${NO}_sig${SIG}
-    run "$OUT" neural_eval.json python eval_neural_l96.py --checkpoint $EXP/checkpoints/stage1_best.ckpt \
+    run "$OUT" neural_eval.json python eval_neural_l96.py --step-power 1 --checkpoint $EXP/checkpoints/stage1_best.ckpt \
       --dataset ${VAL[$RG]} --num-windows 50 --n-members 30 --n-outer $NO --batch-size 25 \
       "${EXTRA[@]}" --members-file scores --output $OUT/neural_eval.json
   done

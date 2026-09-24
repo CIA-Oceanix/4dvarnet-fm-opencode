@@ -4,6 +4,8 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 
 **Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms of the benchmark default.
 
+**Flow sampler grid**: every VanillaCFM / PredictStateCFM number here was sampled on the *uniform* Euler grid (10 steps), i.e. before #253 made the early-fine grid the default; the run scripts pin `--step-power 1` to reproduce them. #253 reports ~2-4% better CRPS with the new default, so the flow rows are, if anything, slightly pessimistic. SDA and the hybrid use the SDA sampler and are unaffected.
+
 ## Findings
 
 1. **Best scheme: the DirectUNet-M -> SDA2-M hybrid** (validation-selected tau0 0.1, gw 2), with the 1200-epoch DirectUNet-M as its mean: regular S0 0.310, random S0 0.382, CRPS 0.144 / 0.174 -- best RMSE and CRPS on both test sets (400-epoch mean: 0.329 / 0.406). A better mean carries straight through the SDA correction. Best DA on regular S0: ETKF 0.687.

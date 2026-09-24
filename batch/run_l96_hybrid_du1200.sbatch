@@ -38,7 +38,7 @@ else
   for RG in regular rlayout; do
     if [ $RG = regular ]; then V=$R/experiments/l96_valset_regular_w50.pt; else V=$R/experiments/l96_valset_rlayout_n10-100_k4-16_w50.pt; fi
     O=experiments/eval_val/$RG/du_alone/L96B_directunet_monaiM_ep1200_seed1
-    [ -f $O/neural_eval.json ] || { mkdir -p $O; python eval_neural_l96.py --checkpoint $DU/checkpoints/stage1_best.ckpt --dataset $V \
+    [ -f $O/neural_eval.json ] || { mkdir -p $O; python eval_neural_l96.py --step-power 1 --checkpoint $DU/checkpoints/stage1_best.ckpt --dataset $V \
       --num-windows 50 --n-members 1 --n-outer 1 --batch-size 25 --output $O/neural_eval.json; }
     for T0 in 0.05 0.1 0.2; do for GW in 1 2 5; do
       hyb $DU $V experiments/eval_val/$RG/hybrid_du1200/A3_sda2_monaiM_l96/tau${T0}_gw$GW $T0 $GW 50
