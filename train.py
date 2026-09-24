@@ -108,7 +108,8 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
 
 PSC_TAU_OPTION_KEYS = ("tau0_frac", "tau0_zero_input", "tau_sampling", "tau_low_frac",
                        "tau_low_max", "boot_frac", "boot_tau_min", "boot_tau_max",
-                       "boot_dtau_min", "boot_dtau_max", "boot_alpha")
+                       "boot_dtau_min", "boot_dtau_max", "boot_alpha",
+                       "var_weight", "var_tau_min", "var_tau_max", "var_fd_eps")
 
 
 def psc_tau_options(section) -> dict:
@@ -117,15 +118,21 @@ def psc_tau_options(section) -> dict:
 
 
 def psc_teacher_options(cfg) -> dict:
-    """LitModel EMA-teacher kwargs; empty (no teacher) unless boot_ema_decay is set."""
+    """LitModel kwargs for the PredictStateCFM options: the EMA teacher (only if boot_ema_decay is
+    set) and the epoch at which the T5 variance loss switches on (var_start_epoch)."""
     model_type = cfg.model.get("model_type", "")
     if model_type not in ("predict_state_cfm", "monai_predict_state_cfm"):
         return {}
     section = cfg.model.get(model_type, None)
-    if section is None or section.get("boot_ema_decay", None) is None:
+    if section is None:
         return {}
-    return {"ema_decay": float(section.boot_ema_decay),
-            "teacher_start_epoch": int(section.get("boot_start_epoch", 0))}
+    opts = {}
+    if section.get("boot_ema_decay", None) is not None:
+        opts.update(ema_decay=float(section.boot_ema_decay),
+                    teacher_start_epoch=int(section.get("boot_start_epoch", 0)))
+    if section.get("var_start_epoch", None) is not None:
+        opts["var_start_epoch"] = int(section.var_start_epoch)
+    return opts
 
 
 def model_factory(cfg: DictConfig, device: torch.device):
@@ -448,6 +455,10 @@ def model_factory(cfg: DictConfig, device: torch.device):
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
+    section = cfg.model.get(model_type, None) if model_type in (
+        "vanilla_cfm", "monai_vanilla_cfm", "predict_state_cfm", "monai_predict_state_cfm") else None
+    if section is not None and section.get("step_power", None) is not None:
+        model.step_power = float(section.step_power)
     return model.to(device)
 
 
