@@ -16,8 +16,10 @@ JSON, so the table cannot drift from the artifacts.
 
 Three protocol facts that make or break comparability, all enforced below:
 
-* **Generative rows** are scored on `ens30_no10` -- 30 members, N_outer=10 --
-  as ensemble-mean RMSE plus a proper ensemble CRPS. **Deterministic rows** are
+* **Generative rows** are scored on `ens30_no20` -- 30 members, 20 early-fine
+  Euler steps tau_k = 1-(1-k/20)^0.5 (the benchmark flow sampler since
+  2026-09-24; earlier renders used `ens30_no10`, 10 uniform steps) -- as
+  ensemble-mean RMSE plus a proper ensemble CRPS. **Deterministic rows** are
   a single pass. A one-draw score of a generative model is a strictly worse
   estimator and is never mixed into the same column.
 * **SDA rows** must come from `eval_sda_l96.py` with a guidance weight: SDA1 is
@@ -68,13 +70,13 @@ DET = [
     ("DirectUNet-L", "P1_directunet_monaiL_noaug_l96", "ens1_no1", "23.5 M", "unstable"),
 ]
 FM = [
-    ("VanillaCFM-S+", "A1_vanillacfm_monaiSplus_l96", "ens30_no10", "1.48 M", ""),
-    ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", "ens30_no10", "5.89 M", ""),
-    ("VanillaCFM-L", "A1_vanillacfm_monaiL_l96", "ens30_no10", "23.5 M", ""),
-    ("PredictStateCFM-S+", "A2_predictstatecfm_monaiSplus_l96", "ens30_no10", "1.48 M", ""),
-    ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", "ens30_no10", "5.89 M", ""),
-    ("PredictStateCFM-L(lr3e-4)", "A2_predictstatecfm_monaiL_lr3e4_l96", "ens30_no10", "23.5 M", "lr 3e-4"),
-    ("PredictStateCFM-L(lr5e-4)", "A2_predictstatecfm_monaiL_lr5e4_l96", "ens30_no10", "23.5 M", "lr 5e-4"),
+    ("VanillaCFM-S+", "A1_vanillacfm_monaiSplus_l96", "ens30_no20", "1.48 M", ""),
+    ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", "ens30_no20", "5.89 M", ""),
+    ("VanillaCFM-L", "A1_vanillacfm_monaiL_l96", "ens30_no20", "23.5 M", ""),
+    ("PredictStateCFM-S+", "A2_predictstatecfm_monaiSplus_l96", "ens30_no20", "1.48 M", ""),
+    ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", "ens30_no20", "5.89 M", ""),
+    ("PredictStateCFM-L(lr3e-4)", "A2_predictstatecfm_monaiL_lr3e4_l96", "ens30_no20", "23.5 M", "lr 3e-4"),
+    ("PredictStateCFM-L(lr5e-4)", "A2_predictstatecfm_monaiL_lr5e4_l96", "ens30_no20", "23.5 M", "lr 5e-4"),
 ]
 SDA = [
     ("SDA1-S+", "B4_sda1_monaiSplus_l96", "ens30_gw20", "1.48 M", ""),
@@ -186,7 +188,7 @@ FIGURE_SCHEMES = [
     ("Truth-ref ETKF", ("da", "ETKF")),
     ("Strong-4DVar", ("da", "Strong-4DVar")),
     ("DirectUNet-M", ("det", "P1_directunet_monaiM_noaug_l96", "ens1_no1")),
-    ("VanillaCFM-M", ("gen", "A1_vanillacfm_monaiM_l96", "ens30_no10")),
+    ("VanillaCFM-M", ("gen", "A1_vanillacfm_monaiM_l96", "ens30_no20")),
     ("SDA1-M", ("gen", "B4_sda1_monaiM_l96", "ens30_gw20")),
 ]
 
@@ -326,7 +328,7 @@ def main():
       "ensemble variance is cached (EnKF/ETKF). No members are stored, so no ensemble CRPS |")
     A("| Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance "
       "(1.0 calibrated, ~0.35 collapsed) |")
-    A("| Flow matching | `ens30_no10` (30 members, N_outer=10) | ensemble-mean RMSE; proper "
+    A("| Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper "
       "ensemble CRPS; `spread/RMSE` (1.0 calibrated) |")
     A("| SDA | guided `ens30`, `gw=20`, `r_var=0.5` | as above. **Must** use `eval_sda_l96.py`: "
       "SDA1 is an unconditional prior and the unguided sampler returns climatological spread |")
@@ -404,7 +406,7 @@ def main():
     A("- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; "
       "M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).")
     A("- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and "
-      "PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.0) "
+      "PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) "
       "despite a 3x gap in training val_loss — val_loss is not comparable across objectives.")
     A("- **SDA's conditioning buys ~1-2% RMSE**, while its guidance weight is worth ~4x more "
       "(8% from tuning alone) — consistent with observations entering SDA only through the "

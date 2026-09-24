@@ -21,7 +21,7 @@ export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
 mkdir -p "$MPLCONFIGDIR"
 i=$SLURM_ARRAY_TASK_ID
 EXPS=(L96B_directunet_monaiM L96B_vanillacfm_monaiM)
-MEMBERS=(1 30); OUTER=(1 10)
+MEMBERS=(1 30); OUTER=(1 20)
 m=$((i / 3)); SEED=$((i % 3 + 1))
 EXPERIMENT="${EXPS[$m]}"; SUB="ens${MEMBERS[$m]}_no${OUTER[$m]}"; DIR="experiments/${EXPERIMENT}_seed${SEED}"
 echo "===== ${EXPERIMENT} seed ${SEED} | $(date) | $(nvidia-smi --query-gpu=name --format=csv,noheader -i 0 | tail -1) ====="
