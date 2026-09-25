@@ -1,0 +1,11 @@
+# @package _global_
+# PredictStateCFM-M under the L96 benchmark default with a linear skip connection:
+# D = tau * x_tau + (1 - tau) * net. Everything else identical to
+# L96B_predictstatecfm_monaiM (same data, seeds, 400 epochs, cosine LR), so the
+# skip is the only difference from that row of the benchmark.
+defaults:
+  - /experiment/L96B_predictstatecfm_monaiM
+  - _self_
+model:
+  monai_predict_state_cfm:
+    skip_connection: linear

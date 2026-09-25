@@ -581,7 +581,7 @@ class PredictStateCFM(nn.Module):
                           boot_dtau_min: float = 0.2, boot_dtau_max: float = 0.5,
                           boot_alpha: float = 1.0, var_weight: float = 0.0,
                           var_tau_min: float = 0.05, var_tau_max: float = 0.95,
-                          var_fd_eps: float = 1e-2) -> None:
+                          var_fd_eps: float = 1e-2, skip_connection: str = "none") -> None:
         """Training-time tau options; every default reproduces the plain CFM loss.
 
         See docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
@@ -594,7 +594,14 @@ class PredictStateCFM(nn.Module):
         tau0_zero_input: feed x=0 whenever tau == 0, in training AND sampling (A1 by construction).
         var_weight: weight of the second-order consistency loss (T5) on rows with tau in
             [var_tau_min, var_tau_max]; see variance_terms.
+        skip_connection: "none" (D = net) or "linear" (D = tau * x_tau + (1 - tau) * net): D is
+            exact at tau = 1 by construction, the tau = 0 head is unchanged, and the sampler's
+            velocity (D - x)/(1 - tau) becomes net - x. The loss stays on D, so net is weighted
+            by (1 - tau)^2.
         """
+        if skip_connection not in ("none", "linear"):
+            raise ValueError(f"skip_connection must be 'none' or 'linear', got {skip_connection!r}")
+        self.skip_connection = skip_connection
         if tau_sampling not in ("uniform", "low_mix"):
             raise ValueError(f"tau_sampling must be 'uniform' or 'low_mix', got {tau_sampling!r}")
         if tau0_frac < 0 or boot_frac < 0 or tau0_frac + boot_frac > 1:
@@ -669,8 +676,11 @@ class PredictStateCFM(nn.Module):
             x_t = x_t * (tau > 0).to(x_t.dtype).view(-1, 1, 1)
         cond = _make_cond(batch.obs, batch.forcing, batch.params,
                           self.param_dim, self.cond_extra_dim)
-        μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau)
-        return μ.transpose(1, 2)
+        μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau).transpose(1, 2)
+        if getattr(self, "skip_connection", "none") == "linear":
+            t = tau.view(-1, 1, 1).to(x_t.dtype)
+            μ = t * x_t + (1.0 - t) * μ
+        return μ
 
     def pair_from_x1(self, x1: torch.Tensor, tau: torch.Tensor,
                      tau_prime: torch.Tensor) -> tuple:
