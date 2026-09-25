@@ -10,6 +10,9 @@ weights 1 (VanillaCFM) and (1 - tau)^2 (PredictStateCFM). The blend integrates
 
 with a tau-varying weight lam (the weight on PredictStateCFM). lam = 1 and lam = 0 skip the
 unused network, so they reproduce PredictStateCFM / VanillaCFM sampling exactly.
+
+Any two flows can be blended (lam weights the second): two seeds of the same family give the
+model-averaging control for a VanillaCFM + PredictStateCFM blend.
 """
 from __future__ import annotations
 
@@ -40,28 +43,34 @@ def parse_blend_schedule(spec: str) -> Callable[[float], float]:
 class TauBlendedFlow(VanillaCFM):
     """Subclasses VanillaCFM only so the evaluation dispatch treats it as a flow sampler."""
 
-    def __init__(self, vanilla: VanillaCFM, predict_state: PredictStateCFM, schedule: str):
+    def __init__(self, first: VanillaCFM, second: VanillaCFM, schedule: str):
         nn.Module.__init__(self)
-        if isinstance(vanilla, PredictStateCFM) or not isinstance(predict_state, PredictStateCFM):
-            raise TypeError("need a VanillaCFM and a PredictStateCFM")
-        if vanilla.sigma_prior != predict_state.sigma_prior or vanilla.state_dim != predict_state.state_dim:
+        if not (isinstance(first, VanillaCFM) or isinstance(first, PredictStateCFM)) or \
+                not (isinstance(second, VanillaCFM) or isinstance(second, PredictStateCFM)):
+            raise TypeError("both flows must be VanillaCFM or PredictStateCFM")
+        if first.sigma_prior != second.sigma_prior or first.state_dim != second.state_dim:
             raise ValueError("the two flows must share sigma_prior and state_dim")
-        self.vanilla = vanilla
-        self.predict_state = predict_state
+        self.first = first
+        self.second = second
         self.schedule = schedule
         self.lam = parse_blend_schedule(schedule)
-        self.sigma_prior = vanilla.sigma_prior
-        self.state_dim = vanilla.state_dim
-        self.N_outer = vanilla.N_outer
+        self.sigma_prior = first.sigma_prior
+        self.state_dim = first.state_dim
+        self.N_outer = first.N_outer
         self.train_tau_0_only = False
+
+    @staticmethod
+    def _velocity(flow: nn.Module, x: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        if isinstance(flow, PredictStateCFM):
+            return (flow.forward(x, batch, tau) - x) / (1.0 - tau.clamp(max=0.999)).view(-1, 1, 1)
+        return flow.forward(x, batch, tau)
 
     def velocity(self, x: torch.Tensor, batch, tau: torch.Tensor, lam: float) -> torch.Tensor:
         v = torch.zeros_like(x)
         if lam > 0:
-            one_minus = (1.0 - tau.clamp(max=0.999)).view(-1, 1, 1)
-            v = v + lam * (self.predict_state.forward(x, batch, tau) - x) / one_minus
+            v = v + lam * self._velocity(self.second, x, batch, tau)
         if lam < 1:
-            v = v + (1.0 - lam) * self.vanilla.forward(x, batch, tau)
+            v = v + (1.0 - lam) * self._velocity(self.first, x, batch, tau)
         return v
 
     def sample(self, batch, N_outer: Optional[int] = None, step_power: Optional[float] = None):

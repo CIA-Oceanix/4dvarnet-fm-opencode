@@ -52,10 +52,22 @@ def test_schedules():
             parse_blend_schedule(bad)
 
 
-def test_rejects_swapped_or_mismatched_flows():
+def test_same_family_blend_is_the_average_of_two_seeds():
+    _, psc, batch = *_flows(), _batch()
+    torch.manual_seed(1)
+    psc2 = MonaiPredictStateCFM(state_dim=4, hidden_channels=[16, 32], N_outer=4, dropout=0.0, param_dim=0,
+                                cond_extra_dim=0, num_res_blocks=1, norm_num_groups=8).eval()
+    blend = TauBlendedFlow(psc, psc2, "const:0.5")
+    x, tau = torch.randn(3, 32, 4), torch.full((3,), 0.4)
+    with torch.no_grad():
+        mean_d = 0.5 * (psc.forward(x, batch, tau) + psc2.forward(x, batch, tau))
+        assert torch.allclose(blend.velocity(x, batch, tau, 0.5), (mean_d - x) / 0.6, atol=1e-5)
+
+
+def test_rejects_non_flows_or_mismatched_flows():
     vc, psc = _flows()
     with pytest.raises(TypeError):
-        TauBlendedFlow(psc, psc, "const:0.5")
+        TauBlendedFlow(vc, torch.nn.Linear(2, 2), "const:0.5")
     psc.sigma_prior = 1.0
     with pytest.raises(ValueError):
         TauBlendedFlow(vc, psc, "const:0.5")

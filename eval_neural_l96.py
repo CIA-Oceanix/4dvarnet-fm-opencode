@@ -71,10 +71,10 @@ def main():
                              "are denormalized back to raw physical units before scoring. "
                              "Omitting this flag is a true no-op (identical to not passing it).")
     parser.add_argument("--blend-with", default=None,
-                        help="PredictStateCFM checkpoint to blend with --checkpoint (a VanillaCFM) at "
-                             "sampling time: v = lam(tau) v_PSC + (1 - lam(tau)) v_VC (models/cfm_blend.py)")
+                        help="second flow checkpoint (VanillaCFM or PredictStateCFM) blended with --checkpoint "
+                             "at sampling time: v = lam(tau) v_second + (1 - lam(tau)) v_first (models/cfm_blend.py)")
     parser.add_argument("--blend-schedule", default="const:0.5",
-                        help="lam(tau), weight on PredictStateCFM: const:a, switch:t, power:p, rpower:p")
+                        help="lam(tau), weight on the --blend-with flow: const:a, switch:t, power:p, rpower:p")
     parser.add_argument("--trueprior-phi-source-s1", default="true", choices=["true", "biased"],
                         help="Only meaningful for update_input='subgrad+state+trueprior' "
                              "(a true no-op for every other model): 'true' (default) feeds "
