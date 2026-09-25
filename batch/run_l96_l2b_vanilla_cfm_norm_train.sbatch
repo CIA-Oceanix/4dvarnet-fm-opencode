@@ -9,6 +9,8 @@
 #SBATCH --output=sbatch_logs/l96_neural_%j.out
 #SBATCH --error=sbatch_logs/l96_neural_%j.err
 
+export FDV_KEEP_MEMBERS=1  # report-read benchmark rows keep members on /Odyssey (evaluation/members_store.py)
+
 set -euo pipefail
 
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-eval-config-persist

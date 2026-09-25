@@ -9,6 +9,8 @@
 #SBATCH --job-name=l96b-psc
 #SBATCH --output=sbatch_logs/l96b_psc_seed%a_%A.out
 #SBATCH --error=sbatch_logs/l96b_psc_seed%a_%A.err
+
+export FDV_KEEP_MEMBERS=1  # report-read benchmark rows keep members on /Odyssey (evaluation/members_store.py)
 # PredictStateCFM-M under the benchmark default, seed = array index; then the
 # benchmark flow eval (ens30 x 20 early-fine steps) on the regular grid and on the canonical
 # random-observing-system test set.

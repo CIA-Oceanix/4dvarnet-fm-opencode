@@ -34,6 +34,7 @@ from evaluation.estimate_metrics import (
     save_estimates,
 )
 from evaluation.neural_inference import BatchDict, load_model, prepare_dataset
+from evaluation import members_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="fdv1_fdv1cfm_hybrid_eval_results.json", help="Output JSON")
+    parser.add_argument("--keep-members", action="store_true",
+                        help="Write members_<case>.npz next to --output (report-read benchmark rows). Default: node-local /tmp, see evaluation/members_store.py")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -138,7 +141,7 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = output_path.parent / f"members_{case}.npz"
+            members_path = members_store.members_path(output_path.parent, case, keep=args.keep_members)
             np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])

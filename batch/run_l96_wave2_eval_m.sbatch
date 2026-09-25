@@ -9,6 +9,8 @@
 #SBATCH --job-name=l96-w2evalM
 #SBATCH --output=sbatch_logs/l96_wave2_evalM_%j.out
 #SBATCH --error=sbatch_logs/l96_wave2_evalM_%j.err
+
+export FDV_KEEP_MEMBERS=1  # report-read benchmark rows keep members on /Odyssey (evaluation/members_store.py)
 set -euo pipefail
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-fdv-tau-aware
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"

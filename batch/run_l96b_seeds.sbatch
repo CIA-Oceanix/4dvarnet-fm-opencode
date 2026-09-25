@@ -27,8 +27,8 @@ EXPERIMENT="${EXPS[$m]}"; SUB="ens${MEMBERS[$m]}_no${OUTER[$m]}"; DIR="experimen
 echo "===== ${EXPERIMENT} seed ${SEED} | $(date) | $(nvidia-smi --query-gpu=name --format=csv,noheader -i 0 | tail -1) ====="
 python train.py --config-name experiment/${EXPERIMENT} hydra.run.dir=. hydra.output_subdir=null training.seed=${SEED}
 for TS in regular rand30_fast8; do
-  if [ "$TS" = regular ]; then DS=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt; OUT="${DIR}/${SUB}";
-  else DS=experiments/l96_datasets_obsj2_rand30_fast8_nwin200.pt; OUT="experiments/eval_rand30_fast8/$(basename $DIR)/${SUB}"; fi
+  if [ "$TS" = regular ]; then DS=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt; OUT="${DIR}/${SUB}"; export FDV_KEEP_MEMBERS=1;
+  else DS=experiments/l96_datasets_obsj2_rand30_fast8_nwin200.pt; OUT="experiments/eval_rand30_fast8/$(basename $DIR)/${SUB}"; export FDV_KEEP_MEMBERS=0; fi
   mkdir -p "$OUT"
   python eval_neural_l96.py --checkpoint "${DIR}/checkpoints/stage1_best.ckpt" --dataset "$DS" \
     --num-windows 200 --n-members "${MEMBERS[$m]}" --n-outer "${OUTER[$m]}" --batch-size 25 --output "${OUT}/neural_eval.json"
