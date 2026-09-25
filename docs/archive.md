@@ -15,6 +15,12 @@ report:
 <run>/manifest.json                  provenance of each artifact (optional)
 ```
 
+`members_{s0,s1}.npz` (full ensembles, 1.6-3.3 GB each) are **not** written
+here by default: they go to the GPU node's local `/tmp` unless the eval runs with
+`--keep-members` / `FDV_KEEP_MEMBERS=1`, which only the sbatch scripts behind
+report-read benchmark rows set (`evaluation/members_store.py`). Sweeps and
+diagnostics keep their metrics sidecar and nothing else on /Odyssey.
+
 Both checkpoint forms hold the same weights, but they are **not
 interchangeable**: `evaluation.neural_inference.load_model` accepts only
 `stage1_best.ckpt`, because `stage1.pt` has no `state_dict` key.

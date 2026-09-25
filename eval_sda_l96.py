@@ -46,6 +46,7 @@ from evaluation.estimate_metrics import (
 )
 from evaluation.neural_inference import load_model, prepare_dataset, run_inference
 from models.sda import ConditionalPriorCFM
+from evaluation import members_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -96,6 +97,8 @@ def main():
     parser.add_argument("--members-file", default="full", choices=["full", "scores"],
                         help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
                              "only (scores_<case>.npz, KBs)")
+    parser.add_argument("--keep-members", action="store_true",
+                        help="Write members_<case>.npz next to --output (report-read benchmark rows). Default: node-local /tmp, see evaluation/members_store.py")
     parser.add_argument("--normalize-stats", default=None,
                         help="Path to a per-channel norm stats .pt (mean/std). When given, "
                              "obs is z-score normalized before each model/guidance call and "
@@ -189,8 +192,9 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = save_members_or_scores(output_path.parent, case, est["members"],
-                                                  est["truth"], args.members_file)
+            members_path = save_members_or_scores(
+                members_store.members_dir(output_path.parent, keep=args.keep_members, mode=args.members_file),
+                case, est["members"], est["truth"], args.members_file)
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])
             logger.info(f"Saved estimates: {npz_path} + members: {members_path}")

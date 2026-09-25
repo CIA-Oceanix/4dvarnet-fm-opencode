@@ -44,6 +44,7 @@ from evaluation.estimate_metrics import (
 from evaluation.neural_inference import BatchDict, load_model, prepare_dataset
 from evaluation.sda_sampler import sda_guided_sample
 from models.fourdvarnet import FourDVarNetPredictStateCFM, FourDVarNetSolver
+from evaluation import members_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -141,6 +142,8 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="sda_mean_hybrid_eval_results.json", help="Output JSON")
+    parser.add_argument("--keep-members", action="store_true",
+                        help="Write members_<case>.npz next to --output (report-read benchmark rows). Default: node-local /tmp, see evaluation/members_store.py")
     parser.add_argument("--normalize-stats", default=None,
                         help="Path to a per-channel norm stats .pt (mean/std) for the SDA prior's "
                              "space. When given, obs is normalized before the SDA guidance call; the "
@@ -232,7 +235,7 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = output_path.parent / f"members_{case}.npz"
+            members_path = members_store.members_path(output_path.parent, case, keep=args.keep_members)
             np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])

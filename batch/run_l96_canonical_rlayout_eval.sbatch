@@ -9,6 +9,8 @@
 #SBATCH --job-name=l96-canon-eval
 #SBATCH --output=sbatch_logs/l96_canonical_rlayout_eval_%A_%a.out
 #SBATCH --error=sbatch_logs/l96_canonical_rlayout_eval_%A_%a.err
+
+export FDV_KEEP_MEMBERS=1  # report-read benchmark rows keep members on /Odyssey (evaluation/members_store.py)
 # Learned schemes on the canonical random-observing-system test set
 # (scripts/make_l96_canonical_testset.py: the P1 200 windows with the exact
 # obs the DA baselines assimilated in eval_da_random_layout_l96.py, n 10-100,
