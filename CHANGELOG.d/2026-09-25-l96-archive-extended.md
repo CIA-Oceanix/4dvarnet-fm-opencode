@@ -1,0 +1,6 @@
+## 2026-09-25: Archive every run behind the L96 benchmark reports (P1, default, extended)
+
+**Summary:** `scripts/archive_l96_benchmark_default.py` now covers all three L96 benchmark reports: the 15 P1-report runs, the benchmark-default runs, and the extended report's runs that were not archived (1200-epoch DirectUNet seeds 1-3, 1200-epoch VanillaCFM/PredictStateCFM seeds 2-3, the 3000-window DirectUNet, SDA1/SDA2 seeds 2-3, SDA3-fix seeds 1-3) plus the DU(1200)->SDA2/SDA3-fix hybrid estimates (manifest names the component runs). New `--refresh` replaces archived estimates/eval json that differ from the reports' current sources (never checkpoints).
+**Files modified:** `scripts/archive_l96_benchmark_default.py` — per-run regular/random eval paths, report tags, hybrid entries, `--refresh`; P1-only S+/L runs archive regular-grid results only (never scored on the random set)
+**Rationale:** the new best scheme (DU(1200)->SDA3-fix) depended on 15 checkpoints that lived only in the `4dvarnet-fm-sda-nanfix` worktree; and 60 archived estimate files were stale (flows scored before the #257 sampler switch, SDA2/SDA3 before the S1 params fix, #265).
+**Verification:** `--apply --refresh` linked 219 files and refreshed 60 (hard links, no disk used); a second dry run reports all 427 files `same`; the 15 checkpoints are hard links of the ones the reports were scored from.
