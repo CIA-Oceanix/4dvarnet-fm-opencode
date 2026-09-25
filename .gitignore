@@ -34,6 +34,7 @@ data/processed/
 outputs/
 !reports/*/outputs/
 results/
+!docs/results/
 lightning_logs/
 
 # OS

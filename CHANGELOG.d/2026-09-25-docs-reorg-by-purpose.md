@@ -33,6 +33,8 @@ is deleted. A new `tests/test_docs_layout.py` enforces the layout.
   - nothing sits outside the layout;
   - every `docs/...` path cited in the tracked tree exists.
 - `AGENTS.md` — a one-line pointer to the layout.
+- `.gitignore`: add `!docs/results/`. The generic `results/` rule was silently
+  ignoring every new results note, which then needed `git add -f`.
 - Folded in #261, which merged while this PR was open:
   - `docs/results/cfm_tau_consistency_synthesis.md` →
     `docs/results/l96_cfm_tau_consistency_synthesis.md`;
