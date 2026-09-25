@@ -68,12 +68,12 @@ def fingerprint(windows) -> dict:
     return out
 
 
-def parse_tag(tag: str) -> tuple[tuple[int, int], tuple[int, int], int, int]:
-    m = re.fullmatch(r"rlayout_n(\d+)-(\d+)_k(\d+)-(\d+)_w(\d+)_d(\d+)", tag)
+def parse_tag(tag: str) -> tuple[tuple[int, int], tuple[int, int], int, int, float]:
+    m = re.fullmatch(r"rlayout_n(\d+)-(\d+)_k(\d+)-(\d+)_w(\d+)_d(\d+)(?:_r([\d.]+))?", tag)
     if m is None:
         raise ValueError(f"unrecognized layout tag {tag!r}")
-    a, b, c, d, w, n = (int(x) for x in m.groups())
-    return (a, b), (c, d), w, n
+    a, b, c, d, w, n = (int(x) for x in m.groups()[:6])
+    return (a, b), (c, d), w, n, float(m.group(7)) if m.group(7) else 0.5
 
 
 def load_layouts(layout_dir: str, tag: str) -> tuple[dict, list[str]]:
@@ -108,45 +108,57 @@ def main() -> None:
     p.add_argument("--output", default=None)
     args = p.parse_args()
 
-    n_range, k_range, n_windows, n_draws = parse_tag(args.tag)
-    if n_draws != 1:
-        raise ValueError("a canonical test set needs exactly one draw per window")
+    n_range, k_range, n_windows, n_draws, r_var = parse_tag(args.tag)
     layouts, layout_files = load_layouts(args.layout_dir, args.tag)
     datasets = torch.load(args.data_cache, weights_only=False)
     idx = list(make_obs_j_indices(8, 4, 2))
+    windows = [int(w) for w in np.linspace(0, len(datasets["test_s0"]), n_windows, endpoint=False)]
+    expected_index = np.repeat(windows, n_draws)
 
     out, manifest_cases = {}, {}
     for case, key in CASES.items():
         rec, ds = layouts[case], datasets[key]
-        if not np.array_equal(rec["window_index"], np.arange(n_windows)) or len(ds) != n_windows:
-            raise ValueError(f"{case}: layout windows are not 0..{n_windows - 1} of a {len(ds)}-window cache")
-        before = fingerprint([ds[i] for i in range(n_windows)])
-        for i in range(n_windows):
-            w = ds[i]
+        if not np.array_equal(rec["window_index"], expected_index):
+            raise ValueError(f"{case}: layout window order is not {n_windows} windows x {n_draws} draws")
+        source = [ds[i] for i in windows]
+        before = fingerprint(source)
+        entries = []
+        for j, wi in enumerate(expected_index):
+            w = ds[int(wi)]
+            d = j % n_draws
             obs, mask = draw_layout(w["true_state"][:, idx].float(), n_range, k_range,
-                                    _layout_seed(case, i, n_range, k_range, 0), args.da_window_steps)
-            if not (torch.equal(mask, rec["obs_mask"][i])
-                    and torch.equal(torch.isnan(obs), torch.isnan(rec["obs"][i]))
-                    and torch.equal(torch.nan_to_num(obs), torch.nan_to_num(rec["obs"][i]))):
-                raise ValueError(f"{case} window {i}: stored layout does not regenerate from its seed")
-            w["obs"] = rec["obs"][i].to(w["obs"].dtype)
-            w["obs_mask"] = rec["obs_mask"][i].to(w["obs_mask"].dtype)
-        after = fingerprint([ds[i] for i in range(n_windows)])
+                                    _layout_seed(case, int(wi), n_range, k_range, d), args.da_window_steps,
+                                    r_var)
+            if not (torch.equal(mask, rec["obs_mask"][j])
+                    and torch.equal(torch.isnan(obs), torch.isnan(rec["obs"][j]))
+                    and torch.equal(torch.nan_to_num(obs), torch.nan_to_num(rec["obs"][j]))):
+                raise ValueError(f"{case} window {wi} draw {d}: stored layout does not regenerate from its seed")
+            entries.append(dict(w, obs=rec["obs"][j].to(w["obs"].dtype),
+                                obs_mask=rec["obs_mask"][j].to(w["obs_mask"].dtype)))
+        if fingerprint([ds[i] for i in windows]) != before:
+            raise AssertionError(f"{case}: source windows changed while building the test set")
+        out[key] = ds if n_draws == 1 and windows == list(range(len(ds))) else entries
+        if out[key] is ds:
+            for j, e in enumerate(entries):
+                ds[j]["obs"], ds[j]["obs_mask"] = e["obs"], e["obs_mask"]
+        after = fingerprint([out[key][j] for j in range(len(entries))])
         for f in TENSOR_FIELDS + ("params",):
-            if before[f] != after[f]:
-                raise AssertionError(f"{case}: field {f} changed while replacing obs")
-        out[key] = ds
+            ref = fingerprint([ds[int(wi)] for wi in expected_index])[f] if out[key] is not ds else before[f]
+            if after[f] != ref:
+                raise AssertionError(f"{case}: field {f} differs from the source windows")
         manifest_cases[case] = after
 
     path = args.output or os.path.join(os.path.dirname(args.data_cache), f"l96_testset_{args.tag}.pt")
     torch.save(out, path)
     reloaded = torch.load(path, weights_only=False)
+    n_entries = len(expected_index)
     for case, key in CASES.items():
-        if fingerprint([reloaded[key][i] for i in range(n_windows)]) != manifest_cases[case]:
+        if fingerprint([reloaded[key][i] for i in range(n_entries)]) != manifest_cases[case]:
             raise AssertionError(f"{case}: reloaded file does not match what was written")
     manifest = {
         "testset": os.path.abspath(path), "sha256": sha256_file(path), "tag": args.tag,
-        "n_obs_range": list(n_range), "fast_range": list(k_range), "n_windows": n_windows,
+        "n_obs_range": list(n_range), "fast_range": list(k_range), "n_windows": n_entries,
+        "window_index": [int(w) for w in expected_index], "n_draws": n_draws, "r_var": r_var,
         "source_cache": os.path.abspath(args.data_cache), "source_cache_sha256": sha256_file(args.data_cache),
         "source_layouts": {os.path.basename(f): sha256_file(f) for f in layout_files},
         "fields": manifest_cases,
@@ -155,9 +167,9 @@ def main() -> None:
         json.dump(manifest, f, indent=2)
     for case, key in CASES.items():
         m = reloaded[key]
-        n = [int(m[i]["obs_mask"].sum()) for i in range(n_windows)]
+        n = [int(m[i]["obs_mask"].sum()) for i in range(n_entries)]
         print(f"{case}: n_obs {min(n)}-{max(n)} (mean {np.mean(n):.1f}), step 0 observed in all: "
-              f"{all(bool(m[i]['obs_mask'][0]) for i in range(n_windows))}")
+              f"{all(bool(m[i]['obs_mask'][0]) for i in range(n_entries))}")
     print(f"wrote {path}\n  sha256 {manifest['sha256']}")
 
 

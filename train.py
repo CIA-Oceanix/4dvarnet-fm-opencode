@@ -716,8 +716,7 @@ def main(cfg: DictConfig):
                     cached_full = torch.load(test_cache_path, weights_only=False)
                     cached_test = {k: cached_full[k] for k in ("test_s0", "test_s1")
                                    if k in cached_full}
-                datasets = make_l96_s0_s1_trainval(
-                    base_cfg,
+                trainval_kwargs = dict(
                     num_train_windows=dc.get("num_train_windows", 1000),
                     num_val_windows=dc.get("num_val_windows", 100),
                     num_test_windows=dc.get("num_test_windows", 200),
@@ -726,6 +725,15 @@ def main(cfg: DictConfig):
                     cached_datasets=cached_test,
                     train_forcing_state_bias=dc.get("train_forcing_state_bias", 0.1),
                 )
+                train_cache = dc.get("train_cache", None)
+                if train_cache:
+                    from data.lorenz96 import make_l96_s0_s1_trainval_cached
+                    logger.info(f"data.train_cache={train_cache} "
+                                f"({'reusing' if os.path.exists(train_cache) else 'generating and saving'})")
+                    datasets = make_l96_s0_s1_trainval_cached(base_cfg, train_cache=train_cache,
+                                                              **trainval_kwargs)
+                else:
+                    datasets = make_l96_s0_s1_trainval(base_cfg, **trainval_kwargs)
                 test_keys = ["test_s0", "test_s1"]
         else:
             datasets = make_l96_datasets(base_cfg)

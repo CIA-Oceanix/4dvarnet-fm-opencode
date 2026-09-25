@@ -1,0 +1,21 @@
+# @package _global_
+# SDA3-M with its noisy-DA-bias conditioning actually active. A3_sda3_monaiM_l96
+# inherits lorenz96_default's randomization (biased: false everywhere), so the
+# freshly generated training windows carry *_da == true params and
+# noisy_da_bias interpolates between two equal vectors: it trains bit-identical
+# to SDA2 at the same seed. Here F, c1, hx, eps and fast_weights get the
+# benchmark bias (biased: true, bias 0.1 -- the S1 test configuration; h stays
+# unbiased), so noisy_da_bias draws conditioning params anywhere from the true
+# values to 1.5x the DA bias. Truth trajectories are unchanged (bias only sets
+# the *_da fields).
+defaults:
+  - /experiment/A3_sda3_monaiM_l96
+  - _self_
+data:
+  randomize:
+    F: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    c1: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    hx: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    eps: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    fast_weights: {randomized: true, noise: 0.2, biased: true, bias: 0.1}
+    h: {randomized: false, noise: 0.2, biased: false, bias: 0.0}

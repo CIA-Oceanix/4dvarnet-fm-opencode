@@ -160,3 +160,12 @@ def test_per_case_inflation_reaches_each_case_and_keeps_scalar_cache_names():
     assert _case_cfg({"inflation": 2.0}, "s0") == {"inflation": 2.0}
     assert inflation_tag(2.0) == "2.0"
     assert inflation_tag({"s1": 2.0, "s0": 1.5}) == "s0-1.5_s1-2.0"
+
+
+def test_fast_ring_fill_slow_only_row_filled_with_zero():
+    v = torch.randn(3, 24)
+    v[1, 8:] = float("nan")
+    out = make_fast_ring_fill()(v)
+    assert torch.equal(out[1, :8], v[1, :8])
+    assert torch.equal(out[1, 8:], torch.zeros(16))
+    assert torch.equal(out[[0, 2]], v[[0, 2]])

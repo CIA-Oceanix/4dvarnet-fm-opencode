@@ -78,7 +78,9 @@ def make_fast_ring_fill(NO: int = 8, J_truth: int = 4, J_obs: int = 2):
     :func:`make_obs_j_indices`) by linear interpolation along the periodic
     fast ring (``Y[k, j]`` at position ``k*J_truth + j`` of ``NO*J_truth``)
     from the fast channels observed in the same vector. Slow channels and
-    fully observed or fully missing rows are left as they are."""
+    fully observed rows are left as they are; a row with NO observed fast
+    channel (slow-only observing system) is filled with 0, the same value the
+    P1 initialization gives the never-observed fast channels."""
     pos = np.array([k * J_truth + j for k in range(NO) for j in range(J_obs)], dtype=float)
     period = NO * J_truth
 
@@ -87,7 +89,9 @@ def make_fast_ring_fill(NO: int = 8, J_truth: int = 4, J_obs: int = 2):
         fast = flat[:, NO:].detach().cpu().numpy().astype(np.float64)
         for row in fast:
             seen = np.isfinite(row)
-            if seen.any() and not seen.all():
+            if not seen.any():
+                row[:] = 0.0
+            elif not seen.all():
                 row[~seen] = np.interp(pos[~seen], pos[seen], row[seen], period=period)
         out = flat.clone()
         out[:, NO:] = torch.from_numpy(fast).to(out)
@@ -451,6 +455,8 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             if bl_results[0].ensemble_variance is not None:
                 traj_data["ensemble_variance"] = np.stack(
                     [r.ensemble_variance for r in bl_results], axis=0)
+            if bl_results[0].crps is not None:
+                traj_data["crps"] = np.stack([r.crps for r in bl_results], axis=0)
             np.savez_compressed(_baseline_traj_path(case_name, name, dws_suffix, param_suffix), **traj_data)
             if save_members and getattr(method, "store_ensemble", False):
                 ens = np.stack([r.ensemble for r in bl_results], axis=0)

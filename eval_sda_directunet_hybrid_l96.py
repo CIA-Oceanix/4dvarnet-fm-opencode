@@ -39,6 +39,7 @@ import numpy as np
 import torch
 
 from evaluation.estimate_metrics import (
+    save_members_or_scores,
     evaluate_ensemble_estimates,
     evaluate_estimates,
     save_estimates,
@@ -114,6 +115,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="sda_directunet_hybrid_eval_results.json", help="Output JSON")
+    parser.add_argument("--members-file", default="full", choices=["full", "scores"],
+                        help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
+                             "only (scores_<case>.npz, KBs)")
     parser.add_argument("--normalize-stats", default=None,
                         help="Path to a per-channel norm stats .pt (mean/std), shared by both models. "
                              "When given, obs is normalized before both model calls; DirectUNet's mean "
@@ -182,8 +186,8 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = output_path.parent / f"members_{case}.npz"
-            np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
+            members_path = save_members_or_scores(output_path.parent, case, est["members"],
+                                                  est["truth"], args.members_file)
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])
         else:

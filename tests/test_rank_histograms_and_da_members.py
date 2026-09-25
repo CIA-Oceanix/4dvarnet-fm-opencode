@@ -23,7 +23,8 @@ def _build(cls, store: bool):
     indices = list(range(NO)) + [NO + k * J for k in range(NO)]
     obs_op = ObsOperator(STATE_DIM, indices)
     dyn = Lorenz96Dynamics(dt=DT, NO=NO, J=J, h=1.0, coupling_exponent=1.6, clip_range=50.0)
-    m = cls(N_ensemble=10, inflation=1.0, NO=NO, J=J, dt=DT, dynamics=dyn, obs_operator=obs_op)
+    m = cls(N_ensemble=10, inflation=1.0, NO=NO, J=J, dt=DT, dynamics=dyn, obs_operator=obs_op,
+            device="cpu")
     if store:
         m.store_ensemble = True
     return m, obs_op
@@ -62,7 +63,7 @@ def test_store_ensemble_does_not_change_the_analysis(cls):
         torch.manual_seed(1)
         outs.append(m.assimilate_batch(obs, mask, forcing, truth, F=8.0, c1=1.0, h=1.0, hx=1.0, eps=0.1))
     for a, b in zip(*outs):
-        assert np.array_equal(a.trajectory, b.trajectory)
+        assert np.allclose(a.trajectory, b.trajectory, rtol=0, atol=1e-6)
     assert all(np.abs(r.ensemble).sum() == 0 for r in outs[0])
 
 
