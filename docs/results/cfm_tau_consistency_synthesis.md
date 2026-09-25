@@ -93,7 +93,7 @@ Spread/RMSE, pooled convention (#252, #256).
 - The last Euler step returns `D` directly, so the members are pulled together at the end.
 - This is the motivation of EDM-style skip preconditioning.
 
-**Test (open, §6).** One PSC run with `D = τ·x + (1 − τ)·net`. If the parameterisation is the cause, three things move:
+**Test (open; §6, item 1).** One PSC run with `D = τ·x + (1 − τ)·net`. If the parameterisation is the cause, three things move:
 - NS1c at τ = 0.9 rises toward 1;
 - the rank-histogram tails flatten;
 - the ODE-limit dispersion matches Van's.
@@ -137,4 +137,4 @@ After correcting spread and per-channel mean bias (#260, S0 regular grid, 30 mem
 
 - One checkpoint per model for the P1 recipe; 3 seeds for L96B at 400 epochs; 1 seed at 1200 epochs.
 - The probe identities (E1, NS1, B4) are evaluated on the regular-grid test set, which lies inside the L96B training distribution. The random-layout set reproduced every pattern it was checked on (#256).
-- The mechanism in §3 is an interpretation of consistent measurements. It is not a controlled result until the §6.1 test runs.
+- The mechanism in §3 is an interpretation of consistent measurements. It is not a controlled result until the skip-connection test (§6, item 1) runs.

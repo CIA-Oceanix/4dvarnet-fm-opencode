@@ -85,14 +85,15 @@ def test_default_sampler_uses_the_early_fine_grid_and_attribute_overrides_it():
 
 
 def test_variance_terms_match_an_autograd_jvp():
-    model, batch = _randomize(_psc(var_weight=1.0)), _batch()
+    model, batch = _randomize(_psc(var_weight=1.0)).double(), _batch()
+    batch.obs, batch.forcing, batch.states = batch.obs.double(), batch.forcing.double(), batch.states.double()
     x1 = batch.states
-    tau = torch.tensor([0.2, 0.5, 0.8])
+    tau = torch.tensor([0.2, 0.5, 0.8], dtype=torch.float64)
     x_tau = model.interpolant.mix(torch.randn_like(x1) * model.sigma_prior, x1, tau)
     torch.manual_seed(11)
     jac, _ = model.variance_terms(x_tau, batch, tau, x1)
     torch.manual_seed(11)
-    u = torch.randint(0, 2, x_tau.shape).float() * 2 - 1
+    u = torch.randint(0, 2, x_tau.shape).to(x_tau.dtype) * 2 - 1
     model.eval()
     xg = x_tau.clone().requires_grad_(True)
     v = torch.zeros_like(x_tau, requires_grad=True)
