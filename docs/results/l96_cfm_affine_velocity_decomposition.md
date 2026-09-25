@@ -1,6 +1,6 @@
 # Affine decomposition of the CFM velocity, and what it costs to exploit it
 
-**Status:** DRAFT for review (2026-09-15). Derivation + a measurement on two
+**Status:** RESULTS, draft for review (2026-09-15). Derivation + a measurement on two
 trained L96 checkpoints, via `reports/l96/probe_cfm_affine_decomposition.py`.
 Analysis only — no model, training or evaluation code is changed by this note.
 
@@ -249,7 +249,7 @@ Agreement ~1.5% (V3) / ~4% (FDV1CFM). Two further confirmations:
    quality ($\hat m$ RMSE 0.522 vs 0.515) but very different late-$\tau$ residuals, the
    blow-up is a property of the **residual/velocity stage**, not of the posterior — V2's
    explicitly two-stage design (mean estimator + residual CFM) handles $\tau\to1$
-   cleanly. See `docs/results/psi_decomposition_results.md` §1.
+   cleanly. See `docs/results/l96_psi_decomposition.md` §1.
 
 ### Open / caveats
 

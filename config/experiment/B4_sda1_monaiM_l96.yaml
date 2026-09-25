@@ -1,6 +1,6 @@
 # @package _global_
 # SDA1 unconditional prior, M tier, at the default configuration
-# (monai + cosine + normalize), per docs/scoping/monai_default_config_benchmark_plan.md.
+# (monai + cosine + normalize), per the P1 recipe (reports/l96/outputs/p1_l96_benchmark.md, Protocol).
 #
 # Fixes two defects in SDA1_monai_prior_l96_norm: it had NO cosine annealing
 # (the key was unset and it ran 2026-09-08, before the default flipped to True),

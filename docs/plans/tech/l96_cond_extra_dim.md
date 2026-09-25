@@ -1,5 +1,7 @@
 # Plan: Clean conditioning separation (Option B1) — L1/L2 only
 
+**Status:** DESIGN — confirmed decisions for the `cond_extra_dim` conditioning separation (Option B1), L96 L1/L2 only.
+
 ## Confirmed decisions
 - Option B1 (minimal refactor: `cond_extra_dim` in `UNet1D`/`ConditionEncoder`)
 - New param: `cond_extra_dim` (default 0)

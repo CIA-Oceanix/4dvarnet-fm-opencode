@@ -5,9 +5,9 @@ M members and scores, per step: the member-averaged prediction (the implied
 E[x1|y] at that tau), single members, their spread, the cross-tau error
 correlation, uniform / cross-validated optimal averages over tau, and the
 endpoint RMSE vs step count. Pooled all_obs RMSE in physical units.
-See docs/results/cfm_tau_consistency.md.
+See docs/results/l96_cfm_tau_consistency.md.
 
-Opt-in extras (docs/results/cfm_tau_consistency_ns1.md), off by default so the
+Opt-in extras (docs/results/l96_cfm_tau_consistency_ns1.md), off by default so the
 default output is unchanged: --x0-zero (NS0a, one deterministic path from x0=0)
 and --steps-grid/--members-grid (NS0c, endpoint ensemble-mean RMSE per N steps x
 M members, cost N*M calls). --skip-main runs only the extras.

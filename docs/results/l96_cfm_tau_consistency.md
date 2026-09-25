@@ -2,7 +2,7 @@
 
 **Status:** RESULTS (2026-09-23). Two probes on the P1 M-tier monai flows, L96 S0,
 200 cached test windows. Analysis only — no model, training or evaluation code is
-changed. Next steps: `docs/scoping/cfm_tau_consistency_next_steps.md`.
+changed. Next steps: `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md`.
 
 **Question.** In the P1 benchmark (`reports/l96/outputs/p1_l96_benchmark.md`) the
 ODE ensemble mean of every flow beats that same flow's τ=0 prediction
@@ -23,7 +23,7 @@ known under-dispersion (spread/RMSE ≈ 0.4–0.55) is generated.
 
 ## 1. Setup and notation
 
-Matching `models/vanilla_cfm.py` and `docs/results/cfm_affine_velocity_decomposition.md`:
+Matching `models/vanilla_cfm.py` and `docs/results/l96_cfm_affine_velocity_decomposition.md`:
 
 - `x_tau = tau x1 + (1 - tau) x0`, with `x0 ~ N(0, s0² I)`, `s0 = sigma_prior = 0.5`, in the normalized space. Write `b_tau = (1 - tau) s0`.
 - `D(x, tau, y) = E[x1 | x_tau = x, y]`. PredictStateCFM outputs `D` directly; VanillaCFM outputs `v`, and `D = x + (1 - tau) v`.

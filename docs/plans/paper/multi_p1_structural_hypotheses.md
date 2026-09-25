@@ -1,7 +1,7 @@
 # The structural hypotheses that bound data assimilation — DA-venue scoping
 
 **Status:** SCOPING v2 (2026-09-20), targeting **JAMES**. Companion to
-`docs/scoping/ml_paper_exploiting_prior_knowledge.md`, which after its
+`docs/plans/paper/multi_ml_prior_knowledge.md`, which after its
 2026-09-17 revision (§8.0) keeps the `Ψ_mean/Ψ_G/Ψ_NG` operator partition and
 the matched-budget mean-slot comparison. **This doc owns the model-error and
 observation-sparsity axes**; see §10 decision 1 for the split, which is now
@@ -56,7 +56,7 @@ sensitivity to it (§4.1.2). D4 tests the first, D7 the second.
 **A fourth hypothesis, named here but not argued here.** **H4 (gradients are
 valuable when available)** — that the adjoint of the dynamics, or of a
 variational cost built on it, is what makes an estimator efficient. H4 is
-**owned by P2** (`docs/scoping/p2_unrolled_solvers_and_flows.md`), where it
+**owned by P2** (`docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md`), where it
 belongs: its sharp form is a statement about the learned operator family at S0
 — that *differentiability is a training-time requirement, not an inference-time
 one*. This paper retains only its classical corollary, **C7**, which lives on
@@ -626,7 +626,7 @@ scope rather than over-claim transfer to operational systems.
 
 1. ~~**The split with the companion ML doc.**~~ **CLOSED (2026-09-18).** There
    are now three papers, split by testbed, and the boundary is recorded in
-   `docs/scoping/p2_unrolled_solvers_and_flows.md` §9: the ML doc owns families
+   `docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md` §9: the ML doc owns families
    A/B/C and is **deliberately non-DA**; **this paper** owns the model-error axis
    on L96/QG; **P2** owns the operator family and the observation-sparsity axis
    at S0. The matched-budget mean-slot comparison went to **P2** (M2), not to the

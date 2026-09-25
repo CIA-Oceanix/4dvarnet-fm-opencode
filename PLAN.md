@@ -2209,7 +2209,7 @@ These were proposed alongside the S1 ens30 study (Phase A, done 2026-08-24) but 
 
 Investigate whether a Tweedie-style two-stage decomposition or a diffusion-style
 variant improves on VanillaCFM for L96. **Design doc drafted 2026-08-25**
-(`docs/scoping/phase_B_l96_cfm_variants.md`) — defines V1 (L96 TweedieSolver port,
+(`docs/plans/analysis/l96_phaseB_cfm_variants.md`) — defines V1 (L96 TweedieSolver port,
 obs-only, `use_energy=false`, 2-stage) and V2 (CFM + Tweedie residual hybrid)
 precisely with reference bars vs L2b/L3/L4 and the open design questions to
 resolve (cond_extra_dim plumbing, energy flag, stage-1 budget, 24D cell
@@ -2242,7 +2242,7 @@ baselines** exist; the L96 joint **neural** models were missing.
   L63 configs `H1_joint_cfm_default.yaml`, `H2_joint_cfm_tau0.yaml`, `S5/S6`; L96
   Joint DA baselines `JointEnKFL96`/`JointETKFL96`/`JointStrong4DVarL96`
   (`evaluation/baselines.py`) + `eval_joint_comparison_l96.py` (ready DA comparator).
-- **Done (2026-08-25):** design doc `docs/scoping/phase_C_l96_joint_neural.md`; L96 joint
+- **Done (2026-08-25):** design doc `docs/plans/analysis/l96_phaseC_joint_neural.md`; L96 joint
   neural models `JointCFM` (port) + `JointDirectUNet` (new); 3 configs L7/L8/L9;
   `data/lorenz96.py` flattens `fast_weights` to per-index `w1..w4`/`true_w1..`/`_da`
   scalar keys; `train.py`/`lightning_module.py` dispatch; `eval_joint_neural_l96.py`
@@ -2586,7 +2586,7 @@ time of writing -- code lives on `feature/l96-obs-density-augmented-report`).
 ### Phase 0: Plan
 - [x] Initial PLAN.md created
 - [x] CS3/CS4 experiment plan in `docs/papers/case_studies.tex`
-- [x] Exp G (τ=0) experiment plan in `docs/scoping/experiment_G_tau0_cfm.md`
+- [x] Exp G (τ=0) experiment plan in `docs/plans/analysis/l63_expG_tau0_cfm.md`
 
 ### Phase 1: Implementation (complete)
 - [x] `models/direct_unet.py` — DirectUNet nn.Module

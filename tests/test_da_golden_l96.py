@@ -1,6 +1,6 @@
 """Tier A1 numerical-regression tests for the L96 DA baselines.
 
-See ``docs/scoping/test_suite_redesign.md``.
+See ``docs/plans/tech/multi_test_suite_redesign.md``.
 
 WHY GOLDEN VALUES RATHER THAN BOUNDS
 ------------------------------------

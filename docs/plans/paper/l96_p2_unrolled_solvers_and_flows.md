@@ -1,8 +1,8 @@
 # What a flow adds to an unrolled variational solver, and what it cannot — DA-venue scoping (P2)
 
 **Status:** SCOPING v1 (2026-09-18), targeting **JAMES** as a sequel to the
-4DVarNet line. Companion to `docs/scoping/da_paper_structural_hypotheses.md`
-(P1, the diagnosis paper) and `docs/scoping/ml_paper_exploiting_prior_knowledge.md`
+4DVarNet line. Companion to `docs/plans/paper/multi_p1_structural_hypotheses.md`
+(P1, the diagnosis paper) and `docs/plans/paper/multi_ml_prior_knowledge.md`
 (the non-DA ML paper). §9 fixes the boundary between the three.
 
 **S0 only.** This paper makes no claim about model error; see §5.0 for why that
@@ -178,7 +178,7 @@ All S0, L96, 200 windows unless stated.
 
 ### 4.1 The decomposition is validated on trained checkpoints
 
-From `docs/results/cfm_affine_velocity_decomposition.md` (on `master` since #211),
+From `docs/results/l96_cfm_affine_velocity_decomposition.md` (on `master` since #211),
 on two trained checkpoints (V3, FDV1CFM):
 
 - the closed-form gain matches the least-squares optimum to **~1.5% (V3) / ~4%

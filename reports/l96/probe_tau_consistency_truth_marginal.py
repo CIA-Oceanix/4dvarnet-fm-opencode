@@ -14,8 +14,8 @@ i.e. exactly the distribution the network was trained on.
         E|x1 - D(x_tau)|^2 = (b_tau^2 / tau) E[tr grad_x D] / n, ratio 1 when exact;
         tr by Hutchinson with central finite-difference JVPs (eps = 1e-2).
 
-Normalized space. See docs/results/cfm_tau_consistency_ns1.md and
-docs/scoping/cfm_tau_consistency_next_steps.md (v3).
+Normalized space. See docs/results/l96_cfm_tau_consistency_ns1.md and
+docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md (v3).
 """
 import argparse
 import json

@@ -1,5 +1,5 @@
 """PredictStateCFM tau-consistency training options (T1', T1, T2a/T2b, T4a) and the
-LitModel EMA teacher. See docs/scoping/cfm_tau_consistency_next_steps.md."""
+LitModel EMA teacher. See docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md."""
 from types import SimpleNamespace
 
 import pytest

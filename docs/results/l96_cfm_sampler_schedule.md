@@ -1,6 +1,6 @@
 # S1 — sampler-side test of the variance collapse (no retraining)
 
-**Status:** RESULTS (2026-09-24). Step S1 of `docs/scoping/cfm_tau_consistency_next_steps.md` v4.
+**Status:** RESULTS (2026-09-24). Step S1 of `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v4.
 
 - Checkpoints: the P1 M-tier monai flows, PredictStateCFM-M (PSC) and VanillaCFM-M (Vanilla), archived under `4dvarnet-fm-fdv-tau-aware/experiments/`.
 - Data: L96 S0, 200 cached test windows, 30 members.

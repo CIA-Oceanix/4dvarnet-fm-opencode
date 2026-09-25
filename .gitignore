@@ -72,7 +72,7 @@ batch/logs/
 # Strong-4DVar tuning scratch probes (single-window; not in the report)
 reports/qg/outputs/qg_tune_4dvar/
 
-# Nested topic worktrees (see docs/worktrees.md). These are git worktrees living
+# Nested topic worktrees (see docs/plans/tech/worktrees.md). These are git worktrees living
 # inside the master worktree; they are never tracked, and ignoring them keeps
 # `git status` readable.
 4dvarnet-fm-*/

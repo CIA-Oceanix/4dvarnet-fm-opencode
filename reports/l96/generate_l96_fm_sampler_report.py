@@ -212,7 +212,7 @@ network's operator after subtracting that specific affine part. Re-using the
 network's `Psi_NG` beneath a different gain `K~` is inconsistent, and the
 inconsistency dominates. Real decoupling would require retraining `Psi_NG` against
 the new affine part, which is precisely the argument for the unrolled-mean
-architecture in `docs/results/cfm_affine_velocity_decomposition.md` §5.
+architecture in `docs/results/l96_cfm_affine_velocity_decomposition.md` §5.
 """
 
 def cold_vs_baseline(data, baseline="Strong-4DVar"):

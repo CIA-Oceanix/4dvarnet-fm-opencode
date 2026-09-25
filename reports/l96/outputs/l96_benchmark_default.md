@@ -6,7 +6,7 @@ Two-scale L96, 24D observed space (8 slow + 16 fast), 200 shared test windows, S
 
 - **Training (benchmark default, `config/l96_benchmark_default.yaml`)**: P1 recipe (monai, `normalize`, cosine annealing, 400 epochs, lr 1e-3, clip 10, batch 16) with a random observing system redrawn every batch with fresh noise -- 10-300 stratified obs times (step 0 always observed), 4-16 observed fast channels per window (subset per obs time), slow channels always. Validation windows re-observed once with a fixed seed from the same distribution (checkpoint = `stage1_best` by that val loss). 3 seeds.
 - **P1 fixed obs**: the P1 checkpoints -- regular 30-obs grid, noise frozen per window across epochs.
-- **Flow sampling (VanillaCFM, PredictStateCFM)**: 30 members, 20 early-fine Euler steps tau_k = 1-(1-k/20)^0.5 (the models' default grid since 2026-09-24; earlier renders of this report used 10 uniform steps, `ens30_no10`). See `docs/results/cfm_tau_consistency_l96b.md`.
+- **Flow sampling (VanillaCFM, PredictStateCFM)**: 30 members, 20 early-fine Euler steps tau_k = 1-(1-k/20)^0.5 (the models' default grid since 2026-09-24; earlier renders of this report used 10 uniform steps, `ens30_no10`). See `docs/results/l96_cfm_tau_consistency_l96b.md`.
 - **SDA**: the P1 checkpoints unchanged -- the prior and its validation loss never see observations, so the obs protocol does not apply to training. Guided sampling: 30 members, 10 steps, guidance weight 20 (tuned on the regular grid), r_var 0.5, with the NaN-channel guidance fix (#244).
 - **DA**: ETKF / EnKF (30 members, inflation S0 1.5 / S1 2.0), Strong-4DVar; per-window `fast_weights` in the forward model; DA window 500.
 - **Regular test set**: the P1 cache, 30 regular obs times, all 24 channels.

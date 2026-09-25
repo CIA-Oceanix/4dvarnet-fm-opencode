@@ -215,7 +215,7 @@ spatial layout. See R3.
 - **S1-struct-param:** the DA model replaces the cross triads with drag, i.e.
   a bulk parameterization.
 
-The standing caveat in `docs/scoping/README.md` applies unchanged: these
+The standing caveat in `docs/README.md` applies unchanged: these
 scenarios price model error **only for methods that run a forward model at
 inference**. A model-free neural row's S1/S0 ratio is definitional.
 
@@ -268,7 +268,7 @@ inference**. A model-free neural row's S1/S0 ratio is definitional.
 - The core still changes weekly. A copy would drift and break like-for-like
   cross-case tables.
 - The fences are the `cgoa_*` / `maooam_*` prefixes, the dedicated worktree
-  `4dvarnet-fm-cgoa` (see `docs/worktrees.md`), and this note instead of a new
+  `4dvarnet-fm-cgoa` (see `docs/plans/tech/worktrees.md`), and this note instead of a new
   `PLAN.md` section.
 - Revisit if the case needs a different stack or becomes a separate project.
 

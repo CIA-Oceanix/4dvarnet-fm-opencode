@@ -2,7 +2,7 @@
 
 First draft of the DA-venue diagnosis paper. Target: **JAMES**.
 
-**Source of truth is `docs/scoping/da_paper_structural_hypotheses.md` (SCOPING
+**Source of truth is `docs/plans/paper/multi_p1_structural_hypotheses.md` (SCOPING
 v2), not this directory.** The draft renders that document's argument; it does
 not supersede it. If a number changes in the scoping doc or the underlying
 report, change it here too.

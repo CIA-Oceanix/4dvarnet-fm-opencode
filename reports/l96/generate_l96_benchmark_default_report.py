@@ -236,7 +236,7 @@ def main() -> None:
     A.append("- **Flow sampling (VanillaCFM, PredictStateCFM)**: 30 members, 20 early-fine Euler "
              "steps tau_k = 1-(1-k/20)^0.5 (the models' default grid since 2026-09-24; earlier "
              "renders of this report used 10 uniform steps, `ens30_no10`). See "
-             "`docs/results/cfm_tau_consistency_l96b.md`.")
+             "`docs/results/l96_cfm_tau_consistency_l96b.md`.")
     A.append("- **SDA**: the P1 checkpoints unchanged -- the prior and its validation loss never see "
              "observations, so the obs protocol does not apply to training. Guided sampling: 30 "
              "members, 10 steps, guidance weight 20 (tuned on the regular grid), r_var 0.5, with "

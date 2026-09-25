@@ -1,11 +1,11 @@
 # Phase C-adjacent — L96 Joint State-Parameter ETKF DA Baseline (design doc)
 
-**Status:** designed for execution (branch `feature/l96-joint-da-benchmark`).
+**Status:** PLAN, designed for execution (branch `feature/l96-joint-da-benchmark`).
 **System:** Lorenz-96 two-scale (NO=8, J=4), observed subspace 24D (`obs_j=2`, Obs30).
 **Scope:** Redesign `JointETKFL96` from scratch and benchmark it against `ETKF` on the
 cached S0/S1 test set (200 windows), producing a standalone DA report.
 
-This is the L96 analogue of the L63 `docs/results/joint_estimation_progress.md`, scoped
+This is the L96 analogue of the L63 `docs/results/l63_joint_estimation_progress.md`, scoped
 specifically to the **ETKF** joint state-parameter problem (F, c1, hx, eps, w1..w4;
 h fixed), evaluated apples-to-apples with the L7/L8/L9 joint neural models.
 

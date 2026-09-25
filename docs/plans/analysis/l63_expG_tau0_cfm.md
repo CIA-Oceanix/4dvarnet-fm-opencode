@@ -1,5 +1,7 @@
 # Experiment G: VanillaCFM with τ=0 Training
 
+**Status:** PLAN — motivation, expected outcomes and run command only; the outcomes live in the L63 reports (`reports/l63/outputs/`).
+
 ## Motivation
 
 Test whether VanillaCFM's advantage over DirectUNet comes from multi-τ

@@ -78,7 +78,7 @@ The spread and bias corrections use the truth. They are diagnostics, not usable 
 3. **VanillaCFM's posterior shape is essentially right.**
    - P1, 20 steps: RI_db = 0.03 and extreme_db = 1.00. Its only defect was spread, and the early-fine sampler largely fixes that; the old 10-step uniform sampler also distorted shape (RI_db 0.08).
    - Benchmark default: 0.04–0.11 across seeds, and seed 3 is nearly flat even raw (RI 0.02).
-4. **PredictStateCFM's light tails are structural.** RI_db ≈ 0.12–0.13 and extreme_db ≈ 1.6–1.8 are the same under the P1 and benchmark recipes, for every seed and both samplers. This is consistent with its late-τ Jacobian defect (NS1c ≈ 0.07 at τ = 0.9, `docs/results/cfm_tau_consistency_l96b.md`).
+4. **PredictStateCFM's light tails are structural.** RI_db ≈ 0.12–0.13 and extreme_db ≈ 1.6–1.8 are the same under the P1 and benchmark recipes, for every seed and both samplers. This is consistent with its late-τ Jacobian defect (NS1c ≈ 0.07 at τ = 0.9, `docs/results/l96_cfm_tau_consistency_l96b.md`).
 
 ## Consequences for the P1 paper (proposed; not edited here)
 

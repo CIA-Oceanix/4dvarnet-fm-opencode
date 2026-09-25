@@ -1,8 +1,8 @@
 # τ-consistency on true marginals (NS1) and the sampler-side cost grid (NS0)
 
-**Status:** RESULTS (2026-09-24). Track A of `docs/scoping/cfm_tau_consistency_next_steps.md` (v3).
+**Status:** RESULTS (2026-09-24). Track A of `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` (v3).
 Diagnostics only: no model, training or evaluation code is changed. Follows
-`docs/results/cfm_tau_consistency.md` (property labels A1, B4, D1, E1 are that doc's).
+`docs/results/l96_cfm_tau_consistency.md` (property labels A1, B4, D1, E1 are that doc's).
 
 **Checkpoints.** The P1 M-tier monai flows, archived under
 `4dvarnet-fm-fdv-tau-aware/experiments/`:
@@ -11,7 +11,7 @@ Diagnostics only: no model, training or evaluation code is changed. Follows
 
 **Data and settings.** L96 S0, 200 cached test windows. Scripts:
 - `reports/l96/probe_tau_consistency_truth_marginal.py` (NS1): normalized space; 30 ODE members (N=10) for `g` and `D0`; 4 draws of x0 per window for each truth-built `x_tau`.
-- `reports/l96/probe_ode_mean_along_path.py --x0-zero --steps-grid --members-grid --skip-main` (NS0): pooled RMSE in physical units, the convention of `docs/results/cfm_tau_consistency.md` §2.
+- `reports/l96/probe_ode_mean_along_path.py --x0-zero --steps-grid --members-grid --skip-main` (NS0): pooled RMSE in physical units, the convention of `docs/results/l96_cfm_tau_consistency.md` §2.
 
 Outputs are in `reports/l96/outputs/cfm_tau_consistency/{ns1_truth_marginal,ns0_cost_grid}_{psc_m,vanilla_m}_s0.json`.
 95% CIs are from a window bootstrap with 200 resamples.
@@ -108,7 +108,7 @@ Endpoint ensemble-mean RMSE (physical units, pooled all_obs) and network calls
 | **PSC** | 0.454 | 0.444 | **0.430** | 0.417 | 0.416 | **0.411** | 0.409 | 0.400 |
 | **VanillaCFM** | 0.474 | 0.446 | **0.441** | 0.415 | 0.413 | **0.407** | 0.404 | 0.389 |
 
-The 10×30 column is from `docs/results/cfm_tau_consistency.md` §2.
+The 10×30 column is from `docs/results/l96_cfm_tau_consistency.md` §2.
 
 - **NS0a (a path from x0 = 0) is uninformative, as v3's caveat anticipated.**
   - The deterministic path scores 0.510 (PSC) and 0.799 (VanillaCFM), worse than a single random member.
@@ -142,5 +142,5 @@ Batch 1, then Batch 2."*
 - One checkpoint per model, S0 only. P1 measured 15–21% checkpoint-selection noise, so the magnitudes can move; the qualitative pattern (defect ≤ τ 0.2; NS1b ≈ 0 for s ≥ 0.2) is shared by both parameterisations.
 - NS1a uses `g = ODE mean − D0` as its only test feature. Orthogonality to one feature is necessary, not sufficient.
 - NS1b uses two features. The martingale could fail along directions they do not span.
-- NS1c's ratios use the pooled trace (the sum over all coordinates). The diagonal Jacobian over a 3000-step window is dominated by directions where the posterior covariance is tiny (see `docs/results/cfm_tau_consistency.md` §3 reading 5), but the identity is exact in trace, so the ratio stays valid.
+- NS1c's ratios use the pooled trace (the sum over all coordinates). The diagonal Jacobian over a 3000-step window is dominated by directions where the posterior covariance is tiny (see `docs/results/l96_cfm_tau_consistency.md` §3 reading 5), but the identity is exact in trace, so the ratio stays valid.
 - NS0 uses the same seed and draws for every grid cell within a step count N, but cells with different N are independent draws.

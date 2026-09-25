@@ -16,7 +16,7 @@ history (#248).
   - keeps **T2a′** as an optional last test of the first-moment line.
 
 Property labels (A1, B4, D1, E1, NS1a–c) are those of
-`docs/results/cfm_tau_consistency.md` and `docs/results/cfm_tau_consistency_ns1.md`.
+`docs/results/l96_cfm_tau_consistency.md` and `docs/results/l96_cfm_tau_consistency_ns1.md`.
 
 ---
 
@@ -59,7 +59,7 @@ and two consequences follow:
 
 ### S1 — stochastic sampler on the existing P1 checkpoints (no retraining; **done**)
 
-> **Outcome (2026-09-24, `docs/results/cfm_sampler_schedule.md`): the "mixed" row of the decision rule below.**
+> **Outcome (2026-09-24, `docs/results/l96_cfm_sampler_schedule.md`): the "mixed" row of the decision rule below.**
 > - **Stochasticity (η > 0) lowers the spread** on both models: rejected.
 > - **With uniform Euler steps, spread/RMSE saturates with N**, at ≈ 0.64 (PSC) and ≈ 0.81 (Vanilla). The gap from there to 1 is the operator's share.
 > - **Fine early steps are a free win at the current cost.** With the schedule `tau_k = 1 − (1 − k/N)^0.5`, N = 10: CRPS −4.4% (PSC) / −2.0% (Vanilla), RMSE slightly better, spread/RMSE 0.53 → 0.61 / 0.66 → 0.73.
@@ -96,7 +96,7 @@ The flat-in-τ B4 check is reported for the chosen η too, via `probe_tau_consis
 
 ### T5 — second-order (variance) consistency loss (4 runs: 2 values of λ × 2 seeds)
 
-> **Outcome (2026-09-24, `docs/results/cfm_tau_consistency_t5.md`): negative as implemented.**
+> **Outcome (2026-09-24, `docs/results/l96_cfm_tau_consistency_t5.md`): negative as implemented.**
 > - λ = 10 is inside the noise band, with no calibration change; it scaled the Jacobian term *down* ≈ 10–15% at every τ.
 > - λ = 100 diverged at switch-on.
 > - Cause: the single-probe squared loss is biased; its expectation adds the Hutchinson variance, which rewards shrinking the whole Jacobian.

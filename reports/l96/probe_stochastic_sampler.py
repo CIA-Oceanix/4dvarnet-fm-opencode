@@ -9,7 +9,7 @@ where v is the variance of q(x_tau | x_s, x1) under the forward-noising kernel
 x_s = (s/tau) x_tau + c xi', c^2 = b_s^2 - (s/tau)^2 b_tau^2. eta = 0 is exactly the Euler
 ODE step of the CFM sampler; eta = 1 is the ancestral sampler (at s = 0: fresh noise).
 Every eta keeps x_tau | x1 on the path marginal when D is exact, so eta trades the ODE's
-accumulated contraction against injected noise. See docs/results/cfm_sampler_schedule.md.
+accumulated contraction against injected noise. See docs/results/l96_cfm_sampler_schedule.md.
 """
 import argparse
 import json

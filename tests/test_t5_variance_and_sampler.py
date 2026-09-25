@@ -1,5 +1,5 @@
 """Early-fine Euler grid for VanillaCFM / PredictStateCFM sampling, and the T5 second-order
-(variance) consistency loss. See docs/scoping/cfm_tau_consistency_next_steps.md v4."""
+(variance) consistency loss. See docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md v4."""
 from types import SimpleNamespace
 
 import pytest

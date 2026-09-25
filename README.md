@@ -45,7 +45,7 @@ without re-running the science.
 | doc | what it covers |
 |---|---|
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | worked path, conventions, gotchas |
-| [`docs/scoping/refactor_plan.md`](docs/scoping/refactor_plan.md) | where the code structure is heading |
+| [`docs/plans/tech/multi_refactor_plan.md`](docs/plans/tech/multi_refactor_plan.md) | where the code structure is heading |
 | [`AGENTS.md`](AGENTS.md) | session workflow, git/PR rules, changelog policy |
 | [`PLAN.md`](PLAN.md) | the running scientific design plan |
-| [`docs/worktrees.md`](docs/worktrees.md) | the one-worktree-per-topic setup |
+| [`docs/plans/tech/worktrees.md`](docs/plans/tech/worktrees.md) | the one-worktree-per-topic setup |
