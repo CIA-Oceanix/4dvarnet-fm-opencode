@@ -18,6 +18,7 @@
 - Settles the paper's largest open experiment.
 - DA members are ~1.7 GB per method and Odyssey is nearly full, so nothing large is written there.
 
+**Members location:** after #259, `--save-members` writes through `evaluation/members_store.py` (node-local /tmp by default; `--keep-members` / `FDV_KEEP_MEMBERS=1` keeps them next to the trajectories).
 **Verification:**
 - `pytest` over the baseline and DA suites plus the new tests: 120 passed. The DA golden values are unchanged, and the stored members' mean equals the analysis.
 - The DA re-runs reproduce the stored RMSEs to within 0.4%.

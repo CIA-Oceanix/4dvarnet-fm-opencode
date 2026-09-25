@@ -117,3 +117,15 @@ def test_mean_bias_is_a_ramp_removed_by_debiasing(tmp_path):
     r = prh.analyse("bias", _write(tmp_path, members, truth + 0.8, "bias"), seed=0)["all_obs"]
     assert r["rank_bias"] > 0.15 and r["ri_shape"] > 0.3
     assert r["ri_debiased"] < 0.06 and abs(r["rank_bias_debiased"]) < 0.02
+
+
+def test_da_members_default_to_node_local_tmp(tmp_path, monkeypatch):
+    from evaluation.run_l96 import da_members_path
+    monkeypatch.delenv("FDV_KEEP_MEMBERS", raising=False)
+    monkeypatch.setenv("FDV_MEMBERS_TMP", str(tmp_path / "node"))
+    traj = str(tmp_path / "exp" / "l96_baselines_trajs_s0_ETKF.npz")
+    local = da_members_path(traj)
+    assert local.startswith(str(tmp_path / "node")) and local.endswith("l96_baselines_trajs_s0_ETKF_members.npz")
+    assert da_members_path(traj, keep=True) == str(tmp_path / "exp" / "l96_baselines_trajs_s0_ETKF_members.npz")
+    monkeypatch.setenv("FDV_KEEP_MEMBERS", "1")
+    assert da_members_path(traj) == str(tmp_path / "exp" / "l96_baselines_trajs_s0_ETKF_members.npz")

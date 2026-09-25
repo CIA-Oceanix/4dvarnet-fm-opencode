@@ -33,7 +33,7 @@ def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
                   obs_j=2, s1_j=None, eval_j=None, obs_interval=100, fw_randomized=False,
-                  da_fast_weights=False, save_members=False):
+                  da_fast_weights=False, save_members=False, keep_members=False):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -51,7 +51,8 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        obs_interval=obs_interval,
                                        fw_randomized=fw_randomized,
                                        da_fast_weights=da_fast_weights,
-                                       save_members=save_members)
+                                       save_members=save_members,
+                                       keep_members=keep_members)
     return results
 
 
@@ -104,6 +105,9 @@ def main():
     parser.add_argument("--skip-strong", action="store_true", default=False)
     parser.add_argument("--save-members", action="store_true", default=False,
                         help="ETKF/EnKF: also write the full ensembles (*_members.npz) for rank histograms")
+    parser.add_argument("--keep-members", action="store_true", default=False,
+                        help="with --save-members: write next to the trajectories instead of node-local /tmp "
+                             "(also FDV_KEEP_MEMBERS=1; see evaluation/members_store.py)")
     parser.add_argument("--randomize-params", type=str, default=None,
                         help="Comma-separated list of params to randomize (e.g. 'F' or 'F,c1,h,hx,eps'). "
                              "Default: all 5 params randomized.")
@@ -219,7 +223,8 @@ def main():
                                       obs_interval=args.obs_interval,
                                       fw_randomized="fast_weights" in randomize,
                                       da_fast_weights=args.da_fast_weights,
-                                      save_members=args.save_members)
+                                      save_members=args.save_members,
+                                      keep_members=args.keep_members)
 
     print("\n── L96 S0/S1 Comparison Table ──")
     headers = ["Case"]

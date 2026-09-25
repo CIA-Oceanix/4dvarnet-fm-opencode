@@ -23,7 +23,8 @@ T=/tmp/rankhist_${SLURM_JOB_ID}_${i}
 trap 'rm -rf "$T"' EXIT
 FREE=$(df -BG --output=avail /tmp | tail -1 | tr -dc 0-9)
 [ "$FREE" -ge 20 ] || { echo "only ${FREE}G free on /tmp"; exit 1; }
-mkdir -p $T/code/experiments $T/mpl; export MPLCONFIGDIR=$T/mpl
+mkdir -p $T/code/experiments $T/mpl $T/members; export MPLCONFIGDIR=$T/mpl
+export FDV_MEMBERS_TMP=$T/members
 rsync -a --exclude experiments --exclude .git --exclude 'reports/l96/outputs' "${SLURM_SUBMIT_DIR}"/ $T/code/
 ln -s /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt $T/code/experiments/
 cd $T/code
@@ -34,9 +35,9 @@ else
 fi
 python -u evaluate_all_l96.py --da-window-steps 500 --num-test-windows 200 --t-max 3.0   --enkf-inflation $INF --etkf-inflation $INF --obs-j 2 --obs-interval 100 --suffix _s0c   --randomize '{"F": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "c1": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "eps": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}}' --skip-weak --skip-strong --cases s0 --save-members $EXTRA
 ls -la experiments/
-ETKF=$(ls experiments/*ETKF*_members.npz 2>/dev/null | head -1 || true)
-ENKF=$(ls experiments/*EnKF*_members.npz 2>/dev/null | head -1 || true)
-[ -z "$ETKF" ] && ETKF=$(ls experiments/*s0*etkf*members.npz 2>/dev/null | head -1)
+ETKF=$(find $T/members -name '*_s0_ETKF_members.npz' | head -1)
+ENKF=$(find $T/members -name '*_s0_EnKF_members.npz' | head -1)
+[ -n "$ETKF" ] && [ -n "$ENKF" ] || { echo "DA members not found under $T/members"; exit 1; }
 echo "DA members: $ETKF | $ENKF"
 cp experiments/*.json /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_rank_hist/ 2>/dev/null || true
 if [ $i -eq 0 ]; then

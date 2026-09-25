@@ -139,6 +139,15 @@ def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
     return os.path.join(EXP_DIR, f"l96_baselines_trajs{dws_suffix}{param_suffix}_{key}.npz")
 
 
+def da_members_path(traj_path: str, keep: bool = False) -> str:
+    """Where ``--save-members`` writes a DA ensemble: node-local /tmp by default,
+    next to the trajectory file only with ``keep`` / ``FDV_KEEP_MEMBERS=1``
+    (``evaluation.members_store``)."""
+    from evaluation.members_store import members_dir
+    name = os.path.basename(traj_path).replace(".npz", "_members.npz")
+    return str(members_dir(os.path.dirname(os.path.abspath(traj_path)), keep=keep) / name)
+
+
 def _per_group_rmse(mean_rmse, NO=8, obs_j=2):
     groups = {}
     groups["slow"] = float(np.mean(mean_rmse[:NO]))
@@ -308,10 +317,12 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
                              obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
-                             fw_randomized=False, da_fast_weights=False, save_members=False):
-    """``save_members``: ETKF/EnKF also keep their full ensembles and write them next to
-    the trajectory file as ``*_members.npz`` (``members`` (W, T, D, N) and ``truth`` (W, T, D)
-    in the evaluated subspace, the layout of the neural ``members_<case>.npz``)."""
+                             fw_randomized=False, da_fast_weights=False, save_members=False,
+                             keep_members=False):
+    """``save_members``: ETKF/EnKF also keep their full ensembles and write them as
+    ``*_members.npz`` (``members`` (W, T, D, N) and ``truth`` (W, T, D) in the evaluated
+    subspace, the layout of the neural ``members_<case>.npz``), to node-local /tmp unless
+    ``keep_members`` (see ``da_members_path``)."""
     if s1_j is None:
         s1_j = obs_j
     if eval_j is None:
@@ -465,9 +476,11 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                 truth = np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))], axis=0)
                 if truth.shape[-1] > ens.shape[-1]:
                     truth = truth[..., eval_var_indices]
-                np.savez(_baseline_traj_path(case_name, name, dws_suffix, param_suffix).replace(".npz", "_members.npz"),
-                         members=np.ascontiguousarray(ens.transpose(0, 2, 3, 1)).astype(np.float32),
+                mpath = da_members_path(_baseline_traj_path(case_name, name, dws_suffix, param_suffix),
+                                        keep=keep_members)
+                np.savez(mpath, members=np.ascontiguousarray(ens.transpose(0, 2, 3, 1)).astype(np.float32),
                          truth=truth.astype(np.float32))
+                print(f"    members -> {mpath}")
 
             rmse_mean = np.mean(m)
             groups = _per_group_rmse(m, NO=NO, obs_j=obs_j)
