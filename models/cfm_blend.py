@@ -16,8 +16,9 @@ model-averaging control for a VanillaCFM + PredictStateCFM blend.
 """
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -85,24 +86,37 @@ class TauBlendedFlow(VanillaCFM):
         return x
 
 
-class MeanVelocityFlow(VanillaCFM):
-    """Equal-weight average of the velocities of N flows (VanillaCFM and/or PredictStateCFM),
-    integrated on one shared trajectory: an N-network flow ensemble at sampling time."""
+def random_weight_schedule(n_flows: int, seed: int, n_knots: int = 5) -> tuple:
+    """Random tau-varying simplex weights: Dirichlet(1) weights at n_knots equispaced tau,
+    linearly interpolated (stays on the simplex). Returns (w(tau) -> weights, knot array)."""
+    knots = np.random.RandomState(seed).dirichlet(np.ones(n_flows), size=n_knots)
+    grid = np.linspace(0.0, 1.0, n_knots)
+    return (lambda tau: [float(np.interp(tau, grid, knots[:, i])) for i in range(n_flows)]), knots
 
-    def __init__(self, flows: list):
+
+class MeanVelocityFlow(VanillaCFM):
+    """Weighted average of the velocities of N flows (VanillaCFM and/or PredictStateCFM),
+    integrated on one shared trajectory: an N-network flow ensemble at sampling time. Equal
+    weights by default; ``weights(tau)`` gives tau-varying ones (see random_weight_schedule)."""
+
+    def __init__(self, flows: list, weights: Optional[Callable[[float], Sequence[float]]] = None):
         nn.Module.__init__(self)
         if len(flows) < 2 or not all(isinstance(f, VanillaCFM) or isinstance(f, PredictStateCFM) for f in flows):
             raise TypeError("need at least two VanillaCFM / PredictStateCFM flows")
         if len({(f.sigma_prior, f.state_dim) for f in flows}) != 1:
             raise ValueError("the flows must share sigma_prior and state_dim")
         self.flows = nn.ModuleList(flows)
+        self.weights = weights
         self.sigma_prior = flows[0].sigma_prior
         self.state_dim = flows[0].state_dim
         self.N_outer = flows[0].N_outer
         self.train_tau_0_only = False
 
     def velocity(self, x: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
-        return sum(TauBlendedFlow._velocity(f, x, batch, tau) for f in self.flows) / len(self.flows)
+        if self.weights is None:
+            return sum(TauBlendedFlow._velocity(f, x, batch, tau) for f in self.flows) / len(self.flows)
+        w = self.weights(float(tau[0]))
+        return sum(wi * TauBlendedFlow._velocity(f, x, batch, tau) for wi, f in zip(w, self.flows) if wi > 0)
 
     def sample(self, batch, N_outer: Optional[int] = None, step_power: Optional[float] = None):
         N_outer = self.N_outer if N_outer is None else N_outer

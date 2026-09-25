@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -89,3 +90,23 @@ def test_mean_velocity_flow_matches_the_two_flow_blend_and_averages_three():
         assert torch.allclose(three.velocity(x, batch, tau), expected, atol=1e-5)
     with pytest.raises(TypeError):
         MeanVelocityFlow([vc])
+
+
+def test_random_weight_schedule_is_seeded_and_on_the_simplex():
+    from models.cfm_blend import random_weight_schedule
+    w, knots = random_weight_schedule(3, seed=4)
+    w2, knots2 = random_weight_schedule(3, seed=4)
+    assert np.array_equal(knots, knots2) and knots.shape == (5, 3)
+    for tau in (0.0, 0.1, 0.37, 0.5, 0.99, 1.0):
+        assert abs(sum(w(tau)) - 1) < 1e-12 and min(w(tau)) >= 0 and w(tau) == w2(tau)
+    assert np.allclose(w(0.25), knots[1])
+
+
+def test_weighted_mean_velocity_flow_uses_the_tau_weights():
+    from models.cfm_blend import MeanVelocityFlow
+    vc, psc, batch = *_flows(), _batch()
+    flow = MeanVelocityFlow([vc, psc], weights=lambda tau: [tau, 1 - tau])
+    x, tau = torch.randn(3, 32, 4), torch.full((3,), 0.4)
+    with torch.no_grad():
+        expected = 0.4 * vc.forward(x, batch, tau) + 0.6 * (psc.forward(x, batch, tau) - x) / 0.6
+        assert torch.allclose(flow.velocity(x, batch, tau), expected, atol=1e-5)
