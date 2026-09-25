@@ -59,7 +59,9 @@ See `reports/l96/outputs/l96_benchmark_extended.md` for all numbers.
 Every L96 S1 evaluation of the params-conditioned SDA priors (SDA2, SDA3; P1 and the
 benchmark reports alike) fed them the TRUE parameters: the evaluation collate read the
 plain `F/c1/...` keys, which hold the truth in S1 windows, while the DA baselines and the
-training collate read the biased `*_da` values. Fixed and re-run (S0 unchanged, bit-for-bit).
+training collate read the biased `*_da` values. Fixed and re-run (S0 unchanged: bit-for-bit for
+every run first made with the current code; the 2026-09-22 P1 regular-set runs differ only in
+their random draws, S0 0.5571 vs 0.5568).
 
 - With the biased DA params, SDA2-M degrades at S1 (0.500 -> 0.509 regular) while
   SDA3-fix-M, trained on noisy DA params, does not (0.501 -> 0.502). Alone the gap is within
