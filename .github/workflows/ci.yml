@@ -104,10 +104,10 @@ jobs:
           # The whole tests/ tree, not a hand-maintained file list. The list
           # this replaced named 24 of 53 files; the other 29 had never run in
           # CI, and had silently accumulated a refactor's worth of API drift
-          # (see docs/scoping/refactor_plan.md, Phase 0). A new test file is now
+          # (see docs/plans/tech/multi_refactor_plan.md, Phase 0). A new test file is now
           # gated by existing, rather than by remembering to edit this file.
           #
-          # One deliberate exclusion, tracked in docs/scoping/refactor_plan.md:
+          # One deliberate exclusion, tracked in docs/plans/tech/multi_refactor_plan.md:
           #   test_joint_estimation.py        -- 7 tests written against
           #       JointCFM's pre-restructure API. JointCFM itself is covered by
           #       test_joint_estimation_l96_neural.py and test_neural_inference.py.

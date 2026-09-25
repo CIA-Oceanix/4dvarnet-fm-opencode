@@ -11,7 +11,7 @@ Everything is computed in the model's normalized space (where s0 is defined).
   C1  asymmetry ||(J - J^T) u|| / ||J u||.
 
 J u by central finite differences (eps=1e-2 matches exact autograd to <0.1%),
-J^T u by autograd. See docs/results/cfm_tau_consistency.md.
+J^T u by autograd. See docs/results/l96_cfm_tau_consistency.md.
 """
 import argparse
 import json

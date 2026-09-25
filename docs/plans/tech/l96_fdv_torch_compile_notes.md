@@ -1,6 +1,6 @@
 # FDV speed levers beyond checkpointing: torch.compile and JAX (investigation notes, 2026-09-08)
 
-**Status:** investigation notes, not an execution plan. Captures why `torch.compile`
+**Status:** NOTES — investigation notes, not an execution plan. Captures why `torch.compile`
 was tried and shelved as a follow-up to the gradient-checkpointing work
 (`[[project_fdv_gradient_checkpointing_plan]]`, PR #172/#173), and why a JAX port
 wasn't pursued either, despite JAX structurally avoiding the specific bug hit here.

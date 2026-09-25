@@ -6,8 +6,8 @@ FM-prior conditional-sampler results (PR #211,
 decision 4, narrows and re-points risk R6, and adds the orthogonality condition
 that §2.2's additivity actually rests on. Targeting an ML venue (ICLR / NeurIPS /
 TMLR). Supersedes the *framing* of
-`docs/scoping/best_prior_approximate_inference.md`; that doc's testbed ladder and
-risk register are folded in below. `docs/scoping/phase_D_physics_priors_under_uncertainty.md`
+`docs/plans/paper/superseded/multi_best_prior_approximate_inference.md`; that doc's testbed ladder and
+risk register are folded in below. `docs/plans/analysis/multi_phaseD_physics_priors.md`
 remains the dynamical-systems work plan.
 
 **Deliberately not DA-only.** Three case-study families — deconvolution, Fourier
@@ -184,8 +184,8 @@ satisfies this; nothing that fails it is in the paper.
 A consequence worth stating in the paper: **the ML paper is deliberately
 synthetic throughout**, because the question *requires* a known prior. External
 validity is supplied by the companion DA papers on L96/QG
-(`docs/scoping/da_paper_structural_hypotheses.md`,
-`docs/scoping/p2_unrolled_solvers_and_flows.md`), not by adding a real-data arm
+(`docs/plans/paper/multi_p1_structural_hypotheses.md`,
+`docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md`), not by adding a real-data arm
 here. That is a division of labour, not an omission, and it should be written as
 such — a real-data family that conspicuously could not host the headline
 experiment would *advertise* the limitation rather than cover it.
@@ -392,7 +392,7 @@ bold-best marker. Do not quote ES from that table cross-row.
 ## 7. What is already in hand
 
 - **The decomposition is empirically validated on two trained L96 checkpoints**
-  (`docs/results/cfm_affine_velocity_decomposition.md`, on `master` since #211): the
+  (`docs/results/l96_cfm_affine_velocity_decomposition.md`, on `master` since #211): the
   closed-form gain matches the least-squares optimum to ~1.5% (V3) / ~4%
   (FDV1CFM) from a single parameter;
   the structural constraint `(1 − β_τK_τ)` holds to <0.015; the predicted peak
@@ -442,7 +442,7 @@ with a uniform proper `N`-member convention:
   different gain is inconsistent, with the inconsistency dominating. This is the
   evidence behind §10 decision 4, and it is also an argument for learning `Ψ_NG`
   against a *prescribed* `(μ, K)` — i.e. for the unrolled-mean architecture of
-  `docs/results/cfm_affine_velocity_decomposition.md` §5.
+  `docs/results/l96_cfm_affine_velocity_decomposition.md` §5.
 
 ---
 
@@ -525,7 +525,7 @@ exactly-known `H` with mature baselines. Those were always where C1 was testable
 problem, not the headline.
 
 **The matched-budget mean-slot comparison moves out**, to
-`docs/scoping/p2_unrolled_solvers_and_flows.md` (M2). It is inherently L96/QG —
+`docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md` (M2). It is inherently L96/QG —
 i.e. DA — so it never belonged in a deliberately non-DA paper. That also
 dissolves the overlap §10.6 was opened to manage.
 
@@ -639,6 +639,6 @@ audience cares) are clearly met.
 
 6. ~~Does the mean-slot comparison belong to this paper or to the DA-venue
    paper?~~ **CLOSED (2026-09-18): neither of the options as posed — it goes to
-   P2**, `docs/scoping/p2_unrolled_solvers_and_flows.md` §5.1 M2. It is an L96/QG
+   P2**, `docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md` §5.1 M2. It is an L96/QG
    experiment and this paper is deliberately non-DA, so the overlap this decision
    was opened to manage no longer exists.

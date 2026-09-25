@@ -1,6 +1,6 @@
 # Joint State-Parameter Estimation: Progress Log
 
-## Status: In Progress | Started: 2026-07-02
+**Status:** NOTES — progress log, in progress since 2026-07-02.
 
 ## Branch: `feature/joint-estimation`
 

@@ -1,6 +1,6 @@
 # T5 — second-order (variance) consistency loss: results
 
-**Status:** RESULTS (2026-09-24). **Negative as implemented; the cause is identified.** Step T5 of `docs/scoping/cfm_tau_consistency_next_steps.md` v4.
+**Status:** RESULTS (2026-09-24). **Negative as implemented; the cause is identified.** Step T5 of `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v4.
 
 - Code and configs: #253 (`var_*` options on `PredictStateCFM`, `var_start_epoch`, `val_var_ratio`).
 - Runs: SLURM array 55263, launched from a frozen worktree at `d78bd60`. Follow-ups: 55280, 55288.
@@ -71,7 +71,7 @@ All seven evaluated checkpoints improve under p = 0.5 at the same N = 10:
 - **RMSE −1.0% to −2.3%**;
 - **spread/RMSE +0.06 to +0.08.**
 
-This confirms `docs/results/cfm_sampler_schedule.md`, which rested on one checkpoint per model, and supports the default adopted in #253.
+This confirms `docs/results/l96_cfm_sampler_schedule.md`, which rested on one checkpoint per model, and supports the default adopted in #253.
 
 ## 5. What a corrected T5 would need (not launched)
 

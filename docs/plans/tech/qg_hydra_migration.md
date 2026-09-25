@@ -163,5 +163,5 @@ shim rather than landing a half-converted caller set.
 Unifying `QGNeuralLightning` with `training/lightning_module.LitModel`, or
 folding `train_qg_neural.py` into `train.py` behind a `system:` switch, is a
 larger change with its own risk to the L96 side, and the config migration does
-not depend on it. `docs/scoping/refactor_plan.md` is the right home for that
+not depend on it. `docs/plans/tech/multi_refactor_plan.md` is the right home for that
 question; this plan deliberately stops at the config layer.

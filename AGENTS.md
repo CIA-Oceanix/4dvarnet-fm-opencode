@@ -156,6 +156,9 @@ Always run tests after making changes.
 - `reports/` — Report generation scripts
 - `batch/` — SLURM batch scripts for HPC
 - `tests/` — Unit and integration tests
+- `docs/` — `plans/{paper,analysis,case_study,tech}/`, `results/`, `papers/`; layout, naming
+  (`<case>_<topic>.md`) and the index of live docs in `docs/README.md`, enforced by
+  `tests/test_docs_layout.py`
 - Top-level entry points: `train.py` (Hydra-driven training), `run_experiment.py` /
   `run_experiments.py` (single/batch experiment runners), and per-case-study
   `eval_*.py` / `evaluate_all*.py` scripts (e.g. `eval_baselines.py`,
@@ -189,14 +192,14 @@ Always run tests after making changes.
   (and their monai subclasses) integrate on the early-fine Euler grid `tau_k = 1 - (1 - k/N)^0.5`
   (`models.vanilla_cfm.DEFAULT_STEP_POWER`), not the uniform grid. This is a deliberate default: at the
   same N = 10 it improved CRPS by 4.4% / 2.0% and RMSE slightly on the P1 PSC-M / VanillaCFM-M
-  checkpoints (`docs/results/cfm_sampler_schedule.md`). **Numbers produced before this date used the
+  checkpoints (`docs/results/l96_cfm_sampler_schedule.md`). **Numbers produced before this date used the
   uniform grid**; reproduce them with `eval_neural_l96.py --step-power 1` (or `model.step_power: 1.0`).
   `eval_neural_l96.py` records the grid used under `sampling.step_power`.
 - **L96 benchmark flow sampler (as of 2026-09-24):** benchmark flows (VanillaCFM / PredictStateCFM) are
   scored with **30 members × 20 early-fine steps** (`--n-members 30 --n-outer 20`, p = 0.5), eval
   sub-directory `ens30_no20` (was `ens30_no10`, uniform). On the benchmark-default checkpoints this gives
   spread/RMSE ≈ 0.86-1.02 and beats uniform N = 80 on CRPS for PredictStateCFM
-  (`docs/results/cfm_tau_consistency_l96b.md`). SDA keeps its own guided protocol (`ens30_gw20`, 10 steps).
+  (`docs/results/l96_cfm_tau_consistency_l96b.md`). SDA keeps its own guided protocol (`ens30_gw20`, 10 steps).
 
 ## When Making Model Changes
 

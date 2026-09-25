@@ -16,7 +16,7 @@ interpolant x_tau = (1-tau)*x0 + tau*x1:
 
 K_tau is fitted per tau by least squares over all (window, time, channel)
 entries; the constrained form A = 1 - tau*K is used for the components, having
-been verified to hold to <0.015 (see docs/results/cfm_affine_velocity_decomposition.md).
+been verified to hold to <0.015 (see docs/results/l96_cfm_affine_velocity_decomposition.md).
 
 Key reported quantity: ||Psi_NG|| / ||Psi_G||, the non-Gaussian component
 relative to the Gaussian one, versus observation density.

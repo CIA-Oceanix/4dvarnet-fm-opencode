@@ -2,7 +2,7 @@
 
 **Status:** RESULTS (2026-09-24). **Negative** for both training arms as designed.
 
-- Plan: `docs/scoping/cfm_tau_consistency_next_steps.md` v3. Training code: #249. Diagnostics: `docs/results/cfm_tau_consistency.md` and `docs/results/cfm_tau_consistency_ns1.md` (#250).
+- Plan: `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v3. Training code: #249. Diagnostics: `docs/results/l96_cfm_tau_consistency.md` and `docs/results/l96_cfm_tau_consistency_ns1.md` (#250).
 - All numbers are L96 S0, 200 cached test windows, PredictStateCFM-M, P1 recipe.
 - One run per arm, all with `training.seed: 1`, so each arm is paired with the T0 reseed on initialisation and batch order.
 
@@ -48,7 +48,7 @@
 
 ## 3. τ-consistency probes
 
-These use the probe conventions of `docs/results/cfm_tau_consistency.md`: pooled physical RMSE for the per-step predictions, and normalised space for E1/B4/A1. The P1 row is that doc's number.
+These use the probe conventions of `docs/results/l96_cfm_tau_consistency.md`: pooled physical RMSE for the per-step predictions, and normalised space for E1/B4/A1. The P1 row is that doc's number.
 
 | run | RMSE of `m_hat` at τ = 0 / 0.1 / 0.3 / endpoint | τ=0 gap vs endpoint | E1 slope | B4(0.1)/B4(0.9) | A1 |
 |---|---|---|---|---|---|

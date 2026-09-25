@@ -147,7 +147,7 @@ DEFAULT_STEP_POWER = 0.5
 def flow_tau_grid(n_steps: int, step_power: float = DEFAULT_STEP_POWER) -> list:
     """Euler grid tau_k = 1 - (1 - k/N)^p. p = 1 is uniform; p = 0.5 (the default since
     2026-09-24) puts the fine steps early, where the ensemble loses variance
-    (docs/results/cfm_sampler_schedule.md)."""
+    (docs/results/l96_cfm_sampler_schedule.md)."""
     return [1.0 - (1.0 - k / n_steps) ** step_power for k in range(n_steps + 1)]
 
 
@@ -584,7 +584,7 @@ class PredictStateCFM(nn.Module):
                           var_fd_eps: float = 1e-2) -> None:
         """Training-time tau options; every default reproduces the plain CFM loss.
 
-        See docs/scoping/cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
+        See docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
         tau0_frac: fraction of each batch trained at tau=0 exactly (target x1).
         tau_sampling: "uniform" or "low_mix" ((1-f) U[0,1] + f U[0, tau_low_max]).
         boot_*: fraction of each batch whose target at tau ~ U[boot_tau_min, boot_tau_max]

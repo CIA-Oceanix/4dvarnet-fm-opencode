@@ -6,7 +6,7 @@ gitignored directory does not exist.
 These guard the drift that made the report unreproducible: between PR #183 and
 PR #204 the checked-in `l96_consolidated_benchmark.md` gained seven methods that
 the generator had never heard of, because rows were added to the markdown by
-hand. `docs/scoping/README.md` already forbids that ("fix the generator **and**
+hand. `docs/README.md` already forbids that ("fix the generator **and**
 the checked-in output together"); nothing enforced it.
 """
 import re

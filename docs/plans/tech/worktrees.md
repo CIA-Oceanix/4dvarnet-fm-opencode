@@ -1,5 +1,7 @@
 # Worktree Organization
 
+**Status:** NOTES — one git worktree per topic branch; the table below is not kept current (`git worktree list` is authoritative).
+
 ## Current worktrees
 
 | Worktree dir | Branch | Topic |

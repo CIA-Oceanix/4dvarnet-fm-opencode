@@ -1,6 +1,6 @@
 # L96 TweedieCFM Benchmark — V2 family vs V3 reference
 
-Setup: two-scale L96, Obs30 (`obs_interval=100`, `obs_j=2` → 24D observed space), dws=500, 200 shared cached test windows; S1 = ±20% params + ±10% bias. All schemes are the [V2/V3 CFM variants](../../../docs/scoping/phase_B_l96_cfm_variants.md); DA baselines are covered in `l96_consolidated_benchmark.md`.
+Setup: two-scale L96, Obs30 (`obs_interval=100`, `obs_j=2` → 24D observed space), dws=500, 200 shared cached test windows; S1 = ±20% params + ±10% bias. All schemes are the [V2/V3 CFM variants](../../../docs/plans/analysis/l96_phaseB_cfm_variants.md); DA baselines are covered in `l96_consolidated_benchmark.md`.
 
 Single-sample (N=1) metrics are read from each experiment's root `neural_eval.json`; the ens30×10 (N=30) tables use the shared `ens30_no10` run (10 Euler steps, fresh x₀ per member). ES/spread for ens30 rows are proper ensemble scores (MAE − 0.5·pairwise). **bold** marks the best value per column.
 

@@ -4,15 +4,15 @@
 
 | note | PR | content |
 |---|---|---|
-| `docs/results/cfm_tau_consistency.md` | #245 | first probes: per-step predictions, E1, B2/B4, A1/A3, C1 |
-| `docs/results/cfm_tau_consistency_ns1.md` | #250 | truth-marginal tests NS1a–c; sampler cost grid |
-| `docs/results/cfm_tau_consistency_batch1.md` | #251 | training arms T0 / T1′ / T2a |
-| `docs/results/cfm_sampler_schedule.md` | #252 | stochastic and step-schedule samplers (S1) |
-| `docs/results/cfm_tau_consistency_t5.md` | #255 | second-order training loss (T5) |
-| `docs/results/cfm_tau_consistency_l96b.md` | #256 | re-probe on the benchmark-default flows, 400 vs 1200 epochs |
+| `docs/results/l96_cfm_tau_consistency.md` | #245 | first probes: per-step predictions, E1, B2/B4, A1/A3, C1 |
+| `docs/results/l96_cfm_tau_consistency_ns1.md` | #250 | truth-marginal tests NS1a–c; sampler cost grid |
+| `docs/results/l96_cfm_tau_consistency_batch1.md` | #251 | training arms T0 / T1′ / T2a |
+| `docs/results/l96_cfm_sampler_schedule.md` | #252 | stochastic and step-schedule samplers (S1) |
+| `docs/results/l96_cfm_tau_consistency_t5.md` | #255 | second-order training loss (T5) |
+| `docs/results/l96_cfm_tau_consistency_l96b.md` | #256 | re-probe on the benchmark-default flows, 400 vs 1200 epochs |
 | `docs/results/l96_rank_histograms_c4.md` | #260 | rank histograms (P1 paper C4) |
 
-The plan that drove the line, `docs/scoping/cfm_tau_consistency_next_steps.md` (v1–v4, #245–#252), is closed by this note. Its open items are listed in §6.
+The plan that drove the line, `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` (v1–v4, #245–#252), is closed by this note. Its open items are listed in §6.
 
 **Scope:**
 - **System:** two-scale L96, 24-D observed subspace, S0, 200 cached test windows.

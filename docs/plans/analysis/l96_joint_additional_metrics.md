@@ -1,6 +1,6 @@
 # Step 1: L96 Joint Benchmark — Additional Metrics
 
-Status: in progress 2026-08-26 · branch `feature/l96-joint-additional-metrics`
+**Status:** PLAN, in progress 2026-08-26 · branch `feature/l96-joint-additional-metrics`
 
 ## Objective
 

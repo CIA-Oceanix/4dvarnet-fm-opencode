@@ -4,7 +4,7 @@
 # and 94% vs L). Note training val_loss ranked the tiers in the OPPOSITE order at
 # the top (L best) -- SDA's val_loss is the velocity-matching MSE of a prior,
 # while RMSE/CRPS measure the posterior after guidance. Do not select SDA tiers
-# on val_loss. See docs/results/l96_default_config_benchmark_synthesis.md F5.
+# on val_loss. See reports/l96/outputs/p1_l96_benchmark.md (finding F5 of a synthesis note that was never committed).
 #
 # Adds cosine annealing, which NO previous SDA run has ever had (the key was
 # unset in every SDA config and they all ran before the 2026-09-10 default flip).

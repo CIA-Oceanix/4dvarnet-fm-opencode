@@ -1,6 +1,6 @@
 # Phase C — L96 Joint State-Parameter Neural Estimation (design doc)
 
-**Status:** designed for execution.
+**Status:** PLAN, designed for execution.
 **System:** Lorenz-96 (two-scale), observed subspace 24D (`obs_j=2`, Obs30).
 **Models:** 3 joint neural estimators (state + 8 params), benchmarked against the
 L96 joint DA baselines (`JointEnKFL96` / `JointETKFL96` / `JointStrong4DVarL96`).

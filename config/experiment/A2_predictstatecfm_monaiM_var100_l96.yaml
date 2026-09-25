@@ -1,5 +1,5 @@
 # @package _global_
-# T5 (docs/scoping/cfm_tau_consistency_next_steps.md v4): second-order (variance) consistency loss,
+# T5 (docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md v4): second-order (variance) consistency loss,
 # lambda = 100. L = L_CFM + lambda * mean_c(mean_t[(b^2/tau) u*(J u) - sg(x1 - D)^2])^2 on rows with
 # tau in [0.05, 0.95] of the unchanged uniform-tau batch. On the P1 checkpoint L_var/L_CFM ~ 0.008, so
 # lambda = 100 puts it at ~80% of L_CFM. Base: A2_predictstatecfm_monaiM_l96 (P1 recipe); seed 1 by

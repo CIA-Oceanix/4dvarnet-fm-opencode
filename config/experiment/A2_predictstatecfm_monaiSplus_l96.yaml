@@ -1,8 +1,8 @@
 # @package _global_
-# monai_predict_state_cfm, S+ tier, default configuration per docs/scoping/wave2_benchmark_plan.md:
+# monai_predict_state_cfm, S+ tier, default configuration per the P1 recipe (reports/l96/outputs/p1_l96_benchmark.md, Protocol):
 # monai + normalize + cosine + 400 epochs, NO obs-density augmentation
 # (wave 1 showed augmentation's sign is family-dependent, so it is a labelled
-# second arm rather than a default -- see docs/results/l96_default_config_benchmark_synthesis.md F2).
+# second arm rather than a default -- see reports/l96/outputs/p1_l96_benchmark.md (finding F2 of a synthesis note that was never committed)).
 #
 # train_tau_0_only: false -- the existing L2b/V3 configs set it TRUE, which makes
 # the model a tau=0 point estimator rather than a generative flow and voids its

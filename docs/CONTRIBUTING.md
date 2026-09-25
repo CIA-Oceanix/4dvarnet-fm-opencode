@@ -1,6 +1,6 @@
 # Contributing
 
-**Status:** NOTES — describes the repo, not the science (kept at `docs/` level alongside `docs/worktrees.md`).
+**Status:** NOTES — describes the repo, not the science (kept at `docs/` level; the repo-layout notes are in `docs/plans/tech/`).
 
 A worked path through the repository, for a scientist who did not write it.
 Everything below is a real command taken from `batch/` and the report scripts.
@@ -86,11 +86,11 @@ conflict on it. Format is in `CHANGELOG.d/README.md`.
 - **`experiments/` is gitignored.** Checkpoints worth keeping get archived to
   `experiments/l96/` and referenced from a report.
 - **Nested `4dvarnet-fm-*/` directories are git worktrees**, one per topic branch
-  (`docs/worktrees.md`). They are not part of the source tree.
-- **Not every test file runs in CI yet.** See `docs/scoping/refactor_plan.md` Phase 0.
+  (`docs/plans/tech/worktrees.md`). They are not part of the source tree.
+- **Not every test file runs in CI yet.** See `docs/plans/tech/multi_refactor_plan.md` Phase 0.
 
 ## 5. Where the code is going
 
-`docs/scoping/refactor_plan.md` has the contributor-facing refactor plan: what is being
+`docs/plans/tech/multi_refactor_plan.md` has the contributor-facing refactor plan: what is being
 consolidated, in what order, and why a per-case-study directory split is
 explicitly *not* the plan.

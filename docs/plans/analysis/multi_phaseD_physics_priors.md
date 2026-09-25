@@ -1,7 +1,7 @@
 # Phase D — How physics knowledge matters under model error and observation sparsity (design doc)
 
 **Status:** DESIGN. No code written for this phase yet. Supersedes the paper-
-positioning sections of `docs/results/research_notes_cfm_da_originality_and_benchmarking.md`
+positioning sections of `docs/plans/paper/superseded/multi_cfm_da_originality_notes.md`
 (2026-09-02), whose four open items are now all executed and benchmarked.
 
 **Question:** when the forward model is uncertain and observations are sparse,
@@ -290,7 +290,7 @@ fit so the 10-step output matches truth, not so that it minimizes J. Truncated
 unrolling is a biased surrogate for the bi-level gradient.
 *Target mismatch to report:* supervised MSE targets the posterior mean (MMSE);
 variational assimilation targets the mode (MAP). They coincide only under
-Gaussianity, and `docs/results/cfm_affine_velocity_decomposition.md` measured that
+Gaussianity, and `docs/results/l96_cfm_affine_velocity_decomposition.md` measured that
 non-Gaussianity (19-31% of velocity amplitude non-affine) — hedge appropriately
 (ρ measures non-affineness of E[x₁|x_τ,y] in flow coordinates, not non-Gaussianity
 of p(x₁|y) directly), but the link is real.
