@@ -88,19 +88,34 @@ def _window_param_vector(bd, prefix=""):
     return vec
 
 
+def _window_da_param_vector(bd):
+    """The DA-model 8-param vector of a window: the biased ``*_da`` values when
+    the window carries them (S1), else the plain params (S0, where they equal
+    the true ones). Same parameters the DA baselines (``evaluation/run_l96.py``)
+    and the training collate (``data/dataloader._l96_biased_param_vector``) use;
+    the plain ``F``/``c1``/... keys of an S1 window hold the TRUE values.
+    """
+    view = dict(bd)
+    view.update({k[:-3]: v for k, v in bd.items() if k.endswith("_da")})
+    if "fast_weights_da" in bd:
+        for j in range(1, 5):
+            view.pop(f"w{j}", None)
+    return _window_param_vector(view)
+
+
 def collate_joint_eval(batch):
     """Collate for joint models: also stack the 8 L96 params + true_params.
 
-    Reads the 8-param vector via ``_window_param_vector``, transparently
-    handling both the flattened (w1..w4) and legacy (fast_weights list) cache
-    formats.
+    ``params`` are the DA-model params (``_window_da_param_vector``: biased on
+    S1), ``true_params`` the ground truth; both handle the flattened (w1..w4)
+    and legacy (fast_weights list) cache formats.
     """
     states = torch.stack([b["true_state"] for b in batch])
     obs = torch.stack([b["obs"] for b in batch])
     masks = torch.stack([b["obs_mask"] for b in batch])
     forcing = torch.stack([b["forcing_corrupted"] for b in batch])
     forcing_true = torch.stack([b["forcing_true"] for b in batch])
-    params = torch.tensor([_window_param_vector(bd) for bd in batch])
+    params = torch.tensor([_window_da_param_vector(bd) for bd in batch])
     true_params = torch.tensor([_window_param_vector(bd, prefix="true_") for bd in batch])
     return {
         "true_state": states, "obs": obs, "obs_mask": masks, "forcing": forcing,
