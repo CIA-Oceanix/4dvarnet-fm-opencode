@@ -33,6 +33,13 @@ is deleted. A new `tests/test_docs_layout.py` enforces the layout.
   - nothing sits outside the layout;
   - every `docs/...` path cited in the tracked tree exists.
 - `AGENTS.md` — a one-line pointer to the layout.
+- Folded in #261, which merged while this PR was open:
+  - `docs/results/cfm_tau_consistency_synthesis.md` →
+    `docs/results/l96_cfm_tau_consistency_synthesis.md`;
+  - the τ-consistency plan's CLOSED status moves into the `docs/README.md` index,
+    which gains a "cite the synthesis" table;
+  - `CLOSED` is added to the `plans/analysis/` and `plans/case_study/`
+    vocabularies, for a plan that a synthesis in `results/` answers.
 
 **Rationale:** Paper scoping, analysis plans, case-study proposals and tech notes
 were mixed in one folder, with an index that had to explain what each file

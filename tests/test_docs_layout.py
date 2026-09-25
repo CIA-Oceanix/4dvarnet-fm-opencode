@@ -17,12 +17,12 @@ DOCS = ROOT / "docs"
 VOCAB = {
     "plans/paper/superseded": {"SUPERSEDED"},
     "plans/paper": {"SCOPING", "SUPERSEDED"},
-    "plans/analysis": {"PLAN", "DESIGN", "DRAFT", "SUPERSEDED"},
-    "plans/case_study": {"PROPOSAL", "SCOPING", "SUPERSEDED"},
+    "plans/analysis": {"PLAN", "DESIGN", "DRAFT", "CLOSED", "SUPERSEDED"},
+    "plans/case_study": {"PROPOSAL", "SCOPING", "CLOSED", "SUPERSEDED"},
     "plans/tech": {"DESIGN", "DRAFT", "PROPOSAL", "SCOPING", "NOTES"},
     "results": {"RESULTS", "NOTES"},
 }
-STATUS = re.compile(r"^\*\*Status:\*\*\s*([A-Z]+)")
+STATUS = re.compile(r"^\*\*Status:\*\*\s*(?:\*\*)?([A-Z]+)")
 CITED = re.compile(r"docs/[A-Za-z0-9_./-]+\.(?:md|tex|bib|pdf)")
 TEXT_SUFFIXES = {".md", ".py", ".tex", ".yaml", ".yml", ".sh", ".sbatch", ".slurm", ".txt", ".toml", ".ini", ".cfg"}
 DELIBERATELY_ABSENT = {

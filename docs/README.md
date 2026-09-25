@@ -8,8 +8,8 @@ Split first by **purpose**, then named `<case>_<topic>.md`, where `<case>` is
 | folder | holds | lifecycle | `Status:` vocabulary |
 |---|---|---|---|
 | `plans/paper/` | paper scoping: claims, the evidence each claim needs, venue, the boundary with the other papers | superseded in chains; superseded docs move to `plans/paper/superseded/`, whose Status must be SUPERSEDED | SCOPING, SUPERSEDED |
-| `plans/analysis/` | question-driven experiment / analysis plans: hypothesis, runs, controls, decision criteria | superseded in chains | PLAN, DESIGN, DRAFT, SUPERSEDED |
-| `plans/case_study/` | proposals for a new testbed: physics, scenarios, implementation plan | superseded in chains | PROPOSAL, SCOPING, SUPERSEDED |
+| `plans/analysis/` | question-driven experiment / analysis plans: hypothesis, runs, controls, decision criteria | superseded in chains; CLOSED once a synthesis in `results/` answers it | PLAN, DESIGN, DRAFT, CLOSED, SUPERSEDED |
+| `plans/case_study/` | proposals for a new testbed: physics, scenarios, implementation plan | superseded in chains | PROPOSAL, SCOPING, CLOSED, SUPERSEDED |
 | `plans/tech/` | codebase, infrastructure, test design, repo layout — no science | edited in place | DESIGN, DRAFT, PROPOSAL, SCOPING, NOTES |
 | `results/` | measurement records and investigation notes — *what was found* | **append-only.** Do not edit one to reflect a later finding; write a new doc that states the retraction (as `docs/results/l96_psi_decomposition.md` does for conclusion 5 of `docs/results/l96_cfm_affine_velocity_decomposition.md`). | RESULTS, NOTES |
 | `papers/` | paper drafts (tex / pdf) and their Overleaf sync — not repo prose | external | — |
@@ -82,7 +82,7 @@ sweep at S0*, which **must share one protocol**).
 
 | doc | status |
 |---|---|
-| `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` | **DRAFT**, v4 2026-09-24. Targets defect 2 (variance collapse). S1 done: early-fine Euler steps adopted as the sampler default (#253). T5 done and negative: the single-probe objective is biased toward shrinking the Jacobian, and λ = 100 diverged; a corrected T5 is specified but not launched. Re-probed on the benchmark-default (L96B) flows (`docs/results/l96_cfm_tau_consistency_l96b.md`): the τ=0 bias persists and grows relative to the endpoint; the collapse is mostly sampler-side; early-fine N=20 is the best sampler. Results: the six `docs/results/l96_cfm_tau_consistency*.md` notes and `docs/results/l96_cfm_sampler_schedule.md`. |
+| `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` | **CLOSED** 2026-09-25 (last revision v4). Outcomes, the one identified model failure (PredictStateCFM's late-τ Jacobian) and open items are in **`docs/results/l96_cfm_tau_consistency_synthesis.md`** — cite that, not the seven notes it summarises. |
 | `docs/plans/analysis/multi_phaseD_physics_priors.md` | DESIGN; live work packages (see the ML-paper chain above). |
 | `docs/plans/analysis/l96_phaseB_cfm_variants.md` | DESIGN + PARTIAL IMPLEMENTATION (V2/V3 CFM variants). |
 | `docs/plans/analysis/l96_phaseC_joint_da.md` | PLAN, designed for execution — branch `feature/l96-joint-da-benchmark`. |
@@ -110,5 +110,11 @@ sweep at S0*, which **must share one protocol**).
 
 ## Results
 
-Filed by case study; read the plan that produced a note for its context. The
+Filed by case study; read the plan that produced a note for its context. Where a
+thread has a synthesis note, cite it rather than the notes it summarises:
+
+| thread | synthesis |
+|---|---|
+| L96 τ-consistency of the CFM operators | `docs/results/l96_cfm_tau_consistency_synthesis.md` (#261) |
+ The
 L96/QG/L63 number tables are under `reports/*/outputs/`.
