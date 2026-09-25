@@ -139,6 +139,15 @@ def _baseline_traj_path(case_name, method_name, dws_suffix="", param_suffix=""):
     return os.path.join(EXP_DIR, f"l96_baselines_trajs{dws_suffix}{param_suffix}_{key}.npz")
 
 
+def da_members_path(traj_path: str, keep: bool = False) -> str:
+    """Where ``--save-members`` writes a DA ensemble: node-local /tmp by default,
+    next to the trajectory file only with ``keep`` / ``FDV_KEEP_MEMBERS=1``
+    (``evaluation.members_store``)."""
+    from evaluation.members_store import members_dir
+    name = os.path.basename(traj_path).replace(".npz", "_members.npz")
+    return str(members_dir(os.path.dirname(os.path.abspath(traj_path)), keep=keep) / name)
+
+
 def _per_group_rmse(mean_rmse, NO=8, obs_j=2):
     groups = {}
     groups["slow"] = float(np.mean(mean_rmse[:NO]))
@@ -308,7 +317,12 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
                              obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
-                             fw_randomized=False, da_fast_weights=False):
+                             fw_randomized=False, da_fast_weights=False, save_members=False,
+                             keep_members=False):
+    """``save_members``: ETKF/EnKF also keep their full ensembles and write them as
+    ``*_members.npz`` (``members`` (W, T, D, N) and ``truth`` (W, T, D) in the evaluated
+    subspace, the layout of the neural ``members_<case>.npz``), to node-local /tmp unless
+    ``keep_members`` (see ``da_members_path``)."""
     if s1_j is None:
         s1_j = obs_j
     if eval_j is None:
@@ -397,6 +411,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
                                   dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
                                   **_case_cfg(etkf_cfg, case_name))
+        if save_members:
+            for m in ("EnKF", "ETKF"):
+                if m in pool:
+                    pool[m].store_ensemble = True
         baseline_pool[case_name] = pool
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
@@ -451,6 +469,18 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             if bl_results[0].crps is not None:
                 traj_data["crps"] = np.stack([r.crps for r in bl_results], axis=0)
             np.savez_compressed(_baseline_traj_path(case_name, name, dws_suffix, param_suffix), **traj_data)
+            if save_members and getattr(method, "store_ensemble", False):
+                ens = np.stack([r.ensemble for r in bl_results], axis=0)
+                if ens.shape[-1] > len(eval_var_indices):
+                    ens = ens[..., eval_var_indices]
+                truth = np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))], axis=0)
+                if truth.shape[-1] > ens.shape[-1]:
+                    truth = truth[..., eval_var_indices]
+                mpath = da_members_path(_baseline_traj_path(case_name, name, dws_suffix, param_suffix),
+                                        keep=keep_members)
+                np.savez(mpath, members=np.ascontiguousarray(ens.transpose(0, 2, 3, 1)).astype(np.float32),
+                         truth=truth.astype(np.float32))
+                print(f"    members -> {mpath}")
 
             rmse_mean = np.mean(m)
             groups = _per_group_rmse(m, NO=NO, obs_j=obs_j)
