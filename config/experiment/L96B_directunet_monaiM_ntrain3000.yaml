@@ -1,0 +1,10 @@
+# @package _global_
+# DirectUNet-M under the L96 benchmark default with 3000 training windows
+# (default 1000): data-scaling probe -- L never beats M at 1000 windows, so is
+# the training-truth budget, not capacity, the limit? Only num_train_windows
+# differs from L96B_directunet_monaiM.
+defaults:
+  - /experiment/L96B_directunet_monaiM
+  - _self_
+data:
+  num_train_windows: 3000

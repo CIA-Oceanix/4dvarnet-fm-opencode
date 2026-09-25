@@ -61,6 +61,10 @@ class DataConfig:
     randomize: Dict[str, ParamRandomization] = field(default_factory=dict)
     smoke_cached_data: Optional[str] = None
     test_cache: Optional[str] = None
+    # L96 s0_s1: cache of the generated train/val windows (generated and saved
+    # on first use, reused after a settings check -- see
+    # data.lorenz96.make_l96_s0_s1_trainval_cached). ~0.85 MB per window.
+    train_cache: Optional[str] = None
     resample_bias_draws: bool = False
     bias_max: float = 0.2
     # Training-time fast-Y observation-density augmentation (see
