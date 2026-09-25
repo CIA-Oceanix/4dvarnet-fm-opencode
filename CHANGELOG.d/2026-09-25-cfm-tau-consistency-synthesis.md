@@ -13,4 +13,5 @@
 - the negatives;
 - the C4 result.
 
-**Verification:** Docs only. Every number was cross-checked against the source notes' tables and JSON outputs.
+**Also:** `tests/test_t5_variance_and_sampler.py::test_variance_terms_match_an_autograd_jvp` now runs in float64. The float32 finite-difference check was hardware-dependent (1.4% on the CI runner vs 7e-5 locally; the CI CPU runs float32 convolutions at reduced precision) and blocked this docs-only PR.
+**Verification:** Docs, plus that one test (12 passed locally). Every number was cross-checked against the source notes' tables and JSON outputs.
