@@ -408,9 +408,11 @@ def main():
     A("- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and "
       "PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) "
       "despite a 3x gap in training val_loss — val_loss is not comparable across objectives.")
-    A("- **SDA's conditioning buys ~1-2% RMSE**, while its guidance weight is worth ~4x more "
-      "(8% from tuning alone) — consistent with observations entering SDA only through the "
-      "guidance term.")
+    A("- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the "
+      "biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose "
+      "1-2%, since both were trained with DA params equal to the true ones. The guidance weight is "
+      "worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 "
+      "(`l96_benchmark_extended.md`).")
     A("- **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is "
       "not only about sampling.\n")
     A("## Caveats\n")

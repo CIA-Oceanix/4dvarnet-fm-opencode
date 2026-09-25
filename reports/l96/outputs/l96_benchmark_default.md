@@ -41,8 +41,8 @@ Two-scale L96, 24D observed space (8 slow + 16 fast), 200 shared test windows, S
 | SDA (obs-free training) | SDA1-S+ | 1 | 0.626 | 0.625 | 0.720 | 0.725 | 1.15 | 1.00 |
 | SDA (obs-free training) | SDA1-M | 1 | 0.506 | 0.505 | 0.614 | 0.625 | 1.21 | 1.00 |
 | SDA (obs-free training) | SDA1-L | 1 | 0.534 | 0.533 | 0.636 | 0.648 | 1.19 | 1.00 |
-| SDA (obs-free training) | SDA2-M | 1 | 0.513 | 0.513 | 0.615 | 0.624 | 1.20 | 1.00 |
-| SDA (obs-free training) | SDA3-M | 1 | 0.523 | 0.523 | 0.625 | 0.634 | 1.19 | 1.00 |
+| SDA (obs-free training) | SDA2-M | 1 | 0.513 | 0.523 | 0.615 | 0.636 | 1.20 | 1.02 |
+| SDA (obs-free training) | SDA3-M | 1 | 0.523 | 0.529 | 0.625 | 0.643 | 1.20 | 1.01 |
 
 ## Probabilistic scores (flows and SDA, S0)
 
@@ -55,8 +55,8 @@ Two-scale L96, 24D observed space (8 slow + 16 fast), 200 shared test windows, S
 | SDA (obs-free training) | SDA1-S+ | 0.318 | 0.369 | 0.520 | 0.456 |
 | SDA (obs-free training) | SDA1-M | 0.258 | 0.315 | 0.416 | 0.385 |
 | SDA (obs-free training) | SDA1-L | 0.273 | 0.327 | 0.399 | 0.384 |
-| SDA (obs-free training) | SDA2-M | 0.242 | 0.290 | 0.550 | 0.519 |
-| SDA (obs-free training) | SDA3-M | 0.251 | 0.298 | 0.532 | 0.510 |
+| SDA (obs-free training) | SDA2-M | 0.242 | 0.290 | 0.549 | 0.519 |
+| SDA (obs-free training) | SDA3-M | 0.250 | 0.298 | 0.533 | 0.510 |
 
 ## Deterministic variance ratio (S0, predicted/true variance)
 
