@@ -83,3 +83,34 @@ class TauBlendedFlow(VanillaCFM):
             tau = torch.full((B,), t0, device=x.device)
             x = x + (t1 - t0) * self.velocity(x, batch, tau, self.lam(t0))
         return x
+
+
+class MeanVelocityFlow(VanillaCFM):
+    """Equal-weight average of the velocities of N flows (VanillaCFM and/or PredictStateCFM),
+    integrated on one shared trajectory: an N-network flow ensemble at sampling time."""
+
+    def __init__(self, flows: list):
+        nn.Module.__init__(self)
+        if len(flows) < 2 or not all(isinstance(f, VanillaCFM) or isinstance(f, PredictStateCFM) for f in flows):
+            raise TypeError("need at least two VanillaCFM / PredictStateCFM flows")
+        if len({(f.sigma_prior, f.state_dim) for f in flows}) != 1:
+            raise ValueError("the flows must share sigma_prior and state_dim")
+        self.flows = nn.ModuleList(flows)
+        self.sigma_prior = flows[0].sigma_prior
+        self.state_dim = flows[0].state_dim
+        self.N_outer = flows[0].N_outer
+        self.train_tau_0_only = False
+
+    def velocity(self, x: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        return sum(TauBlendedFlow._velocity(f, x, batch, tau) for f in self.flows) / len(self.flows)
+
+    def sample(self, batch, N_outer: Optional[int] = None, step_power: Optional[float] = None):
+        N_outer = self.N_outer if N_outer is None else N_outer
+        step_power = DEFAULT_STEP_POWER if step_power is None else step_power
+        B = batch.obs.shape[0]
+        x = torch.randn_like(batch.obs) * self.sigma_prior
+        taus = flow_tau_grid(N_outer, step_power)
+        for t0, t1 in zip(taus[:-1], taus[1:]):
+            tau = torch.full((B,), t0, device=x.device)
+            x = x + (t1 - t0) * self.velocity(x, batch, tau)
+        return x

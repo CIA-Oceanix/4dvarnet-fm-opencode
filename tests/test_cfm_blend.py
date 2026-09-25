@@ -71,3 +71,21 @@ def test_rejects_non_flows_or_mismatched_flows():
     psc.sigma_prior = 1.0
     with pytest.raises(ValueError):
         TauBlendedFlow(vc, psc, "const:0.5")
+
+
+def test_mean_velocity_flow_matches_the_two_flow_blend_and_averages_three():
+    from models.cfm_blend import MeanVelocityFlow
+    vc, psc, batch = *_flows(), _batch()
+    two = MeanVelocityFlow([vc, psc])
+    assert torch.allclose(_sample(two, batch), _sample(TauBlendedFlow(vc, psc, "const:0.5"), batch), atol=1e-5)
+    torch.manual_seed(2)
+    psc3 = MonaiPredictStateCFM(state_dim=4, hidden_channels=[16, 32], N_outer=4, dropout=0.0, param_dim=0,
+                                cond_extra_dim=0, num_res_blocks=1, norm_num_groups=8).eval()
+    three = MeanVelocityFlow([vc, psc, psc3])
+    x, tau = torch.randn(3, 32, 4), torch.full((3,), 0.4)
+    with torch.no_grad():
+        expected = (vc.forward(x, batch, tau) + (psc.forward(x, batch, tau) - x) / 0.6
+                    + (psc3.forward(x, batch, tau) - x) / 0.6) / 3
+        assert torch.allclose(three.velocity(x, batch, tau), expected, atol=1e-5)
+    with pytest.raises(TypeError):
+        MeanVelocityFlow([vc])
