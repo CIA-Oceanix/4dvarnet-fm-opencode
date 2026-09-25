@@ -177,6 +177,13 @@ upper-layer flow and relaxed towards an atmospheric temperature mode. That is
 a real model extension, and it moves the setup towards MAOOAM (CGOA Tier B).
 Listed for completeness; not proposed now.
 
+### Option F — Coupled hurricane event (separate note)
+
+A localized, two-way coupled vortex over the QG ocean. It uses a light
+version of Option E (a slab mixed layer) and the Option A driver as the
+storm's environment. Scoped in its own note,
+`docs/plans/case_study/qg_hurricane_coupled.md`.
+
 ### Comparison
 
 | option | code change | answers | benchmark impact | main risk |
