@@ -70,6 +70,11 @@ def main():
                              "obs is z-score normalized before each model call and predictions "
                              "are denormalized back to raw physical units before scoring. "
                              "Omitting this flag is a true no-op (identical to not passing it).")
+    parser.add_argument("--blend-with", default=None,
+                        help="PredictStateCFM checkpoint to blend with --checkpoint (a VanillaCFM) at "
+                             "sampling time: v = lam(tau) v_PSC + (1 - lam(tau)) v_VC (models/cfm_blend.py)")
+    parser.add_argument("--blend-schedule", default="const:0.5",
+                        help="lam(tau), weight on PredictStateCFM: const:a, switch:t, power:p, rpower:p")
     parser.add_argument("--trueprior-phi-source-s1", default="true", choices=["true", "biased"],
                         help="Only meaningful for update_input='subgrad+state+trueprior' "
                              "(a true no-op for every other model): 'true' (default) feeds "
@@ -92,6 +97,11 @@ def main():
             raise ValueError(f"--sigma-prior given but {type(model).__name__} has no sigma_prior")
         logger.info(f"sigma_prior override: {model.sigma_prior} -> {args.sigma_prior} (sampling only)")
         model.sigma_prior = args.sigma_prior
+    if args.blend_with:
+        from models.cfm_blend import TauBlendedFlow
+        psc, _ = load_model(args.blend_with, None, device=device)
+        model = TauBlendedFlow(model, psc, args.blend_schedule).eval()
+        logger.info(f"Blending with {args.blend_with}, schedule {args.blend_schedule}")
     logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
     if hasattr(model, "train_tau_0_only"):
         logger.info(f"train_tau_0_only={model.train_tau_0_only}")
@@ -223,6 +233,7 @@ def main():
             "step_power": args.step_power if args.step_power is not None else DEFAULT_STEP_POWER,
             "seed": args.seed,
             "cases": list(args.cases),
+            **({"blend_with": args.blend_with, "blend_schedule": args.blend_schedule} if args.blend_with else {}),
         },
         "estimates": estimates_paths,
         "metrics": metrics,
