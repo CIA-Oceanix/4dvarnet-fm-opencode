@@ -12,6 +12,14 @@ the shared DA pieces). In the numbering of the first note, this is an
 the deferred Option E (an SST tracer), but **not** Option B, because the
 feedback acts through a scalar, the SST under the storm core.
 
+> **Revised in review (same PR, 2026-09-25):**
+> - the sign of `η` in the sub-mixed-layer temperature `T_b` is fixed (§5.4);
+> - the H0 Geisler test gets upper-layer damping, since without it the
+>   steady problem has no solution on a periodic domain (§9.3);
+> - the exchange ratio `C_k/C_D` now appears in the intensity equation (§5.2);
+> - the claim that H-lo fits the quadratic CGOA engine is withdrawn (§6);
+> - the latitude and domain size of the ocean become **decision 3** (§11).
+
 ---
 
 ## 1. Summary
@@ -82,14 +90,15 @@ hurricane translating at speed `U`. The control parameter is the Froude number
 `U/c`, with `c` the baroclinic long-wave speed:
 
 - **`U > c` (the usual case).** A wake of near-inertial internal waves trails
-  the storm, with wavelength ≈ `2πU/f`, on top of a ridge of upwelled
+  the storm (see also Gill 1984), with wavelength ≈ `2πU/f`, on top of a ridge of upwelled
   interface along the track.
 - **`U < c`.** A local upwelling under the storm, with no wave wake.
 - **Barotropic mode.** `c ~ 200 m/s ≫ U`: a weak, quasi-steady response.
 
 For the repo's ocean, `c = f·rd ≈ 1.5 m/s` if `f ≈ 10⁻⁴ s⁻¹` (pyqg fixes
 `rd`, not `f₀`, so this is an assumption to record in the config). A 5 m/s
-storm sits at `U/c ≈ 3`.
+storm sits at `U/c ≈ 3`. These are **mid-latitude** values. At TC latitudes
+`c` is closer to 2–3 m/s; see decision 3 (§11).
 
 **What QG keeps.** QG filters inertia–gravity waves. It keeps the balanced
 part of Geisler's solution: the upwelled ridge (a cyclonic PV anomaly in the
@@ -169,7 +178,7 @@ quantities:
 
 - translation speed `U(t) = U₀ (1 + b · y_U)`;
 - heading `θ(t) = θ₀ + d · y_θ`;
-- vertical wind shear `S(t) = s₀ · y_S²` (non-negative, and still quadratic).
+- vertical wind shear `S(t) = s₀ · y_S²` (non-negative).
 
 As in the QG note, the mapping is a modelling choice (its risk R2). The
 phase-randomized surrogate of that note applies unchanged, as a control for
@@ -184,15 +193,16 @@ State `z_v = (x_c, y_c, V)`, optionally with `R_max`.
 
   ```
   dV/dt = (C_D / 2h_b) · (V_p² − V²) − κ_s S V
-  V_p²  = V_p0² + λ (T_core − T_ref)
+  V_p²  = (C_k / C_D) · [A_p + λ (T_core − T_ref)]
   ```
 
   where `T_core` is the mixed-layer temperature averaged over `r < 2 R_max`.
-  `V_p0`, `λ`, `h_b` and `κ_s` are calibrated so that intensification and
+  `A_p`, `λ`, `h_b` and `κ_s` are calibrated so that intensification and
   decay rates, peak intensity and the SST sensitivity of `V_p` are in the
-  observed ranges. The form is quadratic in `(V, T_core, S)`, so it also fits
-  the CGOA `QuadraticTensorDynamics` engine for a purely low-order variant
-  (§6, H-lo).
+  observed ranges. At the reference, `V_p0² = (C_k/C_D) · A_p`.
+  The exchange ratio `C_k/C_D` is an explicit factor of `V_p²`, following
+  Emanuel's potential intensity. That makes it a real model parameter, which
+  S1-tc-exchange (§7.2) and Q5 need.
 - **Life cycle.** A genesis and decay envelope on `V` guarantees **one
   passage per window**. Without it the storm re-enters the periodic domain.
 
@@ -221,19 +231,23 @@ Two new 2-D fields: SST `T` and mixed-layer depth `h`.
 ∂T/∂t = −J(ψ₁, T) − (w_e / h)(T − T_b) − (T − T*) / τ_r
 ∂h/∂t = −J(ψ₁, h) + w_e − (h − h*) / τ_h
 w_e   = m₀ u*³ / (g α h (T − T_b)),   u*² = |τ| / ρ₀
-T_b   = T_ref − Γ (h + D₀ − η),       η ∝ (f₀/g′)(ψ₁ − ψ₂)
+T_b   = min(T_ref, T_ref − Γ (h + η − D₀)),   η ∝ (f₀/g′)(ψ₁ − ψ₂)
 ```
 
-- `T_b` is the temperature just below the mixed layer. Thermocline uplift
-  (`η > 0`, from Ekman pumping or a cold eddy) makes it colder, which couples
-  the mixed layer to the QG interface.
+- `T_b` is the temperature just below the mixed layer. `η` is the **upward**
+  displacement of the interface and `D₀` the undisturbed depth of the top of
+  the thermocline. Uplift (`η > 0`, from Ekman pumping or a cold eddy) brings
+  up water from `h + η` in the undisturbed profile, so `T_b` gets **colder**.
+  This couples the mixed layer to the QG interface. The sign of the
+  proportionality in `η ∝ (f₀/g′)(ψ₁ − ψ₂)` is pinned down by the H0 test
+  (§9.3).
 - The restoring terms stand for air–sea fluxes and slow recovery of the wake
   (weeks).
 - The mixed layer is **passive** for the QG PV: it does not change ψ. This
   keeps the QG core unchanged.
 
-The closure is crude on purpose. The sign convention of `η` and the exact
-closure are WP2 design choices (§9.4).
+The closure is crude on purpose. The exact closure is a WP2 design choice
+(§9.4); decision 7 (§11) proposes a slab-momentum upgrade.
 
 ### 5.5 Coupling loop and state vector
 
@@ -257,7 +271,7 @@ CGOA §5.1 uses for scoring, localization and whitening.
 
 | quantity | proposal | note |
 |---|---|---|
-| grid | `nx = 128` over 1000 km (Δx ≈ 7.8 km) | 64 points leave only 2–3 across the core |
+| grid | `nx = 128` over 1000 km (Δx ≈ 7.8 km) | at the current QG (mid-latitude) parameters; 64 points leave only 2–3 across the core. Decision 3 would change this row. |
 | time step | `dt = 1 h` | intensity changes on hours; stronger local velocities |
 | `R_max` | 40–60 km | deliberately large, for resolution |
 | translation `U₀` | 2–8 m/s | spans `U/c` from ≈ 1 to ≈ 5 |
@@ -272,8 +286,18 @@ CGOA §5.1 uses for scoring, localization and whitening.
 | **H1** | QG ocean, prescribed vortex (fixed track and `V(t)`) | one-way | balanced wake in an eddy field (Q1) |
 | **H2** | H1 + passive mixed layer | one-way | cold wake, eddy modulation of cooling; calibrate the closure |
 | **H3** | H2 + intensity equation + gyrostat environment | **two-way** | the coupled case: Q2–Q5 |
-| H-lo | vortex + 1D mixed layer + gyrostat, no QG | two-way | cheap low-order variant on the CGOA engine; close to Schade & Emanuel (1999) |
+| H-lo | vortex + 1D mixed layer + gyrostat, no QG | two-way | cheap low-order variant with a generic ODE right-hand side; close to Schade & Emanuel (1999) |
 | H-sw | H3 with a two-layer shallow-water ocean | two-way | recovers Geisler's inertial wake; optional, large (§11, decision 2) |
+
+**H-lo is not a quadratic system**, so it does not fit the CGOA
+`QuadraticTensorDynamics` engine. Four terms break the form:
+- the shear term `S·V` with `S = s₀ y_S²` is cubic in the state;
+- the entrainment velocity `w_e ∝ u*³ / (h ΔT)` is a rational function;
+- the track uses `cos θ`;
+- `T_core` is an average over a footprint around a moving centre.
+
+H-lo calls the vortex and mixed-layer tendency functions of H3 directly, so
+there is no second implementation.
 
 ## 7. Synthetic experiments and DA scenarios
 
@@ -283,7 +307,7 @@ CGOA §5.1 uses for scoring, localization and whitening.
 |---|---|---|---|
 | **O-track** | `(x_c, y_c, V)` every 6 h, with noise | none | best-track data |
 | **O-alt** | O-track | ψ₁ along-track (existing `alongtrack` geometry) | nadir altimetry |
-| **O-swath** | O-track | ψ₁ in wide columns (existing `random_column` geometry) | SWOT |
+| **O-swath** | O-track | ψ₁ in swaths of adjacent columns (~120 km, i.e. 8–15 columns): an extension of the existing `random_column` geometry, which observes one column at a time | SWOT |
 | **O-sst-ir** | O-track | `T` on the grid, masked within ~300 km of the storm | infrared SST under clouds |
 | **O-sst-mw** | O-track | `T` coarsened to ~25 km, masked in the core | microwave SST |
 | **O-prof** | O-track | a few `(T, h, η)` profiles along the track | Argo, AXBT, gliders |
@@ -447,19 +471,29 @@ New flags follow the existing pattern until that migration lands.
 
 - **Default unchanged:** `wind_profile="mexhat"` and no extra PV source
   reproduce the current wind state and a short QG trajectory bitwise.
-- **Geisler check (H0):** with β = 0, no mean shear, weak forcing and a
-  steady translating vortex, the steady linear QG response in the storm frame
-  is solvable by FFT. The model's interface displacement must match it after
-  spin-up. This checks sign conventions, the stress-to-PV scaling and the
-  periodic images at once.
+- **Geisler check (H0).** Setup: β = 0, no mean shear, weak forcing, a
+  vortex translating at constant speed `U`, and, for the test only, weak
+  Rayleigh damping `r` in **both** layers.
+  - **Why the damping is needed:** without it, the steady storm-frame problem
+    `−U ∂q/∂x = F` is singular at `k_x = 0` on a doubly periodic domain. Along
+    any line through the track the forcing's x-mean is not zero, so the ridge
+    grows without bound and wraps around. The existing `rek` damps layer 2
+    only (`models/qg_dynamics.py:240`).
+  - **The reference:** with damping, `(r − U ∂ₓ) q = F` is solvable per
+    Fourier mode. The model's interface displacement must match it after
+    spin-up. The time-dependent linear solution, also solvable per mode, is an
+    alternative reference.
+  - **What it checks:** sign conventions (that of `η` included), the
+    stress-to-PV scaling and the periodic images, all at once.
 - **Ekman pumping:** the diagnosed pumping under a reference vortex matches
   `curl τ/(ρ₀ f)`.
 - **Mixed layer:** no wind → `T` and `h` relax to `T*`, `h*`; entrainment
   only cools and only deepens.
 - **Feedback sign:** everything else fixed, a slower storm cools more and
   peaks lower.
-- **Low-order variant:** H-lo written in `QuadraticTensorDynamics` matches
-  the direct implementation.
+- **Low-order variant:** H-lo uses the same vortex and mixed-layer tendency
+  functions as H3 (no second implementation), and passes the feedback-sign
+  test above.
 
 ### 9.4 Work packages
 
@@ -481,14 +515,15 @@ WP1–WP2 can start now. WP6's data preparation can run in parallel with WP3–W
 
 | # | risk | mitigation |
 |---|---|---|
-| R1 | Resolution: the core is barely resolved at `nx = 64`. | `nx = 128` and a large `R_max`; check convergence of wake statistics at `nx = 256` on a few events. |
+| R1 | Resolution: the core is barely resolved at `nx = 64`. | `nx = 128` and a large `R_max`; check convergence of wake statistics at `nx = 256` on a few events. Retuning to TC latitude (decision 3) relaxes this. |
 | R2 | The storm forcing is ~15× the current one; local velocities grow, and the filter or `clip_range` may act on the wake. | `dt = 1 h`; monitor filter dissipation; H0 test before H1. |
 | R3 | QG validity: the local Rossby number under the core is not small. | Interpret only the balanced wake; H-sw as the check (WP8). |
 | R4 | The mixed-layer closure drives the cooling results. | Calibrate against observed statistics (WP2); report conclusions that survive two closures. |
-| R5 | Periodic re-entry of the storm or its wake. | Life-cycle envelope; one passage per window; wake decay checked against the window length. |
+| R5 | Periodic re-entry of the storm or its wake, and overlap of the wind field with its periodic images. | Life-cycle envelope; one passage per window; wake decay checked against the window length. The envelope does **not** prevent the wind-field overlap or the wake wrapping around on a 1000 km domain; a larger domain does (decision 3). |
 | R6 | Cache reuse across configurations. | `QGTCConfig` and `TC_VERSION` in the key. |
 | R7 | Sim-to-real gap (§8.4). | The three-step protocol of §8.3; no direct toy-to-real claims. |
 | R8 | Few storms with rich ocean data. | Train on the large sparse set, validate on the small rich set; pool across basins if needed. |
+| R9 | Cost: at `nx = 128` the state vector has about 65k entries (q, T, h), against 8k for the current QG. Localized ETKF and neural training at 128² cost much more. | Profile ETKF and one neural epoch at WP1. Decision 3's coarser grid on a larger domain may cost similar or less. |
 
 ## 11. Open decisions
 
@@ -497,18 +532,48 @@ WP1–WP2 can start now. WP6's data preparation can run in parallel with WP3–W
 2. **Ocean model.** Stay with QG and accept the missing inertial wake, or
    plan H-sw (a two-layer shallow-water ocean, Geisler's own model) as a
    second ocean?
-3. **Grid.** A fixed basin grid (current) or a storm-following grid? The
+3. **Ocean latitude and domain size.** The QG defaults are mid-latitude:
+   `β = 1.5e-11` corresponds to about 49°N, and `rd = 15 km`. At TC
+   latitudes (15–30°), `f₀ ≈ 4–7×10⁻⁵ s⁻¹`, `rd ≈ 40–80 km` (Chelton et al.
+   1998) and `β ≈ 2×10⁻¹¹`, which gives `c = f₀ rd ≈ 2–3 m/s`. The 1000 km
+   periodic domain is also small for a TC: the wind field extends 200–300+ km
+   from the centre and overlaps its periodic images, and a 3-day passage at
+   5 m/s (~1300 km) laps the whole domain. Two options:
+   - **(a) Keep the QG defaults** on 1000 km with `nx = 128` (§5.6).
+     Comparable with the existing QG case study, but mid-latitude physics and
+     strong periodic artefacts.
+   - **(b) Retune to TC latitude** (`f₀ ≈ 5×10⁻⁵`, `rd ≈ 50 km`,
+     `β ≈ 2×10⁻¹¹`) on a domain of at least 2500–3000 km. Larger eddies relax
+     the resolution constraint, so `nx = 128–192` (Δx ≈ 15–20 km) may be
+     enough with `R_max` 40–60 km, to be checked by the R1 convergence test.
+
+   **(b) is recommended.** It changes §5.6 and the H0 numbers. It gives up
+   direct comparability with the existing QG configuration, and leaves the QG
+   benchmark itself untouched, since QG-TC is a separate setting.
+4. **Grid.** A fixed basin grid (current) or a storm-following grid? The
    second suits real data and resolution but changes the QG code more.
-4. **First real-data problem.** Reconstruction is recommended: it is closest
+5. **First real-data problem.** Reconstruction is recommended: it is closest
    to 4DVarNet's SSH/SST heritage, and its observations are the most
    abundant. Calibration second, intensity forecasting third.
-5. **Paper fit.** Q4–Q5 and the S1-tc scenarios fit P1 (model error) and the
+6. **Paper fit.** Q4–Q5 and the S1-tc scenarios fit P1 (model error) and the
    CGOA coupled-DA questions. The real-data reconstruction could be a
    separate application paper.
+7. **Mixed-layer momentum.** Add a slab momentum equation to the mixed layer
+   (Pollard & Millard 1970), e.g. `∂u/∂t − f v = τₓ/(ρ₀h)`, still passive for
+   the QG PV. It restores the near-inertial currents that QG filters out, and
+   with them:
+   - shear-driven entrainment through a bulk-Richardson closure (Price 1981),
+     which §3.2 names as the dominant cooling process and which a pure `u*³`
+     closure underestimates;
+   - the rightward bias of the cold wake, marked "partial" in §3.4.
+
+   It is cheap (two more 2-D fields). The question is whether it enters WP2 or
+   stays a later upgrade.
 
 ## References
 
 - Bell, Montgomery & Emanuel (2012), air–sea enthalpy and momentum exchange at major hurricane wind speeds (CBLAST). *J. Atmos. Sci.* 69, 3197–3222.
+- Chelton, deSzoeke, Schlax, El Naggar & Siwertz (1998), geographical variability of the first baroclinic Rossby radius of deformation. *J. Phys. Oceanogr.* 28, 433–460.
 - Emanuel (1986), an air–sea interaction theory for tropical cyclones. *J. Atmos. Sci.* 43, 585–605.
 - Emanuel (1988), the maximum intensity of hurricanes. *J. Atmos. Sci.* 45, 1143–1155.
 - Fablet et al. (2021), learning variational data assimilation models and solvers. *J. Adv. Model. Earth Syst.* 13, e2021MS002572.
@@ -519,6 +584,8 @@ WP1–WP2 can start now. WP6's data preparation can run in parallel with WP3–W
 - Kraus & Turner (1967), a one-dimensional model of the seasonal thermocline II. *Tellus* 19, 98–106.
 - Lloyd & Vecchi (2011), observational evidence for oceanic controls on hurricane intensity. *J. Climate* 24, 1138–1153.
 - Mainelli, DeMaria, Shay & Goni (2008), application of oceanic heat content estimation to operational forecasting of recent Atlantic category 5 hurricanes. *Wea. Forecasting* 23, 3–16.
+- Niiler & Kraus (1977), one-dimensional models of the upper ocean. In *Modelling and Prediction of the Upper Layers of the Ocean*, E. B. Kraus (ed.), Pergamon, 143–172.
+- Pollard & Millard (1970), comparison between observed and simulated wind-generated inertial oscillations. *Deep-Sea Res.* 17, 813–821.
 - Powell, Vickery & Reinhold (2003), reduced drag coefficient for high wind speeds in tropical cyclones. *Nature* 422, 279–283.
 - Price (1981), upper ocean response to a hurricane. *J. Phys. Oceanogr.* 11, 153–175.
 - Price, Sanford & Forristall (1994), forced stage response to a moving hurricane. *J. Phys. Oceanogr.* 24, 233–260.

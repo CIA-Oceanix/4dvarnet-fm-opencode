@@ -96,6 +96,7 @@ sweep at S0*, which **must share one protocol**).
 |---|---|
 | `docs/plans/case_study/cgoa_coupled_gyrostats.md` | **SCOPING** v2 2026-09-24. Coupled ocean–atmosphere from coupled gyrostats (Tier A) plus MAOOAM through qgs (Tier B), on one quadratic-tensor torch engine, built on shared pieces extracted in a no-op PR rather than mirroring the L96 stack. Nothing implemented. Paper fit (P1 / P2 / standalone) is open, §9. |
 | `docs/plans/case_study/qg_gyrostat_synoptic_forcing.md` | **SCOPING** v1 2026-09-25. Extends the QG case study (not a new testbed): replace the kinematic OU storm with a gyrostat low-order atmosphere to study the upper-ocean response to synoptic variability. Five options, from a one-way parametric driver (recommended first, with a phase-randomized surrogate control) to two-way mechanical coupling and an ocean gyrostat reduced model. The QG benchmark default is unchanged. Nothing implemented. |
+| `docs/plans/case_study/qg_hurricane_coupled.md` | **SCOPING** v1 2026-09-25. Option F of the note above: a two-way coupled hurricane event over the QG ocean. A parametric vortex with an Emanuel-type intensity equation, a slab mixed layer tied to the QG interface, and the gyrostat driver as the storm's environment. Configuration ladder from a Geisler check to full coupling, synthetic DA scenarios, a transfer protocol to real wind/ocean data, and an open decision on retuning the ocean to tropical latitudes. Nothing implemented. |
 
 ## Tech
 
