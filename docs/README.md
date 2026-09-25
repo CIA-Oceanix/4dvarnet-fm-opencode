@@ -88,7 +88,7 @@ sweep at S0*, which **must share one protocol**).
 | `docs/plans/analysis/l96_phaseC_joint_da.md` | PLAN, designed for execution — branch `feature/l96-joint-da-benchmark`. |
 | `docs/plans/analysis/l96_phaseC_joint_neural.md` | PLAN, designed for execution. |
 | `docs/plans/analysis/l96_joint_additional_metrics.md` | PLAN, in progress since 2026-08-26. |
-| `docs/plans/analysis/qg_gyrostat_wind_forcing.md` | **DRAFT** v1 2026-09-26. Executes WP1–WP2 of `docs/plans/case_study/qg_gyrostat_synoptic_forcing.md`: a Lorenz-63 gyrostat driver behind `wind_driver` (the default OU path and existing cache keys bit-identical), a multivariate phase-randomized surrogate, and long forced runs E0–E3 with ensembles. Ends with a go/no-go on Option B. Five open decisions, the first being the time unit (≈49 vs ≈7 days per L63 unit, from measured L63 time scales). Nothing implemented. |
+| `docs/plans/analysis/qg_gyrostat_wind_forcing.md` | **DRAFT** v2 2026-09-26. Implements **Option B** of `docs/plans/case_study/qg_gyrostat_synoptic_forcing.md` directly: gyrostat modes drive the amplitudes of low-order Fourier wind-curl patterns. Today's storm keeps 99.8% of its curl variance in the 12 amplitudes with `|k| ≤ 2` (measured), so the basis contains the current forcing, and all drivers share its spatial spectrum. Drivers: spectral-OU, gyrostat (`chain6`), phase-randomized surrogate. The default path and cache keys stay bit-identical. Long forced runs E0–E4 end in a go/no-go on Option C. Six open decisions. Nothing implemented. |
 | `docs/plans/analysis/l63_expG_tau0_cfm.md` | PLAN only — motivation, expected outcomes, run command; no results section. Outcomes live in the L63 reports. |
 
 ## Case-study proposals
