@@ -1,6 +1,6 @@
 # τ-consistency of the CFM operator — next steps
 
-**Status:** DRAFT for review, **v4 2026-09-24**. v4 re-targets the plan at
+**Status:** **CLOSED 2026-09-25** — outcomes and open items in `docs/results/cfm_tau_consistency_synthesis.md`. Last revision: v4 2026-09-24. v4 re-targets the plan at
 **defect 2 (variance collapse)**, after v3's Batch 1 came back negative. v3's
 material that is still relevant is summarised in §1; the full v3 text is in git
 history (#248).
