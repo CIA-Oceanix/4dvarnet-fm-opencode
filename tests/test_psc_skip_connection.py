@@ -73,7 +73,42 @@ def test_invalid_skip_connection_raises():
 def test_train_py_wires_skip_connection():
     from train import model_factory
     section = {"hidden_channels": [16, 32], "N_outer": 3, "sigma_prior": 0.5, "dropout": 0.0,
-               "cond_extra_dim": 0, "num_res_blocks": 1, "norm_num_groups": 8, "skip_connection": "linear"}
+               "cond_extra_dim": 0, "num_res_blocks": 1, "norm_num_groups": 8, "skip_connection": "linear",
+               "skip_loss": "net"}
     cfg = OmegaConf.create({"model": {"model_type": "monai_predict_state_cfm", "state_dim": 4,
                                       "param_dim": 0, "monai_predict_state_cfm": section}})
-    assert model_factory(cfg, torch.device("cpu")).skip_connection == "linear"
+    m = model_factory(cfg, torch.device("cpu"))
+    assert m.skip_connection == "linear" and m.skip_loss == "net"
+
+
+def test_net_loss_is_the_unweighted_skip_target():
+    model, batch = _model(skip_connection="linear", skip_loss="net"), _batch()
+    model.train()
+    torch.manual_seed(0)
+    loss = model.compute_loss(batch)
+    torch.manual_seed(0)
+    tau = torch.rand(4)
+    x0 = torch.randn_like(batch.states) * model.sigma_prior
+    x_tau = model.interpolant.mix(x0, batch.states, tau)
+    t = tau.view(-1, 1, 1)
+    net = _net(model, x_tau, batch, tau)
+    assert torch.allclose(loss, ((net - ((1 + t) * batch.states - t * x0)) ** 2).mean(), atol=1e-6)
+    d_residual = model.forward(x_tau, batch, tau) - batch.states
+    assert torch.allclose(d_residual, (1 - t) * (net - ((1 + t) * batch.states - t * x0)), atol=1e-5)
+
+
+def test_validation_loss_is_the_state_loss_for_both_skip_losses():
+    batch = _batch()
+    state, net = _model(skip_connection="linear"), _model(skip_connection="linear", skip_loss="net")
+    torch.manual_seed(2)
+    a = state.compute_loss(batch)
+    torch.manual_seed(2)
+    b = net.compute_loss(batch)
+    assert torch.equal(a, b)
+
+
+@pytest.mark.parametrize("bad", [{"skip_loss": "net"}, {"skip_connection": "linear", "skip_loss": "velocity"},
+                                 {"skip_connection": "linear", "skip_loss": "net", "tau0_frac": 0.1}])
+def test_invalid_skip_loss_raises(bad):
+    with pytest.raises(ValueError):
+        _model(**bad)

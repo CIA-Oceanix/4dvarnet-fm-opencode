@@ -581,7 +581,8 @@ class PredictStateCFM(nn.Module):
                           boot_dtau_min: float = 0.2, boot_dtau_max: float = 0.5,
                           boot_alpha: float = 1.0, var_weight: float = 0.0,
                           var_tau_min: float = 0.05, var_tau_max: float = 0.95,
-                          var_fd_eps: float = 1e-2, skip_connection: str = "none") -> None:
+                          var_fd_eps: float = 1e-2, skip_connection: str = "none",
+                          skip_loss: str = "state") -> None:
         """Training-time tau options; every default reproduces the plain CFM loss.
 
         See docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md (T1', T1, T2a/T2b, T4a).
@@ -596,12 +597,21 @@ class PredictStateCFM(nn.Module):
             [var_tau_min, var_tau_max]; see variance_terms.
         skip_connection: "none" (D = net) or "linear" (D = tau * x_tau + (1 - tau) * net): D is
             exact at tau = 1 by construction, the tau = 0 head is unchanged, and the sampler's
-            velocity (D - x)/(1 - tau) becomes net - x. The loss stays on D, so net is weighted
-            by (1 - tau)^2.
+            velocity (D - x)/(1 - tau) becomes net - x.
+        skip_loss (linear skip only): "state" trains MSE(D, x1), i.e. net weighted by (1 - tau)^2;
+            "net" trains the unweighted MSE(net, (1 + tau) x1 - tau x0), the same target without
+            the weight. Validation always uses MSE(D, x1), so checkpoint selection is comparable.
         """
         if skip_connection not in ("none", "linear"):
             raise ValueError(f"skip_connection must be 'none' or 'linear', got {skip_connection!r}")
+        if skip_loss not in ("state", "net"):
+            raise ValueError(f"skip_loss must be 'state' or 'net', got {skip_loss!r}")
+        if skip_loss == "net" and skip_connection != "linear":
+            raise ValueError("skip_loss='net' requires skip_connection='linear'")
+        if skip_loss == "net" and (tau0_frac > 0 or boot_frac > 0 or tau_sampling != "uniform" or var_weight > 0):
+            raise ValueError("skip_loss='net' is not combined with the tau-consistency training options")
         self.skip_connection = skip_connection
+        self.skip_loss = skip_loss
         if tau_sampling not in ("uniform", "low_mix"):
             raise ValueError(f"tau_sampling must be 'uniform' or 'low_mix', got {tau_sampling!r}")
         if tau0_frac < 0 or boot_frac < 0 or tau0_frac + boot_frac > 1:
@@ -670,13 +680,16 @@ class PredictStateCFM(nn.Module):
         jac, resid = self.variance_terms(x_tau, batch, tau, x1)
         return jac.sum() / resid.sum().clamp(min=1e-12)
 
-    def forward(self, x_t, batch, tau):
-        """Forward pass: predict final state mean μ = E[x1|xt,y]."""
+    def _net(self, x_t, batch, tau):
         if self.tau0_zero_input:
             x_t = x_t * (tau > 0).to(x_t.dtype).view(-1, 1, 1)
         cond = _make_cond(batch.obs, batch.forcing, batch.params,
                           self.param_dim, self.cond_extra_dim)
-        μ = self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau).transpose(1, 2)
+        return self.unet(x_t.transpose(1, 2), cond.transpose(1, 2), tau=tau).transpose(1, 2), x_t
+
+    def forward(self, x_t, batch, tau):
+        """Forward pass: predict final state mean μ = E[x1|xt,y]."""
+        μ, x_t = self._net(x_t, batch, tau)
         if getattr(self, "skip_connection", "none") == "linear":
             t = tau.view(-1, 1, 1).to(x_t.dtype)
             μ = t * x_t + (1.0 - t) * μ
@@ -712,6 +725,9 @@ class PredictStateCFM(nn.Module):
         tau = torch.zeros(B, device=device) if self.train_tau_0_only else torch.rand(B, device=device)
         x0 = torch.randn_like(batch.states) * self.sigma_prior
         x_tau = self.interpolant.mix(x0, batch.states, tau)
+        if self.training and getattr(self, "skip_loss", "state") == "net":
+            t = tau.view(-1, 1, 1)
+            return F.mse_loss(self._net(x_tau, batch, tau)[0], (1.0 + t) * batch.states - t * x0)
         μ_pred = self.forward(x_tau, batch, tau)
         return F.mse_loss(μ_pred, batch.states)
 
