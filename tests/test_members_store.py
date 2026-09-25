@@ -36,6 +36,12 @@ def test_keep_flag_writes_next_to_output(clean_env):
     assert members_store.members_path(out, "s1", keep=True) == out / "members_s1.npz"
 
 
+def test_scores_mode_stays_next_to_output(clean_env):
+    out = clean_env / "run"
+    assert members_store.members_dir(out, mode="scores") == out
+    assert members_store.members_dir(out, mode="full") != out
+
+
 @pytest.mark.parametrize("value,kept", [("1", True), ("true", True), ("0", False), ("", False), ("false", False)])
 def test_keep_env(clean_env, monkeypatch, value, kept):
     monkeypatch.setenv(members_store.KEEP_ENV, value)
@@ -55,5 +61,5 @@ def test_default_root_is_per_job_under_tmp(monkeypatch):
 def test_writers_route_through_members_store(script):
     src = (ROOT / script).read_text()
     assert 'output_path.parent / f"members_{case}.npz"' not in src
-    assert "members_store.members_path(" in src
+    assert "members_store.members_path(" in src or "members_store.members_dir(" in src
     assert '"--keep-members"' in src

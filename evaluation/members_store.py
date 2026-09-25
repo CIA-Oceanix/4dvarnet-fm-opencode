@@ -9,6 +9,8 @@ in-memory members, so by default the dump goes to the GPU node's local /tmp.
 Keep it next to the run's other outputs only when a report generator reads it
 (the P1, benchmark-default and consolidated rows): pass ``--keep-members`` or
 export ``FDV_KEEP_MEMBERS=1``. ``FDV_MEMBERS_TMP`` overrides the node-local root.
+``--members-file scores`` (KB-sized per-window scores, see
+``estimate_metrics.save_members_or_scores``) always stays next to the outputs.
 
 Node-local /tmp is neither visible from other nodes nor guaranteed to outlive
 the job, so anything that must re-read the members runs in the same job.
@@ -35,11 +37,14 @@ def node_local_root() -> Path:
     return Path("/tmp") / getpass.getuser() / f"members_{job}"
 
 
-def members_path(output_dir: str | Path, case: str, keep: bool = False) -> Path:
+def members_dir(output_dir: str | Path, keep: bool = False, mode: str = "full") -> Path:
     output_dir = Path(output_dir)
-    name = f"members_{case}.npz"
-    if keep_members(keep):
-        return output_dir / name
+    if mode == "scores" or keep_members(keep):
+        return output_dir
     local = node_local_root() / output_dir.resolve().relative_to("/")
     local.mkdir(parents=True, exist_ok=True)
-    return local / name
+    return local
+
+
+def members_path(output_dir: str | Path, case: str, keep: bool = False) -> Path:
+    return members_dir(output_dir, keep) / f"members_{case}.npz"

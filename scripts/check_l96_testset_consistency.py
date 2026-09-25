@@ -35,10 +35,10 @@ from scripts.make_l96_canonical_testset import fingerprint, sha256_file  # noqa:
 
 def check_learned(result_dir: str, testset: str, truths: dict) -> list[str]:
     errors = []
-    js = [p for p in (os.path.join(result_dir, "neural_eval.json"), os.path.join(result_dir, "sda_eval.json"))
-          if os.path.exists(p)]
+    js = [os.path.join(result_dir, n) for n in ("neural_eval.json", "sda_eval.json", "hybrid_eval.json")
+          if os.path.exists(os.path.join(result_dir, n))]
     if not js:
-        return [f"{result_dir}: no neural_eval.json / sda_eval.json"]
+        return [f"{result_dir}: no neural_eval.json / sda_eval.json / hybrid_eval.json"]
     ds_path = json.load(open(js[0])).get("dataset", {}).get("path")
     if ds_path is None or os.path.realpath(ds_path) != os.path.realpath(testset):
         errors.append(f"{result_dir}: dataset {ds_path} is not the canonical {testset}")
@@ -57,19 +57,42 @@ def check_learned(result_dir: str, testset: str, truths: dict) -> list[str]:
 
 def check_da(path: str, manifest: dict) -> list[str]:
     errors = []
-    n = manifest["n_windows"]
+    expected = np.array(manifest.get("window_index", range(manifest["n_windows"])))
     with np.load(path) as z:
         for case in CASES:
             key = f"{case}_window_index"
-            if key in z.files and not np.array_equal(z[key], np.arange(n)):
-                errors.append(f"{path}: {case} windows are not 0..{n - 1}")
+            if key in z.files and not np.array_equal(z[key], expected):
+                errors.append(f"{path}: {case} window order differs from the test set's")
     tag = os.path.basename(path).replace("per_window", "layouts").replace(".npz", ".pt")
-    if tag not in manifest["source_layouts"]:
-        errors.append(f"{path}: its layouts file {tag} is not a source of the canonical test set")
-    else:
-        lp = os.path.join(os.path.dirname(path), tag)
+    lp = os.path.join(os.path.dirname(path), tag)
+    if tag in manifest["source_layouts"]:
         if os.path.exists(lp) and sha256_file(lp) != manifest["source_layouts"][tag]:
             errors.append(f"{path}: {tag} changed since the test set was built")
+    elif not os.path.exists(lp):
+        errors.append(f"{path}: layouts file {tag} missing and not a source of the canonical test set")
+    else:
+        errors += layouts_match_testset(lp, manifest)
+    return errors
+
+
+def layouts_match_testset(layouts_path: str, manifest: dict) -> list[str]:
+    """A DA run whose layouts file is not one of the test set's sources is
+    accepted iff its obs/mask equal the canonical test set's, window by window."""
+    layouts = torch.load(layouts_path, weights_only=False)
+    data = torch.load(manifest["testset"], weights_only=False)
+    errors = []
+    for case, key in CASES.items():
+        if case not in layouts:
+            continue
+        rec = layouts[case]
+        for i in range(manifest["n_windows"]):
+            w = data[key][i]
+            obs = rec["obs"][i].to(w["obs"].dtype)
+            if not (torch.equal(rec["obs_mask"][i].to(w["obs_mask"].dtype), w["obs_mask"])
+                    and torch.equal(torch.isnan(obs), torch.isnan(w["obs"]))
+                    and torch.equal(torch.nan_to_num(obs), torch.nan_to_num(w["obs"]))):
+                errors.append(f"{layouts_path}: {case} window {i} obs differ from the canonical test set")
+                break
     return errors
 
 

@@ -21,6 +21,7 @@ import torch
 from omegaconf import OmegaConf
 
 from evaluation.estimate_metrics import (
+    save_members_or_scores,
     evaluate_ensemble_estimates,
     evaluate_estimates,
     save_estimates,
@@ -57,6 +58,11 @@ def main():
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
+    parser.add_argument("--sigma-prior", type=float, default=None,
+                        help="override the flow's prior std at SAMPLING time (calibration probe)")
+    parser.add_argument("--members-file", default="full", choices=["full", "scores"],
+                        help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
+                             "only (scores_<case>.npz, KBs)")
     parser.add_argument("--keep-members", action="store_true",
                         help="Write members_<case>.npz next to --output (report-read benchmark rows). Default: node-local /tmp, see evaluation/members_store.py")
     parser.add_argument("--normalize-stats", default=None,
@@ -81,6 +87,11 @@ def main():
     logger.info(f"Loading model: {args.checkpoint}")
     overrides = {"train_tau_0_only": True} if args.train_tau0_only else None
     model, cfg = load_model(args.checkpoint, args.config, device=device, overrides=overrides)
+    if args.sigma_prior is not None:
+        if not hasattr(model, "sigma_prior"):
+            raise ValueError(f"--sigma-prior given but {type(model).__name__} has no sigma_prior")
+        logger.info(f"sigma_prior override: {model.sigma_prior} -> {args.sigma_prior} (sampling only)")
+        model.sigma_prior = args.sigma_prior
     logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
     if hasattr(model, "train_tau_0_only"):
         logger.info(f"train_tau_0_only={model.train_tau_0_only}")
@@ -182,8 +193,9 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = members_store.members_path(output_path.parent, case, keep=args.keep_members)
-            np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
+            members_path = save_members_or_scores(
+                members_store.members_dir(output_path.parent, keep=args.keep_members, mode=args.members_file),
+                case, est["members"], est["truth"], args.members_file)
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])
             logger.info(f"Saved estimates: {npz_path} + members: {members_path}")

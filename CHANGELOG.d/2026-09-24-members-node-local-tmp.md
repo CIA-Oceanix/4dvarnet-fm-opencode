@@ -26,6 +26,13 @@ set the rule that sweeps and diagnostics do not store full ensembles on
 /Odyssey. Metrics are unaffected: every eval script computes them in-process
 from the in-memory members before the dump is written.
 
+**Interplay with #258's `--members-file`:**
+- `--members-file scores` (KB-sized per-window scores) still writes next to
+  `--output`.
+- `--members-file full` (the default) goes through `members_store.members_dir`,
+  so it lands on node-local /tmp unless kept.
+- #258's new sweep scripts already pass `scores` and need no flag.
+
 **Caveats:**
 - Node-local /tmp is not visible from other nodes and may not outlive the
   job, so any re-reading of the members, e.g. by

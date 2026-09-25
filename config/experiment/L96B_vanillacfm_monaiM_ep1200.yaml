@@ -1,0 +1,9 @@
+# @package _global_
+# 1200-epoch arm of L96B_vanillacfm_monaiM (1000 training windows): does the flow
+# gain from 3x training length as DirectUNet-M did (0.383 -> 0.342 regular S0)?
+# Only stage1.epochs differs; cosine annealing follows max_epochs.
+defaults:
+  - /experiment/L96B_vanillacfm_monaiM
+  - _self_
+training:
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}

@@ -300,6 +300,18 @@ def _safe_ref(ref, analysis, obs_operator):
     return ref
 
 
+def _analysis_crps_step(ensemble: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    """Ensemble CRPS of the ANALYSIS ensemble ``(B, N, D)`` against ``(B, D)``
+    truth -- the same sorted-member formula as the flows' CRPS
+    (``evaluation.estimate_metrics.ensemble_window_scores``), unlike
+    ``_ESAccumulator`` which scores the forecast ensemble."""
+    N = ensemble.shape[1]
+    mae = (ensemble - ref.unsqueeze(1)).abs().mean(dim=1)
+    coeff = (2 * torch.arange(N, device=ensemble.device, dtype=ensemble.dtype) - N + 1).view(1, N, 1)
+    pairwise = 2 * (coeff * torch.sort(ensemble, dim=1).values).sum(dim=1) / (N * N)
+    return mae - 0.5 * pairwise
+
+
 class _ESAccumulator:
     """Accumulates per-step Energy Score contributions without storing the ensemble.
 
@@ -380,6 +392,7 @@ class BaselineResult:
     ensemble_variance: np.ndarray = None
     params: np.ndarray = None
     es: np.ndarray = None
+    crps: np.ndarray = None
 
 
 class Weak4DVar:
@@ -1229,6 +1242,9 @@ class ETKF:
             [None] * B if ref_full is None
             else [_ESAccumulator(num_steps, self.state_dim, N) for _ in range(B)]
         )
+        crps_ref = (true_state.to(device=self.device, dtype=ensemble.dtype)
+                    if ref_full is not None else None)
+        crps_sum = _analysis_crps_step(ensemble, crps_ref[:, 0]) if crps_ref is not None else None
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
@@ -1310,13 +1326,17 @@ class ETKF:
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()
+            if crps_sum is not None:
+                crps_sum += _analysis_crps_step(ensemble, crps_ref[:, t])
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
+        crps_all = (crps_sum / num_steps).detach().cpu().numpy() if crps_sum is not None else None
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
+                crps=(crps_all[b] if crps_all is not None else None),
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((N, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],
@@ -1530,6 +1550,9 @@ class EnKF:
             [None] * B if ref_full is None
             else [_ESAccumulator(num_steps, self.state_dim, self.N_ensemble) for _ in range(B)]
         )
+        crps_ref = (true_state.to(device=self.device, dtype=ensemble.dtype)
+                    if ref_full is not None else None)
+        crps_sum = _analysis_crps_step(ensemble, crps_ref[:, 0]) if crps_ref is not None else None
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
@@ -1598,13 +1621,17 @@ class EnKF:
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()
+            if crps_sum is not None:
+                crps_sum += _analysis_crps_step(ensemble, crps_ref[:, t])
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
+        crps_all = (crps_sum / num_steps).detach().cpu().numpy() if crps_sum is not None else None
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
+                crps=(crps_all[b] if crps_all is not None else None),
                 trajectory=analysis[b], rmse=rmse_b,
                 ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)),
                 ensemble_variance=ens_var[b],

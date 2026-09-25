@@ -39,6 +39,7 @@ import torch
 from omegaconf import OmegaConf
 
 from evaluation.estimate_metrics import (
+    save_members_or_scores,
     evaluate_ensemble_estimates,
     evaluate_estimates,
     save_estimates,
@@ -93,6 +94,9 @@ def main():
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"],
                         help="Which test cases to evaluate")
     parser.add_argument("--output", default="sda_eval_results.json", help="Output JSON")
+    parser.add_argument("--members-file", default="full", choices=["full", "scores"],
+                        help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
+                             "only (scores_<case>.npz, KBs)")
     parser.add_argument("--keep-members", action="store_true",
                         help="Write members_<case>.npz next to --output (report-read benchmark rows). Default: node-local /tmp, see evaluation/members_store.py")
     parser.add_argument("--normalize-stats", default=None,
@@ -188,8 +192,9 @@ def main():
         save_estimates(str(npz_path), est["trajectories"], est["truth"])
         estimates_paths[case] = str(npz_path)
         if "members" in est:
-            members_path = members_store.members_path(output_path.parent, case, keep=args.keep_members)
-            np.savez_compressed(members_path, members=est["members"], truth=est["truth"])
+            members_path = save_members_or_scores(
+                members_store.members_dir(output_path.parent, keep=args.keep_members, mode=args.members_file),
+                case, est["members"], est["truth"], args.members_file)
             estimates_paths[f"{case}_members"] = str(members_path)
             metrics[case] = evaluate_ensemble_estimates(est["members"], est["truth"])
             logger.info(f"Saved estimates: {npz_path} + members: {members_path}")
