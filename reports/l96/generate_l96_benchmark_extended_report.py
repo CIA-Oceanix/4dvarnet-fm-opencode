@@ -89,7 +89,8 @@ def rows() -> list[tuple]:
         R.append(("SDA, gw 20", lab, [P1 / name / "ens30_gw20"], [CAN / name / "ens30_gw20"]))
     for lab, name in (("DirectUNet-M(400 ep) -> SDA2-M", "hybrid_DU{s}_A3_sda2_monaiM_l96"),
                       ("DirectUNet-M(400 ep) -> SDA1-M", "hybrid_DU{s}_B4_sda1_monaiM_l96"),
-                      ("DirectUNet-M(1200 ep) -> SDA2-M", "hybrid_DU1200s{s}_A3_sda2_monaiM_l96")):
+                      ("DirectUNet-M(1200 ep) -> SDA2-M", "hybrid_DU1200s{s}_A3_sda2_monaiM_l96"),
+                      ("DirectUNet-M(1200 ep) -> SDA3-fix-M", "hybrid_DU1200s{s}_A3_sda3fix_monaiM_l96")):
         R.append(("Hybrid (tau0 0.1, gw 2)", lab, seeds(name, REGE, "tau0.1_gw2"), seeds(name, CAN, "tau0.1_gw2")))
     for lab, name, sub in (("DirectUNet-M", "P1_directunet_monaiM_noaug_l96", D), ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", FL),
                            ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", FL)):
@@ -445,7 +446,7 @@ def tuning_section(cache: dict) -> list[str]:
     mean2 = lambda d: float(np.mean([np.mean(score_dir(d, cache)[c]["rmse"]) for c in CASES]))  # noqa: E731
     A += ["**SDA guidance weight** (P1 used 20)\n", "| regime | model | " + " | ".join(f"gw {g}" for g in (10, 15, 20, 25, 30, 40)) + " |", "|" + "---|" * 8]
     for rg in ("regular", "rlayout"):
-        for m in ("B4_sda1_monaiM_l96", "A3_sda2_monaiM_l96", "A3_sda3_monaiM_l96"):
+        for m in ("B4_sda1_monaiM_l96", "A3_sda2_monaiM_l96", "A3_sda3fix_monaiM_l96_seed1"):
             A.append(f"| {rg} | {m} | " + " | ".join(fmt(mean2(V / rg / 'sda_gw' / m / f'gw{g}')) if done(V / rg / 'sda_gw' / m / f'gw{g}') else '—'
                                                     for g in (10, 15, 20, 25, 30, 40)) + " |")
     A += ["\n**DirectUNet-M -> SDA hybrid** (rows tau0, columns guidance weight); `DU alone` for reference\n"]
@@ -460,15 +461,17 @@ def tuning_section(cache: dict) -> list[str]:
                                                          else '—' for g in gws) + " |")
         du12 = V / rg / "du_alone/L96B_directunet_monaiM_ep1200_seed1"
         if done(du12):
-            A.append(f"\nWith the 1200-epoch DirectUNet-M (alone {fmt(mean2(du12))}), SDA2-M prior. **tau0 0.05 is not a "
+            A.append(f"\nWith the 1200-epoch DirectUNet-M (alone {fmt(mean2(du12))}), SDA2-M / SDA3-fix-M priors. **tau0 0.05 is not a "
                      "warm start**: the sampler snaps tau0 to its 10-step grid with `round(tau0 * N_outer)`, and 0.5 "
                      "rounds to 0, so that row is plain SDA from noise at a far-too-low guidance weight (the tuned SDA "
                      "weight is 25).\n")
             gws2 = ["1", "2", "5"]
-            A += ["| tau0 | " + " | ".join(f"gw {g}" for g in gws2) + " |", "|" + "---|" * 4]
-            for t in ("0.05", "0.1", "0.2"):
-                A.append(f"| {t} | " + " | ".join(fmt(mean2(V / rg / 'hybrid_du1200/A3_sda2_monaiM_l96' / f'tau{t}_gw{g}'))
-                                                  if done(V / rg / 'hybrid_du1200/A3_sda2_monaiM_l96' / f'tau{t}_gw{g}') else '—' for g in gws2) + " |")
+            A += ["| prior | tau0 | " + " | ".join(f"gw {g}" for g in gws2) + " |", "|" + "---|" * 5]
+            for m in ("A3_sda2_monaiM_l96", "A3_sda3fix_monaiM_l96_seed1"):
+                for t in ("0.05", "0.1", "0.2"):
+                    d = V / rg / "hybrid_du1200" / m
+                    A.append(f"| {m} | {t} | " + " | ".join(fmt(mean2(d / f'tau{t}_gw{g}')) if done(d / f'tau{t}_gw{g}') else '—'
+                                                             for g in gws2) + " |")
     A += ["\n**Flow calibration** (benchmark default seed 1; S0 RMSE / CRPS / spread-over-RMSE)\n",
           "| regime | model | 10 steps | 20 steps | 50 steps | sigma 0.75 | sigma 1.0 |", "|---|---|---|---|---|---|---|"]
     for rg in ("regular", "rlayout"):
@@ -515,15 +518,16 @@ def findings(da, learned) -> list[str]:
     row = {(r["group"], r["label"]): r for r in learned}
     m = lambda g, lab, t, c="s0": None if row[(g, lab)][t] is None else float(row[(g, lab)][t][c]["rmse"].mean())  # noqa: E731
     best_da = min(da, key=lambda r: r["reg"]["s0"]["rmse"].mean())
-    h4 = ("Hybrid (tau0 0.1, gw 2)", "DirectUNet-M(400 ep) -> SDA2-M")
-    h12 = ("Hybrid (tau0 0.1, gw 2)", "DirectUNet-M(1200 ep) -> SDA2-M")
-    h = h12 if row[h12]["reg"] is not None and row[h12]["can"] is not None else h4
+    hg = "Hybrid (tau0 0.1, gw 2)"
+    h2, h3 = (hg, "DirectUNet-M(1200 ep) -> SDA2-M"), (hg, "DirectUNet-M(1200 ep) -> SDA3-fix-M")
     A = ["## Findings\n"]
-    A.append(f"1. **Best scheme: the DirectUNet-M -> SDA2-M hybrid** (validation-selected tau0 0.1, gw 2), with the "
-             f"{'1200' if h == h12 else '400'}-epoch DirectUNet-M as its mean: regular S0 {fmt(m(*h, 'reg'))}, random S0 "
-             f"{fmt(m(*h, 'can'))}, CRPS {fmt(row[h]['reg']['s0']['crps'])} / {fmt(row[h]['can']['s0']['crps'])} -- best RMSE and "
-             f"CRPS on both test sets (400-epoch mean: {fmt(m(*h4, 'reg'))} / {fmt(m(*h4, 'can'))}). A better mean carries "
-             f"straight through the SDA correction. Best DA on regular S0: {best_da['label']} {best_da['reg']['s0']['rmse'].mean():.3f}.")
+    A.append(f"1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is "
+             f"also the better one on the validation windows): regular S0 / S1 {fmt(m(*h3, 'reg'))} / {fmt(m(*h3, 'reg', 's1'))}, "
+             f"random S0 / S1 {fmt(m(*h3, 'can'))} / {fmt(m(*h3, 'can', 's1'))} -- flat under model error. The SDA2-M prior "
+             f"is marginally better at S0 ({fmt(m(*h2, 'reg'))} / {fmt(m(*h2, 'can'))}) but degrades at S1 "
+             f"({fmt(m(*h2, 'reg', 's1'))} / {fmt(m(*h2, 'can', 's1'))}): it was trained with DA params equal to the true ones, "
+             f"so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: {best_da['label']} "
+             f"{best_da['reg']['s0']['rmse'].mean():.3f}.")
     A.append("2. **The 400-epoch budget of the benchmark default is too short.** At 1200 epochs every family gains 9-19% "
              f"(regular S0: DirectUNet {fmt(m('Benchmark default, 400 ep', 'DirectUNet-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'DirectUNet-M', 'reg'))}, "
              f"PredictStateCFM {fmt(m('Benchmark default, 400 ep', 'PredictStateCFM-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'PredictStateCFM-M', 'reg'))}, "
@@ -538,8 +542,12 @@ def findings(da, learned) -> list[str]:
              "error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).")
     A.append("5. **Beyond the training range**: learned models are weak at 6 obs and degrade with 1000 obs (DirectUNet "
              "0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least. Noise shifts are handled gracefully.")
-    A.append("6. **SDA3 conditioning was inert by construction** (training DA params equalled the true ones); with the bias "
-             "active (SDA3-fix) it is still no better than SDA1/SDA2 -- conditioning is inert. SDA2 is the better hybrid prior.")
+    sd2, sd3 = ("SDA, gw 25", "SDA2-M"), ("SDA, gw 25", "SDA3-fix-M")
+    A.append("6. **Params conditioning matters once it is tested.** P1's SDA3 was inert by construction (training DA params "
+             "equalled the true ones), and every S1 evaluation before 2026-09-25 fed the conditioned priors the TRUE params. "
+             f"With the biased DA params at S1, SDA2-M degrades ({fmt(m(*sd2, 'reg'))} -> {fmt(m(*sd2, 'reg', 's1'))} regular) "
+             f"while SDA3-fix-M, trained on noisy DA params, does not ({fmt(m(*sd3, 'reg'))} -> {fmt(m(*sd3, 'reg', 's1'))}). "
+             "Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).")
     A.append("7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights "
              "fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).\n")
     return A
@@ -581,7 +589,11 @@ def main() -> None:
          "protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); "
          "the report refuses to render a flow result recorded with any other sampling. Only the calibration study "
          "(section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler "
-         "(10 guided steps).\n"]
+         "(10 guided steps).\n",
+         "**SDA conditioning at S1**: the params-conditioned priors (SDA2, SDA3-fix, alone and as hybrid priors) are "
+         "conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA "
+         "baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read "
+         "the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")

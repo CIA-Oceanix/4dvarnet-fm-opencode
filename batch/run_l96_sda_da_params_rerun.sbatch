@@ -68,6 +68,7 @@ elif [ $i -le 11 ]; then
 elif [ $i -le 14 ]; then
   S=$((i - 11)); hyb_tests experiments/L96B_directunet_monaiM_ep1200_seed$S $SDA3F hybrid_DU1200s${S}_A3_sda3fix_monaiM_l96
 elif [ $i -le 16 ]; then
+  export FDV_KEEP_MEMBERS=1  # the P1 and benchmark-default reports read members from /Odyssey
   EXP=$( [ $i = 15 ] && echo A3_sda2_monaiM_l96 || echo A3_sda3_monaiM_l96 )
   sda_eval $F/$EXP 20 $REG $F/$EXP/ens30_gw20 200 16 full
   sda_eval $F/$EXP 20 $CAN experiments/eval_rlayout_n10-100_k4-16_w200/$EXP/ens30_gw20 200 16 full

@@ -69,8 +69,8 @@ Source: `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_f
 | SDA1-S+ | 1.48 M | 0.6260 ± 0.1132 | 0.6253 ± 0.1118 | 0.999 | 0.3178 ± 0.0525 | 0.3174 ± 0.0518 | 0.520 |  |
 | **SDA1-M** | 5.89 M | **0.5063 ± 0.0912** | 0.5049 ± 0.0906 | 0.997 | 0.2579 ± 0.0415 | 0.2577 ± 0.0407 | 0.416 |  |
 | SDA1-L | 23.5 M | 0.5342 ± 0.0951 | 0.5332 ± 0.0948 | 0.998 | 0.2732 ± 0.0454 | 0.2727 ± 0.0446 | 0.399 |  |
-| SDA2-M | 5.89 M | 0.5129 ± 0.0969 | 0.5130 ± 0.0973 | 1.000 | 0.2424 ± 0.0349 | 0.2420 ± 0.0352 | 0.550 |  |
-| SDA3-M | 5.89 M | 0.5228 ± 0.1004 | 0.5229 ± 0.1006 | 1.000 | 0.2505 ± 0.0372 | 0.2503 ± 0.0376 | 0.532 |  |
+| SDA2-M | 5.89 M | 0.5125 ± 0.0966 | 0.5226 ± 0.1005 | 1.020 | 0.2423 ± 0.0349 | 0.2431 ± 0.0362 | 0.549 |  |
+| SDA3-M | 5.89 M | 0.5228 ± 0.1002 | 0.5295 ± 0.1035 | 1.013 | 0.2504 ± 0.0372 | 0.2474 ± 0.0373 | 0.533 |  |
 
 ## Cross-family reading
 
@@ -79,7 +79,7 @@ Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.50
 - **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by ~1.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
 - **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
 - **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
-- **SDA's conditioning buys ~1-2% RMSE**, while its guidance weight is worth ~4x more (8% from tuning alone) — consistent with observations entering SDA only through the guidance term.
+- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 (`l96_benchmark_extended.md`).
 - **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is not only about sampling.
 
 ## Caveats

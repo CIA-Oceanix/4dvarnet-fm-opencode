@@ -54,6 +54,26 @@ See `reports/l96/outputs/l96_benchmark_extended.md` for all numbers.
   fast channels. New material for H1 (`02_background.tex` L191–194) and the marginal-value
   surface (`06_discussion.tex` L145–148).
 
+## Update 2026-09-25 — S1 conditioning bug: "conditioning is inert" is reversed
+
+Every L96 S1 evaluation of the params-conditioned SDA priors (SDA2, SDA3; P1 and the
+benchmark reports alike) fed them the TRUE parameters: the evaluation collate read the
+plain `F/c1/...` keys, which hold the truth in S1 windows, while the DA baselines and the
+training collate read the biased `*_da` values. Fixed and re-run (S0 unchanged, bit-for-bit).
+
+- With the biased DA params, SDA2-M degrades at S1 (0.500 -> 0.509 regular) while
+  SDA3-fix-M, trained on noisy DA params, does not (0.501 -> 0.502). Alone the gap is within
+  seed noise (SDA3-fix seeds 0.494-0.514).
+- As the DirectUNet-hybrid prior it decides robustness: DU(1200)->SDA2-M 0.310 / 0.333
+  (S0 / S1, regular), DU(1200)->SDA3-fix-M 0.312 / 0.307 (random set 0.382 / 0.408 vs
+  0.388 / 0.385). The SDA3-fix hybrid is the best scheme at S1 on both test sets and the
+  better prior on the validation windows too.
+- Paper impact: `tab:ladder` SDA2/SDA3 S1 cells and the "conditioning is inert" reading
+  (`05_results.tex` L111-146) must be redone; the "most accurate scheme" claim
+  (`07_conclusion.tex` L31-33) should name the DU->SDA3-fix hybrid, which is also flat under
+  model error. SDA S1/S0 ratios quoted anywhere (e.g. `05_results.tex` L179-181) change for
+  SDA2/SDA3 only.
+
 ## High priority — the marginal-value headline must be re-run (done 2026-09-24, see above)
 
 `main.tex` L78–81, `01_introduction.tex` L68–72, `05_results.tex` L197–225
