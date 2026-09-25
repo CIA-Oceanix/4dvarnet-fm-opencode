@@ -1221,6 +1221,10 @@ class ETKF:
         ens_var = np.zeros((B, num_steps, self.state_dim))
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
+        ens_store = (np.zeros((B, self.N_ensemble, num_steps, self.state_dim), dtype=np.float32)
+                     if getattr(self, "store_ensemble", False) else None)
+        if ens_store is not None:
+            ens_store[:, :, 0] = ensemble.detach().cpu().numpy()
 
         ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
@@ -1310,6 +1314,8 @@ class ETKF:
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()
+            if ens_store is not None:
+                ens_store[:, :, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
@@ -1318,7 +1324,7 @@ class ETKF:
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b,
-                ensemble=np.zeros((N, num_steps, self.state_dim)),
+                ensemble=(ens_store[b] if ens_store is not None else np.zeros((N, num_steps, self.state_dim))),
                 ensemble_variance=ens_var[b],
                 es=(es_accs[b].es() if es_accs[b] is not None else None),
             ))
@@ -1522,6 +1528,10 @@ class EnKF:
         ens_var = np.zeros((B, num_steps, self.state_dim))
         analysis[:, 0] = torch.mean(ensemble, dim=1).cpu().numpy()
         ens_var[:, 0] = torch.var(ensemble, dim=1).cpu().numpy()
+        ens_store = (np.zeros((B, self.N_ensemble, num_steps, self.state_dim), dtype=np.float32)
+                     if getattr(self, "store_ensemble", False) else None)
+        if ens_store is not None:
+            ens_store[:, :, 0] = ensemble.detach().cpu().numpy()
 
         ref_full = true_state.detach().cpu().numpy() if (
             true_state is not None and true_state.shape[-1] == self.state_dim
@@ -1598,6 +1608,8 @@ class EnKF:
 
             analysis[:, t] = torch.mean(ensemble, dim=1).detach().cpu().numpy()
             ens_var[:, t] = torch.var(ensemble, dim=1).detach().cpu().numpy()
+            if ens_store is not None:
+                ens_store[:, :, t] = ensemble.detach().cpu().numpy()
 
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
@@ -1606,7 +1618,7 @@ class EnKF:
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
             results.append(BaselineResult(
                 trajectory=analysis[b], rmse=rmse_b,
-                ensemble=np.zeros((self.N_ensemble, num_steps, self.state_dim)),
+                ensemble=(ens_store[b] if ens_store is not None else np.zeros((self.N_ensemble, num_steps, self.state_dim))),
                 ensemble_variance=ens_var[b],
                 es=(es_accs[b].es() if es_accs[b] is not None else None),
             ))

@@ -304,7 +304,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                              weak_config=None, strong_config=None, enkf_config=None,
                              etkf_config=None, suffix="", exclude_methods=None,
                              obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
-                             fw_randomized=False, da_fast_weights=False):
+                             fw_randomized=False, da_fast_weights=False, save_members=False):
+    """``save_members``: ETKF/EnKF also keep their full ensembles and write them next to
+    the trajectory file as ``*_members.npz`` (``members`` (W, T, D, N) and ``truth`` (W, T, D)
+    in the evaluated subspace, the layout of the neural ``members_<case>.npz``)."""
     if s1_j is None:
         s1_j = obs_j
     if eval_j is None:
@@ -393,6 +396,10 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
                                   dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
                                   **_case_cfg(etkf_cfg, case_name))
+        if save_members:
+            for m in ("EnKF", "ETKF"):
+                if m in pool:
+                    pool[m].store_ensemble = True
         baseline_pool[case_name] = pool
 
     cfg_s0 = Lorenz96Config(param_bias=0.0, forcing_state_bias=0.0, T_max=3.0, seed=123,
@@ -445,6 +452,16 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
                 traj_data["ensemble_variance"] = np.stack(
                     [r.ensemble_variance for r in bl_results], axis=0)
             np.savez_compressed(_baseline_traj_path(case_name, name, dws_suffix, param_suffix), **traj_data)
+            if save_members and getattr(method, "store_ensemble", False):
+                ens = np.stack([r.ensemble for r in bl_results], axis=0)
+                if ens.shape[-1] > len(eval_var_indices):
+                    ens = ens[..., eval_var_indices]
+                truth = np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))], axis=0)
+                if truth.shape[-1] > ens.shape[-1]:
+                    truth = truth[..., eval_var_indices]
+                np.savez(_baseline_traj_path(case_name, name, dws_suffix, param_suffix).replace(".npz", "_members.npz"),
+                         members=np.ascontiguousarray(ens.transpose(0, 2, 3, 1)).astype(np.float32),
+                         truth=truth.astype(np.float32))
 
             rmse_mean = np.mean(m)
             groups = _per_group_rmse(m, NO=NO, obs_j=obs_j)
