@@ -80,6 +80,8 @@ def main() -> None:
     p.add_argument("--loc-radius", type=float, default=2.0)
     p.add_argument("--etkf-ridge", type=float, default=0.1)
     p.add_argument("--out", required=True, help="summary JSON path (run() output)")
+    p.add_argument("--save-traj", default=None,
+                   help="directory for run()'s trajectory npz (analysis mean, free forecast, truth)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
     spec = SPECS[args.spec]
@@ -95,7 +97,7 @@ def main() -> None:
                   loc_radius=args.loc_radius, scenarios=("test_s0",), out_path=args.out,
                   init="lagged", geometry="random_columns", obs_var="psi",
                   init_lag_days=args.init_lag_days, ds={"test_s0": windows},
-                  etkf_ridge=args.etkf_ridge)
+                  etkf_ridge=args.etkf_ridge, save_traj=args.save_traj)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
