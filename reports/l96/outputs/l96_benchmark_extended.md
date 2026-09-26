@@ -4,7 +4,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 
 **Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms of the benchmark default.
 
-**Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); the report refuses to render a flow result recorded with any other sampling. Only the calibration study (section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler (10 guided steps).
+**Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); the report refuses to render a flow result recorded with any other sampling. Only the calibration study (section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler (10 guided steps). The `PredictStateCFM-M x3` row averages the velocities of three trained networks (`models/cfm_blend.py`), so it costs 3x a single-model row.
 
 **SDA conditioning at S1**: the params-conditioned priors (SDA2, SDA3-fix, alone and as hybrid priors) are conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.
 
@@ -17,6 +17,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 5. **Beyond the training range**: learned models are weak at 6 obs and degrade with 1000 obs (DirectUNet 0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least. Noise shifts are handled gracefully.
 6. **Params conditioning matters once it is tested.** P1's SDA3 was inert by construction (training DA params equalled the true ones), and every S1 evaluation before 2026-09-25 fed the conditioned priors the TRUE params. With the biased DA params at S1, SDA2-M degrades (0.500 -> 0.509 regular) while SDA3-fix-M, trained on noisy DA params, does not (0.501 -> 0.501). Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).
 7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).
+8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, one shared trajectory) gives regular / random S0 0.327 / 0.429 vs 0.341 / 0.443 for a single network, with unchanged calibration -- at 3x the parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).
 
 ## 1. Main table
 
@@ -34,6 +35,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | Benchmark default, 1200 ep | PredictStateCFM-M | 3/3 | 0.341 ± 0.078 | 0.338 ± 0.079 | 0.443 ± 0.260 | 0.447 ± 0.233 | 1.30 | 0.001 |
 | Benchmark default, 1200 ep | VanillaCFM-M | 3/3 | 0.351 ± 0.079 | 0.349 ± 0.080 | 0.462 ± 0.277 | 0.468 ± 0.250 | 1.32 | 0.001 |
 | Benchmark default, 3000 windows | DirectUNet-M | 1/1 | 0.334 ± 0.061 | 0.334 ± 0.061 | 0.447 ± 0.316 | 0.440 ± 0.270 | 1.34 | — |
+| Flow ensemble, 1200 ep (3 networks) | PredictStateCFM-M x3 | 1/1 | 0.327 ± 0.077 | 0.323 ± 0.078 | 0.429 ± 0.259 | 0.432 ± 0.232 | 1.31 | — |
 | SDA, gw 25 | SDA1-M | 3/3 | 0.501 ± 0.083 | 0.500 ± 0.083 | 0.612 ± 0.233 | 0.624 ± 0.229 | 1.22 | 0.001 |
 | SDA, gw 25 | SDA2-M | 3/3 | 0.500 ± 0.086 | 0.509 ± 0.089 | 0.605 ± 0.230 | 0.627 ± 0.226 | 1.21 | 0.004 |
 | SDA, gw 25 | SDA3-fix-M | 3/3 | 0.501 ± 0.083 | 0.501 ± 0.084 | 0.610 ± 0.234 | 0.619 ± 0.228 | 1.22 | 0.012 |
@@ -57,6 +59,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | Benchmark default, 400 ep | VanillaCFM-M | 0.196 (0.196) | 0.239 (0.244) | 0.79 (0.80) | 0.75 (0.73) |
 | Benchmark default, 1200 ep | PredictStateCFM-M | 0.150 (0.148) | 0.194 (0.196) | 0.63 (0.63) | 0.64 (0.61) |
 | Benchmark default, 1200 ep | VanillaCFM-M | 0.152 (0.151) | 0.202 (0.205) | 0.71 (0.72) | 0.68 (0.66) |
+| Flow ensemble, 1200 ep (3 networks) | PredictStateCFM-M x3 | 0.142 (0.141) | 0.186 (0.189) | 0.63 (0.63) | 0.63 (0.60) |
 | SDA, gw 25 | SDA1-M | 0.255 (0.254) | 0.312 (0.320) | 0.42 (0.43) | 0.39 (0.37) |
 | SDA, gw 25 | SDA2-M | 0.239 (0.240) | 0.287 (0.292) | 0.54 (0.65) | 0.51 (0.59) |
 | SDA, gw 25 | SDA3-fix-M | 0.249 (0.247) | 0.303 (0.305) | 0.46 (0.48) | 0.42 (0.43) |

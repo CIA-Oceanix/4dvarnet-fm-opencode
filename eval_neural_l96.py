@@ -70,6 +70,15 @@ def main():
                              "obs is z-score normalized before each model call and predictions "
                              "are denormalized back to raw physical units before scoring. "
                              "Omitting this flag is a true no-op (identical to not passing it).")
+    parser.add_argument("--blend-with", default=None, nargs="+",
+                        help="second flow checkpoint (VanillaCFM or PredictStateCFM) blended with --checkpoint "
+                             "at sampling time: v = lam(tau) v_second + (1 - lam(tau)) v_first (models/cfm_blend.py); "
+                             "with several checkpoints, the equal-weight average of all N+1 velocities (--blend-schedule ignored)")
+    parser.add_argument("--blend-schedule", default="const:0.5",
+                        help="lam(tau), weight on the --blend-with flow: const:a, switch:t, power:p, rpower:p")
+    parser.add_argument("--blend-weights", default="mean",
+                        help="with several --blend-with checkpoints: 'mean' (equal weights) or 'random:<seed>' "
+                             "(random tau-varying simplex weights, models/cfm_blend.random_weight_schedule)")
     parser.add_argument("--trueprior-phi-source-s1", default="true", choices=["true", "biased"],
                         help="Only meaningful for update_input='subgrad+state+trueprior' "
                              "(a true no-op for every other model): 'true' (default) feeds "
@@ -92,6 +101,20 @@ def main():
             raise ValueError(f"--sigma-prior given but {type(model).__name__} has no sigma_prior")
         logger.info(f"sigma_prior override: {model.sigma_prior} -> {args.sigma_prior} (sampling only)")
         model.sigma_prior = args.sigma_prior
+    if args.blend_with:
+        from models.cfm_blend import MeanVelocityFlow, TauBlendedFlow
+        others = [load_model(c, None, device=device)[0] for c in args.blend_with]
+        if len(others) == 1:
+            model = TauBlendedFlow(model, others[0], args.blend_schedule).eval()
+            logger.info(f"Blending with {args.blend_with[0]}, schedule {args.blend_schedule}")
+        else:
+            weights, knots = None, None
+            if args.blend_weights.startswith("random:"):
+                from models.cfm_blend import random_weight_schedule
+                weights, knots = random_weight_schedule(len(others) + 1, int(args.blend_weights.split(":")[1]))
+            model = MeanVelocityFlow([model] + others, weights).eval()
+            blend_knots = None if knots is None else knots.tolist()
+            logger.info(f"Ensemble of {len(others) + 1} flows ({args.blend_weights}): {args.blend_with}")
     logger.info(f"Model: {type(model).__name__}, state_dim={model.state_dim}")
     if hasattr(model, "train_tau_0_only"):
         logger.info(f"train_tau_0_only={model.train_tau_0_only}")
@@ -223,6 +246,9 @@ def main():
             "step_power": args.step_power if args.step_power is not None else DEFAULT_STEP_POWER,
             "seed": args.seed,
             "cases": list(args.cases),
+            **({"blend_with": args.blend_with,
+                "blend_schedule": args.blend_schedule if len(args.blend_with) == 1 else args.blend_weights,
+                **({"blend_knots": blend_knots} if len(args.blend_with) > 1 else {})} if args.blend_with else {}),
         },
         "estimates": estimates_paths,
         "metrics": metrics,

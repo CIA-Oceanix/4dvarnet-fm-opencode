@@ -120,5 +120,6 @@ thread has a synthesis note, cite it rather than the notes it summarises:
 | thread | synthesis |
 |---|---|
 | L96 τ-consistency of the CFM operators | `docs/results/l96_cfm_tau_consistency_synthesis.md` (#261) |
+| L96 flow blends and velocity ensembles (VanillaCFM / PredictStateCFM) | `docs/results/l96_cfm_velocity_ensembles.md` |
  The
 L96/QG/L63 number tables are under `reports/*/outputs/`.
