@@ -8,7 +8,7 @@ benchmark parameters, nx=64), then run 120 days forced by:
 |---|---|---|
 | E0 | `ou` | the current moving Mexican-hat storm (OU amplitude, 15-day memory; the wind series starts after a 4-memory-time lead-in, since the OU amplitude is initialized at zero) |
 | E0b | `spectral_ou` | 12 Fourier amplitudes (`|k| ≤ 2`), independent OU, same per-mode variance and memory as the storm |
-| E1 | `gyrostat` | the same amplitudes driven by `l63ring4` (four Lorenz-63 gyrostats on a ring, energy-conserving coupling 0.5) |
+| E1 | `gyrostat` | the same amplitudes driven by the `l63ring4` gyrostat preset (12 modes; `l63ring4` is four Lorenz-63 gyrostats on a ring, energy-conserving coupling 0.5) |
 | E2 | `gyrostat_surrogate` | multivariate phase-randomized surrogate of E1's gyrostat series (same auto- and cross-spectra, Gaussian) |
 
 All spectral drivers share the storm's spatial spectrum (variance per mode, analytic from the
@@ -36,8 +36,8 @@ Amplitude statistics from 40-year amplitude-only series (no ocean):
 
 | run | mean KE, last half (m² s⁻²) | max KE (m² s⁻²) | rms curl (s⁻²) | GPU time (s) |
 |---|---|---|---|---|
-| E0: moving storm (current) | 5.899e-03 | 8.669e-03 | 2.21e-12 | 18 |
-| E0b: spectral OU | 5.471e-03 | 1.447e-02 | 2.91e-12 | 6 |
+| E0: moving storm (current) | 5.899e-03 | 8.669e-03 | 2.21e-12 | 16 |
+| E0b: spectral OU | 5.471e-03 | 1.447e-02 | 2.91e-12 | 5 |
 | E1: gyrostat (l63ring4) | 5.830e-03 | 7.522e-03 | 3.04e-12 | 5 |
 | E2: phase-randomized surrogate | 4.994e-03 | 7.224e-03 | 3.38e-12 | 5 |
 

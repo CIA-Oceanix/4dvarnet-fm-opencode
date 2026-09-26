@@ -136,3 +136,26 @@ def test_spectral_forcing_drives_qg_through_tendency(basis):
     q1 = torch.fft.irfft2(tend[0, 0], s=(64, 64))
     torch.testing.assert_close(q1, basis.curl_field(a[0]), rtol=1e-8, atol=1e-20)
     assert math.isclose(float(tend[0, 1].abs().max()), 0.0, abs_tol=1e-30)
+
+
+def test_constructor_accepts_dtype_none():
+    b = FourierWindBasis(nx=16, L=L, kmax=1, dtype=None)
+    assert b.patterns.dtype == torch.float64
+
+
+def test_default_mapping_resolves_per_preset(basis):
+    a = generate_spectral_wind(basis, "gyrostat", 4, 7200.0, amp=1e-11, sigma=SIGMA,
+                               cx=0.0, cy=0.0, x0=0.0, y0=0.0, seed=0, burnin_units=1.0,
+                               mapping=None)
+    assert a.shape == (4, basis.n_amp)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_translate_and_ricker_follow_input_device():
+    b = FourierWindBasis(nx=32, L=L, kmax=2, dtype=torch.float32, device="cuda")
+    a = torch.randn(3, b.n_amp, device="cuda")
+    out = b.translate(a, torch.tensor([1e4, 2e4, 3e4], device="cuda"), 0.0)
+    assert out.device.type == "cuda"
+    amps = b.ricker_amplitudes(torch.ones(2, device="cuda", dtype=torch.float64),
+                               torch.zeros(2, device="cuda"), torch.zeros(2, device="cuda"), SIGMA)
+    assert amps.device.type == "cuda"

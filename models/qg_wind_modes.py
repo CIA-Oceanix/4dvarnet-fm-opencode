@@ -70,8 +70,8 @@ class FourierWindBasis:
 
     def to(self, dtype: torch.dtype | None = None,
            device: torch.device | str | None = None) -> "FourierWindBasis":
-        dtype = dtype or self.patterns.dtype
-        device = device if device is not None else self._patterns64.device
+        dtype = dtype or getattr(self, "patterns", self._patterns64).dtype
+        device = device if device is not None else getattr(self, "patterns", self._patterns64).device
         self.patterns = self._patterns64.to(dtype=dtype, device=device)
         cdtype = torch.complex64 if dtype == torch.float32 else torch.complex128
         self.spectral_patterns = torch.fft.rfft2(
@@ -96,10 +96,11 @@ class FourierWindBasis:
         return flat @ self.proj.T
 
     def translate(self, a: torch.Tensor, dx, dy) -> torch.Tensor:
-        dx = torch.as_tensor(dx, dtype=torch.float64)
-        dy = torch.as_tensor(dy, dtype=torch.float64)
-        phi = 2.0 * math.pi * (dx[..., None] * self._kx / self.L
-                               + dy[..., None] * self._ky / self.W)
+        dev = a.device
+        dx = torch.as_tensor(dx, dtype=torch.float64, device=dev)
+        dy = torch.as_tensor(dy, dtype=torch.float64, device=dev)
+        phi = 2.0 * math.pi * (dx[..., None] * self._kx.to(dev) / self.L
+                               + dy[..., None] * self._ky.to(dev) / self.W)
         pairs = a.to(torch.float64).reshape(*a.shape[:-1], -1, 2)
         c, s = pairs[..., 0], pairs[..., 1]
         cp, sp = torch.cos(phi), torch.sin(phi)
@@ -115,12 +116,15 @@ class FourierWindBasis:
 
     def ricker_amplitudes(self, A: torch.Tensor, xc: torch.Tensor, yc: torch.Tensor,
                           sigma: float) -> torch.Tensor:
-        k = self.wavenumbers
+        A = torch.as_tensor(A, dtype=torch.float64)
+        dev = A.device
+        k = self.wavenumbers.to(dev)
         ks2 = (k * sigma) ** 2
         radius = 2.0 * math.pi * sigma ** 2 * ks2 * torch.exp(-0.5 * ks2) / (self.L * self.W)
-        A = torch.as_tensor(A, dtype=torch.float64)
-        phase = 2.0 * math.pi * (torch.as_tensor(xc, dtype=torch.float64)[..., None] * self._kx / self.L
-                                 + torch.as_tensor(yc, dtype=torch.float64)[..., None] * self._ky / self.W)
+        xc = torch.as_tensor(xc, dtype=torch.float64, device=dev)
+        yc = torch.as_tensor(yc, dtype=torch.float64, device=dev)
+        phase = 2.0 * math.pi * (xc[..., None] * self._kx.to(dev) / self.L
+                                 + yc[..., None] * self._ky.to(dev) / self.W)
         c = A[..., None] * radius * torch.cos(phase)
         s = A[..., None] * radius * torch.sin(phase)
         return torch.stack([c, s], dim=-1).reshape(*A.shape, self.n_amp)
@@ -137,11 +141,12 @@ def _unit_ou(n_steps: int, n_channels: int, dt: float, tau: float, seed: int) ->
     return z
 
 
-def _gyrostat_series(preset: str, mapping: str, n_steps: int, dt_days: float,
+def _gyrostat_series(preset: str, mapping: str | None, n_steps: int, dt_days: float,
                      time_unit_days: float, seed: int, burnin_units: float,
                      surrogate: bool) -> np.ndarray:
     spec = get_preset(preset)
     system = GyrostatSystem(spec)
+    mapping = mapping or next(iter(MODE_MAPPINGS.get(preset, {})), None)
     order = MODE_MAPPINGS.get(preset, {}).get(mapping)
     if order is None:
         raise ValueError(f"no mapping {mapping!r} for preset {preset!r}")
@@ -165,7 +170,7 @@ def generate_spectral_wind(basis: FourierWindBasis, driver: str, n_steps: int,
                            dt_seconds: float, amp: float, sigma: float,
                            cx: float, cy: float, x0: float, y0: float, seed: int,
                            tau_days: float = 15.0, preset: str = "l63ring4",
-                           mapping: str = "xz_pairs",
+                           mapping: str | None = None,
                            time_unit_days: float | None = None,
                            burnin_units: float = 50.0) -> torch.Tensor:
     if driver not in SPECTRAL_DRIVERS:

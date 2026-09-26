@@ -36,7 +36,7 @@ CMAP = "RdBu_r"
 DRIVER_LABELS = {
     "ou": "E0: moving storm (current)",
     "spectral_ou": "E0b: spectral OU",
-    "gyrostat": "E1: gyrostat (l63ring4)",
+    "gyrostat": "E1: gyrostat",
     "gyrostat_surrogate": "E2: phase-randomized surrogate",
 }
 DRIVER_COLORS = {"ou": "#555555", "spectral_ou": "#1f77b4",
@@ -83,7 +83,7 @@ def _wind_state(driver: str, args, basis: FourierWindBasis, dyn_ou: QGDynamics,
     return generate_spectral_wind(
         basis, driver, n, args.dt, amp=args.wind_amp, sigma=args.wind_sigma,
         cx=args.wind_cx, cy=args.wind_cy, x0=x0, y0=y0, seed=args.wind_seed,
-        tau_days=args.wind_tau_days, preset=args.preset)
+        tau_days=args.wind_tau_days, preset=args.preset, mapping=args.mapping)
 
 
 def _simulate(driver: str, args, basis, basis_dev, state0, device) -> dict:
@@ -109,6 +109,7 @@ def _simulate(driver: str, args, basis, basis_dev, state0, device) -> dict:
         "curl": curl_all[::stride].numpy(), "rms_curl": curl_all.pow(2).mean((-2, -1)).sqrt().numpy(),
         "amps": amps, "ke": ke, "days_snap": np.arange(q.shape[0]) * args.sample_days,
         "days": np.arange(n) / args.steps_per_day, "elapsed_s": elapsed,
+        "wavevectors": basis.wavevectors,
     }
 
 
@@ -153,8 +154,8 @@ def _fig_forcing(run, scales, path):
         ax.set_xticks([])
         ax.set_yticks([])
     ax = fig.add_subplot(gs[1, :])
-    for k, lab in ((0, "(1,0) cos"), (2, "(0,1) cos"), (4, "(1,1) cos"), (8, "(2,0) cos")):
-        ax.plot(run["days"], run["amps"][:, k], lw=1.2, label=lab)
+    for i, (kx, ky) in enumerate(run["wavevectors"][:4]):
+        ax.plot(run["days"], run["amps"][:, 2 * i], lw=1.2, label=f"({kx},{ky}) cos")
     ax.plot(run["days"], run["rms_curl"], color="k", lw=1.8, label="domain-rms curl")
     ax.set_xlabel("day")
     ax.set_ylabel("curl amplitude (s⁻²)")
@@ -197,7 +198,8 @@ def _long_amplitude_stats(args, basis, drivers, years=40.0) -> dict:
         else:
             a = generate_spectral_wind(basis, d, n, dt, amp=args.wind_amp, sigma=args.wind_sigma,
                                        cx=0.0, cy=0.0, x0=0.0, y0=0.0, seed=args.wind_seed + 1,
-                                       tau_days=args.wind_tau_days, preset=args.preset).numpy()
+                                       tau_days=args.wind_tau_days, preset=args.preset,
+                                       mapping=args.mapping).numpy()
         z = a[:, 0] / a[:, 0].std()
         v = z - z.mean()
         spec = np.fft.rfft(v, 2 * n)
@@ -261,8 +263,9 @@ def _write_report(args, runs, stats, files, path):
         "starts after a 4-memory-time lead-in, since the OU amplitude is initialized at zero) |",
         f"| E0b | `spectral_ou` | {files['n_amp']} Fourier amplitudes (`|k| ≤ {args.kmax}`), independent OU, "
         "same per-mode variance and memory as the storm |",
-        f"| E1 | `gyrostat` | the same amplitudes driven by `{args.preset}` (four Lorenz-63 gyrostats on a "
-        "ring, energy-conserving coupling 0.5) |",
+        f"| E1 | `gyrostat` | the same amplitudes driven by the `{args.preset}` gyrostat preset "
+        f"({spec.n_modes} modes; `l63ring4` is four Lorenz-63 gyrostats on a ring, energy-conserving "
+        "coupling 0.5) |",
         "| E2 | `gyrostat_surrogate` | multivariate phase-randomized surrogate of E1's gyrostat series "
         "(same auto- and cross-spectra, Gaussian) |",
         "",
@@ -334,7 +337,11 @@ def main() -> None:
     p.add_argument("--wind-cx", type=float, default=0.5)
     p.add_argument("--wind-cy", type=float, default=0.03)
     p.add_argument("--kmax", type=int, default=2)
-    p.add_argument("--preset", default="l63ring4")
+    p.add_argument("--preset", default="l63ring4",
+                   help="gyrostat preset; its modes must match the basis amplitudes "
+                        "(l63ring4 has 12, which is |k| <= 2)")
+    p.add_argument("--mapping", default=None,
+                   help="mode-to-amplitude mapping; defaults to the preset's first mapping")
     p.add_argument("--drivers", default="ou,spectral_ou,gyrostat,gyrostat_surrogate")
     p.add_argument("--duration-ms", type=int, default=160)
     p.add_argument("--gif-scale", type=float, default=0.5)
@@ -343,6 +350,7 @@ def main() -> None:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
     args.steps_per_day = round(86400.0 / args.dt)
+    DRIVER_LABELS["gyrostat"] = f"E1: gyrostat ({args.preset})"
     drivers = args.drivers.split(",")
     device = torch.device(args.device)
     os.makedirs(args.out_dir, exist_ok=True)
