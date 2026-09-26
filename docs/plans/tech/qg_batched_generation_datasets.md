@@ -326,6 +326,17 @@ reported separately, never pooled with the in-distribution test.
 
 ### 4.6 Fresh train windows every epoch (decision 5)
 
+> **Implemented in G5** (`data/qg_specwind_neural.py`,
+> `train_qg_neural.py --specwind-spec`). Train windows are regenerated
+> every `--regen-every` epochs (`--regen-windows` per round), from spawn
+> keys at index ≥ 10⁹ in the train namespace, with a per-round Latin
+> hypercube. Val is re-materialized at full resolution by deterministic
+> regeneration and verified against the stored 12-hourly frames (bit-exact
+> on GPU). Test is read from its full-resolution shards with purpose
+> `test`. Normalization stats come from the first train draw. Only
+> `cond_mode` `none` and `true` are supported until the spectral S1
+> corruption lands (Option B PR-2).
+
 Batched generation makes it cheap to **regenerate train windows on the fly**
 from fresh spawn keys: about 4–6 min per 1000 windows on one RTX 8000.
 - Training can then draw new windows every epoch or every k epochs, which is
