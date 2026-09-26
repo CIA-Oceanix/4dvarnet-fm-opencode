@@ -49,8 +49,12 @@ Design choices made during implementation:
   685 MB shard per window;
 - a KD-tree for nearest neighbours instead of an O(N²) distance matrix.
 
-The full 5000/500/500 run (~23 GB) is not launched: `/Odyssey` was at 100%
-(170 GB free).
+**Production run** (5000/500/500): 37.8 min on one RTX 8000, 21.7 GB,
+stored on the generation server's local scratch disk (`/SCRATCH`, not
+backed up). All independence checks pass (0.6% of val and test windows
+below train's 1% nearest-neighbour quantile; max start-state correlation
+0.78). Regimes 0 + 15 hold 52% of windows, and codes 5 and 10 occur in 6 of
+5000.
 
 **Verification:**
 - `pytest tests/test_qg_datasets.py tests/test_qg_batched.py`: 29 passed.

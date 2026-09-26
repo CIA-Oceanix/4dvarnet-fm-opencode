@@ -5,9 +5,8 @@ framework of `docs/plans/tech/qg_batched_generation_datasets.md`: the spec
 `qg_specwind_gyrostat_demo`, which has the same factor ranges and protocol as
 the production spec `qg_specwind_gyrostat_v1` at 256/64/64 windows.
 
-The production 5000/500/500 run (~23 GB) is not launched yet: `/Odyssey` was
-at 100% (170 GB free of 30 TB) on 2026-09-26, and the space needs
-confirming first.
+The production 5000/500/500 run was generated later the same day; see the
+"Production run" section below. It is stored on a server-local disk, not on `/Odyssey`.
 
 ## Generation
 
@@ -67,3 +66,42 @@ An overview page with the independence checks, distributions, regime
 occupancy, factor coverage and five sample animations (train and val only;
 the test split is withheld by protocol) is produced by
 `reports/qg/visualize_qg_dataset.py`.
+
+## Production run: `qg_specwind_gyrostat_v1` (5000/500/500)
+
+Generated on 2026-09-26, 14:04 → 14:46, on one RTX 8000 (server
+`sl-mee-br-202`), from commit `16a38f8`. It ran as 24 sequential shards of
+250 windows, at 95 s per shard (104 s for test shards, which keep every
+step).
+
+| split | windows | time | on disk |
+|---|---|---|---|
+| train | 5000 | 1882.9 s | 13 GB |
+| val | 500 | 188.1 s | 1.3 GB |
+| test | 500 | 196.4 s | 7.4 GB (read-only) |
+
+**Total: 37.8 min, 21.7 GB.** Location:
+`/SCRATCH/rfablet/qg_datasets/qg_specwind_gyrostat_v1` on `sl-mee-br-202`.
+This is the server's local scratch disk (the user asked for server-local
+temporary storage; its `/tmp` had only 6.5 GB free). It is not backed up
+and not visible from other nodes. It regenerates in about 40 min from this
+spec and commit if lost.
+
+**Independence: all checks pass.**
+
+| pair | NN distance, other → ref (median) | within ref (median) | below ref 1% quantile | max start-state \|corr\| |
+|---|---|---|---|---|
+| train vs val | 0.418 | 0.422 | 0.6% | 0.73 |
+| train vs test | 0.421 | 0.422 | 0.6% | 0.78 |
+| val vs test | 0.554 | 0.564 | 0.8% | 0.69 |
+
+**Diversity:**
+- calm fraction 20.0% in both train and val;
+- design discrepancy 7.4×10⁻⁴ (train);
+- val against train: KS p ≥ 0.86 for every factor, the rms curl and the
+  KE.
+
+**Regime occupancy confirms the synchronization finding at scale.** All 16
+codes occur in train, but codes 0 + 15 hold 52% of windows (54% in val).
+The alternating codes 5 and 10 occur in 2 and 4 of 5000 train windows
+(0.04% and 0.08%) and in none of the 500 val windows.
