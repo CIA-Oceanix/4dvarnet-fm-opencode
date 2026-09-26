@@ -41,3 +41,10 @@ Measured on an RTX 8000 at batch size 256:
 **Verification:** `pytest tests/test_qg_batched.py`: 16 passed (19 s,
 including the CUDA test). `ruff check` on the new files: clean. The
 benchmark JSON is in the PR.
+
+**Review follow-up (same PR):** `BatchedGyrostat.integrate` took the RK4
+substep count from the largest `dt` in the batch, so a window's step size
+could depend on its batch-mates (the reviewer noted this does not happen in
+the production range). Windows are now grouped by their own substep count.
+The new test `test_window_series_invariant_when_substeps_differ_across_the_batch`
+(time units 30 and 90 d at 12 h steps, so 4 and 2 substeps) covers it.

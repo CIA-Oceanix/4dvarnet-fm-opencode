@@ -105,14 +105,17 @@ class BatchedGyrostat:
 
     def integrate(self, y: torch.Tensor, n_steps: int, dt_units,
                   max_substep: float = 0.005) -> torch.Tensor:
-        dt = _per_window(dt_units, y.shape[0]).to(self.device).view(-1, 1)
-        n_sub = max(1, int(math.ceil(float(dt.max()) / max_substep)))
-        h = dt / n_sub
+        dt = _per_window(dt_units, y.shape[0])
+        n_sub = torch.ceil(dt / max_substep).clamp_min(1).to(torch.int64)
         out = torch.empty((y.shape[0], n_steps, y.shape[1]), dtype=torch.float64, device=self.device)
-        for t in range(n_steps):
-            out[:, t] = y
-            for _ in range(n_sub):
-                y = self._rk4(y, h)
+        for n in torch.unique(n_sub).tolist():
+            idx = torch.nonzero(n_sub == n).flatten().to(self.device)
+            h = (dt[n_sub == n] / n).to(self.device).view(-1, 1)
+            ys = y[idx]
+            for t in range(n_steps):
+                out[idx, t] = ys
+                for _ in range(n):
+                    ys = self._rk4(ys, h)
         return out
 
     def standardize(self, y: torch.Tensor) -> torch.Tensor:

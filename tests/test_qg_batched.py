@@ -193,3 +193,12 @@ def test_gpu_batched_dynamics_runs_and_matches_cpu_float64():
     a, _ = cpu.rollout(q0, 10)
     b, _ = gpu.rollout(q0.cuda(), 10)
     torch.testing.assert_close(b.cpu(), a, rtol=1e-8, atol=1e-18)
+
+
+def test_window_series_invariant_when_substeps_differ_across_the_batch():
+    basis = FourierWindBasis(nx=NX, L=L, kmax=2)
+    kw = dict(n_steps=30, dt_seconds=12 * 3600.0, amp=1e-11, cx=0.5, cy=0.0, x0=0.0, y0=0.0,
+              sigma=SIGMA, burnin_units=2.0)
+    full = batched_spectral_wind(basis, "gyrostat", [21, 22], time_unit_days=[30.0, 90.0], **kw)
+    alone = batched_spectral_wind(basis, "gyrostat", [22], time_unit_days=90.0, **kw)
+    torch.testing.assert_close(full[1:2], alone, rtol=0, atol=0)
