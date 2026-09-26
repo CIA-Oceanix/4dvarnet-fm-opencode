@@ -1,0 +1,12 @@
+# @package _global_
+# 1200-epoch PredictStateCFM-M (benchmark default data) with a linear skip connection
+# D = tau * x_tau + (1 - tau) * net, trained with skip_loss: state
+# (MSE(D, x1), i.e. net weighted by (1 - tau)^2).
+# Only the skip differs from L96B_predictstatecfm_monaiM_ep1200 (regular S0 0.341).
+defaults:
+  - /experiment/L96B_predictstatecfm_monaiM_ep1200
+  - _self_
+model:
+  monai_predict_state_cfm:
+    skip_connection: linear
+    skip_loss: state
