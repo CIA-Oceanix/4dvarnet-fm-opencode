@@ -94,6 +94,22 @@ That makes 1000/100/100 = 41 GB and 5000/500/500 = 203 GB. After the
 24 September disk-full incident (149 GB deleted), this is the binding
 constraint.
 
+### 2.5 Measured after G1 (`scripts/bench_qg_batched.py`, RTX 8000)
+
+With `BatchedQGDynamics`, per-window `rd/U1/rek`, the spectral forcing and
+the eddy drag, at batch size 256:
+
+| quantity | value |
+|---|---|
+| ocean time per window-step | **0.028 ms** (the plan assumed 0.027: risk R2 cleared) |
+| full batch: forced 2-year spin-up + 481 window steps (9241 steps) | wind 29 s + ocean 66 s = **0.37 s per window** |
+| wind generation (gyrostat, 50-unit burn-in + 9241 steps) | 29 s **per batch**, launch-bound, so independent of batch size |
+| batch dependence of the ocean on GPU | none: a window alone and in a batch of 256 are bit-identical after 50 steps |
+
+Generating a split's wind in one large batch, the cost is about 0.26 s per
+window (ocean) + about 30 s per split (wind). **5000/500/500 takes about
+26 min on this GPU.**
+
 ## 3. Part A: batched GPU generation
 
 ### 3.1 `BatchedQGDynamics` (new class; `QGDynamics` untouched)
@@ -119,11 +135,19 @@ because cuFFT results depend on the batch size.
 - **Gyrostat:** a torch right-hand side over `(B, M)` using `index_add`; the
   Option C prototype already has it. It integrates on the GPU in the same
   loop as the ocean, or ahead of it for Option B.
-- **Burn-in:** the 50-unit burn-in is replaced by a **split-specific cache of
-  attractor states**: one long trajectory per split, each window starting at
-  a separate, well-separated offset. Offsets are ≥ 20 gyrostat units apart,
-  i.e. more than 15 Lyapunov times (λ = 1.25). A split never samples another
-  split's trajectory (§4.3).
+- **Burn-in (revised in G1):** the attractor-state cache is dropped. Each
+  window gets its **own** 50-unit burn-in (≈ 62 Lyapunov times, λ = 1.25)
+  from an initial state drawn from its own seed. All windows burn in
+  together as one batch on the GPU, so the cost does not grow with the
+  number of windows (§2.5), and windows are independent by construction,
+  which is stronger than well-separated offsets on a shared trajectory.
+- **Reproducibility:** the gyrostat right-hand side uses gathers and
+  explicit elementwise adds over a fixed, padded role table, with no atomic
+  scatter and no reductions. Noise and surrogate phases come from
+  per-window generators, and the surrogate FFT is done per window. A
+  window's wind is therefore **bit-identical whatever batch it is generated
+  in** (tested). This matters because the burn-in amplifies roundoff by
+  about e⁶⁰.
 - **OU and surrogate:** OU is batched as an exact AR(1). The surrogate uses
   batched `torch.fft`, with the same random phases across the modes of a
   window.
