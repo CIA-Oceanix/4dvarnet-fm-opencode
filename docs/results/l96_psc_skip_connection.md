@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-26). Two 1200-epoch PredictStateCFM-M runs (benchmark-default data, seed 1) with D = τ·x_τ + (1 - τ)·net, one per loss. Code: `skip_connection` / `skip_loss` options of `PredictStateCFM` (`models/vanilla_cfm.py`), configs `L96B_predictstatecfm_monaiM_ep1200_skip_{state,net}loss`, `batch/run_l96b_psc_skip.sbatch`.
 
+**Numbers:** `batch/run_l96b_psc_skip.sbatch` (`eval_neural_l96.py`, benchmark sampler); per-run eval JSONs and estimates are archived under the canonical L96 archive (`experiments/l96/L96B_predictstatecfm_monaiM_ep1200_skip_*`), not checked in.
+
 ## Question
 
 Does an EDM-style skip parameterization of PredictStateCFM's denoiser -- exact at τ = 1, unchanged
