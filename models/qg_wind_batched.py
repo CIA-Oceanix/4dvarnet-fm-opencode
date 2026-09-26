@@ -160,13 +160,14 @@ def batched_spectral_wind(basis: FourierWindBasis, driver: str, seeds: list[int]
                           sigma: float, tau_days: float = 15.0, preset: str = "l63ring4",
                           mapping: str | None = None, time_unit_days=None,
                           burnin_units: float = 50.0, surrogate_factor: int = 4,
-                          device: torch.device | str = "cpu") -> torch.Tensor:
+                          device: torch.device | str = "cpu", return_modes: bool = False):
     if driver not in SPECTRAL_DRIVERS:
         raise ValueError(f"unknown spectral driver {driver!r}; known: {SPECTRAL_DRIVERS}")
     batch = len(seeds)
     dt_days = dt_seconds / 86400.0
     if driver == "spectral_ou":
         z = batched_unit_ou(seeds, n_steps, basis.n_amp, dt_days, tau_days, device)
+        modes = z
     else:
         spec = get_preset(preset)
         mapping = mapping or next(iter(MODE_MAPPINGS.get(preset, {})), None)
@@ -187,10 +188,12 @@ def batched_spectral_wind(basis: FourierWindBasis, driver: str, seeds: list[int]
             start = (n_gen - n_steps) // 2
             traj = traj[:, start:start + n_steps]
         z = traj[:, :, list(order)]
+        modes = traj
     scale = _per_window(amp, batch).to(z.device).view(-1, 1, 1) \
         * basis.ricker_mode_std(sigma).to(z.device).view(1, 1, -1)
     a = z * scale
     t = torch.arange(n_steps, dtype=torch.float64, device=z.device) * dt_seconds
     dx = _per_window(x0, batch).to(z.device).view(-1, 1) + _per_window(cx, batch).to(z.device).view(-1, 1) * t
     dy = _per_window(y0, batch).to(z.device).view(-1, 1) + _per_window(cy, batch).to(z.device).view(-1, 1) * t
-    return basis.translate(a, dx, dy)
+    amps = basis.translate(a, dx, dy)
+    return (amps, modes) if return_modes else amps

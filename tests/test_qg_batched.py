@@ -202,3 +202,15 @@ def test_window_series_invariant_when_substeps_differ_across_the_batch():
     full = batched_spectral_wind(basis, "gyrostat", [21, 22], time_unit_days=[30.0, 90.0], **kw)
     alone = batched_spectral_wind(basis, "gyrostat", [22], time_unit_days=90.0, **kw)
     torch.testing.assert_close(full[1:2], alone, rtol=0, atol=0)
+
+
+def test_return_modes_gives_the_standardized_gyrostat_series():
+    basis = FourierWindBasis(nx=NX, L=L, kmax=2)
+    amps, modes = batched_spectral_wind(basis, "gyrostat", [4, 5], 12, 7200.0, amp=1e-11, cx=0.0,
+                                        cy=0.0, x0=0.0, y0=0.0, sigma=SIGMA, burnin_units=2.0,
+                                        return_modes=True)
+    assert amps.shape == (2, 12, basis.n_amp)
+    assert modes.shape == (2, 12, 12)
+    only = batched_spectral_wind(basis, "gyrostat", [4, 5], 12, 7200.0, amp=1e-11, cx=0.0, cy=0.0,
+                                 x0=0.0, y0=0.0, sigma=SIGMA, burnin_units=2.0)
+    torch.testing.assert_close(amps, only, rtol=0, atol=0)
