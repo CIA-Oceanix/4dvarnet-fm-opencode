@@ -187,6 +187,19 @@ datasets spin up **coupled**. One-way datasets can use either an unforced
 spin-up (today's convention) or a forced one (decision 2). With batching,
 the cost difference is small (§5).
 
+> **Implemented in G3** (`models/qg_coupled.py`: `CoupledSpectralQG`,
+> `generate_coupled_windows`). Measured on an RTX 8000 at batch 256:
+> - the coupled step costs **0.046 ms per window-step**, 1.63× the one-way
+>   step (0.028). The prototype's 1.2–1.4× left out the per-stage frame
+>   rotation and projection;
+> - feedback ÷ the gyrostat's own tendency (median / p90):
+>   **κ_fb = 1: 0.75% / 2.3%**, κ_fb = 10: 7.5% / 22%, κ_fb = 100:
+>   57% / 119%;
+> - after 60 days, the gyrostat state differs from κ_fb = 0 by 4% / 41% /
+>   173% (relative).
+>
+> With κ_fb = 0 the run reproduces the one-way path bit for bit (tested).
+
 ### 3.5 Sharding and determinism
 
 - **Sharding:** per-window seeds (§4.2) make sharding free. A SLURM array
