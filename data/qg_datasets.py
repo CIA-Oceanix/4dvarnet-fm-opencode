@@ -154,16 +154,18 @@ def window_seed(spec: QGDatasetSpec, split: str, index: int) -> int:
     return int(a) << 32 | int(b)
 
 
-def design_unit(spec: QGDatasetSpec, split: str) -> np.ndarray:
+def design_unit(spec: QGDatasetSpec, split: str, n: int | None = None,
+                design_key: tuple = (DESIGN_KEY,)) -> np.ndarray:
     from scipy.stats import qmc
 
-    seed = np.random.SeedSequence(spec.entropy(split), spawn_key=(SPLIT_IDS[split], DESIGN_KEY))
+    seed = np.random.SeedSequence(spec.entropy(split), spawn_key=(SPLIT_IDS[split],) + tuple(design_key))
     lhs = qmc.LatinHypercube(d=len(FACTORS), seed=np.random.default_rng(seed))
-    return lhs.random(spec.n_windows(split))
+    return lhs.random(spec.n_windows(split) if n is None else n)
 
 
-def design_factors(spec: QGDatasetSpec, split: str) -> dict[str, np.ndarray]:
-    u = design_unit(spec, split)
+def design_factors(spec: QGDatasetSpec, split: str, n: int | None = None,
+                   design_key: tuple = (DESIGN_KEY,)) -> dict[str, np.ndarray]:
+    u = design_unit(spec, split, n, design_key)
     col = {name: u[:, i] for i, name in enumerate(FACTORS)}
 
     def span(rng, v):
@@ -191,10 +193,25 @@ def _hash_tensor(t: torch.Tensor) -> str:
 
 def generate_windows(spec: QGDatasetSpec, split: str, indices: list[int],
                      device: torch.device | str = "cpu", batch_size: int = 256,
-                     dtype: torch.dtype = torch.float32) -> dict:
+                     dtype: torch.dtype = torch.float32, factors: dict | None = None,
+                     keep_every: int | None = None) -> dict:
+    """Generate the windows `indices` of `split`.
+
+    By default factors come from the split's design (`design_factors`) and the
+    truth is kept at the split's storage resolution. `factors` (arrays aligned
+    with `indices`) and `keep_every` override both, for draws outside the
+    stored design (train-time regeneration) or full-resolution copies.
+    """
     device = torch.device(device)
-    fac = design_factors(spec, split)
-    keep = spec.keep_every(split)
+    if factors is None:
+        fac = design_factors(spec, split)
+        rows = list(indices)
+    else:
+        fac = factors
+        rows = list(range(len(indices)))
+    keep = spec.keep_every(split) if keep_every is None else keep_every
+    if spec.n_lead % keep or spec.n_window % keep:
+        raise ValueError(f"keep_every={keep} must divide the lead and window steps")
     basis64 = FourierWindBasis(nx=spec.nx, L=spec.L, kmax=spec.kmax, device=device)
     basis_f = FourierWindBasis(nx=spec.nx, L=spec.L, kmax=spec.kmax, dtype=dtype, device=device)
     t0_frame = spec.n_lead // keep
@@ -203,8 +220,9 @@ def generate_windows(spec: QGDatasetSpec, split: str, indices: list[int],
                            "ke_upper", "state_hash", "gyro_hash")}
     for start in range(0, len(indices), batch_size):
         idx = indices[start:start + batch_size]
+        sel = rows[start:start + batch_size]
         seeds = [window_seed(spec, split, i) for i in idx]
-        pick = lambda name: fac[name][idx]  # noqa: E731
+        pick = lambda name: fac[name][sel]  # noqa: E731
         amps, modes = batched_spectral_wind(
             basis64, spec.driver, seeds, spec.n_total, spec.dt, amp=pick("level"),
             cx=pick("cx"), cy=pick("cy"), x0=pick("x0"), y0=pick("y0"), sigma=spec.sigma,
@@ -246,8 +264,8 @@ def generate_windows(spec: QGDatasetSpec, split: str, indices: list[int],
         "ke_upper": torch.cat(out["ke_upper"]),
         "state_hash": out["state_hash"],
         "gyro_hash": out["gyro_hash"],
-        "factors": {k: np.asarray(v[indices]) for k, v in fac.items() if k != "unit"},
-        "unit": np.asarray(fac["unit"][indices]),
+        "factors": {k: np.asarray(v[rows]) for k, v in fac.items() if k != "unit"},
+        "unit": np.asarray(fac["unit"][rows]),
         "keep_every": keep,
         "window_start_frame": t0_frame,
     }

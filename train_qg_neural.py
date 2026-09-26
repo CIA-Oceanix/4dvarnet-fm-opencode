@@ -69,7 +69,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
-from data.normalization import load_norm_stats
+from data.normalization import load_norm_stats, save_norm_stats
 from data.qg import QGConfig
 from data.qg_neural import (
     QGNeuralDataset,
@@ -494,6 +494,84 @@ def layer_summary(rmse_dim, ev_dim, cfg):
             "pooled_rmse": float(np.mean(rmse_dim)), "pooled_ev": float(np.mean(ev_dim))}
 
 
+def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols_per_day_range,
+                         noisy_max, norm, forcing_norm, param_norm, do_normalize, norm_stats_path):
+    """Spectral-wind splits for G5: regenerated train, re-materialized val, stored test."""
+    from data.qg_datasets import SPECS
+    from data.qg_specwind_neural import (
+        RegenerateTrainWindows,
+        SpecWindTrainSource,
+        check_compatible,
+        materialize_split,
+        train_norm_stats,
+        with_fixed_obs,
+    )
+
+    spec = SPECS[args.specwind_spec]
+    check_compatible(spec, cfg)
+    with_curl = cond_mode == "true"
+    test_raw, test_rep = materialize_split(spec, "test", args.specwind_root, device, with_curl)
+    test_windows = with_fixed_obs(test_raw, cfg)
+    info = {"spec": spec.name, "root": args.specwind_root, "cond_mode": cond_mode,
+            "regen_windows": args.regen_windows, "regen_every": args.regen_every,
+            "test": test_rep}
+    train_ds = val_ds = callback = None
+    forcing_path = os.path.join(exp_dir, "specwind_forcing_norm_stats.pt")
+    param_path = os.path.join(exp_dir, "specwind_param_norm_stats.pt")
+    if args.eval_only is not None:
+        needed = []
+        if do_normalize and norm is None:
+            needed.append(("psi", norm_stats_path))
+        if with_curl and forcing_norm is None:
+            needed.append(("forcing", forcing_path))
+        if with_curl and param_norm is None:
+            needed.append(("param", param_path))
+        missing = [path for _, path in needed if not os.path.exists(path)]
+        if missing:
+            raise FileNotFoundError(
+                "--eval-only with --specwind-spec needs the normalization stats the training "
+                f"run saved in the experiment directory; missing: {missing}. Pass the paths "
+                "explicitly or evaluate in the training run's --exp-dir.")
+        for kind, path in needed:
+            if kind == "psi":
+                norm = load_norm_stats(path)
+            elif kind == "forcing":
+                forcing_norm = load_norm_stats(path)
+            else:
+                param_norm = load_norm_stats(path)
+        info["eval_only_stats"] = {kind: path for kind, path in needed}
+    if args.eval_only is None:
+        source = SpecWindTrainSource(spec, args.regen_windows, device=device,
+                                     batch_size=args.regen_batch_size, with_wind_curl=with_curl)
+        t0 = time.time()
+        train_windows = source.draw(0)
+        info["first_draw_seconds"] = round(time.time() - t0, 1)
+        val_windows, val_rep = materialize_split(spec, "val", args.specwind_root, device, with_curl)
+        info["val"] = val_rep
+        stats = train_norm_stats(train_windows, cfg, with_forcing=with_curl)
+        if do_normalize and norm is None:
+            norm = stats["psi"]
+            save_norm_stats(norm_stats_path, norm)
+        if with_curl:
+            forcing_norm = forcing_norm or stats["forcing"]
+            param_norm = param_norm or stats["params"]
+            save_norm_stats(forcing_path, forcing_norm)
+            save_norm_stats(param_path, param_norm)
+        train_ds = QGNeuralDataset(train_windows, cfg, norm, on_the_fly_obs=True,
+                                   cond_mode=cond_mode, param_norm_stats=param_norm,
+                                   noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                   include_ic=include_ic, cols_per_day_range=cols_per_day_range)
+        val_ds = QGNeuralDataset(val_windows, cfg, norm, on_the_fly_obs=True,
+                                 cond_mode=cond_mode, param_norm_stats=param_norm,
+                                 noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
+                                 include_ic=include_ic)
+        callback = RegenerateTrainWindows(train_ds, source, args.regen_every,
+                                          log_path=os.path.join(exp_dir, "regen_log.jsonl"))
+    with open(os.path.join(exp_dir, "specwind.json"), "w") as fh:
+        json.dump(info, fh, indent=1)
+    return test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-type",
@@ -623,6 +701,17 @@ def main():
     # fallback below has changed (2026-09-14, see PLAN.md).
     ap.add_argument("--obs-noise-std-frac", type=float, default=None)
     ap.add_argument("--init-lag-days", type=float, default=None)
+    ap.add_argument("--specwind-spec", default=None,
+                    help="Train on the spectral-wind QG dataset of this data.qg_datasets "
+                         "spec instead of the legacy storm caches: fresh train windows "
+                         "regenerated every --regen-every epochs, val re-materialized at "
+                         "full resolution, test from its stored split (G5).")
+    ap.add_argument("--specwind-root", default="experiments/qg_datasets")
+    ap.add_argument("--regen-windows", type=int, default=1000,
+                    help="Train windows per regeneration round (--specwind-spec only).")
+    ap.add_argument("--regen-every", type=int, default=5,
+                    help="Regenerate the train windows every this many epochs.")
+    ap.add_argument("--regen-batch-size", type=int, default=256)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
@@ -659,9 +748,14 @@ def main():
                      else float(exp_cfg.training.q_loss_weight))
     do_normalize = (args.normalize if args.normalize is not None
                     else bool(exp_cfg.data.get("normalize", True)))
-    norm_stats_path = (args.norm_stats_path or
-                       exp_cfg.data.get("norm_stats_path", "experiments/qg_psi_norm_stats.pt"))
-    norm = load_norm_stats(norm_stats_path) if do_normalize else None
+    specwind = args.specwind_spec is not None
+    if specwind:
+        norm_stats_path = args.norm_stats_path or os.path.join(exp_dir, "specwind_psi_norm_stats.pt")
+    else:
+        norm_stats_path = (args.norm_stats_path or
+                           exp_cfg.data.get("norm_stats_path", "experiments/qg_psi_norm_stats.pt"))
+    load_psi_norm = do_normalize and (not specwind or args.norm_stats_path is not None)
+    norm = load_norm_stats(norm_stats_path) if load_psi_norm else None
     param_dim = int(exp_cfg.model.get("param_dim", 0))
     cond_extra_dim = int(exp_cfg.model.get("cond_extra_dim", 0))
     # model.fdv.* mirrors L96's train.py "fourdvarnet" dispatch (cfg.model.fdv)
@@ -676,18 +770,25 @@ def main():
                 else float(exp_cfg.data.get("noisy_max", 1.5)))
     param_norm_stats_path = (args.param_norm_stats_path or
                              exp_cfg.data.get("param_norm_stats_path", None))
-    if cond_mode != "none" and not param_norm_stats_path:
+    if specwind:
+        from data.qg_specwind_neural import SUPPORTED_COND_MODES
+        if cond_mode not in SUPPORTED_COND_MODES:
+            raise ValueError(f"--specwind-spec supports cond_mode in {SUPPORTED_COND_MODES}; "
+                             f"{cond_mode!r} needs the spectral S1 corruption (Option B PR-2)")
+    if cond_mode != "none" and not param_norm_stats_path and not specwind:
         raise ValueError(f"cond_mode={cond_mode!r} requires data.param_norm_stats_path "
                          "(see precompute_qg_norm_stats.py --output-params)")
-    param_norm = load_norm_stats(param_norm_stats_path) if cond_mode != "none" else None
+    param_norm = (load_norm_stats(param_norm_stats_path)
+                  if cond_mode != "none" and param_norm_stats_path else None)
     forcing_norm_stats_path = (args.forcing_norm_stats_path or
                                exp_cfg.data.get("forcing_norm_stats_path", None))
-    if cond_mode != "none" and not forcing_norm_stats_path:
+    if cond_mode != "none" and not forcing_norm_stats_path and not specwind:
         raise ValueError(f"cond_mode={cond_mode!r} requires data.forcing_norm_stats_path "
                          "(see precompute_qg_norm_stats.py --output-forcing -- leaving "
                          "the forcing field unnormalized collapsed a real training run, "
                          "see data/qg_neural.py's module docstring)")
-    forcing_norm = load_norm_stats(forcing_norm_stats_path) if cond_mode != "none" else None
+    forcing_norm = (load_norm_stats(forcing_norm_stats_path)
+                    if cond_mode != "none" and forcing_norm_stats_path else None)
     s1_param_bias = (args.s1_param_bias if args.s1_param_bias is not None
                      else exp_cfg.data.get("s1_param_bias", None))
     s1_amp_bias = (args.s1_amp_bias if args.s1_amp_bias is not None
@@ -761,12 +862,26 @@ def main():
     # nx/seed/num_windows-only `test_cache_cfg` that still didn't match
     # because QGConfig's plain defaults aren't the S0 reference values
     # either (see PLAN.md's 2026-09-12 note for both).
-    test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
-                              obs_geometry="random_columns", cols_per_day=4,
-                              obs_noise_std_frac=0.01, init_lag_days=1.0)
-    test_windows = ensure_truth_cache_redrawn(test_cache_cfg, test_cfg, args.num_test,
-                                              args.cache_dir)
-    if args.eval_only is None:
+    regen_callback = None
+    if specwind:
+        test_windows, train_ds, val_ds, regen_callback, norm, forcing_norm, param_norm = \
+            _build_specwind_data(args, test_cfg, exp_dir, device, cond_mode, include_ic,
+                                 cols_per_day_range, noisy_max, norm, forcing_norm, param_norm,
+                                 do_normalize, norm_stats_path)
+        if args.eval_only is None:
+            train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                                      collate_fn=qg_collate, num_workers=args.num_workers,
+                                      persistent_workers=False)
+            val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                                    collate_fn=qg_collate, num_workers=args.num_workers,
+                                    persistent_workers=args.num_workers > 0)
+    else:
+        test_cache_cfg = build_cfg(nx=args.nx, seed=args.test_seed, num_windows=args.num_test,
+                                  obs_geometry="random_columns", cols_per_day=4,
+                                  obs_noise_std_frac=0.01, init_lag_days=1.0)
+        test_windows = ensure_truth_cache_redrawn(test_cache_cfg, test_cfg, args.num_test,
+                                                  args.cache_dir)
+    if args.eval_only is None and not specwind:
         # No obs-config overrides here: `_truth_cache_path` hashes the whole
         # QGConfig, and the pre-generated production truth was built with plain
         # QGConfig defaults for obs fields (only nx/dt/seed/num_windows set) --
@@ -815,6 +930,8 @@ def main():
                                 use_cosine_scheduler=args.cosine_scheduler,
                                 max_epochs=epochs)
         trainer = create_trainer(tcfg, 1)
+        if regen_callback is not None:
+            trainer.callbacks.append(regen_callback)
         t0 = time.time()
         trainer.fit(lit, train_loader, val_loader)
         total_train = time.time() - t0
