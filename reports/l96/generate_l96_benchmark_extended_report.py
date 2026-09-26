@@ -85,6 +85,8 @@ def rows() -> list[tuple]:
                   seeds(f"L96B_{fam}_monaiM_ep1200_seed{{s}}", CAN, sub)))
     R.append(("Benchmark default, 3000 windows", "DirectUNet-M", [HERE / "L96B_directunet_monaiM_ntrain3000_seed1" / D],
               [CAN / "L96B_directunet_monaiM_ntrain3000_seed1" / D]))
+    R.append(("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3", [REGE / "ens3_psc123" / FL],
+              [CAN / "ens3_psc123" / FL]))
     for lab, name in (("SDA1-M", "B4_sda1_monaiM_l96"), ("SDA2-M", "A3_sda2_monaiM_l96"), ("SDA3-fix-M", "A3_sda3fix_monaiM_l96")):
         R.append(("SDA, gw 25", lab, seeds(f"{name}_seed{{s}}", REGE, "ens30_gw25"), seeds(f"{name}_seed{{s}}", CAN, "ens30_gw25")))
     for lab, name in (("SDA1-S+", "B4_sda1_monaiSplus_l96"), ("SDA1-L", "B4_sda1_monaiL_l96")):
@@ -551,7 +553,13 @@ def findings(da, learned) -> list[str]:
              f"while SDA3-fix-M, trained on noisy DA params, does not ({fmt(m(*sd3, 'reg'))} -> {fmt(m(*sd3, 'reg', 's1'))}). "
              "Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).")
     A.append("7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights "
-             "fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).\n")
+             "fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).")
+    e3, p1 = ("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3"), ("Benchmark default, 1200 ep", "PredictStateCFM-M")
+    A.append(f"8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, "
+             f"one shared trajectory) gives regular / random S0 {fmt(m(*e3, 'reg'))} / {fmt(m(*e3, 'can'))} vs "
+             f"{fmt(m(*p1, 'reg'))} / {fmt(m(*p1, 'can'))} for a single network, with unchanged calibration -- at 3x the "
+             "parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random "
+             "schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).\n")
     return A
 
 
@@ -591,7 +599,8 @@ def main() -> None:
          "protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); "
          "the report refuses to render a flow result recorded with any other sampling. Only the calibration study "
          "(section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler "
-         "(10 guided steps).\n",
+         "(10 guided steps). The `PredictStateCFM-M x3` row averages the velocities of three trained networks "
+         "(`models/cfm_blend.py`), so it costs 3x a single-model row.\n",
          "**SDA conditioning at S1**: the params-conditioned priors (SDA2, SDA3-fix, alone and as hybrid priors) are "
          "conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA "
          "baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read "
