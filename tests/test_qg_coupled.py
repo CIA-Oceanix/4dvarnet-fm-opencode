@@ -118,3 +118,34 @@ def test_generate_coupled_windows_in_g2_format():
     assert res["feedback_ratio"].shape == (3,)
     calm = res["factors"]["level"] == 0.0
     assert all(float(r) == 0.0 for r, c in zip(res["feedback_ratio"], calm) if c)
+
+
+def test_coupled_spec_hash_rules_and_pairing():
+    import dataclasses
+
+    from data.qg_datasets import SPECS, design_factors, window_seed
+
+    forced, coupled = SPECS["qg_specwind_gyrostat_v1"], SPECS["qg_coupled_gyrostat_v1"]
+    assert forced.split_hash("train") == dataclasses.replace(forced, kappa_fb=10.0).split_hash("train")
+    assert coupled.split_hash("train") != dataclasses.replace(coupled, kappa_fb=10.0).split_hash("train")
+    for i in (0, 17, 4999):
+        assert window_seed(forced, "train", i) == window_seed(coupled, "train", i)
+    np.testing.assert_array_equal(design_factors(forced, "val")["rd"], design_factors(coupled, "val")["rd"])
+
+
+def test_coupled_shards_carry_feedback_ratio_in_the_manifest(tmp_path):
+    import json
+
+    from data.qg_datasets import assemble_split, split_dir, write_shard
+
+    spec = QGDatasetSpec(name="tiny_cd", driver="coupled", kappa_fb=10.0, n_train=3, n_val=2,
+                         n_test=2, nx=NX, spinup_days=1.0, lead_days=0.5, window_days=1.0,
+                         burnin_units=2.0)
+    write_shard(spec, "train", str(tmp_path), 0, 1, batch_size=3)
+    m = assemble_split(spec, "train", str(tmp_path))
+    assert all("feedback_ratio" in w for w in m["windows"])
+    calm = [w["factors"]["level"] == 0.0 for w in m["windows"]]
+    assert all((c and w["feedback_ratio"] == 0.0) or (not c and w["feedback_ratio"] > 0.0)
+               for c, w in zip(calm, m["windows"]))
+    with open(split_dir(str(tmp_path), spec, "train") + "/manifest.json") as fh:
+        assert json.load(fh)["spec"]["driver"] == "coupled"
