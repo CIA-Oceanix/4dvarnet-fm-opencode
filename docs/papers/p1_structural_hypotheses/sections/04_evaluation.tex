@@ -68,12 +68,44 @@ Unrolled variational solvers are deliberately excluded. They are a fourth
 operator family whose analysis requires the gradient machinery this paper does
 not introduce, and they are treated separately.
 
+\subsection{The Lorenz-96 protocol}
+\label{sec:protocol}
+
+\paragraph{Test sets.} The same 200 windows, scored twice: on a regular grid of 30
+observation times with all 16 fast channels observed, and on a random observing
+system (10 to 100 observation times per window, stratified, the first step always
+observed, and 4 to 16 observed fast channels per window). Every scheme, classical
+and learned, sees exactly the same observations, noise and \So{} forcing, checked
+window by window.
+
+\paragraph{Training (benchmark default).} Learned schemes are trained on a random
+observing system redrawn for every window of every batch, with fresh noise: 10 to
+300 observation times, 4 to 16 observed fast channels. Validation windows are
+re-observed once from the same distribution, so checkpoint selection measures a
+random observing system. 1200 epochs, cosine-annealed learning rate, normalised
+states, three seeds per scheme. The earlier \emph{P1 protocol} --- one fixed
+30-observation grid, observation noise frozen per window across epochs --- is
+reported only as a reference: it overfits the frozen noise.
+
+\paragraph{Inference settings.} Flows are sampled with 30 members and 20 Euler
+steps on an early-fine grid $\tau_k = 1-(1-k/20)^{1/2}$. SDA uses 30 members, 10
+guided steps and guidance weight 25; the DirectUNet$\to$SDA hybrid starts the SDA
+sampler from the DirectUNet estimate at $\tau_0 = 0.1$ with guidance weight 2. Both
+weights were tuned on validation windows disjoint from the test set. The DA
+baselines receive each window's parameters --- including the fast-variable
+coupling weights --- as their forward model (biased at \So{}), with ETKF/EnKF
+inflation 1.5 at \Sz{} and 2.0 at \So{}.
+
 \subsection{The model-error axis}
 \label{sec:s0s1}
 
 \begin{description}[leftmargin=2em,style=nextline]
   \item[\Sz{} (perfect model).] The assimilating model's parameters equal those
-    generating the truth for that window.
+    generating the truth for that window. (Earlier drafts' Lorenz-96 DA numbers
+    were not perfect-model: the fast-variable coupling weights never reached the
+    DA forward model. Fixing this, with the per-case inflation, lowered the \Sz{} RMSE of ETKF
+    from 0.866 to 0.687 and of Strong-4D-Var from 0.738 to 0.703; the numbers here are the fixed
+    ones.)
   \item[\So{} (model error).] The assimilating model's parameters carry an
     additional $\pm 10\%$ bias. The truth is drawn from the same distribution in
     both scenarios; only $\thv^{*}$ changes.
@@ -95,11 +127,12 @@ robustness evidence.
 \textbf{class} & \textbf{what \So{} changes for it} & \textbf{a ratio $\approx 1.00$ means} \\
 \midrule
 classical DA & integrates a biased forward model; the bias compounds through the
-integration & n/a --- these degrade by $1.68$--$1.80\times$ \\
+integration & n/a --- these degrade by $2.0$--$2.2\times$ on L96 \\
 model-free learned (DirectUNet, CFM, unconditional SDA) & nothing: no parameters,
 no forward model & \emph{definitional}; carries no information \\
 conditioned learned (SDA2/SDA3; QG Q2--Q4) & the conditioning inputs
-$(\zv^{*},\thv^{*})$ are biased or corrupted & a genuine robustness result \\
+$(\zv^{*},\thv^{*})$ are biased or corrupted & a genuine robustness result ---
+obtained only when trained on noisy conditioning (Section~\ref{sec:inert}) \\
 \bottomrule
 \end{tabular}
 \caption{What \So{} means depends on whether, and how, a scheme consumes model
@@ -108,13 +141,13 @@ information. This governs every cross-class statement in the paper.}
 \end{table}
 
 \subsection{Metrics}
-RMSE is pooled over all windows and timesteps,
-$\sqrt{\overline{(\cdot)^2}}$, with the same convention for every scheme.
+RMSE is computed per window over the observed subspace and averaged over windows,
+with the same convention for every scheme.
 Explained variance is reported per field. For ensemble schemes the spread/skill
 ratio is compared against the finite-ensemble reliability target
 $\sqrt{(N-1)/(N+1)}$, and proper ensemble CRPS / energy scores are computed at a
 single uniform convention, $N=30$.
 
-\needsrun{Rank histograms are the primary posterior-diagnostic figure for a DA
-readership and are not implemented anywhere in the codebase. This remains the
-largest new-code item.}
+Rank histograms, with spread and per-channel mean bias corrected in turn to
+separate second-moment, first-moment and shape errors, complement spread/RMSE
+(Section~\ref{sec:nongaussian}).

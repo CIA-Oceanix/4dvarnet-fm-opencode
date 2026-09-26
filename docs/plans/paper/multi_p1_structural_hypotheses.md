@@ -7,6 +7,31 @@ the matched-budget mean-slot comparison. **This doc owns the model-error and
 observation-sparsity axes**; see §10 decision 1 for the split, which is now
 settled.
 
+> **Evidence update 2026-09-26 (numbers below are superseded where they conflict).**
+> The L96 evidence was re-measured under the benchmark default and the draft in
+> `docs/papers/p1_structural_hypotheses/` now carries the corrected numbers; the
+> per-claim audit is `docs/results/l96_benchmark_default_paper_audit.md`, the
+> numbers `reports/l96/outputs/l96_benchmark_extended.md`. What changes here:
+> - **L96 DA (§4.1 tables, §4.1.1, C1/C6):** the DA forward model now receives the
+>   per-window fast-variable weights and ETKF/EnKF use inflation 1.5 at S0 / 2.0 at
+>   S1. S0 → S1: Strong-4DVar 0.703 → 1.436 (2.04×), EnKF 0.711 → 1.514 (2.13×),
+>   ETKF 0.687 → 1.478 (2.15×). Every "1.68-1.80x" below reads **2.0-2.2x**.
+> - **Marginal value (§4.2 tables, C1, C7):** with the fix, Strong-4DVar 20.6% vs
+>   3.2% (**6.4×**; 7.0× at the benchmark inflation) but the filters **1.1×**
+>   (1.6-1.7× at the benchmark inflation), not 1.9×. The collapse is specific to the
+>   adjoint method, which *sharpens* C7's adjoint-vs-gradient-free contrast.
+> - **Conditioning (§4.1.1 "nearly inert"):** reversed. P1's SDA3 never had its
+>   bias conditioning active, and S1 evaluations fed the conditioned priors the true
+>   parameters. Corrected: SDA2 (trained on true params) degrades at S1, SDA3-fix
+>   (trained on noisy params) does not; as hybrid prior this decides robustness
+>   (DirectUNet→SDA2 0.310 → 0.333, DirectUNet→SDA3-fix 0.312 → 0.307).
+> - **Rank histograms (§5 metrics, P3/D1 items):** implemented and run
+>   (`docs/results/l96_rank_histograms_c4.md`); C4 is not supported as a
+>   discriminating claim.
+> - **Learned ranking / H1:** depends on budget and protocol (benchmark default now
+>   1200 epochs; DirectUNet ≈ PredictStateCFM < VanillaCFM there); DA is the scheme
+>   least sensitive to a change of observing system (×1.06-1.20).
+
 > **What changed in v2.** The hypothesis set was re-cut, not extended with new
 > evidence. **H1 is restated as Markovianity** rather than "sequential" — the
 > sharper claim, and the one the flow/diffusion samplers *share*. **H3 is split
