@@ -1,4 +1,4 @@
-# Two-way coupled QG dataset (`qg_coupled_gyrostat_v1`, train and val)
+# Two-way coupled QG dataset (`qg_coupled_gyrostat_v1`)
 
 **Status:** RESULTS (2026-09-26). The first dataset from the Option C
 coupled system (`models/qg_coupled.py`), at the physical coupling strength
@@ -35,22 +35,26 @@ On 2026-09-26, 17:01 → 17:47, on one RTX 8000 (`sl-mee-br-202`), commit
 |---|---|---|---|
 | train | 5000 | 2412.6 s | 13 GB |
 | val | 500 | 235.9 s | 1.3 GB |
+| test | 500 | 247.1 s | 7.4 GB (every step; read-only) |
 
 That is 0.48 s per window, 1.26× the forced dataset (0.38 s). Location:
 `/SCRATCH/rfablet/qg_datasets/qg_coupled_gyrostat_v1`, on the server's
 local, un-backed-up scratch disk.
 
-**No test split yet**, as the request was for train and val. It generates in
-about 4 min with the test entropy.
+The test split was generated afterwards (18:17 → 18:23, commit `332241f`)
+with its own entropy. Its shards and manifest are read-only.
 
 ## Independence and diversity
 
-| check (train vs val) | result |
-|---|---|
-| seeds, state hashes, duplicate factors | all pass |
-| NN distance val → train (median) / within train | 0.418 / 0.422 |
-| val windows below train's 1% NN quantile | 0.6% |
-| max start-state \|corr\| | 0.84 (< 0.99) |
+| pair | NN distance other → ref (median) | within ref (median) | below ref 1% quantile | max start-state \|corr\| |
+|---|---|---|---|---|
+| train vs val | 0.418 | 0.422 | 0.6% | 0.84 |
+| train vs test | 0.421 | 0.422 | 0.6% | 0.79 |
+| val vs test | 0.554 | 0.564 | 0.8% | 0.78 |
+
+All checks pass for all three pairs: disjoint seeds and state hashes, no
+duplicate factors, NN distances not closer, and start states below the
+0.99 duplicate threshold.
 
 - **Calm fraction:** 20.0% (train and val).
 - **Val against train:** KS p ≥ 0.90 for every factor, the rms curl, the KE
