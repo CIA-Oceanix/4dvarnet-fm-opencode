@@ -15,3 +15,9 @@ model:
     cond_extra_dim: 0
     num_res_blocks: 2
     norm_num_groups: 32
+# The 400-epoch rows of the L96 benchmark reports. The benchmark default was raised
+# to 1200 epochs on 2026-09-26 (config/l96_benchmark_default.yaml); pinned here so
+# these runs (L96B_*_monaiM_seed{1,2,3}) reproduce. The 1200-epoch arm is
+# L96B_*_monaiM_ep1200.
+training:
+  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
