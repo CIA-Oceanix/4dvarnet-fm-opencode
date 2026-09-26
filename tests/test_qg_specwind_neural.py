@@ -119,3 +119,42 @@ def test_callback_swaps_windows_every_k_epochs(tmp_path):
     cb.on_train_epoch_start(SimpleNamespace(current_epoch=2), None)
     assert ds.windows is not first and len(ds.windows) == 2
     assert (tmp_path / "regen.jsonl").read_text().count("\n") == 1
+
+
+def _eval_args(root, spec_name="tiny_g5"):
+    return SimpleNamespace(specwind_spec=spec_name, specwind_root=root, regen_windows=2,
+                           regen_every=1, regen_batch_size=2, eval_only="stage1_best.pt")
+
+
+def test_eval_only_reloads_the_stats_saved_by_training(built, tmp_path, monkeypatch):
+    import train_qg_neural
+    from data.normalization import save_norm_stats
+    from data.qg_datasets import SPECS
+
+    monkeypatch.setitem(SPECS, "tiny_g5", TINY)
+    exp = str(tmp_path)
+    psi = {"mean": torch.tensor([1.0, 2.0]), "std": torch.tensor([3.0, 4.0])}
+    save_norm_stats(os.path.join(exp, "specwind_psi_norm_stats.pt"), psi)
+    save_norm_stats(os.path.join(exp, "specwind_forcing_norm_stats.pt"),
+                    {"mean": torch.tensor([0.5]), "std": torch.tensor([2.0])})
+    save_norm_stats(os.path.join(exp, "specwind_param_norm_stats.pt"),
+                    {"mean": torch.zeros(3), "std": torch.ones(3)})
+    out = train_qg_neural._build_specwind_data(
+        _eval_args(built), CFG, exp, "cpu", "true", False, None, 1.5, None, None, None, True,
+        os.path.join(exp, "specwind_psi_norm_stats.pt"))
+    test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm = out
+    assert train_ds is None and callback is None and len(test_windows) == TINY.n_test
+    torch.testing.assert_close(norm["std"], psi["std"])
+    torch.testing.assert_close(forcing_norm["mean"], torch.tensor([0.5]))
+    assert param_norm is not None
+
+
+def test_eval_only_fails_loudly_without_saved_stats(built, tmp_path, monkeypatch):
+    import train_qg_neural
+    from data.qg_datasets import SPECS
+
+    monkeypatch.setitem(SPECS, "tiny_g5", TINY)
+    with pytest.raises(FileNotFoundError):
+        train_qg_neural._build_specwind_data(
+            _eval_args(built), CFG, str(tmp_path), "cpu", "none", False, None, 1.5, None, None,
+            None, True, os.path.join(str(tmp_path), "specwind_psi_norm_stats.pt"))

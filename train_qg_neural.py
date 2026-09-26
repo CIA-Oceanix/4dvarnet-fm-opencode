@@ -516,6 +516,30 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
             "regen_windows": args.regen_windows, "regen_every": args.regen_every,
             "test": test_rep}
     train_ds = val_ds = callback = None
+    forcing_path = os.path.join(exp_dir, "specwind_forcing_norm_stats.pt")
+    param_path = os.path.join(exp_dir, "specwind_param_norm_stats.pt")
+    if args.eval_only is not None:
+        needed = []
+        if do_normalize and norm is None:
+            needed.append(("psi", norm_stats_path))
+        if with_curl and forcing_norm is None:
+            needed.append(("forcing", forcing_path))
+        if with_curl and param_norm is None:
+            needed.append(("param", param_path))
+        missing = [path for _, path in needed if not os.path.exists(path)]
+        if missing:
+            raise FileNotFoundError(
+                "--eval-only with --specwind-spec needs the normalization stats the training "
+                f"run saved in the experiment directory; missing: {missing}. Pass the paths "
+                "explicitly or evaluate in the training run's --exp-dir.")
+        for kind, path in needed:
+            if kind == "psi":
+                norm = load_norm_stats(path)
+            elif kind == "forcing":
+                forcing_norm = load_norm_stats(path)
+            else:
+                param_norm = load_norm_stats(path)
+        info["eval_only_stats"] = {kind: path for kind, path in needed}
     if args.eval_only is None:
         source = SpecWindTrainSource(spec, args.regen_windows, device=device,
                                      batch_size=args.regen_batch_size, with_wind_curl=with_curl)
@@ -531,8 +555,8 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
         if with_curl:
             forcing_norm = forcing_norm or stats["forcing"]
             param_norm = param_norm or stats["params"]
-            save_norm_stats(os.path.join(exp_dir, "specwind_forcing_norm_stats.pt"), forcing_norm)
-            save_norm_stats(os.path.join(exp_dir, "specwind_param_norm_stats.pt"), param_norm)
+            save_norm_stats(forcing_path, forcing_norm)
+            save_norm_stats(param_path, param_norm)
         train_ds = QGNeuralDataset(train_windows, cfg, norm, on_the_fly_obs=True,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
