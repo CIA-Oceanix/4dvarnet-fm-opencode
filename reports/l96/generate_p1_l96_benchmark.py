@@ -89,7 +89,8 @@ SDA = [
     ("SDA1-M", "B4_sda1_monaiM_l96", "ens30_gw20", "5.89 M", ""),
     ("SDA1-L", "B4_sda1_monaiL_l96", "ens30_gw20", "23.5 M", ""),
     ("SDA2-M", "A3_sda2_monaiM_l96", "ens30_gw20", "5.89 M", ""),
-    ("SDA3-M", "A3_sda3_monaiM_l96", "ens30_gw20", "5.89 M", ""),
+    ("SDA3-M", "A3_sda3_monaiM_l96", "ens30_gw20", "5.89 M", "bias never active in training (DA params = truth): identical to SDA2 by construction"),
+    ("SDA3-fix-M", "A3_sda3fix_monaiM_l96_seed1", "ens30_gw20", "5.89 M", "SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26)"),
 ]
 # tau=0 mean components, read from eval_mean_component.py's JSON.
 TAU0_LABELS = {
@@ -360,8 +361,10 @@ def main():
             note = ""
             if r["flag"] == "unstable":
                 note = "single unreliable run — an identical config gave 0.4705 on another seed"
-            elif r["flag"]:
+            elif r["flag"].startswith("lr "):
                 note = f"{r['flag']} — the standard 1e-3 diverged at this tier"
+            elif r["flag"]:
+                note = r["flag"]
             if mode == "gen":
                 c0, c1 = ms(r["m"]["s0"]["crps"]), ms(r["m"]["s1"]["crps"])
                 sp = f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"

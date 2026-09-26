@@ -200,6 +200,11 @@ Always run tests after making changes.
   sub-directory `ens30_no20` (was `ens30_no10`, uniform). On the benchmark-default checkpoints this gives
   spread/RMSE ≈ 0.86-1.02 and beats uniform N = 80 on CRPS for PredictStateCFM
   (`docs/results/l96_cfm_tau_consistency_l96b.md`). SDA keeps its own guided protocol (`ens30_gw20`, 10 steps).
+- **L96 benchmark default training budget (as of 2026-09-26):** `config/l96_benchmark_default.yaml`
+  trains **1200 epochs** (was 400). At 400 epochs every family was still improving (9-19% lower RMSE at
+  1200, family gaps largely closed; `reports/l96/outputs/l96_benchmark_extended.md` section 2). The
+  400-epoch benchmark runs pin `epochs: 400` in `L96B_*_monaiM.yaml` so they reproduce; new configs that
+  inherit the default get 1200.
 
 ## When Making Model Changes
 

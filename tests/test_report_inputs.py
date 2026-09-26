@@ -51,3 +51,27 @@ def test_bundler_covers_every_report_root():
     for report, names in _inputs.REPORTS.items():
         assert set(b.LEGACY[report]) == set(names)
         assert (ROOT / b.GENERATORS[report]).is_file()
+
+
+def test_add_links_a_new_result_dir_and_records_it(monkeypatch, tmp_path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import bundle_report_inputs as b
+    bundle = tmp_path / "bundle"
+    (bundle / "here").mkdir(parents=True)
+    (bundle / "MANIFEST.json").write_text(json.dumps({"roots": {"here": {"built_from": "x", "files": ["a/f.npz"]}}}))
+    src = tmp_path / "run" / "ens30_gw20"
+    src.mkdir(parents=True)
+    for name in ("members_s0.npz", "sda_eval.json"):
+        (src / name).write_text(name)
+    monkeypatch.setattr(b._inputs, "bundle", lambda report: bundle)
+    assert b.add("p1_benchmark", "here", src, "newrun/ens30_gw20", apply=False) == 0
+    assert not (bundle / "here" / "newrun").exists()
+    assert b.add("p1_benchmark", "here", src, "newrun/ens30_gw20", apply=True) == 0
+    dst = bundle / "here" / "newrun" / "ens30_gw20" / "sda_eval.json"
+    assert dst.samefile(src / "sda_eval.json")
+    manifest = json.loads((bundle / "MANIFEST.json").read_text())
+    assert "newrun/ens30_gw20/members_s0.npz" in manifest["roots"]["here"]["files"]
+    assert "a/f.npz" in manifest["roots"]["here"]["files"] and manifest["added"][0]["dest"] == "newrun/ens30_gw20"
+    assert b.add("p1_benchmark", "here", src, "newrun/ens30_gw20", apply=True) == 0
+    with pytest.raises(KeyError):
+        b.add("p1_benchmark", "bench", src, "x", apply=False)
