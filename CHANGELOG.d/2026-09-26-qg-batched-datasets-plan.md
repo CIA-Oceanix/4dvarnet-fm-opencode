@@ -32,3 +32,22 @@ The legacy seed arithmetic was checked: no exact collision across splits,
 but interleaved ranges and nothing enforcing independence. It stays for the
 published `ou` benchmark.
 **Verification:** Docs only. `pytest tests/test_docs_layout.py` passes.
+
+**v2 (same PR): decisions settled.**
+- 5000/500/500 for the new drivers;
+- forced spin-up;
+- the gyrostat time unit as a diversity factor (ε later);
+- train-time regeneration built (G5);
+- legacy benchmark unchanged.
+
+Decision 4 is derived from one bulk relative-wind stress: `r_cf` =
+2.8e-8 s^-1 (ocean eddy drag) and `gamma_a` = 1.2e-6 s^-1. ψ̂₁ enters as
+`+gamma_a r_cf zeta_{o,k}` on the wind amplitudes. Measured on a one-year
+gyrostat-forced run:
+- the ocean → atmosphere feedback is 0.2–3.5% of the amplitudes' own
+  tendency;
+- the eddy drag is ~10% of the wind curl.
+
+Physical Option C is therefore close to Option B plus eddy drag (which G1
+now includes). The co-stepped path is kept for a labelled, non-physical
+feedback-gain sweep `kappa_fb` in {1, 10, 100}.

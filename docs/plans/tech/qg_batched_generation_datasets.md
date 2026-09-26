@@ -1,6 +1,6 @@
 # Batched GPU generation for QG Options B and C, and a train/val/test dataset framework
 
-**Status:** DRAFT v1 (2026-09-26). Nothing implemented. It covers two things:
+**Status:** DRAFT v2 (2026-09-26): the six decisions of §8 are settled. Nothing implemented. It covers two things:
 
 1. how to generate QG windows **in batches on GPU** for the one-way spectral
    wind drivers (Option B) and the two-way coupled system (Option C);
@@ -287,7 +287,7 @@ reported separately, never pooled with the in-distribution test.
   window. 1000/100/100 comes to about 3.4 GB (train and val) + 1.6 GB
   (test) ≈ 5 GB.
 
-### 4.6 Optional: fresh train windows every epoch
+### 4.6 Fresh train windows every epoch (decision 5)
 
 Batched generation makes it cheap to **regenerate train windows on the fly**
 from fresh spawn keys: about 4–6 min per 1000 windows on one RTX 8000.
@@ -334,11 +334,11 @@ post-processing.
 | PR | content | depends on |
 |---|---|---|
 | PR-2 (Option B plan) | the dynamics, data and S1 hooks for the spectral drivers on `QGDynamics` (unchanged scope) | #271 |
-| G1 | `BatchedQGDynamics`, batched GPU wind (gyrostat, OU, surrogate, attractor-state cache), parity tests | #271 |
+| G1 | `BatchedQGDynamics` (with the eddy-drag term `r_cf`, §8.1), batched GPU wind (gyrostat, OU, surrogate, attractor-state cache), parity tests | #271 |
 | G2 | `QGDatasetSpec`, manifests, `SeedSequence` streams, independence rules and leakage checks, the §4.5 storage format, the diversity report, sharded generation script + sbatch | G1 |
 | G3 | Option C coupled step (§3.4) on `BatchedQGDynamics`, energy-budget and zero-coupling tests | G1; decision 4 |
 | G4 | generate the datasets (B first, then C) and record the manifests and diversity reports in `docs/results/` | G2 (+ G3 for C) |
-| G5 (optional) | train-time regeneration in the QG neural loader | G2 |
+| G5 | train-time regeneration in the QG neural loader (decision 5) | G2 |
 
 The Option B plan's PR-3 (long forced runs and ensembles) also benefits
 from G1: its ensembles become one batch.
@@ -354,21 +354,60 @@ from G1: its ensembles become one batch.
 | R5 | Thinned storage breaks a consumer that expects every step. | Audit the QG neural and DA loaders in G2; test at full resolution; recompute on load behind one accessor. |
 | R6 | Disk usage. | The §4.5 format; ensembles and diagnostics on node-local `/tmp` (the standing rule). |
 
-## 8. Open decisions
+## 8. Decisions (settled 2026-09-26)
 
-1. **Dataset size.** Keep 1000/100/100, or grow train (e.g. 5000) now that
-   generation costs minutes? Proposal: 5000/500/500 for Option B, since
-   storage is ~25 GB with §4.5.
-2. **One-way spin-up.** Unforced (today's convention) or forced (the ocean in
-   equilibrium with the forcing)? Proposal: forced for new datasets; it costs
-   the same once batched.
-3. **Factor box.** Add the gyrostat time unit (30–90 d) and the ring coupling
-   ε as diversity factors, or keep them fixed as in the Option B plan's
-   defaults? Proposal: add the time unit now; add ε only after its attractor
-   constants are measured.
-4. **Option C coupling.** The values of `r_cf` and γ, and how ψ̂₁ is scaled
-   into the atmospheric modes. This is needed before G3.
-5. **Train-time regeneration (G5).** Build it, or keep stored train sets
-   only?
-6. **Legacy datasets.** Leave the `ou` benchmark on its legacy seeds and
-   format (proposed: its numbers are published), or migrate it too?
+| # | decision | outcome |
+|---|---|---|
+| 1 | dataset size | **5000/500/500** for the new drivers (~25 GB in the §4.5 format) |
+| 2 | one-way spin-up | **forced** for new datasets (same cost once batched) |
+| 3 | factor box | **gyrostat time unit (30–90 d per unit) added now**; ring coupling ε added only after its attractor constants are measured |
+| 4 | Option C coupling | **physical bulk coefficients plus a labelled feedback-gain sweep**; see below |
+| 5 | train-time regeneration | **build it** (G5 is no longer optional) |
+| 6 | legacy datasets | **unchanged**: the `ou` benchmark keeps its legacy seeds and format |
+
+### 8.1 Decision 4: the Option C coupling coefficients
+
+Both exchange terms follow from one bulk relative-wind stress
+`τ = ρ_a C_D |U_a| (u_a − u_o)`, applied with momentum conservation between
+an atmospheric slab (depth `H_a`) and the upper ocean layer (depth `H₁`):
+
+| term | where | coefficient | value (`ρ_a` = 1.2, `C_D` = 1.2×10⁻³, `|U_a|` = 10 m/s, `H_a` = 10 km, `H₁` = 500 m) |
+|---|---|---|---|
+| eddy drag `−r_cf ζ₁` | ocean upper-layer PV | `r_cf = ρ_a C_D |U_a| / (ρ₀ H₁)` | **2.8×10⁻⁸ s⁻¹** (damping time ~1.1 yr; bottom drag `rek` = 5.8×10⁻⁷) |
+| `+γ_a r_cf ζ_{o,k}` | tendency of wind amplitude `a_k` | `γ_a = C_D |U_a| / H_a` | **1.2×10⁻⁶ s⁻¹** (9.6-day spin-down) |
+
+**How ψ̂₁ is scaled into the atmospheric modes.** The wind amplitude `a_k`
+is a PV source, `a = r_cf ζ_a`. The atmospheric drag
+`−γ_a (ζ_a − ζ_o)` therefore becomes `da_k/dt ⊃ −γ_a a_k + γ_a r_cf ζ_{o,k}`,
+where `ζ_{o,k} = −|k|² ψ̂₁,k` is the ocean's relative vorticity projected on
+mode k. The `−γ_a a_k` part is the atmosphere's own drag, already inside the
+gyrostat's damping, so it is not added a second time. Only the
+ocean-dependent term `+γ_a r_cf ζ_{o,k}` is new. In standardized gyrostat
+units it is divided by the mode's std `s_k` and multiplied by the time unit.
+
+**Measured magnitudes** (one-year gyrostat-forced run from the shared
+spin-up; nominal ocean, level 10⁻¹¹):
+
+| quantity | value |
+|---|---|
+| ocean vorticity projected on the 12 modes (rms) | 1.0–4.5 × 10⁻⁷ s⁻¹ |
+| **ocean → atmosphere** feedback / the amplitudes' own tendency (`s_k` per 15 d) | **0.2–1% at `|k|` = 1–√2, 3% at `|k|` = 2** |
+| **atmosphere → ocean** eddy drag on the full field: `r_cf ζ₁` rms / mean rms curl | 3.2×10⁻¹³ / 3×10⁻¹² ≈ **10%** |
+
+**Consequences:**
+- With physical coefficients the coupling is **one-sided**. The eddy drag
+  on the ocean is a real, ~10% effect. The feedback on the atmosphere is at
+  the percent level, as expected for purely mechanical coupling: the strong
+  real-world feedback is thermal (Option E, QG-TC).
+- **The eddy drag does not need co-stepping.** It depends only on the
+  ocean, so "Option B + eddy drag" reproduces physical Option C to within
+  the measured ≤ 3.5% feedback at the cost of Option B. G1 therefore adds
+  `r_cf` to the batched one-way path.
+- **The co-stepped C path (G3) is kept for the feedback-gain sweep:**
+  `κ_fb ∈ {1 (physical), 10, 100}` multiplies only the ocean → atmosphere
+  term. `κ_fb > 1` is **explicitly non-physical**: a sensitivity study of how
+  much a learned DA/forecast system gains when the atmosphere carries ocean
+  information. It is labelled as such in every manifest and report.
+- Diversity factor: `r_cf ∈ [0, 1×10⁻⁷] s⁻¹` (which spans `|U_a|` of about
+  0–35 m/s or shallower effective layers). `κ_fb` is a fixed label per
+  dataset, not a sampled factor.
