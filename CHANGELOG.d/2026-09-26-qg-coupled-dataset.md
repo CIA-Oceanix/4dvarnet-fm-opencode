@@ -42,3 +42,18 @@ one. Findings:
   and reports index tests: 95 passed.
 - `ruff check` on the touched files: clean.
 - The dataset's independence report passes.
+
+**Additions (same PR):**
+- **Coupled test split** (500 windows, 247 s, 7.4 GB, read-only). All
+  independence pairs pass (train–test and val–test: 0.6% and 0.8% below
+  the reference 1% NN quantile; max start-state correlation 0.79 and 0.78).
+- **`docs/plans/analysis/qg_specwind_da_s0.md`** (DRAFT v1): the design of
+  ETKF/EnKF S0 experiments on the forced and coupled test sets.
+  - Scope: ocean state only, with the true wind prescribed, which is a
+    perfect model for both datasets.
+  - Observations: ψ₁ on 3 random meridional columns per day (4.7% of the
+    grid, each once per day), noise 5%, 5-day lagged initial conditions;
+    the QG defaults are re-checked on val.
+  - Implementation: the minimal `QGDynamics` spectral hook of PR-2 plus a
+    thin driver over `run_qg_baselines.run(ds=...)`.
+  - About 21 GPU-hours.

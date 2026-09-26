@@ -25,8 +25,13 @@
 # (eval_neural_l96.py --n-members 30 --n-outer 20; tau_k = 1-(1-k/N)^0.5, the
 # models' default grid), eval sub-directory ens30_no20.
 #
+# Training budget: 1200 epochs (raised from 400 on 2026-09-26: at 400 every
+# family was still improving -- 9-19% lower RMSE at 1200, family gaps largely
+# closed; reports/l96/outputs/l96_benchmark_extended.md section 2). The 400-epoch
+# benchmark rows pin epochs: 400 in their own configs (L96B_*_monaiM.yaml).
+#
 # Everything else = the P1 recipe: normalize, cosine annealing (project
-# default since 2026-09-10), 400 epochs, lr 1e-3, clip 10, batch 16, no
+# default since 2026-09-10), lr 1e-3, clip 10, batch 16, no
 # obs-density augmentation, S0/S1 training data, 24D observed space.
 defaults:
   - /lorenz96_default
@@ -35,7 +40,7 @@ model:
   state_dim: 24
   param_dim: 0
 training:
-  stage1: {epochs: 400, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
   seed: null
   stage2: {epochs: 0}
   batch_size: 16

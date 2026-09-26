@@ -77,13 +77,13 @@ def rows() -> list[tuple]:
                            ("VanillaCFM-M", "vanillacfm", BENCH)):
         sub = D if fam == "directunet" else FL
         can_root = CAN if fam == "directunet" else N20
-        R.append(("Benchmark default, 400 ep", lab, seeds(f"L96B_{fam}_monaiM_seed{{s}}", base, sub),
+        R.append(("Benchmark recipe, 400 ep", lab, seeds(f"L96B_{fam}_monaiM_seed{{s}}", base, sub),
                   seeds(f"L96B_{fam}_monaiM_seed{{s}}", can_root, sub)))
     for lab, fam in (("DirectUNet-M", "directunet"), ("PredictStateCFM-M", "predictstatecfm"), ("VanillaCFM-M", "vanillacfm")):
         sub = D if fam == "directunet" else FL
-        R.append(("Benchmark default, 1200 ep", lab, seeds(f"L96B_{fam}_monaiM_ep1200_seed{{s}}", HERE, sub),
+        R.append(("Benchmark default (1200 ep)", lab, seeds(f"L96B_{fam}_monaiM_ep1200_seed{{s}}", HERE, sub),
                   seeds(f"L96B_{fam}_monaiM_ep1200_seed{{s}}", CAN, sub)))
-    R.append(("Benchmark default, 3000 windows", "DirectUNet-M", [HERE / "L96B_directunet_monaiM_ntrain3000_seed1" / D],
+    R.append(("Benchmark recipe, 400 ep, 3000 windows", "DirectUNet-M", [HERE / "L96B_directunet_monaiM_ntrain3000_seed1" / D],
               [CAN / "L96B_directunet_monaiM_ntrain3000_seed1" / D]))
     R.append(("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3", [REGE / "ens3_psc123" / FL],
               [CAN / "ens3_psc123" / FL]))
@@ -403,16 +403,17 @@ def binned_canonical(cache: dict) -> list[str]:
     pc = np.load(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz")
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     A = ["\n### Canonical random test set, windows binned by their own obs count / fast channels\n",
-         "Learned: benchmark default 400 ep, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(400) -> SDA2-M.\n"]
+         "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> SDA3-fix-M "
+         "(the best scheme, 3 seeds).\n"]
     for c in CASES:
         s = {}
         for lab, f in LEARNED_CURVES:
             dirs = [pick(CAN / f.format(s=x)) or pick(N20 / f.format(s=x)) for x in (1, 2, 3)]
             s[lab] = np.mean([score_dir(p, cache)[c]["rmse"] for p in dirs], axis=0)
         s["SDA1-M"] = np.mean([score_dir(CAN / f"B4_sda1_monaiM_l96_seed{x}" / "ens30_gw25", cache)[c]["rmse"] for x in (1, 2, 3)], axis=0)
-        hyb = [CAN / f"hybrid_DU{x}_A3_sda2_monaiM_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
+        hyb = [CAN / f"hybrid_DU1200s{x}_A3_sda3fix_monaiM_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
         if all(done(h) for h in hyb):
-            s["Hybrid DU->SDA2"] = np.mean([score_dir(h, cache)[c]["rmse"] for h in hyb], axis=0)
+            s["Hybrid DU1200->SDA3-fix"] = np.mean([score_dir(h, cache)[c]["rmse"] for h in hyb], axis=0)
         s["ETKF"], s["EnKF"], s["Strong-4DVar"] = pc[f"{c}_ETKF_rmse_all_obs"], pc[f"{c}_EnKF_rmse_all_obs"], p2[f"{c}_Strong_4DVar_rmse_all_obs"]
         for by, bins, lab in ((nobs[c], [(10, 25), (25, 40), (40, 55), (55, 70), (70, 85), (85, 101)], "n_obs"),
                               (kf[c], [(4, 7), (7, 10), (10, 13), (13, 17)], "k")):
@@ -476,7 +477,7 @@ def tuning_section(cache: dict) -> list[str]:
                     d = V / rg / "hybrid_du1200" / m
                     A.append(f"| {m} | {t} | " + " | ".join(fmt(mean2(d / f'tau{t}_gw{g}')) if done(d / f'tau{t}_gw{g}') else '—'
                                                              for g in gws2) + " |")
-    A += ["\n**Flow calibration** (benchmark default seed 1; S0 RMSE / CRPS / spread-over-RMSE)\n",
+    A += ["\n**Flow calibration** (400-epoch benchmark recipe, seed 1; S0 RMSE / CRPS / spread-over-RMSE)\n",
           "| regime | model | 10 steps | 20 steps | 50 steps | sigma 0.75 | sigma 1.0 |", "|---|---|---|---|---|---|---|"]
     for rg in ("regular", "rlayout"):
         for m in ("L96B_vanillacfm_monaiM_seed1", "L96B_predictstatecfm_monaiM_seed1"):
@@ -532,10 +533,10 @@ def findings(da, learned) -> list[str]:
              f"({fmt(m(*h2, 'reg', 's1'))} / {fmt(m(*h2, 'can', 's1'))}): it was trained with DA params equal to the true ones, "
              f"so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: {best_da['label']} "
              f"{best_da['reg']['s0']['rmse'].mean():.3f}.")
-    A.append("2. **The 400-epoch budget of the benchmark default is too short.** At 1200 epochs every family gains 9-19% "
-             f"(regular S0: DirectUNet {fmt(m('Benchmark default, 400 ep', 'DirectUNet-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'DirectUNet-M', 'reg'))}, "
-             f"PredictStateCFM {fmt(m('Benchmark default, 400 ep', 'PredictStateCFM-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'PredictStateCFM-M', 'reg'))}, "
-             f"VanillaCFM {fmt(m('Benchmark default, 400 ep', 'VanillaCFM-M', 'reg'))} -> {fmt(m('Benchmark default, 1200 ep', 'VanillaCFM-M', 'reg'))}), "
+    A.append("2. **400 epochs was too short; the benchmark default is now 1200 epochs** (2026-09-26). At 1200 epochs every family gains 9-19% "
+             f"(regular S0: DirectUNet {fmt(m('Benchmark recipe, 400 ep', 'DirectUNet-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'DirectUNet-M', 'reg'))}, "
+             f"PredictStateCFM {fmt(m('Benchmark recipe, 400 ep', 'PredictStateCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'PredictStateCFM-M', 'reg'))}, "
+             f"VanillaCFM {fmt(m('Benchmark recipe, 400 ep', 'VanillaCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'VanillaCFM-M', 'reg'))}), "
              "and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.")
     A.append("3. **Observation-count crossover at S0**: DA (ETKF) is best at <= 10 obs per window; from ~20 obs every learned "
              "scheme beats every DA baseline, and the gap grows with density. Under model error (S1) the learned schemes win "
@@ -554,7 +555,7 @@ def findings(da, learned) -> list[str]:
              "Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).")
     A.append("7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights "
              "fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).")
-    e3, p1 = ("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3"), ("Benchmark default, 1200 ep", "PredictStateCFM-M")
+    e3, p1 = ("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3"), ("Benchmark default (1200 ep)", "PredictStateCFM-M")
     A.append(f"8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, "
              f"one shared trajectory) gives regular / random S0 {fmt(m(*e3, 'reg'))} / {fmt(m(*e3, 'can'))} vs "
              f"{fmt(m(*p1, 'reg'))} / {fmt(m(*p1, 'can'))} for a single network, with unchanged calibration -- at 3x the "
@@ -594,7 +595,8 @@ def main() -> None:
          "**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old "
          "`_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 "
          "retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on "
-         "validation windows; 1200-epoch arms of the benchmark default.\n",
+         "validation windows; 1200-epoch arms (the benchmark default since 2026-09-26; the 400-epoch rows are the "
+         "earlier recipe, kept for the training-budget comparison).\n",
          "**Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark "
          "protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); "
          "the report refuses to render a flow result recorded with any other sampling. Only the calibration study "
@@ -618,7 +620,7 @@ def main() -> None:
           "- The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean "
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
-          "- Flow calibration was only probed (sampling-time settings); the benchmark keeps 10 integration steps."]
+          "- Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps)."]
     (OUT / "l96_benchmark_extended.md").write_text("\n".join(A) + "\n")
     print(f"wrote {OUT / 'l96_benchmark_extended.md'}")
 

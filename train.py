@@ -109,7 +109,8 @@ def make_l96_dataloaders(datasets, batch_size=32, with_params=False,
 PSC_TAU_OPTION_KEYS = ("tau0_frac", "tau0_zero_input", "tau_sampling", "tau_low_frac",
                        "tau_low_max", "boot_frac", "boot_tau_min", "boot_tau_max",
                        "boot_dtau_min", "boot_dtau_max", "boot_alpha",
-                       "var_weight", "var_tau_min", "var_tau_max", "var_fd_eps")
+                       "var_weight", "var_tau_min", "var_tau_max", "var_fd_eps",
+                       "skip_connection", "skip_loss")
 
 
 def psc_tau_options(section) -> dict:
