@@ -14,8 +14,13 @@ Split first by **purpose**, then named `<case>_<topic>.md`, where `<case>` is
 | `results/` | measurement records and investigation notes — *what was found* | **append-only.** Do not edit one to reflect a later finding; write a new doc that states the retraction (as `docs/results/l96_psi_decomposition.md` does for conclusion 5 of `docs/results/l96_cfm_affine_velocity_decomposition.md`). | RESULTS, NOTES |
 | `papers/` | paper drafts (tex / pdf) and their Overleaf sync — not repo prose | external | — |
 
-`CONTRIBUTING.md` stays at this level. Generated number tables live under
-`reports/*/outputs/`, not here.
+`CONTRIBUTING.md` stays at this level.
+
+**`docs/results/` holds written findings; the generated numbers they interpret are in
+`reports/` (index: `reports/README.md`).** Every results note carries a `**Numbers:**`
+line right after its `Status:`, naming the report, output folder or probe script its
+numbers come from, or `inline` (collected in the note itself) or `none` (no
+measurements). `reports/README.md` links each output back to the notes that cite it.
 
 ## Conventions
 

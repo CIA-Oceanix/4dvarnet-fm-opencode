@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-24). **Negative as implemented; the cause is identified.** Step T5 of `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v4.
 
+**Numbers:** `reports/l96/outputs/cfm_tau_consistency/t5/`.
+
 - Code and configs: #253 (`var_*` options on `PredictStateCFM`, `var_start_epoch`, `val_var_ratio`).
 - Runs: SLURM array 55263, launched from a frozen worktree at `d78bd60`. Follow-ups: 55280, 55288.
 - Protocol: L96 S0, 200 cached test windows, PredictStateCFM-M on the P1 recipe, `ens30_no10` evaluation under both the uniform Euler grid (p = 1, P1-comparable) and the early-fine default (p = 0.5).

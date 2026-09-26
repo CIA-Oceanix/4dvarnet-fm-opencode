@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-25). This is the experiment flagged as `\needsrun` in P1 §5 ("the single experiment that would settle C4").
 
+**Numbers:** `reports/l96/probe_rank_histograms.py` → `reports/l96/outputs/rank_histograms/`.
+
 **C4, as the paper states it:** schemes that cannot represent `Psi_NG` (the ensemble-Kalman class) are *better* calibrated on spread/RMSE than the schemes carrying a full non-Gaussian branch. The paper's reconciliation is that spread/RMSE is a second-moment diagnostic and `Psi_NG` is not a second-moment object. So the missing branch should show up in the *shape* of the predictive distribution, which only a rank histogram can see.
 
 **Verdict:** **not supported as a discriminating claim.**

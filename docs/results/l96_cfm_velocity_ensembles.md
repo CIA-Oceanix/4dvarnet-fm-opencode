@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-26). Sampling-time blends and ensembles of trained 1200-epoch benchmark-default flows. Code: `models/cfm_blend.py`, `eval_neural_l96.py --blend-with ... [--blend-schedule | --blend-weights]`.
 
+**Numbers:** `eval_neural_l96.py` blend runs (`--blend-with`); their per-run eval JSONs are not checked in. Reference rows: `reports/l96/outputs/l96_benchmark_extended.md`.
+
 ## Question
 
 VanillaCFM (VC) and PredictStateCFM (PSC) integrate the same probability-flow ODE from the same

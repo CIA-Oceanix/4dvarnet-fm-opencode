@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "reports" / "README.md"
 STATUSES = {"CURRENT", "FROZEN", "STALE", "SUPERSEDED"}
-ROW = re.compile(r"^\| `([^`]+\.md)` \|(.*)\|\s*$")
+ROW = re.compile(r"^\| `([^`/]+\.md)` \|(.*)\|\s*$")
 
 
 def _index_rows() -> dict[str, list[str]]:

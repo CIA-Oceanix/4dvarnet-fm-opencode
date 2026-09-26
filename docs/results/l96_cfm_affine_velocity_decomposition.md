@@ -4,6 +4,8 @@
 trained L96 checkpoints, via `reports/l96/probe_cfm_affine_decomposition.py`.
 Analysis only — no model, training or evaluation code is changed by this note.
 
+**Numbers:** `reports/l96/probe_cfm_affine_decomposition.py` (printed by the probe; its output is not checked in).
+
 Goal: make precise the proposed parameterization of the CFM velocity as
 (amortized mean) + (linear term) + (nonlinear remainder), decide whether the
 remainder is small enough for the intended compute saving, and record what was

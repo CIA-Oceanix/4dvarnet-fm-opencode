@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-24). This re-runs every τ-consistency probe of `docs/results/l96_cfm_tau_consistency.md`, `cfm_tau_consistency_ns1.md` and `cfm_sampler_schedule.md` on the flows trained under the benchmark-default preset (#242, #247). Those flows report better RMSE/CRPS after longer training.
 
+**Numbers:** `reports/l96/outputs/cfm_tau_consistency/l96b/`.
+
 **Runs probed** (PredictStateCFM-M = PSC, VanillaCFM-M = Van; monai backbone, 1000 training windows):
 
 | tag | trained in | recipe | epochs | seeds |

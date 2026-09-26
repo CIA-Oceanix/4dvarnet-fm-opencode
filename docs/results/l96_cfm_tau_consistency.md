@@ -4,6 +4,8 @@
 200 cached test windows. Analysis only — no model, training or evaluation code is
 changed. Next steps: `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md`.
 
+**Numbers:** `reports/l96/probe_tau_consistency.py`, `reports/l96/probe_ode_mean_along_path.py` → `reports/l96/outputs/cfm_tau_consistency/` (`tau_consistency_*.json`, `ode_mean_path_*.json`).
+
 **Question.** In the P1 benchmark (`reports/l96/outputs/p1_l96_benchmark.md`) the
 ODE ensemble mean of every flow beats that same flow's τ=0 prediction
 `mu(x0, 0, y)`, averaged over 30 draws. For PredictStateCFM-M it is 0.358 vs 0.408,

@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-24). **Negative** for both training arms as designed.
 
+**Numbers:** `reports/l96/outputs/cfm_tau_consistency/batch1/`.
+
 - Plan: `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v3. Training code: #249. Diagnostics: `docs/results/l96_cfm_tau_consistency.md` and `docs/results/l96_cfm_tau_consistency_ns1.md` (#250).
 - All numbers are L96 S0, 200 cached test windows, PredictStateCFM-M, P1 recipe.
 - One run per arm, all with `training.seed: 1`, so each arm is paired with the T0 reseed on initialisation and batch order.
