@@ -5,6 +5,8 @@ framework of `docs/plans/tech/qg_batched_generation_datasets.md`: the spec
 `qg_specwind_gyrostat_demo`, which has the same factor ranges and protocol as
 the production spec `qg_specwind_gyrostat_v1` at 256/64/64 windows.
 
+**Numbers:** `reports/qg/visualize_qg_dataset.py` (figures); the dataset itself is stored off `/Odyssey`, see "Production run".
+
 The production 5000/500/500 run was generated later the same day; see the
 "Production run" section below. It is stored on a server-local disk, not on `/Odyssey`.
 

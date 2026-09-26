@@ -2,6 +2,8 @@
 
 **Status:** RESULTS (2026-09-24). Step S1 of `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` v4.
 
+**Numbers:** `reports/l96/probe_stochastic_sampler.py` → `reports/l96/outputs/cfm_tau_consistency/sampler/`.
+
 - Checkpoints: the P1 M-tier monai flows, PredictStateCFM-M (PSC) and VanillaCFM-M (Vanilla), archived under `4dvarnet-fm-fdv-tau-aware/experiments/`.
 - Data: L96 S0, 200 cached test windows, 30 members.
 - Script: `reports/l96/probe_stochastic_sampler.py`. Outputs: `reports/l96/outputs/cfm_tau_consistency/sampler/`.

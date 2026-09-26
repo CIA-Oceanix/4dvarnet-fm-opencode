@@ -6,6 +6,8 @@ driver). Context: `docs/plans/case_study/qg_gyrostat_synoptic_forcing.md`
 (Option B). The simulations are in
 `reports/qg/outputs/qg_spectral_wind_report.md`.
 
+**Numbers:** `reports/qg/outputs/qg_spectral_wind_report.md`.
+
 ## 1. Today's storm lives in 12 Fourier amplitudes
 
 The current forcing is a σ = 250 km Mexican hat summed over periodic images

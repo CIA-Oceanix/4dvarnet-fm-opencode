@@ -5,6 +5,8 @@ to `docs/results/l96_cfm_affine_velocity_decomposition.md` (the derivation) and
 `docs/plans/paper/multi_ml_prior_knowledge.md` (which adopts this partition
 as its organizing framework).
 
+**Numbers:** `reports/l96/probe_psi_from_members.py`, `reports/l96/probe_psi_decomposition_vs_density.py`, `reports/l96/sweep_pigdm_guidance.py` (printed by the probes; not checked in).
+
 Decomposition, with `x_tau = (1-tau) x0 + tau x1`, `x0 ~ N(0, sigma0^2 I)`:
 
 ```

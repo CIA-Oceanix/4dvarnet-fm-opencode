@@ -2,6 +2,8 @@
 
 **Status:** NOTES (2026-09-24). Claims audit of the P1 draft against `reports/l96/outputs/l96_benchmark_default.md`.
 
+**Numbers:** `reports/l96/outputs/l96_benchmark_default.md`, `reports/l96/outputs/l96_benchmark_extended.md`, `reports/l96/outputs/l96_da_obs_count_dafw.md`.
+
 Audit of `docs/papers/p1_structural_hypotheses/` (`main.tex`, `sections/01`–`07`)
 against `reports/l96/outputs/l96_benchmark_default.md`. **Nothing in the paper is
 edited here**; this is the list of what the new evidence changes, for the author.

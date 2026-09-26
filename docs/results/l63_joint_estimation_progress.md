@@ -2,6 +2,8 @@
 
 **Status:** NOTES — progress log, in progress since 2026-07-02.
 
+**Numbers:** none — an implementation progress log; it records no measurements.
+
 ## Branch: `feature/joint-estimation`
 
 ---

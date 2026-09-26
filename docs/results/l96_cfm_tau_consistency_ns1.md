@@ -4,6 +4,8 @@
 Diagnostics only: no model, training or evaluation code is changed. Follows
 `docs/results/l96_cfm_tau_consistency.md` (property labels A1, B4, D1, E1 are that doc's).
 
+**Numbers:** `reports/l96/probe_tau_consistency_truth_marginal.py`, `reports/l96/probe_ode_mean_along_path.py` → `reports/l96/outputs/cfm_tau_consistency/` (`ns0_*.json`, `ns1_*.json`).
+
 **Checkpoints.** The P1 M-tier monai flows, archived under
 `4dvarnet-fm-fdv-tau-aware/experiments/`:
 - `A2_predictstatecfm_monaiM_l96/checkpoints/stage1_best.ckpt` (PredictStateCFM-M, "PSC")

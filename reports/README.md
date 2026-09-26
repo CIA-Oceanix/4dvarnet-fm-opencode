@@ -1,5 +1,9 @@
 # `reports/` — index
 
+**`reports/` holds generated numbers (tables, figures and the scripts that write them);
+the written findings that interpret them are in `docs/results/`, and each names the
+outputs its numbers come from.**
+
 Every checked-in report under `reports/*/outputs/` is listed here with the
 question it answers, its status, the protocol its numbers were produced under,
 and the script that writes it. `tests/test_reports_index.py` fails when a report
@@ -48,6 +52,24 @@ To add or refresh rows, produce the new estimates, then rebuild the bundle with
 `batch/run_l96_bundle_report_inputs.sbatch` does all three and diffs the outputs
 after each step. A migration is complete only when the report regenerated from
 the bundle is byte-identical.
+
+## Written findings that cite these outputs
+
+Derived from the `**Numbers:**` line of each note in `docs/results/`; `tests/test_docs_layout.py`
+fails if a note cites an output that is not listed here against it.
+
+| output | discussed in |
+|---|---|
+| `reports/l96/outputs/cfm_tau_consistency/` | `docs/results/l96_cfm_tau_consistency.md`, `docs/results/l96_cfm_tau_consistency_ns1.md` |
+| `reports/l96/outputs/cfm_tau_consistency/batch1/` | `docs/results/l96_cfm_tau_consistency_batch1.md` |
+| `reports/l96/outputs/cfm_tau_consistency/l96b/` | `docs/results/l96_cfm_tau_consistency_l96b.md` |
+| `reports/l96/outputs/cfm_tau_consistency/sampler/` | `docs/results/l96_cfm_sampler_schedule.md` |
+| `reports/l96/outputs/cfm_tau_consistency/t5/` | `docs/results/l96_cfm_tau_consistency_t5.md` |
+| `reports/l96/outputs/l96_benchmark_default.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
+| `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md` |
+| `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
+| `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
+| `reports/qg/outputs/qg_spectral_wind_report.md` | `docs/results/qg_spectral_wind_calibration.md` |
 
 ## Status vocabulary
 

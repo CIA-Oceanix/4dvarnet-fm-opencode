@@ -83,3 +83,42 @@ def test_cited_doc_paths_exist():
             if cited not in DELIBERATELY_ABSENT and not (ROOT / cited).exists():
                 missing.append(f"{p.relative_to(ROOT)} -> {cited}")
     assert not missing, "cited docs/ paths that do not exist:\n" + "\n".join(sorted(missing))
+
+
+NUMBERS = re.compile(r"^\*\*Numbers:\*\*\s*(.*)$")
+REPORTS_INDEX = ROOT / "reports" / "README.md"
+
+
+def _numbers_line(doc: Path) -> str | None:
+    for line in doc.read_text(encoding="utf-8").splitlines()[:25]:
+        m = NUMBERS.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _cited_repo_paths(text: str) -> list[str]:
+    return [t for t in re.findall(r"`([^`]+)`", text)
+            if "*" not in t and not t.startswith("-") and (t.startswith(("reports/", "docs/")) or t.endswith(".py"))]
+
+
+@pytest.mark.parametrize("doc", sorted((DOCS / "results").glob("*.md")), ids=lambda p: p.name)
+def test_results_note_names_its_numbers(doc):
+    line = _numbers_line(doc)
+    assert line, f"{doc.relative_to(ROOT)}: no **Numbers:** line in the first 25 lines"
+    paths = _cited_repo_paths(line)
+    assert paths or line.startswith(("none", "inline")), (
+        f"{doc.relative_to(ROOT)}: **Numbers:** must cite a repo path, or start with 'none' / 'inline'")
+    missing = [p for p in paths if not (ROOT / p).exists()]
+    assert not missing, f"{doc.relative_to(ROOT)}: **Numbers:** cites missing paths {missing}"
+
+
+def test_reports_index_links_back_to_each_citing_note():
+    index = REPORTS_INDEX.read_text(encoding="utf-8").splitlines()
+    missing = []
+    for doc in sorted((DOCS / "results").glob("*.md")):
+        rel = doc.relative_to(ROOT).as_posix()
+        for out in (p for p in _cited_repo_paths(_numbers_line(doc) or "") if "/outputs/" in p):
+            if not any(f"`{out}`" in row and f"`{rel}`" in row for row in index):
+                missing.append(f"{out} <- {rel}")
+    assert not missing, "reports/README.md 'Written findings' table lacks:\n" + "\n".join(missing)

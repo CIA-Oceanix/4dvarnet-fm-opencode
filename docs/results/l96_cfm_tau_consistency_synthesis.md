@@ -2,6 +2,8 @@
 
 **Status:** RESULTS / SYNTHESIS (2026-09-25). This note **closes** the τ-consistency line: it is the reference to cite. It supersedes, for citation purposes, the seven notes it summarises. They stay the detailed record; results docs are append-only.
 
+**Numbers:** inline — collected from the seven notes tabulated below, each of which names its own source.
+
 | note | PR | content |
 |---|---|---|
 | `docs/results/l96_cfm_tau_consistency.md` | #245 | first probes: per-step predictions, E1, B2/B4, A1/A3, C1 |

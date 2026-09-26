@@ -7,6 +7,8 @@ gyrostat atmosphere. It is the configuration of this case study closest to a
 real coupled reanalysis. Context: `docs/plans/tech/qg_batched_generation_datasets.md`
 (decision 4, §8.1).
 
+**Numbers:** `reports/qg/visualize_qg_dataset.py` (figures and summary statistics, `--spec qg_coupled_gyrostat_v1`); the generation-time checks come from the dataset build itself (`models/qg_coupled.py`), not from a checked-in output.
+
 ## Spec and pairing
 
 `qg_coupled_gyrostat_v1` has the same factor box, seed entropies, factor
