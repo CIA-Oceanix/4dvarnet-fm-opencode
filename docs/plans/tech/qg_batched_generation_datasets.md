@@ -187,6 +187,19 @@ datasets spin up **coupled**. One-way datasets can use either an unforced
 spin-up (today's convention) or a forced one (decision 2). With batching,
 the cost difference is small (§5).
 
+> **Implemented in G3** (`models/qg_coupled.py`: `CoupledSpectralQG`,
+> `generate_coupled_windows`). Measured on an RTX 8000 at batch 256:
+> - the coupled step costs **0.046 ms per window-step**, 1.63× the one-way
+>   step (0.028). The prototype's 1.2–1.4× left out the per-stage frame
+>   rotation and projection;
+> - feedback ÷ the gyrostat's own tendency (median / p90):
+>   **κ_fb = 1: 0.75% / 2.3%**, κ_fb = 10: 7.5% / 22%, κ_fb = 100:
+>   57% / 119%;
+> - after 60 days, the gyrostat state differs from κ_fb = 0 by 4% / 41% /
+>   173% (relative).
+>
+> With κ_fb = 0 the run reproduces the one-way path bit for bit (tested).
+
 ### 3.5 Sharding and determinism
 
 - **Sharding:** per-window seeds (§4.2) make sharding free. A SLURM array
@@ -312,6 +325,17 @@ reported separately, never pooled with the in-distribution test.
   (test) ≈ 5 GB.
 
 ### 4.6 Fresh train windows every epoch (decision 5)
+
+> **Implemented in G5** (`data/qg_specwind_neural.py`,
+> `train_qg_neural.py --specwind-spec`). Train windows are regenerated
+> every `--regen-every` epochs (`--regen-windows` per round), from spawn
+> keys at index ≥ 10⁹ in the train namespace, with a per-round Latin
+> hypercube. Val is re-materialized at full resolution by deterministic
+> regeneration and verified against the stored 12-hourly frames (bit-exact
+> on GPU). Test is read from its full-resolution shards with purpose
+> `test`. Normalization stats come from the first train draw. Only
+> `cond_mode` `none` and `true` are supported until the spectral S1
+> corruption lands (Option B PR-2).
 
 Batched generation makes it cheap to **regenerate train windows on the fly**
 from fresh spawn keys: about 4–6 min per 1000 windows on one RTX 8000.
