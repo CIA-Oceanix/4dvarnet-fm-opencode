@@ -129,10 +129,11 @@ class CoupledSpectralQG:
 
     def rollout(self, q0: torch.Tensor, y0: torch.Tensor, n_steps: int, keep_from: int = 0,
                 keep_every: int = 1, amps_from: int | None = None,
-                diagnose_every: int = 0) -> dict:
+                diagnose_every: int = 0, diagnose_from: int = 0,
+                capture_steps: tuple = ()) -> dict:
         oc = self.ocean
         qh, y = torch.fft.rfft2(q0, dim=(-2, -1)), y0
-        kept, amps, diag = [], [], []
+        kept, amps, diag, captured = [], [], [], {}
         amps_from = keep_from if amps_from is None else amps_from
         for k in range(n_steps + 1):
             if k >= keep_from and (k - keep_from) % keep_every == 0:
@@ -140,34 +141,53 @@ class CoupledSpectralQG:
             if k == n_steps:
                 break
             t = k * oc.dt
+            if k in capture_steps:
+                captured[k] = y.clone()
             if k >= amps_from:
                 amps.append(self.amplitudes(y, t))
-            if diagnose_every and k % diagnose_every == 0 and self.kappa_fb != 0.0:
+            if (diagnose_every and k >= diagnose_from and k % diagnose_every == 0
+                    and self.kappa_fb != 0.0):
                 fb = self.feedback_per_unit(oc._invert(qh)[:, 0], t)
                 own = self.gyro.rhs(y)
                 diag.append((fb.pow(2).mean(1).sqrt() / own.pow(2).mean(1).sqrt()).cpu())
             qh, y = self.step(qh, y, t)
         out = {"frames": torch.stack(kept, dim=1),
                "amplitudes": torch.stack(amps, dim=1) if amps else None,
-               "y_end": y}
+               "y_end": y, "captured": captured}
         if diag:
             out["feedback_over_own_rms"] = torch.stack(diag, dim=1)
         return out
 
 
-def generate_coupled_windows(spec, split: str, indices: list[int], kappa_fb: float = 1.0,
+def generate_coupled_windows(spec, split: str, indices: list[int], kappa_fb: float | None = None,
                              device: torch.device | str = "cpu", batch_size: int = 256,
                              dtype: torch.dtype = torch.float32, keep_every: int | None = None,
-                             diagnose_every: int = 0) -> dict:
-    """G2-format windows from the coupled system (forced-and-coupled spin-up)."""
-    from data.qg_datasets import STREAM_OCEAN_IC, design_factors, window_seed
+                             diagnose_every: int = 12) -> dict:
+    """G2-format windows from the coupled system (forced-and-coupled spin-up).
+
+    Same factors, seeds and output keys as `data.qg_datasets.generate_windows`,
+    plus a per-window feedback ratio (rms of the ocean -> atmosphere term over
+    the rms of the gyrostat's own tendency, averaged over the lead and window).
+    """
+    from data.qg_datasets import (
+        REGIME_MODES,
+        STREAM_OCEAN_IC,
+        _hash_tensor,
+        design_factors,
+        window_seed,
+    )
 
     device = torch.device(device)
+    kappa = float(spec.kappa_fb if kappa_fb is None else kappa_fb)
     fac = design_factors(spec, split)
     keep = spec.keep_every(split) if keep_every is None else keep_every
     basis = FourierWindBasis(nx=spec.nx, L=spec.L, kmax=spec.kmax, dtype=dtype, device=device)
     t0_frame = spec.n_lead // keep
-    out = {"true_state": [], "wind_amplitudes": [], "window_seed": [], "feedback_ratio": []}
+    start_step = spec.n_spinup + spec.n_lead
+    regime_idx = REGIME_MODES.get(spec.preset)
+    keys = ("true_state", "wind_amplitudes", "window_seed", "regime", "rms_curl", "ke_upper",
+            "state_hash", "gyro_hash", "feedback_ratio")
+    out = {k: [] for k in keys}
     t_start = time.time()
     for start in range(0, len(indices), batch_size):
         idx = indices[start:start + batch_size]
@@ -178,24 +198,51 @@ def generate_coupled_windows(spec, split: str, indices: list[int], kappa_fb: flo
                                   rek=pick("rek"), r_cf=spec.r_cf, dtype=dtype, device=device)
         model = CoupledSpectralQG(ocean, basis, amp=pick("level"), sigma=spec.sigma, cx=pick("cx"),
                                   cy=pick("cy"), x0=pick("x0"), y0=pick("y0"),
-                                  time_unit_days=pick("time_unit_days"), kappa_fb=kappa_fb,
+                                  time_unit_days=pick("time_unit_days"), kappa_fb=kappa,
                                   preset=spec.preset)
         y0 = model.gyro.burn_in(model.gyro.initial_states(seeds), spec.burnin_units)
         q0 = ocean.initial_q([stream_seed(s, STREAM_OCEAN_IC) for s in seeds])
         res = model.rollout(q0, y0, spec.n_total, keep_from=spec.n_spinup, keep_every=keep,
-                            diagnose_every=diagnose_every)
-        out["true_state"].append(res["frames"].to(torch.float32).cpu())
-        out["wind_amplitudes"].append(res["amplitudes"].to(torch.float32).cpu())
+                            diagnose_every=diagnose_every, diagnose_from=spec.n_spinup,
+                            capture_steps=(start_step,))
+        frames = res["frames"]
+        win_amps = res["amplitudes"].to(torch.float32)
+        psi = ocean.streamfunctions(frames[:, t0_frame:])
+        psih = torch.fft.rfft2(psi[:, :, 0], dim=(-2, -1))
+        k2 = ocean.K2.to(psih.real.dtype)
+        ke = 0.5 * (k2 * psih.abs() ** 2).sum(dim=(-2, -1)) / float(spec.nx * spec.nx) ** 2
+        field_ms = 0.5 * (win_amps[:, spec.n_lead:] ** 2).sum(-1)
+        out["true_state"].append(frames.to(torch.float32).cpu())
+        out["wind_amplitudes"].append(win_amps.cpu())
         out["window_seed"].extend(seeds)
-        if "feedback_over_own_rms" in res:
-            out["feedback_ratio"].append(res["feedback_over_own_rms"].mean(1))
+        out["rms_curl"].append(field_ms.mean(1).sqrt().cpu().double())
+        out["ke_upper"].append(ke.mean(1).cpu().double())
+        y_start = res["captured"][start_step]
+        if regime_idx is not None:
+            signs = (model.gyro.standardize(y_start)[:, list(regime_idx)] > 0).to(torch.int64)
+            weights = 2 ** torch.arange(len(regime_idx), device=signs.device)
+            out["regime"].append((signs * weights).sum(-1).cpu())
+        else:
+            out["regime"].append(torch.full((len(idx),), -1, dtype=torch.int64))
+        ratio = res.get("feedback_over_own_rms")
+        out["feedback_ratio"].append(ratio.mean(1).double() if ratio is not None
+                                     else torch.zeros(len(idx), dtype=torch.float64))
+        for b in range(len(idx)):
+            out["state_hash"].append(_hash_tensor(frames[b, t0_frame]))
+            out["gyro_hash"].append(_hash_tensor(y0[b]))
     return {
         "indices": list(indices),
         "true_state": torch.cat(out["true_state"]),
         "wind_amplitudes": torch.cat(out["wind_amplitudes"]),
         "window_seed": out["window_seed"],
+        "regime": torch.cat(out["regime"]),
+        "rms_curl": torch.cat(out["rms_curl"]),
+        "ke_upper": torch.cat(out["ke_upper"]),
+        "state_hash": out["state_hash"],
+        "gyro_hash": out["gyro_hash"],
+        "feedback_ratio": torch.cat(out["feedback_ratio"]),
         "factors": {k: np.asarray(v[indices]) for k, v in fac.items() if k != "unit"},
-        "keep_every": keep, "window_start_frame": t0_frame, "kappa_fb": float(kappa_fb),
-        "feedback_ratio": torch.cat(out["feedback_ratio"]) if out["feedback_ratio"] else None,
+        "unit": np.asarray(fac["unit"][indices]),
+        "keep_every": keep, "window_start_frame": t0_frame, "kappa_fb": kappa,
         "seconds": time.time() - t_start,
     }

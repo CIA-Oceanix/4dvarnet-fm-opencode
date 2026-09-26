@@ -33,11 +33,12 @@ VARIABLES = {
     "time_unit_days": ("gyrostat time unit", "days per unit", 1.0),
     "rms_curl": ("rms wind curl over the window", "10⁻¹² s⁻²", 1e12),
     "ke_upper": ("upper-layer kinetic energy", "10⁻³ m² s⁻²", 1e3),
+    "feedback_ratio": ("ocean → atmosphere feedback / gyrostat tendency", "%", 100.0),
 }
 
 
 def _values(split: QGGeneratedSplit, var: str) -> np.ndarray:
-    if var in ("rms_curl", "ke_upper"):
+    if var in ("rms_curl", "ke_upper", "feedback_ratio"):
         return np.array([w[var] for w in split.windows])
     return np.array([w["factors"][var] for w in split.windows])
 
@@ -115,13 +116,20 @@ def main() -> None:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--train-samples", type=int, default=3)
     p.add_argument("--val-samples", type=int, default=2)
+    p.add_argument("--pair-spec", default=None,
+                   help="Another spec with the same seeds and factors (e.g. the forced dataset "
+                        "a coupled one is paired with): adds a window-by-window comparison.")
+    p.add_argument("--pair-root", default=None)
     args = p.parse_args()
     spec = SPECS[args.spec]
     os.makedirs(os.path.join(args.out_dir, "gifs"), exist_ok=True)
     tr = QGGeneratedSplit(split_dir(args.root, spec, "train"), purpose="train")
     va = QGGeneratedSplit(split_dir(args.root, spec, "val"), purpose="eval")
-    with open(os.path.join(split_dir(args.root, spec, "test"), "manifest.json")) as fh:
-        test_manifest = json.load(fh)
+    test_path = os.path.join(split_dir(args.root, spec, "test"), "manifest.json")
+    test_manifest = None
+    if os.path.exists(test_path):
+        with open(test_path) as fh:
+            test_manifest = json.load(fh)
     reports = os.path.join(args.root, spec.name, "reports")
     with open(os.path.join(reports, "independence.json")) as fh:
         independence = json.load(fh)
@@ -129,21 +137,26 @@ def main() -> None:
         diversity = json.load(fh)
     sizes = {}
     for s in ("train", "val", "test"):
+        if s == "test" and test_manifest is None:
+            sizes[s] = None
+            continue
         out = subprocess.run(["du", "-sb", split_dir(args.root, spec, s)], capture_output=True, text=True)
         sizes[s] = int(out.stdout.split()[0]) if out.returncode == 0 else None
     splits = {"train": tr, "val": va}
     regimes = sorted({w["regime"] for s in splits.values() for w in s.windows})
+    variables = [v for v in VARIABLES if v != "feedback_ratio" or "feedback_ratio" in tr.windows[0]]
     data = {
         "spec": spec.to_json(),
-        "counts": {"train": len(tr), "val": len(va), "test": test_manifest["n"]},
+        "counts": {"train": len(tr), "val": len(va),
+                   "test": test_manifest["n"] if test_manifest else 0},
         "generation_seconds": {"train": tr.manifest["generation_seconds"],
                                "val": va.manifest["generation_seconds"],
-                               "test": test_manifest["generation_seconds"]},
+                               "test": test_manifest["generation_seconds"] if test_manifest else 0.0},
         "bytes": sizes,
         "split_hashes": {"train": tr.manifest["split_hash"], "val": va.manifest["split_hash"],
-                         "test": test_manifest["split_hash"]},
+                         "test": test_manifest["split_hash"] if test_manifest else None},
         "independence": independence,
-        "histograms": {v: _hist(splits, v) for v in VARIABLES},
+        "histograms": {v: _hist(splits, v) for v in variables},
         "regimes": {"labels": regimes,
                     "series": {n: [sum(w["regime"] == r for w in s.windows) / len(s) for r in regimes]
                                for n, s in splits.items()}},
@@ -158,6 +171,28 @@ def main() -> None:
         data["samples"][name] = [
             _animate(s, i, os.path.join(args.out_dir, "gifs", f"{name}_{s.windows[i]['index']:04d}.gif"))
             for i in _pick_samples(s, n)]
+    if args.pair_spec:
+        other = QGGeneratedSplit(split_dir(args.pair_root or args.root, SPECS[args.pair_spec], "train"),
+                                 purpose="train")
+        a = {w["index"]: w for w in tr.windows}
+        b = {w["index"]: w for w in other.windows}
+        common = sorted(set(a) & set(b))
+        ke_a = np.array([a[i]["ke_upper"] for i in common])
+        ke_b = np.array([b[i]["ke_upper"] for i in common])
+        curl_a = np.array([a[i]["rms_curl"] for i in common])
+        curl_b = np.array([b[i]["rms_curl"] for i in common])
+        same_factors = all(abs(a[i]["factors"]["rd"] - b[i]["factors"]["rd"]) < 1e-9 for i in common)
+        pick = np.linspace(0, len(common) - 1, min(1500, len(common))).round().astype(int)
+        windy = ke_b > 0
+        data["paired"] = {
+            "with": args.pair_spec, "n": len(common), "same_factors": same_factors,
+            "ke_ratio_median": float(np.median(ke_a[windy] / ke_b[windy])),
+            "ke_ratio_p10": float(np.quantile(ke_a[windy] / ke_b[windy], 0.1)),
+            "ke_ratio_p90": float(np.quantile(ke_a[windy] / ke_b[windy], 0.9)),
+            "ke_corr": float(np.corrcoef(ke_a, ke_b)[0, 1]),
+            "curl_corr": float(np.corrcoef(curl_a, curl_b)[0, 1]),
+            "points": [[float(ke_b[k] * 1e3), float(ke_a[k] * 1e3), int(common[k])] for k in pick],
+        }
     with open(os.path.join(args.out_dir, "data.json"), "w") as fh:
         json.dump(data, fh)
     print(json.dumps({"out": args.out_dir, "samples": {k: len(v) for k, v in data["samples"].items()},
