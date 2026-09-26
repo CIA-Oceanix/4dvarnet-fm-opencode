@@ -28,6 +28,9 @@ Also adds:
   `tests/test_qg_datasets.py` (11 tests),
   `docs/results/qg_specwind_demo_dataset.md`;
 - `models/qg_wind_batched.py` (`return_modes`);
+- `requirements.txt`: `scipy==1.14.1` (the factor design uses
+  `scipy.stats.qmc`, so datasets are reproducible only under a pinned
+  scipy; CI lacked it);
 - `tests/test_qg_batched.py` (+1).
 
 **Rationale:** Decisions 1–3 and 6 require a reproducible generator whose

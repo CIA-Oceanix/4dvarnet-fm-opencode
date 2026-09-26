@@ -26,3 +26,7 @@ matplotlib>=3.8.0
 pytest>=7.4.0
 pytest-cov>=4.1.0
 pyyaml>=6.0
+# scipy is pinned exactly: data/qg_datasets.py draws the dataset factor design
+# with scipy.stats.qmc.LatinHypercube, so the generated QG datasets are only
+# reproducible under the same scipy (1.14.1 is the fdv-monai-proto version).
+scipy==1.14.1
