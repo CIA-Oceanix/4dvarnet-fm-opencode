@@ -107,8 +107,16 @@ def _build_dyn(cfg, window, device, psi_state: bool = False):
         "wind_amp": window["wind_amp"], "wind_sigma": cfg.wind_sigma,
         "clip_range": 1e-3,
     }
+    specwind = window.get("specwind")
     if model == "qg1l":
+        if specwind:
+            raise NotImplementedError("the one-layer DA model has no spectral wind hook yet "
+                                      "(Option B plan, PR-2)")
         inner = QG1LDynamics(**common)
+    elif specwind:
+        inner = QGDynamics(**common, delta=cfg.delta, U2=da_params.get("U2", cfg.U2),
+                           wind_driver="gyrostat", wind_kmax=specwind["kmax"],
+                           r_cf=specwind["r_cf"])
     else:
         inner = QGDynamics(**common, delta=cfg.delta,
                            U2=da_params.get("U2", cfg.U2))
