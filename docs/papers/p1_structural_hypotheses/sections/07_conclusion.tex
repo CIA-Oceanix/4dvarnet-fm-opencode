@@ -9,8 +9,8 @@ that is measurable and attributable to named terms of a single operator.
 The headline is that model error does not simply add an error floor. It
 decouples the analysis from the observations: under a modest parameter bias, the
 return on doubling the observation count falls by a factor of six for
-strong-constraint 4D-Var, and explained variance in the fast-variable subspace
-goes to zero. In the sparse-observation regime that characterises geophysical
+strong-constraint 4D-Var, whose analysis is constrained to the wrong model's
+trajectory; the ensemble filters keep most of it. In the sparse-observation regime that characterises geophysical
 assimilation, that is the difference between a system that improves with more
 data and one that does not.
 
@@ -25,12 +25,15 @@ substantially, in a direction predictable from the conditioning of the map
 between representations.
 
 Reading these through the conditional-flow representation is what makes the
-diagnosis attributable rather than anecdotal. The classical schemes are not
-merely worse; they \emph{identically zero} named components of the posterior-mean
-operator, and the components they zero are the ones the measurements show to
-matter. That also explains why blending a deterministic estimate into a
-generative sampler is the most accurate scheme measured here and simultaneously
-the least calibrated: it fills $\Psimean$ by import and pays for it in dispersion.
+diagnosis attributable rather than anecdotal: the classical schemes
+\emph{identically zero} named components of the posterior-mean operator. The
+measurements qualify how much that matters. Occupying more components does not by
+itself buy accuracy --- a mean-only learned estimator matches the full conditional
+flows --- and the zeroed non-Gaussian component shows up neither in dispersion nor
+in rank histograms. What the measurements single out is where model information
+enters: the most accurate scheme measured, a deterministic estimate blended into a
+generative sampler, is also flat under model error, but only when its prior was
+trained on noisy rather than true model parameters.
 
 We have deliberately not proposed a replacement. The value of a diagnosis is
 that it states what a class of methods cannot do however well tuned, and the
@@ -39,7 +42,7 @@ rather than to an implementation.
 
 \todo{Revisit once weak-constraint 4D-Var has run on Lorenz-96. Lorenz-63
 already shows it recovering much of the model-error loss, so the conclusion may
-need to be narrowed to strong-constraint and filtering methods --- narrower, but
+need to be narrowed to strong-constraint 4D-Var --- narrower, but
 better supported, and worth stating plainly rather than hedging.}
 
 \section*{Open science statement}

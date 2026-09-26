@@ -245,7 +245,7 @@
     {
       "label": "SDA3-M",
       "params": "5.89 M",
-      "flag": "",
+      "flag": "bias never active in training (DA params = truth): identical to SDA2 by construction",
       "metrics": {
         "s0": {
           "rmse": 0.52277181746995,
@@ -256,6 +256,23 @@
           "rmse": 0.5294872417143895,
           "crps": 0.24743356089123808,
           "spread": 0.3404368757450596
+        }
+      }
+    },
+    {
+      "label": "SDA3-fix-M",
+      "params": "5.89 M",
+      "flag": "SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26)",
+      "metrics": {
+        "s0": {
+          "rmse": 0.49843869002742563,
+          "crps": 0.2469141370283317,
+          "spread": 0.2264482762843957
+        },
+        "s1": {
+          "rmse": 0.5064763142693995,
+          "crps": 0.2502780325496273,
+          "spread": 0.23978910534641365
         }
       }
     }

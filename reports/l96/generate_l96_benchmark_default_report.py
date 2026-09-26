@@ -227,7 +227,9 @@ def main() -> None:
              "training seeds where a row has several.\n")
     A.append("## Protocol\n")
     A.append("- **Training (benchmark default, `config/l96_benchmark_default.yaml`)**: P1 recipe (monai, "
-             "`normalize`, cosine annealing, 400 epochs, lr 1e-3, clip 10, batch 16) with a random "
+             "`normalize`, cosine annealing, 400 epochs, lr 1e-3, clip 10, batch 16; the default budget "
+             "was raised to 1200 epochs on 2026-09-26 -- this report keeps the 400-epoch runs, the "
+             "1200-epoch ones are in `l96_benchmark_extended.md`) with a random "
              "observing system redrawn every batch with fresh noise -- 10-300 stratified obs times "
              "(step 0 always observed), 4-16 observed fast channels per window (subset per obs "
              "time), slow channels always. Validation windows re-observed once with a fixed seed "

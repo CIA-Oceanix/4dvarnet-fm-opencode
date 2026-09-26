@@ -2,7 +2,7 @@
 
 Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on the regular 30-obs set and on the canonical random observing system (the exact obs the DA baselines assimilated). S0 = true parameters, S1 = biased DA model / corrupted forcing. Every learned result passed the test-set consistency check (dataset + truth window for window); DA runs matched the canonical layouts.
 
-**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms of the benchmark default.
+**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms (the benchmark default since 2026-09-26; the 400-epoch rows are the earlier recipe, kept for the training-budget comparison).
 
 **Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); the report refuses to render a flow result recorded with any other sampling. Only the calibration study (section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler (10 guided steps). The `PredictStateCFM-M x3` row averages the velocities of three trained networks (`models/cfm_blend.py`), so it costs 3x a single-model row.
 
@@ -11,7 +11,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 ## Findings
 
 1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 0.312 / 0.307, random S0 / S1 0.388 / 0.385 -- flat under model error. The SDA2-M prior is marginally better at S0 (0.310 / 0.382) but degrades at S1 (0.333 / 0.408): it was trained with DA params equal to the true ones, so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: ETKF 0.687.
-2. **The 400-epoch budget of the benchmark default is too short.** At 1200 epochs every family gains 9-19% (regular S0: DirectUNet 0.380 -> 0.340, PredictStateCFM 0.403 -> 0.341, VanillaCFM 0.430 -> 0.351), and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.
+2. **400 epochs was too short; the benchmark default is now 1200 epochs** (2026-09-26). At 1200 epochs every family gains 9-19% (regular S0: DirectUNet 0.380 -> 0.340, PredictStateCFM 0.403 -> 0.341, VanillaCFM 0.430 -> 0.351), and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.
 3. **Observation-count crossover at S0**: DA (ETKF) is best at <= 10 obs per window; from ~20 obs every learned scheme beats every DA baseline, and the gap grows with density. Under model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.
 4. **Fast channels**: no crossover -- learned beat DA at every k, including slow-only (k 0, below training range). The learned slow-variable error is flat (~0.2-0.3); all the k-dependence is in the fast variables. Under model error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).
 5. **Beyond the training range**: learned models are weak at 6 obs and degrade with 1000 obs (DirectUNet 0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least. Noise shifts are handled gracefully.
@@ -28,13 +28,13 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKF | — | 0.687 ± 0.131 | 1.478 ± 0.240 | 0.798 ± 0.220 | 1.418 ± 0.307 | 1.16 | — |
 | DA | EnKF | — | 0.711 ± 0.130 | 1.514 ± 0.247 | 0.850 ± 0.227 | 1.428 ± 0.282 | 1.20 | — |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 1.06 | — |
-| Benchmark default, 400 ep | DirectUNet-M | 3/3 | 0.380 ± 0.064 | 0.379 ± 0.064 | 0.493 ± 0.314 | 0.490 ± 0.271 | 1.30 | 0.004 |
-| Benchmark default, 400 ep | PredictStateCFM-M | 3/3 | 0.403 ± 0.079 | 0.400 ± 0.079 | 0.509 ± 0.270 | 0.513 ± 0.243 | 1.26 | 0.005 |
-| Benchmark default, 400 ep | VanillaCFM-M | 3/3 | 0.430 ± 0.072 | 0.427 ± 0.070 | 0.535 ± 0.282 | 0.544 ± 0.256 | 1.24 | 0.006 |
-| Benchmark default, 1200 ep | DirectUNet-M | 3/3 | 0.340 ± 0.062 | 0.339 ± 0.063 | 0.450 ± 0.315 | 0.444 ± 0.269 | 1.32 | 0.002 |
-| Benchmark default, 1200 ep | PredictStateCFM-M | 3/3 | 0.341 ± 0.078 | 0.338 ± 0.079 | 0.443 ± 0.260 | 0.447 ± 0.233 | 1.30 | 0.001 |
-| Benchmark default, 1200 ep | VanillaCFM-M | 3/3 | 0.351 ± 0.079 | 0.349 ± 0.080 | 0.462 ± 0.277 | 0.468 ± 0.250 | 1.32 | 0.001 |
-| Benchmark default, 3000 windows | DirectUNet-M | 1/1 | 0.334 ± 0.061 | 0.334 ± 0.061 | 0.447 ± 0.316 | 0.440 ± 0.270 | 1.34 | — |
+| Benchmark recipe, 400 ep | DirectUNet-M | 3/3 | 0.380 ± 0.064 | 0.379 ± 0.064 | 0.493 ± 0.314 | 0.490 ± 0.271 | 1.30 | 0.004 |
+| Benchmark recipe, 400 ep | PredictStateCFM-M | 3/3 | 0.403 ± 0.079 | 0.400 ± 0.079 | 0.509 ± 0.270 | 0.513 ± 0.243 | 1.26 | 0.005 |
+| Benchmark recipe, 400 ep | VanillaCFM-M | 3/3 | 0.430 ± 0.072 | 0.427 ± 0.070 | 0.535 ± 0.282 | 0.544 ± 0.256 | 1.24 | 0.006 |
+| Benchmark default (1200 ep) | DirectUNet-M | 3/3 | 0.340 ± 0.062 | 0.339 ± 0.063 | 0.450 ± 0.315 | 0.444 ± 0.269 | 1.32 | 0.002 |
+| Benchmark default (1200 ep) | PredictStateCFM-M | 3/3 | 0.341 ± 0.078 | 0.338 ± 0.079 | 0.443 ± 0.260 | 0.447 ± 0.233 | 1.30 | 0.001 |
+| Benchmark default (1200 ep) | VanillaCFM-M | 3/3 | 0.351 ± 0.079 | 0.349 ± 0.080 | 0.462 ± 0.277 | 0.468 ± 0.250 | 1.32 | 0.001 |
+| Benchmark recipe, 400 ep, 3000 windows | DirectUNet-M | 1/1 | 0.334 ± 0.061 | 0.334 ± 0.061 | 0.447 ± 0.316 | 0.440 ± 0.270 | 1.34 | — |
 | Flow ensemble, 1200 ep (3 networks) | PredictStateCFM-M x3 | 1/1 | 0.327 ± 0.077 | 0.323 ± 0.078 | 0.429 ± 0.259 | 0.432 ± 0.232 | 1.31 | — |
 | SDA, gw 25 | SDA1-M | 3/3 | 0.501 ± 0.083 | 0.500 ± 0.083 | 0.612 ± 0.233 | 0.624 ± 0.229 | 1.22 | 0.001 |
 | SDA, gw 25 | SDA2-M | 3/3 | 0.500 ± 0.086 | 0.509 ± 0.089 | 0.605 ± 0.230 | 0.627 ± 0.226 | 1.21 | 0.004 |
@@ -55,10 +55,10 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 |---|---|---|---|---|---|
 | DA | ETKF | 0.331 (0.854) | 0.396 (0.786) | 0.98 (0.37) | 0.96 (0.58) |
 | DA | EnKF | 0.336 (0.906) | 0.421 (0.798) | 0.97 (0.33) | 1.08 (0.54) |
-| Benchmark default, 400 ep | PredictStateCFM-M | 0.183 (0.182) | 0.228 (0.230) | 0.70 (0.70) | 0.68 (0.65) |
-| Benchmark default, 400 ep | VanillaCFM-M | 0.196 (0.196) | 0.239 (0.244) | 0.79 (0.80) | 0.75 (0.73) |
-| Benchmark default, 1200 ep | PredictStateCFM-M | 0.150 (0.148) | 0.194 (0.196) | 0.63 (0.63) | 0.64 (0.61) |
-| Benchmark default, 1200 ep | VanillaCFM-M | 0.152 (0.151) | 0.202 (0.205) | 0.71 (0.72) | 0.68 (0.66) |
+| Benchmark recipe, 400 ep | PredictStateCFM-M | 0.183 (0.182) | 0.228 (0.230) | 0.70 (0.70) | 0.68 (0.65) |
+| Benchmark recipe, 400 ep | VanillaCFM-M | 0.196 (0.196) | 0.239 (0.244) | 0.79 (0.80) | 0.75 (0.73) |
+| Benchmark default (1200 ep) | PredictStateCFM-M | 0.150 (0.148) | 0.194 (0.196) | 0.63 (0.63) | 0.64 (0.61) |
+| Benchmark default (1200 ep) | VanillaCFM-M | 0.152 (0.151) | 0.202 (0.205) | 0.71 (0.72) | 0.68 (0.66) |
 | Flow ensemble, 1200 ep (3 networks) | PredictStateCFM-M x3 | 0.142 (0.141) | 0.186 (0.189) | 0.63 (0.63) | 0.63 (0.60) |
 | SDA, gw 25 | SDA1-M | 0.255 (0.254) | 0.312 (0.320) | 0.42 (0.43) | 0.39 (0.37) |
 | SDA, gw 25 | SDA2-M | 0.239 (0.240) | 0.287 (0.292) | 0.54 (0.65) | 0.51 (0.59) |
@@ -170,48 +170,48 @@ Averaged over k in {4, 8, 12, 16} (factorial only):
 
 ### Canonical random test set, windows binned by their own obs count / fast channels
 
-Learned: benchmark default 400 ep, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(400) -> SDA2-M.
+Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> SDA3-fix-M (the best scheme, 3 seeds).
 
 
 **S0, by n_obs**
 
-| n_obs | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU->SDA2 | ETKF | EnKF | Strong-4DVar |
+| n_obs | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU1200->SDA3-fix | ETKF | EnKF | Strong-4DVar |
 |---|---|---|---|---|---|---|---|---|---|
-| 10-24 | 30 | 1.104 | 0.980 | 1.032 | 0.989 | 0.792 | 1.032 | 1.051 | 1.178 |
-| 25-39 | 29 | 0.558 | 0.583 | 0.614 | 0.695 | 0.480 | 0.874 | 0.893 | 0.845 |
-| 40-54 | 33 | 0.433 | 0.476 | 0.503 | 0.586 | 0.382 | 0.791 | 0.841 | 0.734 |
-| 55-69 | 33 | 0.360 | 0.403 | 0.418 | 0.516 | 0.316 | 0.733 | 0.781 | 0.637 |
-| 70-84 | 36 | 0.331 | 0.372 | 0.389 | 0.497 | 0.293 | 0.726 | 0.802 | 0.599 |
-| 85-100 | 39 | 0.288 | 0.335 | 0.352 | 0.470 | 0.255 | 0.690 | 0.775 | 0.561 |
+| 10-24 | 30 | 1.104 | 0.980 | 1.032 | 0.989 | 0.793 | 1.032 | 1.051 | 1.178 |
+| 25-39 | 29 | 0.558 | 0.583 | 0.614 | 0.695 | 0.450 | 0.874 | 0.893 | 0.845 |
+| 40-54 | 33 | 0.433 | 0.476 | 0.503 | 0.586 | 0.356 | 0.791 | 0.841 | 0.734 |
+| 55-69 | 33 | 0.360 | 0.403 | 0.418 | 0.516 | 0.293 | 0.733 | 0.781 | 0.637 |
+| 70-84 | 36 | 0.331 | 0.372 | 0.389 | 0.497 | 0.278 | 0.726 | 0.802 | 0.599 |
+| 85-100 | 39 | 0.288 | 0.335 | 0.352 | 0.470 | 0.239 | 0.690 | 0.775 | 0.561 |
 
 **S0, by k**
 
-| k | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU->SDA2 | ETKF | EnKF | Strong-4DVar |
+| k | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU1200->SDA3-fix | ETKF | EnKF | Strong-4DVar |
 |---|---|---|---|---|---|---|---|---|---|
-| 4-6 | 53 | 0.621 | 0.653 | 0.690 | 0.759 | 0.529 | 0.977 | 1.045 | 0.889 |
-| 7-9 | 36 | 0.499 | 0.526 | 0.551 | 0.629 | 0.415 | 0.832 | 0.928 | 0.745 |
-| 10-12 | 50 | 0.490 | 0.497 | 0.524 | 0.611 | 0.395 | 0.785 | 0.835 | 0.740 |
-| 13-16 | 61 | 0.381 | 0.383 | 0.400 | 0.475 | 0.303 | 0.634 | 0.648 | 0.615 |
+| 4-6 | 53 | 0.621 | 0.653 | 0.690 | 0.759 | 0.501 | 0.977 | 1.045 | 0.889 |
+| 7-9 | 36 | 0.499 | 0.526 | 0.551 | 0.629 | 0.395 | 0.832 | 0.928 | 0.745 |
+| 10-12 | 50 | 0.490 | 0.497 | 0.524 | 0.611 | 0.379 | 0.785 | 0.835 | 0.740 |
+| 13-16 | 61 | 0.381 | 0.383 | 0.400 | 0.475 | 0.293 | 0.634 | 0.648 | 0.615 |
 
 **S1, by n_obs**
 
-| n_obs | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU->SDA2 | ETKF | EnKF | Strong-4DVar |
+| n_obs | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU1200->SDA3-fix | ETKF | EnKF | Strong-4DVar |
 |---|---|---|---|---|---|---|---|---|---|
-| 10-24 | 27 | 0.994 | 0.891 | 0.945 | 0.929 | 0.746 | 1.651 | 1.661 | 1.547 |
-| 25-39 | 33 | 0.578 | 0.614 | 0.653 | 0.740 | 0.528 | 1.563 | 1.569 | 1.483 |
-| 40-54 | 33 | 0.457 | 0.498 | 0.527 | 0.613 | 0.422 | 1.412 | 1.425 | 1.406 |
-| 55-69 | 35 | 0.401 | 0.448 | 0.473 | 0.571 | 0.378 | 1.389 | 1.407 | 1.447 |
-| 70-84 | 38 | 0.331 | 0.376 | 0.396 | 0.501 | 0.317 | 1.312 | 1.315 | 1.412 |
-| 85-100 | 34 | 0.305 | 0.351 | 0.372 | 0.472 | 0.295 | 1.248 | 1.255 | 1.394 |
+| 10-24 | 27 | 0.994 | 0.891 | 0.945 | 0.929 | 0.716 | 1.651 | 1.661 | 1.547 |
+| 25-39 | 33 | 0.578 | 0.614 | 0.653 | 0.740 | 0.466 | 1.563 | 1.569 | 1.483 |
+| 40-54 | 33 | 0.457 | 0.498 | 0.527 | 0.613 | 0.370 | 1.412 | 1.425 | 1.406 |
+| 55-69 | 35 | 0.401 | 0.448 | 0.473 | 0.571 | 0.324 | 1.389 | 1.407 | 1.447 |
+| 70-84 | 38 | 0.331 | 0.376 | 0.396 | 0.501 | 0.268 | 1.312 | 1.315 | 1.412 |
+| 85-100 | 34 | 0.305 | 0.351 | 0.372 | 0.472 | 0.253 | 1.248 | 1.255 | 1.394 |
 
 **S1, by k**
 
-| k | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU->SDA2 | ETKF | EnKF | Strong-4DVar |
+| k | windows | DirectUNet-M | PredictStateCFM-M | VanillaCFM-M | SDA1-M | Hybrid DU1200->SDA3-fix | ETKF | EnKF | Strong-4DVar |
 |---|---|---|---|---|---|---|---|---|---|
-| 4-6 | 63 | 0.643 | 0.682 | 0.722 | 0.805 | 0.581 | 1.627 | 1.568 | 1.545 |
-| 7-9 | 46 | 0.508 | 0.533 | 0.571 | 0.644 | 0.433 | 1.402 | 1.403 | 1.402 |
-| 10-12 | 32 | 0.382 | 0.406 | 0.431 | 0.518 | 0.346 | 1.304 | 1.354 | 1.406 |
-| 13-16 | 59 | 0.371 | 0.377 | 0.392 | 0.472 | 0.325 | 1.270 | 1.338 | 1.389 |
+| 4-6 | 63 | 0.643 | 0.682 | 0.722 | 0.805 | 0.520 | 1.627 | 1.568 | 1.545 |
+| 7-9 | 46 | 0.508 | 0.533 | 0.571 | 0.644 | 0.388 | 1.402 | 1.403 | 1.402 |
+| 10-12 | 32 | 0.382 | 0.406 | 0.431 | 0.518 | 0.299 | 1.304 | 1.354 | 1.406 |
+| 13-16 | 59 | 0.371 | 0.377 | 0.392 | 0.472 | 0.286 | 1.270 | 1.338 | 1.389 |
 
 ## 5. Out-of-range probes
 
@@ -299,7 +299,7 @@ With the 1200-epoch DirectUNet-M (alone 0.459), SDA2-M / SDA3-fix-M priors. **ta
 | A3_sda3fix_monaiM_l96_seed1 | 0.1 | 0.387 | 0.385 | 0.415 |
 | A3_sda3fix_monaiM_l96_seed1 | 0.2 | 0.391 | 0.392 | 0.421 |
 
-**Flow calibration** (benchmark default seed 1; S0 RMSE / CRPS / spread-over-RMSE)
+**Flow calibration** (400-epoch benchmark recipe, seed 1; S0 RMSE / CRPS / spread-over-RMSE)
 
 | regime | model | 10 steps | 20 steps | 50 steps | sigma 0.75 | sigma 1.0 |
 |---|---|---|---|---|---|---|
@@ -329,4 +329,4 @@ The P1 paper's headline (6.2x for Strong-4D-Var vs 1.9x for filters) came from a
 - Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.
 - The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean hybrid uses the same validation-selected setting (re-checked on validation, section 6).
 - Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.
-- Flow calibration was only probed (sampling-time settings); the benchmark keeps 10 integration steps.
+- Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps).
