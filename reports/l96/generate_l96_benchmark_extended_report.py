@@ -39,13 +39,15 @@ from evaluation.estimate_metrics import _groups_from_per_window  # noqa: E402
 from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
 from generate_p1_l96_benchmark import generative  # noqa: E402
 from scripts.check_l96_testset_consistency import check_da, check_learned  # noqa: E402
+import _inputs  # noqa: E402
 
-REPO = Path("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode")
-SHARED = REPO / "experiments"
-HERE = ROOT / "experiments"
-BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
-P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
-N20 = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
+REPORT = "benchmark_extended"
+SHARED = _inputs.shared()
+HERE = _inputs.root(REPORT, "here")
+BENCH = _inputs.root(REPORT, "bench")
+P1 = _inputs.root(REPORT, "p1")
+N20 = _inputs.root(REPORT, "n20") / "eval_rlayout_n10-100_k4-16_w200"
+RANDOM_OBS_TIMES = _inputs.root(REPORT, "random_obs_times")
 FLOW_SUB = "ens30_no20"
 FLOW_SAMPLING = {"n_members": 30, "n_outer": 20, "step_power": 0.5}
 REG_TEST = SHARED / "l96_datasets_obsj2_int100_nwin200.pt"
@@ -54,10 +56,10 @@ CAN = HERE / "eval_rlayout_n10-100_k4-16_w200"
 REGE = HERE / "eval_regular"
 FACT = HERE / "eval_factorial"
 OOD = HERE / "eval_ood"
-DA243 = REPO / "4dvarnet-fm-da-random-layout/experiments/l96_da_random_layout"
+DA243 = _inputs.root(REPORT, "da_random_layout") / "l96_da_random_layout"
 DAHERE = HERE / "l96_da_random_layout"
 OUT = ROOT / "reports/l96/outputs"
-CACHE = HERE / "l96_benchmark_extended_metrics.json"
+CACHE = ROOT / "experiments" / "l96_benchmark_extended_metrics.json"
 CASES = ("s0", "s1")
 IDX = np.array(make_obs_j_indices(8, 4, 2))
 G = _groups_from_per_window
@@ -144,7 +146,7 @@ def da_main() -> list[dict]:
     truth = torch.load(REG_TEST, weights_only=False)
     tr = {c: np.stack([w["true_state"].numpy()[:, IDX] for w in truth[f"test_{c}"]]) for c in CASES}
     zc = np.load(HERE / "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.5_s1-2.0_etkf_infs0-1.5_s1-2.0_obsj2_int100_fw_dafw.npz")
-    z2 = np.load(REPO / "4dvarnet-fm-random-obs-times/experiments/l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz")
+    z2 = np.load(RANDOM_OBS_TIMES / "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz")
     pc = np.load(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz")
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     sel = lambda a: a[..., IDX] if a.shape[-1] > len(IDX) else a  # noqa: E731
@@ -493,7 +495,7 @@ def marginal_section() -> list[str]:
         leg15 = js(HERE / "l96_baselines_dws500_legacy_inf2.0_etkf_inf2.0_obsj2_int200_dafw.json")
         b15 = js(HERE / "l96_baselines_dws500_s0c_infs0-1.5_s1-2.0_etkf_infs0-1.5_s1-2.0_obsj2_int200_fw_dafw.json")
         r15 = js(HERE / "l96_baselines_dws500_s0c_inf1.5_etkf_inf1.5_obsj2_int100_fw_dafw.json")
-        r20 = js(REPO / "4dvarnet-fm-random-obs-times/experiments/l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.json")
+        r20 = js(RANDOM_OBS_TIMES / "l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.json")
     except FileNotFoundError:
         return ["\n## 7. Marginal value of observations (DA)\n", "pending"]
     b30 = {"s0": {"ETKF": r15["s0"]["ETKF"], "EnKF": r15["s0"]["EnKF"], "Strong-4DVar": r20["s0"]["Strong-4DVar"]},

@@ -31,19 +31,20 @@ from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
 sys.path.insert(0, str(ROOT / "reports" / "l96"))
 from generate_p1_l96_benchmark import deterministic, generative  # noqa: E402
 from scripts.check_l96_testset_consistency import check_da, check_learned  # noqa: E402
+import _inputs  # noqa: E402
 
-REPO = Path("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode")
-SHARED = REPO / "experiments"
+REPORT = "benchmark_default"
+SHARED = _inputs.shared()
 REGULAR = SHARED / "l96_datasets_obsj2_int100_nwin200.pt"
 CANON = SHARED / "l96_testset_rlayout_n10-100_k4-16_w200_d1.pt"
-BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
-P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
-HERE = ROOT / "experiments"
+BENCH = _inputs.root(REPORT, "bench")
+P1 = _inputs.root(REPORT, "p1")
+HERE = _inputs.root(REPORT, "here")
 CAN_EVAL = HERE / "eval_rlayout_n10-100_k4-16_w200"
-DA_LAYOUT = REPO / "4dvarnet-fm-da-random-layout/experiments/l96_da_random_layout"
+DA_LAYOUT = _inputs.root(REPORT, "da_random_layout") / "l96_da_random_layout"
 DA_REG_S0_15 = HERE / "l96_baselines_dws500_s0c_inf1.5_etkf_inf1.5_obsj2_int100_fw_dafw.json"
-DA_REG_20 = REPO / "4dvarnet-fm-random-obs-times/experiments/l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.json"
-CACHE = HERE / "l96_benchmark_default_metrics.json"
+DA_REG_20 = _inputs.root(REPORT, "random_obs_times") / "l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.json"
+CACHE = ROOT / "experiments" / "l96_benchmark_default_metrics.json"
 OUT = ROOT / "reports/l96/outputs"
 CASES = ("s0", "s1")
 DET, FLOW, SDA = "ens1_no1", "ens30_no20", "ens30_gw20"
