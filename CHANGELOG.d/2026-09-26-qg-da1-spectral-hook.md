@@ -23,10 +23,18 @@
   calls `run(..., ds=...)`.
 - **`batch/run_qg_specwind_da.sbatch`:** a SLURM array over window shards,
   reading the staged copy under `experiments/qg_datasets`.
+- **Trajectories and animation:** the driver's `--save-traj` saves
+  analysis, free forecast and truth. New
+  `reports/qg/animate_qg_specwind_da.py` turns them into daily GIFs of
+  observed columns / truth / analysis / free forecast for both layers, plus
+  daily EV curves in `data.json`.
+- **Design doc:** DA-1 note on cost, same-GPU regeneration and the calm-window
+  ψ₂ degradation.
 
 **Files modified:** `models/qg_dynamics.py`, `evaluation/run_qg_baselines.py`,
 `data/qg_specwind_neural.py`; new `evaluation/run_qg_specwind_da.py`,
-`batch/run_qg_specwind_da.sbatch`, `tests/test_qg_specwind_da.py` (5 tests).
+`batch/run_qg_specwind_da.sbatch`, `reports/qg/animate_qg_specwind_da.py`,
+`tests/test_qg_specwind_da.py` (5 tests); `docs/plans/analysis/qg_specwind_da_s0.md` (DA-1 note).
 **Rationale:** The DA runs (DA-2, DA-3) need a DA model that matches the
 truth exactly under S0. The truth has spectral forcing and the eddy drag,
 which the legacy `QGDynamics` had neither of. Found along the way:

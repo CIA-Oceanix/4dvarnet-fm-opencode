@@ -1,6 +1,6 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S0 (ocean only, true wind known) — experiment design
 
-**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 in progress. Nothing run. It designs the first DA
+**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7). It designs the first DA
 baselines on the new QG datasets:
 - the forced dataset `qg_specwind_gyrostat_v1` (Option B + eddy drag;
   `docs/results/qg_specwind_demo_dataset.md`);
@@ -192,6 +192,24 @@ it.
 | DA-2 | Tuning on val (§4.1); record in `docs/results/`. |
 | DA-3 | Main runs, bridge runs and density sensitivity (§4.2–4.3); SLURM array if the data are staged. |
 | DA-4 | Report generator and report; results doc with D1–D4. Archive the run config and estimates per the archive convention. |
+
+**DA-1 note (measured, 2 windows; not results).**
+- **Cost:** ETKF with N = 80 and 3 columns per day takes 43 s per 30-day
+  window on an RTX 8000, which matches the §5 budget.
+- **Regeneration needs the same GPU type:** val and train are stored
+  thinned, so the loader regenerates them at full resolution. The chaotic
+  rollout diverges across devices: val regenerated on CPU differs from
+  storage by a relative 1.25. Regenerate on the GPU type used for
+  generation (rtx8000). `load_full_res_windows` checks this and raises on
+  mismatch.
+- **Early behaviour:** on val windows 0 and 1, pooled ψ EV is 0.90 against
+  0.69 for the free forecast. In the calm window 0, though, the
+  unobserved ψ₂ degrades from 0.71 to 0.34, while the free forecast stays
+  near 0.83. DA-2 therefore scores ψ₂ in its selection criterion and adds
+  vertical localization as a tuning axis.
+- **Tooling:** the driver's `--save-traj` writes analysis, free forecast
+  and truth, and `reports/qg/animate_qg_specwind_da.py` turns them into
+  daily animations with daily EV curves.
 
 ## 8. Out of scope, and follow-ups
 
