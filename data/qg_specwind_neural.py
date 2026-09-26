@@ -84,7 +84,8 @@ def legacy_windows(result: dict, spec: QGDatasetSpec, with_wind_curl: bool = Fal
             "wind_amp": f["level"],
             "wind_seed": int(result["window_seed"][b]) % 2**31,
             "specwind": {"spec": spec.name, "index": int(result["indices"][b]),
-                         "factors": f, "regime": int(result["regime"][b])},
+                         "factors": f, "regime": int(result["regime"][b]),
+                         "r_cf": float(spec.r_cf), "kmax": int(spec.kmax)},
         }
         if with_wind_curl:
             w["wind_curl"] = basis.curl_field(win_amps.double()).float()
@@ -143,8 +144,60 @@ def materialize_split(spec: QGDatasetSpec, split: str, root: str,
     return windows, report
 
 
-def with_fixed_obs(windows: list[dict], cfg: QGConfig) -> list[dict]:
-    obs_ic = QGS01Dataset._generate_obs_ic(cfg, windows, list(range(len(windows))))
+def load_full_res_windows(spec: QGDatasetSpec, split: str, root: str, indices: list[int],
+                          device: torch.device | str = "cpu", with_wind_curl: bool = False,
+                          check_rtol: float = 1e-4) -> tuple[list[dict], dict]:
+    """Full-resolution legacy windows for selected `indices` of a stored split.
+
+    Splits stored at full resolution (test) are read directly, one shard at a
+    time. Thinned splits (train, val) are regenerated for those indices and
+    compared with the stored frames at the stored resolution.
+    """
+    d = split_dir(root, spec, split)
+    purpose = {"train": "train", "val": "eval", "test": "test"}[split]
+    stored = QGGeneratedSplit(d, purpose=purpose)
+    by_index = {w["index"]: w for w in stored.windows}
+    missing = [i for i in indices if i not in by_index]
+    if missing:
+        raise KeyError(f"indices not in the stored {split} split: {missing[:5]}")
+    keep = stored.manifest["keep_every"]
+    order = {i: k for k, i in enumerate(indices)}
+    out: list = [None] * len(indices)
+    report = {"split": split, "n": len(indices), "regenerated": keep != 1, "max_rel_diff": None}
+    by_file: dict[str, list[int]] = {}
+    for i in indices:
+        by_file.setdefault(by_index[i]["file"], []).append(i)
+    max_diff = 0.0
+    for name, idx in by_file.items():
+        data = torch.load(os.path.join(d, name), map_location="cpu", weights_only=False)
+        rows = [by_index[i]["row"] for i in idx]
+        if keep == 1:
+            sub = {**data, "true_state": data["true_state"][rows],
+                   "wind_amplitudes": data["wind_amplitudes"][rows],
+                   "window_seed": [data["window_seed"][r] for r in rows],
+                   "regime": data["regime"][rows], "indices": [data["indices"][r] for r in rows],
+                   "factors": {k: np.asarray(v)[rows] for k, v in data["factors"].items()}}
+        else:
+            sub = generate_windows(spec, split, idx, device=device, keep_every=1)
+            ref = data["true_state"][rows]
+            diff = float((sub["true_state"][:, ::keep] - ref).abs().max() / ref.abs().max())
+            max_diff = max(max_diff, diff)
+        for w in legacy_windows(sub, spec, with_wind_curl):
+            out[order[w["specwind"]["index"]]] = w
+    if keep != 1:
+        report["max_rel_diff"] = max_diff
+        if max_diff > check_rtol:
+            raise RuntimeError(f"regenerated {split} windows differ from storage by {max_diff:.3e} "
+                               "(relative to the stored field's max)")
+    return out, report
+
+
+def with_fixed_obs(windows: list[dict], cfg: QGConfig, indices: list[int] | None = None) -> list[dict]:
+    """Fixed observations and initial states; `indices` (the windows' dataset
+    indices) seed them per window, so the draw does not depend on which subset
+    or shard a window is loaded with."""
+    idx = list(range(len(windows))) if indices is None else [int(i) for i in indices]
+    obs_ic = QGS01Dataset._generate_obs_ic(cfg, windows, idx)
     return [{**w, **o} for w, o in zip(windows, obs_ic)]
 
 
