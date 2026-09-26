@@ -14,7 +14,11 @@ bundles:
           directory's completeness by their existence without opening them,
           write ``MANIFEST.json`` and flag eval sidecars whose recorded dataset
           path points into a worktree;
-  run     run the generator against the bundle only (the default resolution).
+  run     run the generator against the bundle only (the default resolution);
+  add     hard-link one new result directory into a bundle root (``--root``, ``--src``,
+          ``--dest``) and record it in ``MANIFEST.json`` under ``added`` -- for new rows once
+          the legacy worktrees are pruned and ``record`` can no longer run against them.
+          Follow it with ``run``.
 
 A report is migrated when ``run`` reproduces the checked-in output byte for byte.
 ``LEGACY`` is the one place that still names the topic worktrees; it records
@@ -133,13 +137,54 @@ def link(report: str, workdir: Path, apply: bool) -> int:
     return sum(1 for p in problems if p.startswith("CONFLICT"))
 
 
+def add(report: str, root_name: str, src: Path, dest: str, apply: bool) -> int:
+    if root_name not in _inputs.REPORTS[report]:
+        raise KeyError(f"{report!r} has no input root {root_name!r}")
+    bundle = _inputs.bundle(report)
+    files = sorted(p for p in src.rglob("*") if p.is_file())
+    if not files:
+        raise FileNotFoundError(f"no files under {src}")
+    counts: dict[str, int] = {}
+    rels = []
+    for f in files:
+        rel = (Path(dest) / f.relative_to(src)).as_posix()
+        dst = bundle / root_name / rel
+        if dst.exists():
+            status = "same" if os.path.samefile(f, dst) else "CONFLICT"
+        else:
+            status = "linked" if apply else "would-link"
+            if apply:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                os.link(os.path.realpath(f), dst)
+        counts[status] = counts.get(status, 0) + 1
+        rels.append(rel)
+    if apply and "CONFLICT" not in counts:
+        mpath = bundle / "MANIFEST.json"
+        manifest = json.loads(mpath.read_text())
+        listed = manifest["roots"][root_name]["files"]
+        manifest["roots"][root_name]["files"] = sorted(set(listed) | set(rels))
+        manifest.setdefault("added", []).append({"root": root_name, "dest": dest, "src": str(src.resolve()),
+                                                 "added_at": datetime.now(timezone.utc).isoformat(),
+                                                 "files": rels})
+        mpath.write_text(json.dumps(manifest, indent=2))
+    print(report, root_name, dest, dict(sorted(counts.items())), "(dry run)" if not apply else "")
+    return counts.get("CONFLICT", 0)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["record", "link", "run"])
+    ap.add_argument("action", choices=["record", "link", "run", "add"])
     ap.add_argument("reports", nargs="*", default=list(GENERATORS))
     ap.add_argument("--workdir", type=Path, default=ROOT / "experiments" / "report_inputs_logs")
-    ap.add_argument("--apply", action="store_true", help="link: actually create the hard links")
+    ap.add_argument("--apply", action="store_true", help="link / add: actually create the hard links")
+    ap.add_argument("--root", help="add: the bundle input root (e.g. here)")
+    ap.add_argument("--src", type=Path, help="add: the result directory to link in")
+    ap.add_argument("--dest", help="add: its path relative to the root (e.g. <run>/ens30_gw20)")
     args = ap.parse_args()
+    if args.action == "add":
+        if len(args.reports) != 1 or not (args.root and args.src and args.dest):
+            ap.error("add needs exactly one report and --root, --src, --dest")
+        sys.exit(1 if add(args.reports[0], args.root, args.src, args.dest, args.apply) else 0)
     conflicts = 0
     for report in args.reports:
         if args.action == "record":
