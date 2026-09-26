@@ -122,6 +122,7 @@ their own stated configuration.
 | `qg_psi_state_report.md` | Assimilating ψ instead of q (the H3a evidence) | **FROZEN**; predates the 2026-09-12/16 DA defaults | old DA defaults | `reports/qg/generate_qg_psi_state_report.py` |
 | `qg1l_report.md` | One-layer QG variant | **FROZEN** | old DA defaults | `reports/qg/generate_qg1l_report.py` |
 | `figure_qg_lag_loc_sweep_report.md` | Lag × localization sweep figure | **FROZEN** | old DA defaults | none in the repo |
+| `qg_spectral_wind_report.md` | First QG simulations under the Option B spectral wind drivers (storm, spectral OU, gyrostat, surrogate) | **CURRENT** — illustrative single realizations, no statistical claims | simulation only (no DA), nominal ocean, 2-year unforced spin-up + 120 days | `reports/qg/simulate_qg_spectral_wind.py` |
 
 ## L63
 
