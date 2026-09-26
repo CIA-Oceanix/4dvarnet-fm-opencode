@@ -1,6 +1,6 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S0 (ocean only, true wind known) — experiment design
 
-**Status:** DRAFT v1 (2026-09-26). Nothing run. It designs the first DA
+**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 in progress. Nothing run. It designs the first DA
 baselines on the new QG datasets:
 - the forced dataset `qg_specwind_gyrostat_v1` (Option B + eddy drag;
   `docs/results/qg_specwind_demo_dataset.md`);
@@ -208,7 +208,16 @@ it.
 - **4D-Var:** about 15–20× the cost of the ensemble methods per window, and
   it collapses on q layer 2 in QG S1. Deferred.
 
-## 9. Open decisions
+## 9. Decisions (settled 2026-09-26)
+
+| # | outcome |
+|---|---|
+| 1 | **Stage to `/Odyssey`** (`experiments/qg_datasets/`: both test splits, the val splits and the reports) and run as a SLURM array |
+| 2 | **3 columns per day (4.7%) headlines the tables**; 4 columns per day is the bridge |
+| 3 | **100 test windows per dataset** for the tables; extended to 500 only for D2/D3 |
+
+The original options are below, for the record.
+
 
 1. **Where to run:** stage the test and val subsets to `/Odyssey` for a
    SLURM array (recommended; about 15 GB), or run sequentially on
