@@ -45,9 +45,15 @@ if str(ROOT) not in sys.path:
 
 from evaluation.estimate_metrics import _groups_from_per_window  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _inputs  # noqa: E402
+
+HERE = _inputs.root("p1_benchmark", "here")
+DA_BASES = (HERE, _inputs.shared())
+
 DA_TRAJ_CANDIDATES = [
-    "experiments/l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
-    "experiments/l96_baselines_trajectories_dws500_s0c_s1cfix_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
+    "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
+    "l96_baselines_trajectories_dws500_s0c_s1cfix_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
 ]
 DA_METHODS = ["ETKF", "EnKF", "Strong-4DVar"]
 CASES = ("s0", "s1")
@@ -136,9 +142,7 @@ def da_rows(truth, group):
     the MAE column is the point-forecast proxy and is NOT comparable to the
     generative families' ensemble CRPS.
     """
-    # The DA caches are shared across worktrees and live in the main checkout, so
-    # search ROOT first and then its parent (the repo root when ROOT is a worktree).
-    path = next((base / c for base in (ROOT, ROOT.parent)
+    path = next((base / c for base in DA_BASES
                  for c in DA_TRAJ_CANDIDATES if (base / c).exists()), None)
     if path is None:
         return None, None
@@ -234,7 +238,7 @@ def figure_trajectories(case, truth_shape):
     (worse) object than the table reports.
     """
     est = {}
-    da_path = next((base / c for base in (ROOT, ROOT.parent)
+    da_path = next((base / c for base in DA_BASES
                     for c in DA_TRAJ_CANDIDATES if (base / c).exists()), None)
     idx = make_obs_j_indices()
     for label, spec in FIGURE_SCHEMES:
@@ -250,7 +254,7 @@ def figure_trajectories(case, truth_shape):
         else:
             kind, exp, sub = spec
             fn = "members" if kind == "gen" else "estimates"
-            path = ROOT / "experiments" / exp / sub / f"{fn}_{case}.npz"
+            path = HERE / exp / sub / f"{fn}_{case}.npz"
             if not path.exists():
                 continue
             z = np.load(path)
@@ -281,7 +285,7 @@ def main():
             fn = "members" if kind == "gen" else "estimates"
             m, ok = {}, True
             for case in CASES:
-                path = ROOT / "experiments" / exp / sub / f"{fn}_{case}.npz"
+                path = HERE / exp / sub / f"{fn}_{case}.npz"
                 if not path.exists():
                     missing.append(f"{label} [{case}]: {path}")
                     ok = False
@@ -438,9 +442,8 @@ def main():
             "_consol", str(Path(__file__).parent / "generate_l96_consolidated_report.py"))
         _c = _u.module_from_spec(_spec)
         _spec.loader.exec_module(_c)
-        ds_path = ROOT / "experiments" / "l96_datasets_obsj2_int100_nwin200.pt"
-        if not ds_path.exists():
-            ds_path = ROOT.parent / "experiments" / "l96_datasets_obsj2_int100_nwin200.pt"
+        ds_path = next(b / "l96_datasets_obsj2_int100_nwin200.pt" for b in DA_BASES
+                       if (b / "l96_datasets_obsj2_int100_nwin200.pt").exists())
         figs = ROOT / "reports" / "l96" / "outputs" / "figures"
         figs.mkdir(parents=True, exist_ok=True)
         for case in CASES:

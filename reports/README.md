@@ -24,6 +24,31 @@ report in the same PR as the config change. If the report deliberately stays on
 the old configuration, change its status to **FROZEN**. The check applies to
 CURRENT L96 reports; QG and L63 are exempt until their rework (below).
 
+## Where report inputs come from
+
+The three L96 benchmark generators (`generate_p1_l96_benchmark.py`,
+`generate_l96_benchmark_default_report.py`, `generate_l96_benchmark_extended_report.py`)
+read their inputs only through `reports/l96/_inputs.py`. Each named input root
+(`here`, `bench`, `p1`, `n20`, `da_random_layout`, `random_obs_times`) resolves to
+that report's **input bundle**,
+`<main checkout>/experiments/l96/report_inputs/<report>/<root>/`. A bundle holds
+hard links of exactly the files the report was generated from, with a
+`MANIFEST.json`. Test sets and shared DA caches come from the main checkout's
+`experiments/` (`_inputs.shared()`). So these reports regenerate from any
+checkout, and pruning a topic worktree cannot break them.
+`tests/test_report_inputs.py` fails if any report script outside `reports/qg/`
+contains a worktree path or an absolute repository path.
+
+To add or refresh rows, produce the new estimates, then rebuild the bundle with
+`scripts/bundle_report_inputs.py`:
+- `record` runs the generator against the source directories under an audit hook;
+- `link --apply` hard-links what it read;
+- `run` regenerates from the bundle alone.
+
+`batch/run_l96_bundle_report_inputs.sbatch` does all three and diffs the outputs
+after each step. A migration is complete only when the report regenerated from
+the bundle is byte-identical.
+
 ## Status vocabulary
 
 | status | meaning |

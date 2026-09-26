@@ -160,3 +160,18 @@ exist, the generator returned `None` for the neural half, and the table was
 published with the four DA rows alone. That JSON is now tracked, and
 `tests/test_qg_report_consistency.py` fails if a published row and its input
 disagree.
+
+## Report input bundles (L96 benchmark reports)
+
+The P1, benchmark-default and extended reports do not read runs through the
+per-run layout above. They read through `reports/l96/_inputs.py`, which resolves
+each input root to `experiments/l96/report_inputs/<report>/<root>/`: hard links,
+built by `scripts/bundle_report_inputs.py`, of exactly the files the report was
+generated from. The reason is that one run can be scored under several protocols
+(SDA guidance weight 20 for P1 vs 25 for the extended report; regular vs random
+observing system), and the extended report also reads whole sub-studies
+(`eval_factorial/`, `eval_ood/`, `eval_val/`) and DA sidecars. None of that fits
+one directory per run. The bundles still include the full `members_*.npz` files.
+Replacing them with the KB-sized `scores_*.npz` (#258) is a planned follow-up that
+frees their disk.
+
