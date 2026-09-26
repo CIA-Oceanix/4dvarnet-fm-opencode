@@ -8,7 +8,7 @@ notes that cite it. Both READMEs open with the split: `reports/` holds generated
 numbers, `docs/results/` holds the written findings that interpret them.
 
 **Files modified:**
-- all 15 `docs/results/*.md` — the `**Numbers:**` line;
+- all 16 `docs/results/*.md` — the `**Numbers:**` line (including `qg_coupled_dataset.md`, added by #282 while this PR was open);
 - `reports/README.md` — the split statement and the back-link table;
 - `docs/README.md` — the split statement and the `Numbers:` convention;
 - `tests/test_docs_layout.py` — each note must have a `Numbers:` line whose cited
