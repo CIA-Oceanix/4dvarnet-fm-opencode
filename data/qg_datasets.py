@@ -73,6 +73,7 @@ class QGDatasetSpec:
     window_days: float = 30.0
     keep_every_trainval: int = 6
     keep_every_test: int = 1
+    kappa_fb: float = 1.0
     version: int = GENERATOR_VERSION
     notes: dict = field(default_factory=dict)
 
@@ -111,6 +112,8 @@ class QGDatasetSpec:
 
     def split_hash(self, split: str) -> str:
         d = asdict(self)
+        if self.driver != "coupled":
+            d.pop("kappa_fb")
         for other in ("n_train", "n_val", "n_test"):
             if other != f"n_{split}":
                 d.pop(other)
@@ -134,6 +137,14 @@ SPECS = {
     "qg_specwind_gyrostat_v1": QGDatasetSpec(),
     "qg_specwind_gyrostat_demo": QGDatasetSpec(name="qg_specwind_gyrostat_demo",
                                                n_train=256, n_val=64, n_test=64),
+    "qg_coupled_gyrostat_v1": QGDatasetSpec(
+        name="qg_coupled_gyrostat_v1", driver="coupled", kappa_fb=1.0,
+        notes={"paired_with": "qg_specwind_gyrostat_v1",
+               "pairing": "same entropies, factor design and seeds: window i differs from the "
+                          "forced dataset's window i only by the two-way coupling"}),
+    "qg_coupled_gyrostat_demo": QGDatasetSpec(
+        name="qg_coupled_gyrostat_demo", driver="coupled", kappa_fb=1.0,
+        n_train=256, n_val=64, n_test=64),
 }
 
 
@@ -258,7 +269,12 @@ def write_shard(spec: QGDatasetSpec, split: str, root: str, shard: int, n_shards
     os.makedirs(d, exist_ok=True)
     idx = shard_indices(spec.n_windows(split), shard, n_shards)
     t0 = time.time()
-    data = generate_windows(spec, split, idx, device=device, batch_size=batch_size)
+    if spec.driver == "coupled":
+        from models.qg_coupled import generate_coupled_windows
+
+        data = generate_coupled_windows(spec, split, idx, device=device, batch_size=batch_size)
+    else:
+        data = generate_windows(spec, split, idx, device=device, batch_size=batch_size)
     data["meta"] = {"shard": shard, "n_shards": n_shards, "device": str(device),
                     "batch_size": batch_size, "seconds": time.time() - t0,
                     "torch": torch.__version__}
@@ -287,6 +303,8 @@ def assemble_split(spec: QGDatasetSpec, split: str, root: str) -> dict:
                 "ke_upper": float(s["ke_upper"][j]),
                 "state_hash": s["state_hash"][j], "gyro_hash": s["gyro_hash"][j],
             })
+            if s.get("feedback_ratio") is not None:
+                records[-1]["feedback_ratio"] = float(s["feedback_ratio"][j])
     records.sort(key=lambda r: r["index"])
     if [r["index"] for r in records] != list(range(spec.n_windows(split))):
         raise ValueError(f"{split}: shards do not cover indices 0..{spec.n_windows(split) - 1}")
