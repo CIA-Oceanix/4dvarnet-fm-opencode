@@ -365,13 +365,13 @@ def _combined_obs_mask(window, cfg):
 
 def _build_qg_col_point_loc_matrices(state_dim, obs_cols_t, obs_points_t,
                                      nlayers, ny, nx, loc_radius, device,
-                                     state_ny=None, state_nx=None):
+                                     state_ny=None, state_nx=None, cross_layer=0.0):
     """Per-time Gaspari-Cohn localization for the combined psi1-column
     (upper layer) + psi2-point (lower layer) obs stream. Generalizes
     `_build_qg_col_loc_matrices` (columns only, always layer 0) to a
     per-time-varying obs composition/width, matching
     `_psi_h_combined`/`_combined_index_at`'s concatenation order (columns
-    first, then the point).
+    first, then the point). `cross_layer` as in `_build_qg_col_loc_matrices`.
     """
     s_ny = state_ny if state_ny is not None else ny
     s_nx = state_nx if state_nx is not None else nx
@@ -407,10 +407,16 @@ def _build_qg_col_point_loc_matrices(state_dim, obs_cols_t, obs_points_t,
         dy = state_y.unsqueeze(1) - oy.unsqueeze(0)
         dx = state_x.unsqueeze(1) - ox.unsqueeze(0)
         dl = (state_layer.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
-        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
-        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
         doy = oy.unsqueeze(1) - oy.unsqueeze(0)
         dox = ox.unsqueeze(1) - ox.unsqueeze(0)
+        if cross_layer > 0.0:
+            wx = torch.where(state_layer.unsqueeze(1) == ol.unsqueeze(0), 1.0, float(cross_layer))
+            wy = torch.where(ol.unsqueeze(1) == ol.unsqueeze(0), 1.0, float(cross_layer))
+            Lx_t.append((_gc_matrix(torch.sqrt(dy ** 2 + dx ** 2) / loc_radius) * wx).to(torch.float32))
+            Ly_t.append((_gc_matrix(torch.sqrt(doy ** 2 + dox ** 2) / loc_radius) * wy).to(torch.float32))
+            continue
+        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
+        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
         dol = (ol.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
         dod = torch.sqrt(doy ** 2 + dox ** 2 + dol ** 2)
         Ly_t.append(_gc_matrix(dod / loc_radius).to(torch.float32))
@@ -503,7 +509,7 @@ def _obs_spec_rc(cfg, window, device):
     return obs, r_var, od
 
 
-def _sample_init_state(cfg, window, lag_param, band_half, device):
+def _sample_init_state(cfg, window, lag_param, band_half, device, seed_key=None):
     """Sample ONE shared initial state at a band-centered lag.
 
     With the band-centered scheme, `lag_param` is the physical lag in days at
@@ -525,6 +531,9 @@ def _sample_init_state(cfg, window, lag_param, band_half, device):
     Returns:
         init_state: (state_dim,) tensor on `device`
         init_lag_days: the sampled lag in days (for reporting)
+
+    `seed_key` (e.g. the dataset index) gives each window its own lag draw;
+    None keeps the legacy seed shared by all windows.
     """
     truth = window["init_lead_truth"].float()
     steps_per_day = round(86400.0 / cfg.dt)
@@ -532,7 +541,7 @@ def _sample_init_state(cfg, window, lag_param, band_half, device):
     lo = max(0.0, lag_param - band_half)
     hi = min(max_lag_days, lag_param + band_half)
     gen = torch.Generator(device=device).manual_seed(
-        cfg.seed + 7000 + int(lag_param * 10))
+        cfg.seed + 7000 + int(lag_param * 10) + _seed_offset(seed_key))
     lag_days = float(lo + (hi - lo) * torch.rand(1, generator=gen, device=device).item())
     lag_steps = lag_days * steps_per_day
     kk = math.floor(lag_steps)
@@ -543,7 +552,11 @@ def _sample_init_state(cfg, window, lag_param, band_half, device):
     return ((1.0 - alpha) * a + alpha * b).to(device), lag_days
 
 
-def _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg):
+def _seed_offset(seed_key) -> int:
+    return 0 if seed_key is None else 100_003 * (int(seed_key) + 1)
+
+
+def _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg, seed_key=None):
     """DA ensemble anchored at the shared init state (all members + dispersion).
 
     All ensemble members start from the SAME init_state (the one shared with
@@ -557,10 +570,47 @@ def _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg):
     init_ensemble = init_state.unsqueeze(0).expand(N, -1).clone()
     if disp_frac > 0.0:
         disp_std = disp_frac * sigma_raw
-        disp = torch.Generator(device=device).manual_seed(cfg.seed + 9000 + N)
+        disp = torch.Generator(device=device).manual_seed(
+            cfg.seed + 9000 + N + _seed_offset(seed_key))
         init_ensemble = init_ensemble + disp_std * torch.randn(
             init_ensemble.shape, generator=disp, device=device)
     return init_ensemble
+
+
+def _bred_ensemble(cfg, dyn, window, init_state, lag_days, sigma_raw, N, disp_frac,
+                   breed_days, device, seed_key=None):
+    """Flow-dependent DA ensemble: white-noise perturbations bred along the lagged truth.
+
+    Starts `breed_days` before the initial state, from the truth in
+    `init_lead_truth`, adds white noise of the same amplitude as
+    `_ensemble_from_init`, integrates the N members with the DA model and the
+    truth's lead-period wind (`wind_lead`), and keeps the bred anomalies
+    (members minus their mean). They are rescaled to the white-noise
+    amplitude (mean per-point std `disp_frac * sigma_raw`) and added to
+    `init_state`, so the ensemble mean is exactly the shared initial state and
+    only the anomaly structure differs from the white-noise ensemble. Uses no
+    truth later than the initial state.
+    """
+    truth = window["init_lead_truth"].float()
+    spd = round(86400.0 / cfg.dt)
+    n_breed = max(1, round(breed_days * spd))
+    start = len(truth) - 1 - math.floor(lag_days * spd) - n_breed
+    if start < 0:
+        raise ValueError(f"lag {lag_days:.2f} d + breed {breed_days} d exceeds the "
+                         f"{(len(truth) - 1) / spd:.1f}-day lead buffer")
+    if "wind_lead" not in window:
+        raise KeyError("bred ensemble needs the lead-period wind (window['wind_lead'])")
+    wind = window["wind_lead"][start:start + n_breed].to(device)
+    x0 = truth[start].to(device)
+    amp = disp_frac * sigma_raw
+    gen = torch.Generator(device=device).manual_seed(
+        cfg.seed + 11000 + N + _seed_offset(seed_key))
+    members = x0 + amp * torch.randn((N, x0.numel()), generator=gen, device=device)
+    with torch.no_grad():
+        bred = dyn.inner.rollout_steps(members, n_breed, wind_state=wind)
+    anom = bred - bred.mean(0, keepdim=True)
+    anom = anom * (amp / anom.std(0).mean().clamp_min(1e-30))
+    return init_state.unsqueeze(0) + anom
 
 
 def _lagged_init_ensemble(cfg, window, N, init_lag_days, device,
@@ -914,9 +964,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         save_traj=None, obs_var_r_scale=1.0,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
-        q_var_scale=1.0, fourdvar_grad_clip=100.0):
+        q_var_scale=1.0, fourdvar_grad_clip=100.0, loc_cross_layer=0.0,
+        init_ensemble_kind="white", breed_days=3.0):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
+    if loc_cross_layer > 0.0 and obs_var == "q":
+        raise NotImplementedError("loc_cross_layer is implemented for psi observations only")
     if ds is None:
         ds = make_qg_s0_s1_datasets(cfg)
 
@@ -962,8 +1015,9 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 # ONE shared initial state per window, reused by BOTH the
                 # DA ensemble and the free-forecast reference so the comparison
                 # is apples-to-apples (identical initial condition).
+                seed_key = w.get("init_seed_key")
                 shared_init, init_lag_val = _sample_init_state(
-                    cfg, w, init_lag_days, band_half, device)
+                    cfg, w, init_lag_days, band_half, device, seed_key=seed_key)
                 if is_qg1l:
                     # 1-layer DA state = truth's upper-layer PV q1 (the 1-layer
                     # model represents the upper layer). All DA members and the
@@ -987,8 +1041,19 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     sigma_raw = float(dyn.inner.q_to_psi(lead).std(0).mean())
                 else:
                     sigma_raw = float(lead.std(0).mean())
-                init_ensemble = _ensemble_from_init(
-                    shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg)
+                if init_ensemble_kind == "bred":
+                    if is_qg1l or cross_res or is_psi_state:
+                        raise NotImplementedError(
+                            "bred init ensemble: same-resolution two-layer q-state DA only")
+                    init_ensemble = _bred_ensemble(
+                        cfg, dyn, w, shared_init, init_lag_val, sigma_raw, N_ensemble,
+                        disp_frac, breed_days, device, seed_key=seed_key)
+                elif init_ensemble_kind == "white":
+                    init_ensemble = _ensemble_from_init(
+                        shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg,
+                        seed_key=seed_key)
+                else:
+                    raise ValueError(f"unknown init_ensemble_kind: {init_ensemble_kind}")
                 spread_t0_list.append(float(init_ensemble.std(0).mean()))
             if obs_var == "q":
                 per_time = _q_obs_indices_t(cfg, w)
@@ -1036,12 +1101,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                         points_t = _event_points(cfg, w)
                         Lx_t, Ly_t = _build_qg_col_point_loc_matrices(
                             dyn.state_dim, cols_t, points_t, 2, cfg.ny, cfg.nx,
-                            loc_radius, device, state_ny=da_nx, state_nx=da_nx)
+                            loc_radius, device, state_ny=da_nx, state_nx=da_nx,
+                            cross_layer=loc_cross_layer)
                     else:
                         cols_t = _event_columns(cfg, w)
                         Lx_t, Ly_t = _build_qg_col_loc_matrices(
                             dyn.state_dim, cols_t, 2, cfg.ny, cfg.nx,
-                            loc_radius, device, state_ny=da_nx, state_nx=da_nx)
+                            loc_radius, device, state_ny=da_nx, state_nx=da_nx,
+                            cross_layer=loc_cross_layer)
                 if method_name == "enkf":
                     method = EnKF(N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
