@@ -606,7 +606,11 @@ def main() -> None:
          "**SDA conditioning at S1**: the params-conditioned priors (SDA2, SDA3-fix, alone and as hybrid priors) are "
          "conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA "
          "baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read "
-         "the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.\n"]
+         "the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.\n",
+         "**SDA training budget**: every SDA prior -- SDA1/SDA2/SDA3-fix-M, SDA1-S+/L, and the prior of every "
+         "DirectUNet -> SDA hybrid -- is a **400-epoch** checkpoint. The SDA priors have not been retrained at the "
+         "1200-epoch benchmark default, so SDA rows are budget-matched only with the 400-epoch rows, not with the "
+         "1200-epoch DirectUNet/CFM rows (which gained 9-19% from the longer budget).\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")
@@ -617,6 +621,7 @@ def main() -> None:
     A += marginal_section()
     A += ["\n## Caveats\n",
           "- Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.",
+          "- SDA priors (alone and inside the hybrids) are trained for 400 epochs; a 1200-epoch SDA run is pending.",
           "- The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean "
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
