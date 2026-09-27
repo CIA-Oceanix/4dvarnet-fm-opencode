@@ -5,7 +5,15 @@ import pytest
 import torch
 
 from data.qg_datasets import QGDatasetSpec, assemble_split, split_dir, write_shard
-from evaluation.run_qg_baselines import _build_dyn, run
+from evaluation.baselines import _build_qg_col_loc_matrices
+from evaluation.run_qg_baselines import (
+    _bred_ensemble,
+    _build_dyn,
+    _build_qg_col_point_loc_matrices,
+    _ensemble_from_init,
+    _sample_init_state,
+    run,
+)
 from evaluation.run_qg_specwind_da import build_cfg, s0_windows
 from models.qg_batched import BatchedQGDynamics, SpectralWindForcing
 from models.qg_dynamics import QGDynamics
@@ -83,3 +91,64 @@ def test_etkf_runs_end_to_end_on_s0_windows(built, tmp_path):
     s = payload["scenarios"]["test_s0"]
     assert s["expvar_full"] == s["expvar_full"]
     assert (tmp_path / "s.json").exists()
+
+
+def test_cross_layer_localization_scales_the_horizontal_weight():
+    cols_t = [None, [3], [5, 9]]
+    base_x, base_y = _build_qg_col_loc_matrices(2 * 16 * 16, cols_t, 2, 16, 16, 2.0, "cpu")
+    zero_x, _ = _build_qg_col_loc_matrices(2 * 16 * 16, cols_t, 2, 16, 16, 2.0, "cpu", cross_layer=0.0)
+    lx, ly = _build_qg_col_loc_matrices(2 * 16 * 16, cols_t, 2, 16, 16, 2.0, "cpu", cross_layer=0.4)
+    assert zero_x[0] is None and torch.equal(zero_x[2], base_x[2])
+    assert torch.count_nonzero(base_x[2][256:]) == 0
+    torch.testing.assert_close(lx[2][:256], base_x[2][:256])
+    torch.testing.assert_close(lx[2][256:], 0.4 * base_x[2][:256])
+    torch.testing.assert_close(ly[2], base_y[2])
+    px, py = _build_qg_col_point_loc_matrices(2 * 16 * 16, [[4]], [(2, 7)], 2, 16, 16, 2.0, "cpu",
+                                              cross_layer=0.4)
+    assert px[0][256 + 7 * 16 + 2, 16] == pytest.approx(1.0)
+    assert px[0][7 * 16 + 2, 16] == pytest.approx(0.4)
+    assert float(py[0][7, 16]) == pytest.approx(0.4 * float(py[0][7, 5]))
+
+
+def test_init_seed_key_gives_each_window_its_own_draw(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.3)
+    w = s0_windows(TINY, "test", built, [0], cfg)[0][0]
+    legacy, lag_legacy = _sample_init_state(cfg, w, 0.3, 0.1, "cpu")
+    again, _ = _sample_init_state(cfg, w, 0.3, 0.1, "cpu", seed_key=None)
+    lags = {_sample_init_state(cfg, w, 0.3, 0.1, "cpu", seed_key=k)[1] for k in range(4)}
+    assert torch.equal(legacy, again) and len(lags) == 4
+    e0 = _ensemble_from_init(legacy, 1.0, 5, 1.0, "cpu", cfg, seed_key=0)
+    e1 = _ensemble_from_init(legacy, 1.0, 5, 1.0, "cpu", cfg, seed_key=1)
+    assert not torch.equal(e0, e1)
+    torch.testing.assert_close(_ensemble_from_init(legacy, 1.0, 5, 1.0, "cpu", cfg),
+                               _ensemble_from_init(legacy, 1.0, 5, 1.0, "cpu", cfg, seed_key=None))
+
+
+def test_bred_ensemble_is_centred_on_the_init_state_with_white_noise_amplitude(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    w = s0_windows(TINY, "test", built, [1], cfg)[0][0]
+    assert w["wind_lead"].shape == (w["init_lead_truth"].shape[0], 12)
+    dyn = _build_dyn(cfg, w, torch.device("cpu"))
+    init, lag = _sample_init_state(cfg, w, 0.2, 0.05, "cpu", seed_key=1)
+    sigma = float(w["init_lead_truth"].std(0).mean())
+    ens = _bred_ensemble(cfg, dyn, w, init, lag, sigma, 8, 0.5, 2 / 12, "cpu", seed_key=1)
+    assert ens.shape == (8, init.numel())
+    torch.testing.assert_close(ens.mean(0), init, rtol=1e-4, atol=1e-6 * sigma)
+    assert float((ens - init).std(0).mean()) == pytest.approx(0.5 * sigma, rel=1e-4)
+    with pytest.raises(ValueError):
+        _bred_ensemble(cfg, dyn, w, init, lag, sigma, 8, 0.5, 5.0, "cpu")
+
+
+def test_etkf_runs_with_bred_init_and_vertical_localization(built, tmp_path):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    payload = run("etkf", cfg, device=torch.device("cpu"), N_ensemble=6, inflation=1.0,
+                  loc_radius=2.0, scenarios=("test_s0",), out_path=str(tmp_path / "s.json"),
+                  init="lagged", geometry="random_columns", obs_var="psi", init_lag_days=0.2,
+                  band_half=0.05, ds={"test_s0": ws}, etkf_ridge=0.1, loc_cross_layer=0.5,
+                  init_ensemble_kind="bred", breed_days=2 / 12)
+    s = payload["scenarios"]["test_s0"]
+    assert s["expvar_full"] == s["expvar_full"]
+    with pytest.raises(NotImplementedError):
+        run("etkf", cfg, device=torch.device("cpu"), N_ensemble=6, loc_radius=2.0,
+            scenarios=("test_s0",), obs_var="q", ds={"test_s0": ws}, loc_cross_layer=0.5)

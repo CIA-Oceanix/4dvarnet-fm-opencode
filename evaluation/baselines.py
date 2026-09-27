@@ -111,7 +111,8 @@ def _build_qg_col_loc_matrices(state_dim: int, obs_columns_t: list,
                                nlayers: int, ny: int, nx: int,
                                loc_radius: float, device,
                                state_ny: int | None = None,
-                               state_nx: int | None = None) -> tuple:
+                               state_nx: int | None = None,
+                               cross_layer: float = 0.0) -> tuple:
     """Per-time Gaspari-Cohn localization for upper-layer column obs.
 
     Each event observes `C` meridional columns of the upper layer (state dim
@@ -125,6 +126,10 @@ def _build_qg_col_loc_matrices(state_dim: int, obs_columns_t: list,
     Gaspari-Cohn distance is measured in obs-grid units (physical), which keeps
     the same-resolution behaviour byte-identical and supports cross-resolution
     DA models (S1: DA grid 16x16, obs grid 64x64).
+
+    `cross_layer` > 0 replaces the cross-layer weight 0 by `cross_layer` times
+    the horizontal Gaspari-Cohn weight (vertical localization); 0 keeps the
+    original matrices exactly.
     """
     s_ny = state_ny if state_ny is not None else ny
     s_nx = state_nx if state_nx is not None else nx
@@ -151,8 +156,13 @@ def _build_qg_col_loc_matrices(state_dim: int, obs_columns_t: list,
         dy = state_y.unsqueeze(1) - oy.unsqueeze(0)
         dx = state_x.unsqueeze(1) - ox.unsqueeze(0)
         dl = (state_layer.unsqueeze(1) - ol.unsqueeze(0)).abs() * layer_gap
-        dist = torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2)
-        Lx_t.append(_gc_matrix(dist / loc_radius).to(torch.float32))
+        if cross_layer > 0.0:
+            same = state_layer.unsqueeze(1) == ol.unsqueeze(0)
+            lx = _gc_matrix(torch.sqrt(dy ** 2 + dx ** 2) / loc_radius) * torch.where(
+                same, 1.0, float(cross_layer))
+        else:
+            lx = _gc_matrix(torch.sqrt(dy ** 2 + dx ** 2 + dl ** 2) / loc_radius)
+        Lx_t.append(lx.to(torch.float32))
         doy = oy.unsqueeze(1) - oy.unsqueeze(0)
         dox = ox.unsqueeze(1) - ox.unsqueeze(0)
         dod = torch.sqrt(doy ** 2 + dox ** 2)

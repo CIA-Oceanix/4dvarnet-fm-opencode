@@ -1,6 +1,6 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S0 (ocean only, true wind known) — experiment design
 
-**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7). It designs the first DA
+**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7); DA-2 done (`docs/results/qg_specwind_da2_val_tuning.md`: ETKF radius 8, ridge 1, cross-layer weight 1, bred init). It designs the first DA
 baselines on the new QG datasets:
 - the forced dataset `qg_specwind_gyrostat_v1` (Option B + eddy drag;
   `docs/results/qg_specwind_demo_dataset.md`);
@@ -105,12 +105,43 @@ they are. Only the window source and the DA model's wind change.
   `materialize_split`, bit-exact to the stored frames), 20 windows, forced
   dataset only. Given the wind, the DA problem is identical for both
   datasets (D2), so tuning once suffices.
-- **ETKF:** `loc_radius` ∈ {1, 2, 3} × `etkf_ridge` ∈ {0, 0.1, 1}.
-- **EnKF:** `loc_radius` ∈ {1, 2, 3}.
+- **ETKF:** `loc_radius` ∈ {1, 2, 3} × `etkf_ridge` ∈ {0, 0.1, 1} ×
+  cross-layer localization weight ∈ {0, 0.5, 1} × initial ensemble ∈
+  {white, bred}: 54 configurations.
+- **EnKF:** `loc_radius` ∈ {1, 2, 3} × cross-layer weight × initial
+  ensemble: 18 configurations.
 - **Inflation** stays 1.0; the QG study found any value > 1.0 harmful.
-- **Selection:** best mean q EV over the 20 windows, tie-break on ψ EV.
-  Keep the defaults unless a config beats them by more than the val
-  bootstrap interval.
+- **Why the two new axes (added at DA-2, after the DA-1 check):**
+  - *Vertical localization.* The column localization gives state points in
+    the other layer weight 0, so the filter never updates the lower-layer
+    PV q₂ directly. ψ₂ then moves only through q₁ and the dynamics, which
+    is consistent with the ψ₂ degradation in the calm DA-1 window.
+    `loc_cross_layer` = c gives the lower layer c times the horizontal
+    Gaspari–Cohn weight; 0 is the original behaviour, bit-identical.
+  - *Initial ensemble.* The white-noise ensemble has grid-scale, vertically
+    uncorrelated anomalies. The bred ensemble (`init_ensemble_kind="bred"`)
+    adds the same white noise to the truth 3 days before the initial state,
+    integrates the members with the DA model and the truth's lead-period
+    wind, and keeps their anomalies. These are rescaled to the white-noise
+    amplitude and recentred on the shared initial state, so only the
+    anomaly structure changes. No truth later than the initial state is
+    used.
+  - *Per-window seeds.* The lag and the perturbations are now drawn per
+    window (seeded by the dataset index); before, every window got the same
+    draw.
+- **Metrics:** computed per window from the saved trajectories, with each
+  window's own parameters. `run()`'s per-field ψ metrics invert every window
+  with window 0's parameters, which is only approximate here because rd
+  and U1 vary per window.
+- **Selection:** the score is the mean over the 20 windows of the average of
+  the four per-window EVs (ψ₁, ψ₂, q₁, q₂). Also reported: the number of
+  windows where ψ₂ is worse than the free forecast. Keep the defaults
+  (`loc_radius` 2, ridge 0.1, cross-layer 0, white) unless a configuration
+  beats them by more than the paired bootstrap 95% interval.
+- **Cost:** 72 configurations × 20 windows ≈ 18 GPU-hours, run as a SLURM
+  array on the rtx8000 nodes (`batch/run_qg_specwind_da2.sbatch`).
+  The best radius sat at the top of the grid, so the sweep was extended
+  to radius 16 (ETKF) and 8 (EnKF): 92 configurations, about 26 GPU-hours.
 
 ### 4.2 Main runs (test)
 
@@ -165,12 +196,12 @@ it.
 
   | runs | windows × configs | time |
   |---|---|---|
-  | tuning on val (ETKF 9 + EnKF 3 configs) | 20 × 12 | ≈ 2.3 h |
+  | tuning on val (ETKF 54 + EnKF 18 configs, DA-2 grid) | 20 × 72 | ≈ 18 h |
   | main, primary density: 2 methods × 2 test sets | 100 × 4 | ≈ 3.9 h |
   | main, bridge density | 100 × 4 | ≈ 3.9 h |
   | D2/D3 extension to 500 windows (ETKF only, both test sets, primary density) | 400 × 2 more | ≈ 7.8 h |
   | density sensitivity (3 new densities) | 100 × 3 | ≈ 2.9 h |
-  | **total** | | **≈ 21 GPU-hours** |
+  | **total** | | **≈ 37 GPU-hours (21 before the DA-2 grid)** |
 
 - **Materializing val at full resolution:** about 4 min per 500 windows.
 - **Parallelism:** splitting windows over processes is independent per
@@ -189,7 +220,7 @@ it.
 | step | content |
 |---|---|
 | DA-1 | Spectral hook in `QGDynamics` (the minimal part of PR-2), the `_build_dyn` dispatch, the driver `evaluation/run_qg_specwind_da.py`, and tests. One PR. |
-| DA-2 | Tuning on val (§4.1); record in `docs/results/`. |
+| DA-2 | Tuning on val (§4.1); record in `docs/results/`. **Done:** `docs/results/qg_specwind_da2_val_tuning.md`. 92 configurations, including radius extensions to 16; the selected settings are now the driver defaults. |
 | DA-3 | Main runs, bridge runs and density sensitivity (§4.2–4.3); SLURM array if the data are staged. |
 | DA-4 | Report generator and report; results doc with D1–D4. Archive the run config and estimates per the archive convention. |
 
