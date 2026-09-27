@@ -7,7 +7,8 @@ localization radius, ETKF ridge, the cross-layer localization weight
 the lagged truth). Tasks 72-87 extend the ETKF radius beyond the first
 grid's edge (4-16) at its best cross-layer weight and initial ensemble, with
 white-noise controls at radius 6 and 10; tasks 88-91 extend the EnKF radius
-(4-8). Metrics are computed per window from the saved
+(4-8); tasks 92-95 scale the initial spread (`disp_frac` 2, 2.5) at the
+selected ETKF and EnKF settings. Metrics are computed per window from the saved
 trajectories with each window's own parameters (`run()`'s per-field psi
 metrics invert every window with window 0's parameters).
 
@@ -21,22 +22,17 @@ import argparse
 import itertools
 import json
 import os
-import shutil
-import tempfile
 import time
 
 import numpy as np
 import torch
 
 from data.qg_datasets import SPECS
-from evaluation.run_qg_baselines import run
-from evaluation.run_qg_specwind_da import build_cfg, s0_windows
-from models.qg_dynamics import QGDynamics
+from evaluation.run_qg_specwind_da import FIELDS, build_cfg, evaluate, s0_windows
 
 SPEC = "qg_specwind_gyrostat_v1"
 BASELINE = {"method": "etkf", "loc_radius": 2.0, "etkf_ridge": 0.1, "loc_cross_layer": 0.0,
             "init_ensemble": "white"}
-FIELDS = ("psi1", "psi2", "q1", "q2")
 
 
 def configs() -> list[dict]:
@@ -60,35 +56,18 @@ def configs() -> list[dict]:
     for loc in (4.0, 5.0, 6.0, 8.0):
         out.append({"method": "enkf", "loc_radius": loc, "etkf_ridge": 0.1,
                     "loc_cross_layer": 1.0, "init_ensemble": "bred"})
+    for method, loc, ridge in (("etkf", 8.0, 1.0), ("enkf", 6.0, 0.1)):
+        for disp in (2.0, 2.5):
+            out.append({"method": method, "loc_radius": loc, "etkf_ridge": ridge,
+                        "loc_cross_layer": 1.0, "init_ensemble": "bred", "disp_frac": disp})
     return out
 
 
 def config_name(c: dict) -> str:
+    disp = c.get("disp_frac", 1.0)
     return (f"{c['method']}_loc{c['loc_radius']:g}_r{c['etkf_ridge']:g}"
-            f"_x{c['loc_cross_layer']:g}_{c['init_ensemble']}")
-
-
-def _layers(q: np.ndarray, tp: dict, cfg, device) -> dict:
-    inv = QGDynamics(nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"], delta=cfg.delta,
-                     U1=tp["U1"], U2=tp["U2"], rek=tp["rek"]).to(device)
-    psi = inv.streamfunctions(torch.from_numpy(q).to(device)).cpu().numpy()
-    psi = psi.reshape(q.shape[0], 2, -1)
-    per = q.shape[1] // 2
-    return {"psi1": psi[:, 0], "psi2": psi[:, 1], "q1": q[:, :per], "q2": q[:, per:]}
-
-
-def window_metrics(analysis: np.ndarray, free: np.ndarray, truth: np.ndarray, tp: dict, cfg,
-                   device) -> dict:
-    a, f, t = (_layers(x, tp, cfg, device) for x in (analysis, free, truth))
-    out = {}
-    for k in FIELDS:
-        var = float(((t[k] - t[k].mean()) ** 2).mean())
-        for tag, est in (("da", a[k]), ("free", f[k])):
-            mse = float(((est - t[k]) ** 2).mean())
-            out[f"ev_{tag}_{k}"] = 1.0 - mse / max(var, 1e-30)
-            out[f"rmse_{tag}_{k}"] = mse ** 0.5
-    out["score"] = float(np.mean([out[f"ev_da_{k}"] for k in FIELDS]))
-    return out
+            f"_x{c['loc_cross_layer']:g}_{c['init_ensemble']}"
+            + (f"_d{disp:g}" if disp != 1.0 else ""))
 
 
 def run_task(task: int, out_dir: str, root: str, n_windows: int, device: torch.device,
@@ -100,27 +79,14 @@ def run_task(task: int, out_dir: str, root: str, n_windows: int, device: torch.d
     t0 = time.time()
     windows, report = s0_windows(spec, "val", root, idx, cfg, device)
     load_s = time.time() - t0
-    tmp = tempfile.mkdtemp(prefix="qgda2_", dir=os.environ.get("TMPDIR", "/tmp"))
-    try:
-        t0 = time.time()
-        payload = run(c["method"], cfg, device=device, N_ensemble=N, inflation=1.0,
-                      loc_radius=c["loc_radius"], scenarios=("test_s0",), out_path=None,
-                      init="lagged", geometry="random_columns", obs_var="psi", init_lag_days=5.0,
-                      ds={"test_s0": windows}, etkf_ridge=c["etkf_ridge"], save_traj=tmp,
-                      loc_cross_layer=c["loc_cross_layer"], init_ensemble_kind=c["init_ensemble"],
-                      breed_days=breed_days)
-        da_s = time.time() - t0
-        s = payload["scenarios"]["test_s0"]
-        traj = np.load(s["traj_path"])
-        per_window = []
-        for k, w in enumerate(windows):
-            m = window_metrics(traj["analyses"][k], traj["free_forecast"][k], traj["refs"][k],
-                               w["true_params"], cfg, device)
-            m.update({"index": idx[k], "crps": s["crps_list"][k],
-                      "level": w["specwind"]["factors"]["level"]})
-            per_window.append(m)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    t0 = time.time()
+    payload, per_window = evaluate(windows, cfg, c["method"], device, N=N, inflation=1.0,
+                                   loc_radius=c["loc_radius"], etkf_ridge=c["etkf_ridge"],
+                                   loc_cross_layer=c["loc_cross_layer"],
+                                   init_ensemble=c["init_ensemble"], breed_days=breed_days,
+                                   disp_frac=c.get("disp_frac", 1.0))
+    da_s = time.time() - t0
+    s = payload["scenarios"]["test_s0"]
     rec = {"config": c, "name": config_name(c), "N": N, "cols_per_day": cols_per_day,
            "breed_days": breed_days, "indices": idx, "load": report,
            "load_seconds": round(load_s, 1), "da_seconds": round(da_s, 1),

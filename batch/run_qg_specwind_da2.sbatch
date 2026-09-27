@@ -11,7 +11,7 @@
 # DA-2 val tuning (evaluation/qg_specwind_da2_sweep.py): one array task = one configuration
 # over 20 val windows. rtx8000 only: val is regenerated from seeds and checked against storage,
 # and the chaotic rollout only matches on the GPU type that generated it.
-#   sbatch --array=0-91 batch/run_qg_specwind_da2.sbatch   (72-91: radius extensions)
+#   sbatch --array=0-95 batch/run_qg_specwind_da2.sbatch   (72-91: radius extensions; 92-95: spread)
 #   python -m evaluation.qg_specwind_da2_sweep --summarize
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"

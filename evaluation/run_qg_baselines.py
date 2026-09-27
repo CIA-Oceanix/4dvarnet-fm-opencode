@@ -584,7 +584,8 @@ def _bred_ensemble(cfg, dyn, window, init_state, lag_days, sigma_raw, N, disp_fr
     Starts `breed_days` before the initial state, from the truth in
     `init_lead_truth`, adds white noise of the same amplitude as
     `_ensemble_from_init`, integrates the N members with the DA model and the
-    truth's lead-period wind (`wind_lead`), and keeps the bred anomalies
+    lead-period wind the DA model is given (`wind_lead_da`, e.g. corrupted
+    under S1; else the truth's `wind_lead`), and keeps the bred anomalies
     (members minus their mean). They are rescaled to the white-noise
     amplitude (mean per-point std `disp_frac * sigma_raw`) and added to
     `init_state`, so the ensemble mean is exactly the shared initial state and
@@ -598,9 +599,10 @@ def _bred_ensemble(cfg, dyn, window, init_state, lag_days, sigma_raw, N, disp_fr
     if start < 0:
         raise ValueError(f"lag {lag_days:.2f} d + breed {breed_days} d exceeds the "
                          f"{(len(truth) - 1) / spd:.1f}-day lead buffer")
-    if "wind_lead" not in window:
+    lead_wind = window.get("wind_lead_da", window.get("wind_lead"))
+    if lead_wind is None:
         raise KeyError("bred ensemble needs the lead-period wind (window['wind_lead'])")
-    wind = window["wind_lead"][start:start + n_breed].to(device)
+    wind = lead_wind[start:start + n_breed].to(device)
     x0 = truth[start].to(device)
     amp = disp_frac * sigma_raw
     gen = torch.Generator(device=device).manual_seed(
