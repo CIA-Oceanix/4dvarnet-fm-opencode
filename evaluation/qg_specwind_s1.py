@@ -98,7 +98,21 @@ REALISTIC_VARIANTS = {
     "high": S1Levels(amp_bias=0.20, noise_frac=0.35, shift_frac=0.07, rd_bias=-0.15,
                      drag_bias=-0.60, obs_white_frac=0.20, obs_corr_frac=0.20, da_nx=32),
 }
-REALISTIC_SELECTED = "high"
+
+
+def interpolate(a: S1Levels, b: S1Levels, t: float) -> S1Levels:
+    """Levels a fraction `t` of the way from `a` to `b` (the DA grid must agree)."""
+    if a.da_nx != b.da_nx or a.tau_days != b.tau_days:
+        raise ValueError("interpolate needs the same da_nx and tau_days")
+    fields = ("amp_bias", "noise_frac", "shift_frac", "param_bias", "rd_bias", "drag_bias",
+              "obs_white_frac", "obs_corr_frac")
+    return replace(a, **{f: getattr(a, f) + t * (getattr(b, f) - getattr(a, f)) for f in fields})
+
+
+for _t in (0.25, 0.5, 0.75):
+    REALISTIC_VARIANTS[f"mid{int(_t * 100)}"] = interpolate(REALISTIC_VARIANTS["base"],
+                                                           REALISTIC_VARIANTS["high"], _t)
+REALISTIC_SELECTED = "base"
 
 
 def _ou(n: int, tau_steps: float, rng: np.random.Generator, dims: int) -> np.ndarray:

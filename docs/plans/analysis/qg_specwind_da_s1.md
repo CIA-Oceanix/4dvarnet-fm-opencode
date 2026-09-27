@@ -1,9 +1,10 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S1 (model error) — design
 
 **Status:** DRAFT v2 (2026-09-27). v2 adds the realism-anchored scenario
-(§2b), which replaced the legacy-analogue κ scan as the selected S1 after
-calibration (`docs/results/qg_specwind_da_s1_calibration.md`: realistic
-"high"). Follows the S0 design
+(§2b), which replaced the legacy-analogue κ scan as the S1. **Selected:
+realistic base** (`docs/results/qg_specwind_da_s1_calibration.md`), whose
+ETKF ψ₁ of about 0.85–0.9 matches the user's revised aim. Test runs done
+(`docs/results/qg_specwind_da_s0_s1_test.md`). Follows the S0 design
 (`docs/plans/analysis/qg_specwind_da_s0.md`) and the val-tuned S0 settings
 (`docs/results/qg_specwind_da2_val_tuning.md`). 4D-Var is deliberately out of
 scope for now; ETKF and EnKF only.
@@ -104,7 +105,7 @@ the attribution is known.
 
 ## 6. Test runs
 
-At the selected levels (realistic "high"): ETKF and EnKF, 100 test windows
+At the selected levels (realistic base; "high" also run for reference): ETKF and EnKF, 100 test windows
 of the forced and coupled datasets, with the free forecast, alongside the S0
 DA-3 runs (`batch/run_qg_specwind_da.sbatch` with `PRESET=realistic KAPPA=1`).
 

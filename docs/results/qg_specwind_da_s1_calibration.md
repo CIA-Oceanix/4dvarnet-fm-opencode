@@ -5,31 +5,47 @@
 forced dataset; test untouched. ETKF with the S0-tuned settings (radius 8,
 ridge 1, cross-layer weight 1, bred init, N = 80); no S1 re-tuning; no 4D-Var.
 
-**Numbers:** `evaluation/qg_specwind_s1_sweep.py` (`--summarize`, with `--kappa 2`
-or `--variant high` for the attributions) over `experiments/qg_specwind_s1/`.
-Run with `batch/run_qg_specwind_s1.sbatch` (SLURM 55959, 56000, 56034, 56039).
+**Numbers:** `evaluation/qg_specwind_s1_sweep.py` (`--summarize`, with `--kappa 2`,
+`--variant base` or `--variant high` for the attributions) over `experiments/qg_specwind_s1/`.
+Run with `batch/run_qg_specwind_s1.sbatch` (SLURM 55959, 56000, 56034, 56039, 56172, 56181).
 
 **Target** (user request): per-window analysis EVs typically in upper-layer
 q ∈ [0, 0.25] and upper-layer ψ ∈ [0.7, 0.9], read as the median over the 20
 windows, with the fraction of windows inside reported.
 
-**Selected S1: the realism-anchored scenario at the upper edge of its
-ranges (`REALISTIC_VARIANTS["high"]`).** Its magnitudes are defensible for
-a real ocean reanalysis. Unlike the legacy-analogue κ = 2 scenario, it
-includes observation and structural errors, and it does not inflate rd
-beyond its real uncertainty.
+**Selected S1: the realism-anchored scenario at its central levels
+(`REALISTIC_VARIANTS["base"]`),** chosen on 2026-09-27 after the variant
+scan. Every magnitude is the middle of what is defensible for an ocean
+reanalysis. It puts the ETKF's ψ₁ where the user wanted it: 0.865 mean /
+0.894 median on val, 0.854 on test (`docs/results/qg_specwind_da_s0_s1_test.md`).
+The price is that q₁ stays above the original 0–0.25 band (0.34 on val,
+0.39 on test).
 
-## 1. Two scenarios
+History:
+1. The first target (q₁ ∈ [0, 0.25] and ψ₁ ∈ [0.7, 0.9]) was met by the
+   legacy-analogue κ = 2 scenario, but only through an rd bias about 3×
+   real uncertainty.
+2. Within realistic ranges, the target was met only by the upper-edge
+   variant, "high".
+3. The user then aimed at ψ₁ ≈ 0.85–0.9, which base meets.
 
-| | legacy analogue, κ = 2 | realistic, "high" (selected) |
-|---|---|---|
-| wind amplitude bias | +30% | +20% |
-| random wind error (per mode, × train RMS, τ = 10 d) | 0.60 | 0.35 |
-| wind position error (OU, per axis) | 100 km | 70 km |
-| rd | −30% | −15% |
-| bottom drag | −30% | −60% |
-| observation error (fraction of ψ₁ std) | 5% white (S0) | 20% white + 20% correlated per pass (offset and tilt) |
-| DA model grid | 64 (truth) | 32 (rd unresolved) |
+"high" and the interpolated "mid" variants stay available for a harsher
+S1 (§2).
+
+## 1. Scenarios
+
+| | legacy analogue, κ = 2 | **realistic, base (selected)** | realistic, "high" |
+|---|---|---|---|
+| wind amplitude bias | +30% | +15% | +20% |
+| random wind error (per mode, × train RMS, τ = 10 d) | 0.60 | 0.25 | 0.35 |
+| wind position error (OU, per axis) | 100 km | 50 km | 70 km |
+| rd | −30% | −10% | −15% |
+| bottom drag | −30% | −50% | −60% |
+| observation error (fraction of ψ₁ std) | 5% white (S0) | 15% white + 15% correlated per pass | 20% + 20% |
+| DA model grid | 64 (truth) | 32 (rd unresolved) | 32 |
+
+The correlated per-pass error is an offset plus a tilt along each observed
+column.
 
 κ = 2 scales the legacy QG S1 levels (`REFERENCE`) by two. Its −30% rd bias
 is about three times real stratification uncertainty, and it has no
@@ -49,7 +65,21 @@ observation or structural error.
 | realistic, base | 0.894 [0.81, 0.92] | 55% | 0.365 [0.25, 0.44] | 25% | 0.855 | 0.146 | 0.551 | 0.287 / −0.333 |
 | **realistic, high** | **0.847** [0.73, 0.89] | **65%** | **0.174** [0.07, 0.33] | 45% | 0.788 | −0.194 | 0.393 | −0.070 / −0.479 |
 
-- **Only the upper edge of every realistic range reaches the target.** At
+**Between base and high** (linear interpolation of every level, DA grid 32;
+`mid25` / `mid50` / `mid75` = 25 / 50 / 75% of the way to high):
+
+| variant | ψ₁ mean / median | ψ₁ in [0.7, 0.9] | q₁ mean / median | q₁ in [0, 0.25] | ψ₂ | q₂ | score |
+|---|---|---|---|---|---|---|---|
+| **base (selected)** | 0.865 / 0.894 | 55% | 0.338 / 0.365 | 25% | 0.855 | 0.146 | 0.551 |
+| mid25 | 0.854 / 0.883 | 55% | 0.301 / 0.326 | 35% | 0.841 | 0.076 | 0.518 |
+| mid50 | 0.843 / 0.872 | 60% | 0.260 / 0.278 | 45% | 0.824 | −0.003 | 0.481 |
+| mid75 | 0.831 / 0.861 | 65% | 0.213 / 0.224 | 40% | 0.807 | −0.094 | 0.439 |
+| high | 0.817 / 0.847 | 65% | 0.163 / 0.174 | 45% | 0.788 | −0.194 | 0.393 |
+
+Across these, ψ₁ moves little (means 0.865 → 0.817) and q₁ about 3× as
+much (0.338 → 0.163). The variants mainly differ in PV skill.
+
+- **Only the upper edge of every realistic range reaches the first target.** At
   base levels q₁ stays at 0.37. So the targeted degradation needs either
   errors at the pessimistic end of each range, or error sources this model
   cannot represent: mesoscale forcing errors, an analysis-based first guess
@@ -72,7 +102,29 @@ Each component's Shapley value is its average marginal EV loss over all
 orders of switching components on. The values sum exactly to the S0 → S1
 loss. "Interaction" is the full loss minus the sum of stand-alone losses.
 
-### 3.1 Realistic "high" (5 groups, 32 runs)
+### 3.1 Realistic base, selected (5 groups, 32 runs)
+
+| metric (S0 → S1) | forcing | rd | drag | obs | res | interaction |
+|---|---|---|---|---|---|---|
+| score (0.754 → 0.551) | 9% | 16% | 10% | **43%** | 22% | +0.042 |
+| ψ₁ (0.934 → 0.865) | 16% | 13% | 6% | **38%** | 28% | +0.008 |
+| ψ₂ (0.956 → 0.855) | **27%** | 6% | 18% | **27%** | 22% | +0.013 |
+| q₁ (0.573 → 0.338) | 6% | 18% | 0% | **54%** | 21% | +0.017 |
+| q₂ (0.554 → 0.146) | 5% | 18% | 15% | **41%** | 21% | +0.131 |
+
+- **Observation error is the largest single source** again: q₁ loss 0.127
+  [0.082, 0.190] of 0.235, and 38% of the ψ₁ loss.
+- **Resolution is second** on ψ₁ and q₁ (28% and 21%), and ahead of rd
+  here.
+- **rd still compounds** with the other errors: its Shapley value on q₁ is
+  0.042, against 0.024 alone.
+- **Forcing** matters mainly for ψ₂ (27%). **Drag** matters only below the
+  upper layer.
+- **The ranking of sources is the same as at "high"**, but interactions are
+  smaller. The q₂ interaction is +0.131 of 0.407, against +0.313 of 0.748
+  at "high".
+
+### 3.1b Realistic "high" (5 groups, 32 runs)
 
 | metric (S0 → S1) | forcing | rd | drag | obs | res | interaction |
 |---|---|---|---|---|---|---|

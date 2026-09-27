@@ -215,6 +215,8 @@ def main() -> None:
     p.add_argument("--out", default="reports/qg/outputs/qg_specwind_da_report.md")
     p.add_argument("--s1-kappa", type=float, default=None,
                    help="S1 intensity whose test runs feed the S1 sections (default: none)")
+    p.add_argument("--s1-variant", default=None,
+                   help="realistic S1 variant for the S1 main/strata sections (e.g. base)")
     args = p.parse_args()
     runs = load_runs(args.root)
     factors = manifest_factors(args.datasets)
@@ -240,11 +242,14 @@ def main() -> None:
     md += ["", "## D3 — factor strata (S0, forced, ETKF, 3 columns per day)", ""] + \
         strata_table(runs, factors, 3, 0.0)
     if args.s1_kappa is not None:
+        all_runs = runs
+        if args.s1_variant:
+            runs = [r for r in runs if not r["kappa"] or r["s1"] == f"realistic {args.s1_variant}"]
         s1_label = next((r["s1"] for r in runs if abs(r["kappa"] - args.s1_kappa) < 1e-9
                          and r["kappa"]), f"κ = {args.s1_kappa:g}")
         md += ["", f"## S1 ({s1_label}) — main runs (3 columns per day)", ""] + \
             main_table(runs, 3, args.s1_kappa)
-        md += ["", "## S1 against S0", ""] + s1_table(runs, 3)
+        md += ["", "## S1 against S0 (all S1 scenarios run on test)", ""] + s1_table(all_runs, 3)
         md += ["", f"## D3 — factor strata (S1 {s1_label}, forced, ETKF)", ""] + \
             strata_table(runs, factors, 3, args.s1_kappa)
     os.makedirs(os.path.dirname(args.out), exist_ok=True)

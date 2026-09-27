@@ -55,8 +55,9 @@ VARIANTS = REALISTIC_VARIANTS
 
 def realistic_tasks(phase: str, variant: str | None = None) -> list[dict]:
     if phase == "realistic_calib":
-        return [{"name": f"s1r_{v}", "levels": lv, "components": list(REALISTIC_GROUPS)}
-                for v, lv in VARIANTS.items()]
+        names = [v for v in VARIANTS if variant is None or v in variant.split(",")]
+        return [{"name": f"s1r_{v}", "levels": VARIANTS[v], "components": list(REALISTIC_GROUPS)}
+                for v in names]
     if variant not in VARIANTS:
         raise ValueError(f"--phase realistic_shapley needs --variant from {sorted(VARIANTS)}")
     out = []
@@ -225,7 +226,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--phase", default="calib",
                    choices=("calib", "shapley", "realistic_calib", "realistic_shapley"))
-    p.add_argument("--variant", default=None, choices=sorted(VARIANTS))
+    p.add_argument("--variant", default=None,
+                   help=f"realistic variant from {sorted(VARIANTS)} (realistic_calib: comma list)")
     p.add_argument("--kappa", type=float, default=None)
     p.add_argument("--list", action="store_true")
     p.add_argument("--task", type=int)
