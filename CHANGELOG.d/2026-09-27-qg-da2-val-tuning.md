@@ -29,11 +29,27 @@ All new options default off, so existing results are unchanged.
   saved trajectories with each window's own parameters, and summarizes
   against the defaults with a paired bootstrap.
 - **Design doc** §4.1 and §6: the new grid, why, selection rule, cost.
+- **Results:** new `docs/results/qg_specwind_da2_val_tuning.md`. The 72
+  configurations were extended to 92 (ETKF radius up to 16, EnKF up to 8,
+  white-noise controls) because the best radius sat at the top of the grid.
+  Selected: **ETKF, radius 8, ridge 1, cross-layer weight 1, bred init**.
+  - Score 0.754 against 0.646 for the defaults: +0.108, bootstrap 95%
+    [+0.089, +0.130].
+  - ψ₂ EV 0.956 against 0.854, and better than the free forecast in all
+    20 windows (the defaults lost to it in the 6 calmest).
+  - Tied with radius 6 / ridge 0.1, but it sits on a plateau in radius
+    rather than a sharp peak.
+  - EnKF: best at radius 6 (0.753), tied with the selected ETKF; DA-3
+    runs it with `LOC=6`.
+- **New driver defaults:** `evaluation/run_qg_specwind_da.py` and
+  `batch/run_qg_specwind_da.sbatch` now default to the selected settings;
+  the sbatch gains `CROSS` / `INIT`.
 
 **Files modified:** `evaluation/baselines.py`, `evaluation/run_qg_baselines.py`,
 `evaluation/run_qg_specwind_da.py`, `data/qg_specwind_neural.py`,
-`tests/test_qg_specwind_da.py` (+4 tests), `docs/plans/analysis/qg_specwind_da_s0.md`;
-new `evaluation/qg_specwind_da2_sweep.py`, `batch/run_qg_specwind_da2.sbatch`.
+`tests/test_qg_specwind_da.py` (+4 tests), `docs/plans/analysis/qg_specwind_da_s0.md`,
+`batch/run_qg_specwind_da.sbatch`, `docs/README.md`; new `docs/results/qg_specwind_da2_val_tuning.md`,
+`evaluation/qg_specwind_da2_sweep.py`, `batch/run_qg_specwind_da2.sbatch`.
 **Rationale:** In the DA-1 check, the unobserved ψ₂ degraded in a calm
 window. The zero cross-layer localization weight and the grid-scale,
 vertically uncorrelated white-noise ensemble are the two direct suspects,

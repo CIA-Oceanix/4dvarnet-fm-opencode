@@ -4,7 +4,10 @@ One task = one configuration over the first `--n-windows` val windows of the
 forced dataset. Axes (`docs/plans/analysis/qg_specwind_da_s0.md` §4.1):
 localization radius, ETKF ridge, the cross-layer localization weight
 (vertical localization) and the initial ensemble (white noise, or bred along
-the lagged truth). Metrics are computed per window from the saved
+the lagged truth). Tasks 72-87 extend the ETKF radius beyond the first
+grid's edge (4-16) at its best cross-layer weight and initial ensemble, with
+white-noise controls at radius 6 and 10; tasks 88-91 extend the EnKF radius
+(4-8). Metrics are computed per window from the saved
 trajectories with each window's own parameters (`run()`'s per-field psi
 metrics invert every window with window 0's parameters).
 
@@ -45,6 +48,18 @@ def configs() -> list[dict]:
     for loc, cross, init in itertools.product((1.0, 2.0, 3.0), (0.0, 0.5, 1.0), ("white", "bred")):
         out.append({"method": "enkf", "loc_radius": loc, "etkf_ridge": 0.1,
                     "loc_cross_layer": cross, "init_ensemble": init})
+    for loc, ridge in itertools.product((4.0, 5.0, 6.0), (0.0, 0.1)):
+        out.append({"method": "etkf", "loc_radius": loc, "etkf_ridge": ridge,
+                    "loc_cross_layer": 1.0, "init_ensemble": "bred"})
+    for loc, ridge in itertools.product((8.0, 10.0, 12.0, 16.0), (0.1, 1.0)):
+        out.append({"method": "etkf", "loc_radius": loc, "etkf_ridge": ridge,
+                    "loc_cross_layer": 1.0, "init_ensemble": "bred"})
+    for loc in (6.0, 10.0):
+        out.append({"method": "etkf", "loc_radius": loc, "etkf_ridge": 0.1,
+                    "loc_cross_layer": 1.0, "init_ensemble": "white"})
+    for loc in (4.0, 5.0, 6.0, 8.0):
+        out.append({"method": "enkf", "loc_radius": loc, "etkf_ridge": 0.1,
+                    "loc_cross_layer": 1.0, "init_ensemble": "bred"})
     return out
 
 

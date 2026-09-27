@@ -7,7 +7,9 @@ psi on `cols_per_day` random meridional columns, each once per day) and the
 S0 scenario fields (true parameters, the truth's own wind amplitudes), then
 passed to `evaluation.run_qg_baselines.run`. The DA model is `QGDynamics` with
 the spectral wind hook and the truth's eddy drag, so S0 is a perfect model for
-both datasets.
+both datasets. The defaults are the DA-2 val-tuned settings
+(`docs/results/qg_specwind_da2_val_tuning.md`): radius 8, ridge 1,
+cross-layer weight 1, bred initial ensemble.
 
 Run as a module from the repo root:
     python -m evaluation.run_qg_specwind_da --spec qg_specwind_gyrostat_v1 --n-windows 100 \
@@ -78,11 +80,11 @@ def main() -> None:
     p.add_argument("--init-lag-days", type=float, default=5.0)
     p.add_argument("--N", type=int, default=80)
     p.add_argument("--inflation", type=float, default=1.0)
-    p.add_argument("--loc-radius", type=float, default=2.0)
-    p.add_argument("--etkf-ridge", type=float, default=0.1)
-    p.add_argument("--loc-cross-layer", type=float, default=0.0,
+    p.add_argument("--loc-radius", type=float, default=8.0)
+    p.add_argument("--etkf-ridge", type=float, default=1.0)
+    p.add_argument("--loc-cross-layer", type=float, default=1.0,
                    help="cross-layer localization weight (0: the lower layer is not updated directly)")
-    p.add_argument("--init-ensemble", default="white", choices=("white", "bred"))
+    p.add_argument("--init-ensemble", default="bred", choices=("white", "bred"))
     p.add_argument("--breed-days", type=float, default=3.0)
     p.add_argument("--disp-frac", type=float, default=1.0)
     p.add_argument("--out", required=True, help="summary JSON path (run() output)")
