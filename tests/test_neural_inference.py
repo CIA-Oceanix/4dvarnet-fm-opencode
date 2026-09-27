@@ -34,7 +34,7 @@ def _build_case_dataloader(truth, preds):
         def __call__(self, batch):
             t = torch.stack([b[0] for b in batch])
             p = torch.stack([b[1] for b in batch])
-            return {"true_state": t, "obs": p, "obs_mask": torch.ones(t.shape[0], dtype=torch.bool),
+            return {"true_state": t, "obs": p, "obs_mask": torch.ones(t.shape[0], t.shape[1], dtype=torch.bool),
                     "forcing": torch.zeros(t.shape[0], t.shape[1])}
 
 

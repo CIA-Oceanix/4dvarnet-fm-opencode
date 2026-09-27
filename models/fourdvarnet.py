@@ -342,6 +342,21 @@ def _var_cost_training_loss(block_state, obs_clean, obs_mask, forcing, params, d
     return obs_cost + prior_cost
 
 
+def _observed_mask(obs: torch.Tensor, obs_mask: torch.Tensor) -> torch.Tensor:
+    """Per-element (B,T,D) mask: ``obs_mask`` broadcast over D, AND-ed with
+    ``isfinite(obs)``. L96's random observing system
+    (``data/obs_times.py::resample_obs_variable``) keeps ``obs_mask`` (B,T)
+    per-timestep and marks the dropped fast channels of an observed row as
+    NaN; without the ``isfinite`` term those channels, zero-filled by
+    ``nan_to_num``, would count as observed at value 0 in ``g_obs`` and
+    ``_masked_obs_cost``. Identical to the broadcast mask whenever every
+    channel of an observed row is finite (the regular grid)."""
+    mask = obs_mask.to(obs.dtype)
+    if mask.dim() == obs.dim() - 1:
+        mask = mask.unsqueeze(-1)
+    return mask * torch.isfinite(obs).to(obs.dtype)
+
+
 def _embed_obs_to_full_state(obs, obs_mask, obs_var_indices, full_dim):
     """Scatters a (B,T,len(obs_var_indices))-shaped observed-subspace obs/
     mask into a (B,T,full_dim)-shaped tensor at the given channel indices
@@ -1146,7 +1161,7 @@ class FourDVarNetSolver(nn.Module):
             obs_clean = torch.nan_to_num(obs_full, nan=0.0)
         else:
             obs_clean = torch.nan_to_num(batch.obs, nan=0.0)  # (B, T, D)
-            obs_mask = raw_mask
+            obs_mask = _observed_mask(batch.obs, raw_mask)
         B, T, D = obs_clean.shape
         prior_ode_forcing = prior_ode_params = None
         if self.update_input in _FULL_STATE_UPDATE_INPUTS:
@@ -1294,7 +1309,7 @@ class FourDVarNetSolver(nn.Module):
                 obs_clean = torch.nan_to_num(obs_full, nan=0.0)
             else:
                 obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
-                obs_mask = raw_mask
+                obs_mask = _observed_mask(batch.obs, raw_mask)
 
             def _vc(s):
                 return _var_cost_training_loss(
@@ -1423,7 +1438,7 @@ class FourDVarNetPredictStateCFM(nn.Module):
 
     def forward(self, x_t, batch, tau):
         obs_clean = torch.nan_to_num(batch.obs, nan=0.0)
-        obs_mask = batch.obs_mask.to(obs_clean.dtype).unsqueeze(-1)
+        obs_mask = _observed_mask(batch.obs, batch.obs_mask)
         x = x_t
         # x_tau/beta_tau: "subgrad+state+xtau"'s own outer-flow-time inputs
         # (see _build_update_input's docstring) -- x_tau_const is the outer

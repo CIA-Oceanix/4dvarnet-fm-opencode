@@ -243,7 +243,10 @@ def main() -> None:
     A.append("- **SDA**: the P1 checkpoints unchanged -- the prior and its validation loss never see "
              "observations, so the obs protocol does not apply to training. Guided sampling: 30 "
              "members, 10 steps, guidance weight 20 (tuned on the regular grid), r_var 0.5, with "
-             "the NaN-channel guidance fix (#244).")
+             "the NaN-channel guidance fix (#244). Training budget 400 epochs, the same as every "
+             "learned row here, so this report is budget-matched; the SDA priors have **not** been "
+             "retrained at the 1200-epoch default (2026-09-26), and the extended report's SDA rows "
+             "are still 400-epoch checkpoints.")
     A.append("- **DA**: ETKF / EnKF (30 members, inflation S0 1.5 / S1 2.0), Strong-4DVar; "
              "per-window `fast_weights` in the forward model; DA window 500.")
     A.append("- **Regular test set**: the P1 cache, 30 regular obs times, all 24 channels.")
@@ -288,6 +291,10 @@ def main() -> None:
     A.append("\n## Caveats\n")
     A.append("- P1 and SDA rows are single runs; benchmark-default rows are 3 seeds.")
     A.append("- The SDA guidance weight (20) was tuned on the regular grid, not re-tuned for the random set.")
+    A.append("- The SDA rows are superseded by `l96_benchmark_extended.md`: validation-tuned guidance "
+             "weight 25, 3 seeds, and SDA3-fix in place of SDA3 (whose bias conditioning was never "
+             "active in training). Those rows keep the 400-epoch SDA priors, so neither report compares "
+             "SDA with 1200-epoch DirectUNet/CFM at matched budget.")
     A.append("- The random test set is one draw of one observing-system distribution (10-100 obs, 4-16 "
              "fast channels); rankings between learned families depend on the regime (on a sparser "
              "30-obs / 8-fast set VanillaCFM-M led DirectUNet-M).")

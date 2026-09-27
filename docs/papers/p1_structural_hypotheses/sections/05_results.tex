@@ -49,7 +49,7 @@ Table~\ref{tab:classes}.
 \toprule
 \textbf{system} & \textbf{metric} & \textbf{best classical} $\Sz$ / $\So$ & \textbf{best learned} $\Sz$ / $\So$ \\
 \midrule
-L96 & RMSE ($\downarrow$) & $0.687$ \emph{(ETKF)} / $1.436$ \emph{(Strong-4D-Var)} & $\mathbf{0.312}$ / $\mathbf{0.307}$ \emph{(DirectUNet-M$\to$SDA3-fix)} \\
+L96 & RMSE ($\downarrow$) & $0.687$ \emph{(ETKF)} / $1.436$ \emph{(Strong-4D-Var)} & $\mathbf{0.310}$ \emph{(DirectUNet-M$\to$SDA2)} / $\mathbf{0.307}$ \emph{(DirectUNet-M$\to$SDA3-fix)} \\
 QG  & $\psi$ EV ($\uparrow$) & $0.9714$ / $0.9468$ & $\mathbf{0.9827}$ / $\mathbf{0.9808}$ \emph{(Q2 / Q4)} \\
 QG  & $q$ EV ($\uparrow$) & $0.500$ / $0.413$ \emph{(EnKF)} & $\mathbf{0.6745}$ / $\mathbf{0.6744}$ \emph{(Q4)} \\
 \bottomrule
@@ -59,10 +59,13 @@ family, hold under \So{}.} \emph{L63 is absent by necessity: it carries no
 learned schemes} (Table~\ref{tab:coverage}), so the robustness statement above
 spans three systems while this one spans two. The near-invariance of the learned
 columns must be read through Table~\ref{tab:classes} --- for a model-free scheme
-it is definitional, for a conditioned one it is a result. The L96 learned entry is
-conditioned (its SDA prior receives the biased DA parameters at \So{}), so its
-invariance is a result; Section~\ref{sec:inert} separates the two cases. L96: regular
-30-observation test grid, benchmark-default training (Section~\ref{sec:protocol}).}
+it is definitional, for a conditioned one it is a result. The L96 learned entries are
+conditioned (their SDA priors receive the biased DA parameters at \So{}), so their
+\So{} values are a result; Section~\ref{sec:inert} separates the two cases. The
+best \Sz{} and \So{} schemes differ: the SDA2 hybrid degrades to $0.333$ at \So{},
+the SDA3-fix hybrid is $0.312$ at \Sz{}. L96: regular 30-observation test grid,
+benchmark-default training (Section~\ref{sec:protocol}); the SDA priors are
+trained for 400 epochs, not 1200.}
 \label{tab:overview-gap}
 \end{table}
 
@@ -85,7 +88,9 @@ DirectUNet-M$\to$SDA3-fix-M & \textbf{0.312} & 0.307 & 0.98 & all three & $0.53$
 \bottomrule
 \end{tabular}
 \caption{Lorenz-96 under the benchmark default (Section~\ref{sec:protocol}):
-random observing system in training, 1200 epochs, 3 seeds, M tier throughout;
+random observing system in training, 1200 epochs, 3 seeds, M tier throughout ---
+except the SDA priors (SDA1-M, and the prior of the hybrid), which are trained for
+400 epochs and never see observations in training;
 regular 30-observation test grid; mean over windows of the per-window RMSE.
 DA spread from the analysis ensemble; DirectUNet is a single forward pass and has
 no spread. The lower block's $\So/\Sz$ is definitional for the model-free rows
@@ -95,10 +100,13 @@ parameters, so its ratio is a result. Source:
 \label{tab:price}
 \end{table}
 
-\textbf{Occupying more operator slots does not by itself buy accuracy.} SDA1
-fills all three and is the \emph{weakest} learned scheme here (0.501);
+\textbf{Occupying more operator slots does not by itself buy accuracy.}
 DirectUNet fills $\Psimean$ alone and matches the conditional flows, which fill all
-three (0.340 against 0.341--0.351). The most accurate scheme combines the two:
+three (0.340 against 0.341--0.351), at equal training budget. SDA1 also fills all
+three and is the weakest learned scheme in the table (0.501), but that comparison
+is not budget-matched --- its prior had 400 epochs against 1200
+(Section~\ref{sec:protocol}), and the other families gained $9$--$19\%$ from the
+extra budget --- so it is a pessimistic estimate of SDA's accuracy, not a ranking. The most accurate scheme combines the two:
 DirectUNet supplies the mean and a conditioned SDA prior the rest (0.312). The
 slots determine what a scheme \emph{can represent}, not how well it estimates ---
 and Section~\ref{sec:nongaussian} shows the same non-monotonicity in the
@@ -139,7 +147,8 @@ DirectUNet-M$\to$SDA2-M & as SDA2 & \textbf{0.310} & 0.333 & \textbf{1.07} \\
 DirectUNet-M$\to$SDA3-fix-M & as SDA3-fix & 0.312 & \textbf{0.307} & 0.98 \\
 \bottomrule
 \end{tabular}
-\caption{Lorenz-96 conditioning ladder, benchmark default, M tier, 3 seeds,
+\caption{Lorenz-96 conditioning ladder, benchmark default, M tier, 3 seeds (SDA
+priors trained for 400 epochs, Section~\ref{sec:protocol}),
 regular 30-observation test grid, guidance weight 25 (validation-tuned). At \So{}
 the conditioned priors receive the biased DA parameters and the corrupted forcing
 --- the same model the DA baselines assimilate with. Hybrids: the 1200-epoch
@@ -153,12 +162,25 @@ handed biased ones; one trained on noisy parameters does not.} Source:
 At \Sz{}, conditioning on model information moves skill by less than seed noise:
 SDA1, SDA2 and SDA3-fix are within $0.001$ of each other. Under \So{} it
 separates them. SDA2, trained with its conditioning parameters equal to the
-truth, degrades by $2\%$ when handed the biased DA parameters; SDA3-fix, trained
-on noisy DA parameters, does not. Alone the gap is small --- comparable to the
-spread across SDA3-fix seeds ($0.494$--$0.514$) --- but as the prior of the best
-scheme it decides robustness: the SDA2 hybrid degrades by $7\%$ under \So{}, the
-SDA3-fix hybrid not at all ($0.312 \to 0.307$), which makes it the most accurate
-scheme at \So{} on both test sets.
+truth, degrades by $2\%$ when handed the biased DA parameters, in every seed and
+at every guidance weight tried (weights 15--40 on the validation windows:
+$1.7$--$1.9\%$ on the regular grid, $2.5$--$3.0\%$ on random layouts). SDA3-fix, trained on noisy
+DA parameters, degrades \emph{no more than the unconditional prior}: on the
+regular grid at the tuned weight it is flat ($0.501 \to 0.501$), and on the random
+observing system it loses $1.5\%$ against SDA1's $2.0\%$ and SDA2's $3.6\%$. The
+robust statement is the comparison with SDA1, not the flat ratio: SDA3-fix's own
+\So/\Sz{} ratio moves with the guidance weight ($1.014$ at 15, $0.985$ at 40 on the
+regular validation windows) while SDA2's does not. Alone the gap is small ---
+comparable to the spread across SDA3-fix seeds ($0.494$--$0.514$) --- but as the
+prior of the best scheme it decides robustness: the SDA2 hybrid degrades by $7\%$
+under \So{}, the SDA3-fix hybrid not at all ($0.312 \to 0.307$), which makes it the
+most accurate scheme at \So{} on both test sets.
+
+\caveat{That the SDA3-fix hybrid is slightly \emph{better} at \So{} than at \Sz{}
+should not be read as a gain from model error. Its training conditioning is the
+truth plus a fraction of the DA bias drawn uniformly on $[0, 1.5]$, per parameter.
+\Sz{} conditions it at fraction 0, the edge of that range; \So{} at fraction 1,
+inside it. The same drift appears for SDA3-fix alone at high guidance weight.}
 
 \caveat{Two earlier readings of this ladder were artefacts. The P1 SDA3
 configuration never activated its noisy-bias conditioning --- its training DA
@@ -176,12 +198,17 @@ Classical DA has no such option --- its prior is the integrated model. H2 binds
 not because model information is unhelpful, but because DA cannot learn how much
 to trust it.
 
-\paragraph{The training-exposure control has been run.}
-The configuration trained with zero forcing/state bias --- the only one never
-exposed to \So{}-level error in training --- gives \Sz{} 0.7046 / \So{} 0.7033,
-ratio 0.998, indistinguishable from its exposed sibling (0.997).
-\caveat{This control has no counterpart in the canonical benchmark table, which
-is scoped to one backbone family; it is cited to its own run artefact.}
+\paragraph{The training-exposure control has not been run on the corrected
+protocol.}
+The one available run --- an SDA2 prior trained with zero forcing/state bias,
+the only configuration never exposed to \So{}-level error in training (\Sz{} 0.7046
+/ \So{} 0.7033) --- is not usable: it predates the 2026-09-25 fix, so its \So{}
+evaluation fed the prior the true parameters, and it uses an earlier backbone
+($\sim$0.70 against $\sim$0.50 for the M tier here). The ladder already answers
+most of what it was meant to: a prior conditioned on the truth in training is the
+fragile one.
+\needsrun{SDA2-nominal-M (no forcing/state bias in training), three seeds,
+evaluated with the biased \So{} conditioning.}
 
 \paragraph{QG separates the definitional case from the real one.}
 The QG DirectUNet ladder makes Table~\ref{tab:classes}'s caveat concrete. Q1 is
@@ -209,9 +236,10 @@ The ladder above measures the other quantity directly: a conditioned amortised
 estimator takes $(\thv^{*},\zv^{*})$ as inputs at fixed $\yv$, so perturbing the
 conditioning while holding the observations fixed is a finite-difference estimate
 of posterior sensitivity. Replacing the true by the biased parameters at fixed
-$\yv$ moves skill by $2\%$ for a prior trained on the truth and not at all for one
-trained on noisy parameters, against the $2.0$--$2.2\times$ by which the classical
-schemes degrade over the same perturbation.
+$\yv$ moves skill by $2$--$4\%$ for a prior trained on the truth and by no more
+than for the unconditional prior ($0$--$1.5\%$) for one trained on noisy
+parameters, against the $2.0$--$2.2\times$ by which the classical schemes degrade
+over the same perturbation.
 
 \textbf{Assessing parameter and forcing uncertainty by propagating it through the
 model therefore overstates its effect on the posterior whenever the observations
@@ -517,11 +545,16 @@ DA needs no retraining for a new observing system, and it shows. On a random
 observing system --- 10 to 100 observation times and 4 to 16 observed fast
 channels per window, the same layouts for every scheme --- DA loses
 $\times 1.06$--$1.20$ relative to the regular grid; learned schemes trained on a
-distribution of random observing systems lose $\times 1.24$--$1.32$; and those
-trained on one fixed grid (the P1 protocol) lose $\times 2.7$--$3.3$. Binned by
-observation count, ETKF is the best scheme at \Sz{} with 10 or fewer observations
-per window, and every learned scheme beats every DA baseline from about 20 on;
-under \So{} the learned schemes win at every density. A factorised estimator
+distribution of random observing systems lose $\times 1.24$--$1.32$ (the hybrids
+$\times 1.23$--$1.24$); SDA, which never sees observations in training, sits
+between the two ($\times 1.21$--$1.22$); and schemes trained on one fixed grid
+(the P1 protocol) lose $\times 2.7$--$3.3$. In the controlled observation-count
+sweep, ETKF is the best scheme at \Sz{} with 10 or fewer observations per window,
+and every learned scheme beats every DA baseline from about 20 on; under \So{} the
+learned schemes win at every density. The sweep does not include the hybrid: on
+the random test set binned by each window's own observation count, the SDA3-fix
+hybrid beats ETKF even in the sparsest bin (10--24 observations, $0.793$ against
+$1.032$). A factorised estimator
 adapts to any observation configuration for free; an amortised one must be
 trained on the distribution of configurations it will meet --- and then matches a
 fixed-grid model on that grid (PredictStateCFM 0.341 against 0.354) while being

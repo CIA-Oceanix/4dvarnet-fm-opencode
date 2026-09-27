@@ -4,6 +4,8 @@ Two-scale L96, `obs_interval=100`, `obs_j=2` (24D observed space), 200 shared ca
 
 **One recipe for every learned row**: monai backbone, `data.normalize: true`, cosine annealing, 400 epochs, `batch_size: 16`, lr 1e-3, grad clip 10.0, **no obs-density augmentation**. Deviations are called out per row. Unrolled/4DVarNet schemes are out of P1 scope.
 
+**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, so the families are budget-matched *within this report*. The benchmark default has since moved DirectUNet and the CFMs to 1200 epochs, but **the SDA priors (SDA1/SDA2/SDA3-fix) have not been retrained at 1200 epochs**: the SDA rows of the extended report, and the prior of every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. Two other parts of this report are out of date: the DA baselines (section 1) predate the DA-side `fast_weights` fix and the per-case inflation (current: ETKF S0 0.687, S1/S0 2.0-2.2x), and the SDA rows use guidance weight 20 (validation-tuned: 25).
+
 ## Protocol
 
 | family | protocol | columns |
@@ -80,7 +82,7 @@ Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.50
 - **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by ~1.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
 - **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
 - **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
-- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 (`l96_benchmark_extended.md`).
+- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row still loses 1.6%, and on the random observing system it degrades about as much as the unconditional SDA1 (1.5% vs 2.0% at gw 25).
 - **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is not only about sampling.
 
 ## Caveats
@@ -88,6 +90,7 @@ Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.50
 - DA baselines receive the same per-window parameters as truth generation (S0) or their biased `*_da` counterparts (S1); the learned schemes see observations only. This is what makes the comparison apples-to-apples, and also why their S1 behaviour differs so much.
 - No ensemble members are cached for the DA baselines, so their MAE column is a point proxy and is not comparable to the generative families' ensemble CRPS.
 - SDA is the only learned family with a tuned inference hyper-parameter (`gw`).
+- SDA budget: 400 epochs here, like every row. Do not set these SDA rows against 1200-epoch DirectUNet/CFM results: the SDA priors have not been retrained at the 1200-epoch default.
 - The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).
 - L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: 0.4705 vs 0.8579 on two seeds of one config). Treat any single L cell as indicative.
 - Checkpoint-selection noise on this family was measured at 15-21%; smaller differences need the paired within-window tests, not these point estimates.

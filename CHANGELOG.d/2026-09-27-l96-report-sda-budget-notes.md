@@ -1,0 +1,6 @@
+## 2026-09-27: L96 reports — SDA training-budget and superseded-row notes
+
+**Summary:** Added notes to `p1_l96_benchmark.md`, `l96_benchmark_default.md` and `l96_benchmark_extended.md` (via their generators) saying the SDA priors, and so every DirectUNet -> SDA hybrid prior, are 400-epoch checkpoints never retrained at the 1200-epoch benchmark default. The P1 report now also flags its out-of-date DA rows (from before the DA `fast_weights` fix and the per-case inflation) and gw-20 SDA rows.
+**Files modified:** `reports/l96/generate_p1_l96_benchmark.py`, `reports/l96/generate_l96_benchmark_default_report.py`, `reports/l96/generate_l96_benchmark_extended_report.py` — note text only; `reports/l96/outputs/{p1_l96_benchmark,l96_benchmark_default,l96_benchmark_extended}.md` — regenerated.
+**Rationale:** The extended report puts 400-epoch SDA rows next to 1200-epoch DirectUNet/CFM rows without saying so, and the two older reports carry SDA/DA rows that the paper (PR #288) no longer uses.
+**Verification:** Unpatched regeneration from the input bundles reproduced all three committed reports byte-identical; after patching, the only diff is the added notes. `ruff check` on the generators passes; report/docs tests pass.
