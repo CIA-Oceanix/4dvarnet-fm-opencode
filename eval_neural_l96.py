@@ -34,6 +34,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def default_n_outer(model: torch.nn.Module) -> int:
+    from models.fourdvarnet import FourDVarNetSolver
+    return model.N_outer if isinstance(model, FourDVarNetSolver) else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run a neural model on L96 S0/S1 test dataset")
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint .pt")
@@ -48,8 +53,9 @@ def main():
                         help="Load with train_tau_0_only=True (tau=0-trained CFM checkpoints)")
     parser.add_argument("--n-members", type=int, default=1,
                         help="Number of stochastic members to sample (CFM; 1 = legacy single sample)")
-    parser.add_argument("--n-outer", type=int, default=1,
-                        help="Euler integration steps for CFM sampling")
+    parser.add_argument("--n-outer", type=int, default=None,
+                        help="Euler integration steps for CFM sampling. Default: the "
+                             "unrolled solver's own N_outer for FourDVarNetSolver, else 1")
     parser.add_argument("--step-power", type=float, default=None,
                         help="CFM Euler grid tau_k = 1-(1-k/N)^p (VanillaCFM/PredictStateCFM). "
                              "Default: the models' DEFAULT_STEP_POWER (0.5, early-fine, since "
@@ -96,6 +102,9 @@ def main():
     logger.info(f"Loading model: {args.checkpoint}")
     overrides = {"train_tau_0_only": True} if args.train_tau0_only else None
     model, cfg = load_model(args.checkpoint, args.config, device=device, overrides=overrides)
+    if args.n_outer is None:
+        args.n_outer = default_n_outer(model)
+        logger.info(f"--n-outer not given: using {args.n_outer} for {type(model).__name__}")
     if args.sigma_prior is not None:
         if not hasattr(model, "sigma_prior"):
             raise ValueError(f"--sigma-prior given but {type(model).__name__} has no sigma_prior")

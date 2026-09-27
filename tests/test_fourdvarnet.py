@@ -10,6 +10,7 @@ from models.fourdvarnet import (
     _build_update_input,
     _embed_obs_to_full_state,
     _normalize_channels,
+    _observed_mask,
     _prior_ae,
     _prior_cost,
     _soft_clip,
@@ -132,6 +133,59 @@ def test_obs_mask_3d_per_cell_not_broadcast_uniformly():
         "a per-cell mask that differs from its per-timestep-broadcast "
         "equivalent must change the forward output -- otherwise the mask's "
         "extra per-cell resolution is being silently discarded")
+
+
+def _random_layout_batches(B=2, T=8, D=4, seed=0):
+    """Two batches that differ only in how one dropped fast channel of an
+    observed row is encoded: NaN with a (B,T) mask (the random observing
+    system's convention) vs. a finite value with that cell off in a (B,T,D)
+    mask. A correct per-element mask makes the two indistinguishable."""
+    torch.manual_seed(seed)
+    states = torch.randn(B, T, D)
+    obs = torch.randn(B, T, D)
+    time_mask = torch.zeros(B, T, dtype=torch.bool)
+    time_mask[:, ::2] = True
+    obs = torch.where(time_mask.unsqueeze(-1), obs, torch.full_like(obs, float("nan")))
+    obs_finite = obs.clone()
+    obs_finite[0, 0, D - 1] = 5.0
+    obs_nan = obs.clone()
+    obs_nan[0, 0, D - 1] = float("nan")
+    cell_mask = time_mask.unsqueeze(-1).expand(B, T, D).clone()
+    cell_mask[0, 0, D - 1] = False
+
+    b_nan = _RawBatch()
+    b_nan.states, b_nan.obs, b_nan.obs_mask = states, obs_nan, time_mask
+    b_cell = _RawBatch()
+    b_cell.states, b_cell.obs, b_cell.obs_mask = states, obs_finite, cell_mask
+    return b_nan, b_cell
+
+
+class TestObservedMask:
+    def test_regular_grid_equals_broadcast_time_mask(self):
+        batch = _MockBatch(B=2, T=10, D=3, obs_every=2, seed=0)
+        expected = batch.obs_mask.float().unsqueeze(-1).expand(2, 10, 3)
+        assert torch.equal(_observed_mask(batch.obs, batch.obs_mask), expected)
+
+    def test_nan_channel_in_observed_row_is_unobserved(self):
+        b_nan, b_cell = _random_layout_batches()
+        mask = _observed_mask(b_nan.obs, b_nan.obs_mask)
+        assert mask.shape == b_nan.obs.shape
+        assert torch.equal(mask, b_cell.obs_mask.float())
+
+    def test_solver_ignores_nan_dropped_channel(self):
+        b_nan, b_cell = _random_layout_batches()
+        model = _make_model(state_dim=4, unet_backbone="unet1d", N_outer=2,
+                            update_input="subgrad+state").eval()
+        with torch.no_grad():
+            assert torch.allclose(model(b_nan), model(b_cell))
+
+    def test_cfm_ignores_nan_dropped_channel(self):
+        b_nan, b_cell = _random_layout_batches()
+        model = _make_cfm_model(state_dim=4, update_input="subgrad+state").eval()
+        x_tau = torch.randn_like(b_nan.states)
+        tau = torch.full((b_nan.states.shape[0],), 0.5)
+        with torch.no_grad():
+            assert torch.allclose(model(x_tau, b_nan, tau), model(x_tau, b_cell, tau))
 
 
 class TestFourDVarNetSolver:

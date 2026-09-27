@@ -1,0 +1,23 @@
+# @package _global_
+# FDV2 subgrad+state (obs + prior-autoencoder residuals, no autograd) unrolled solver, M tier, under the L96 benchmark default
+# (config/l96_benchmark_default.yaml: random observing system, normalize, 1200 epochs).
+# Plan: docs/plans/analysis/l96_p2_fdv_benchmark.md. aux_var_cost_weight is 0.01 at
+# S and 0 at M: the aux prior loss degraded M-tier FDV1 (val ~0.38 vs 0.20-0.29,
+# CHANGELOG.d/2026-09-12-fdv1-xstier-auxpriorcost-ablation.md) but not S.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2
