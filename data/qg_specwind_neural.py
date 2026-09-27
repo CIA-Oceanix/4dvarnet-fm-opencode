@@ -81,6 +81,7 @@ def legacy_windows(result: dict, spec: QGDatasetSpec, with_wind_curl: bool = Fal
             "true_params": {"U1": f["U1"], "rd": f["rd"], "rek": f["rek"],
                             "beta": spec.beta, "U2": spec.U2},
             "wind_state_true": win_amps.clone(),
+            "wind_lead": amps[:lead].clone(),
             "wind_amp": f["level"],
             "wind_seed": int(result["window_seed"][b]) % 2**31,
             "specwind": {"spec": spec.name, "index": int(result["indices"][b]),

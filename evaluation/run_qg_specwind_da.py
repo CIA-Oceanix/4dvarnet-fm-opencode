@@ -48,7 +48,7 @@ def s0_windows(spec: QGDatasetSpec, split: str, root: str, indices: list[int], c
     windows = with_fixed_obs(windows, cfg, indices)
     per_layer = cfg.ny * cfg.nx
     out = []
-    for w in windows:
+    for idx, w in zip(indices, windows):
         tp = w["true_params"]
         inv = QGDynamics(nx=cfg.nx, L=cfg.L, dt=cfg.dt, beta=tp["beta"], rd=tp["rd"],
                          delta=cfg.delta, U1=tp["U1"], U2=tp["U2"], rek=tp["rek"])
@@ -56,6 +56,7 @@ def s0_windows(spec: QGDatasetSpec, split: str, root: str, indices: list[int], c
         out.append({
             **w,
             "da_model": "qg2l", "da_nx": cfg.nx, "da_params": dict(tp),
+            "init_seed_key": idx,
             "wind_state_corrupted": w["wind_state_true"],
             "target_state_psi": psi1, "target_state_q": w["true_state"][:, :per_layer].clone(),
         })
@@ -79,6 +80,11 @@ def main() -> None:
     p.add_argument("--inflation", type=float, default=1.0)
     p.add_argument("--loc-radius", type=float, default=2.0)
     p.add_argument("--etkf-ridge", type=float, default=0.1)
+    p.add_argument("--loc-cross-layer", type=float, default=0.0,
+                   help="cross-layer localization weight (0: the lower layer is not updated directly)")
+    p.add_argument("--init-ensemble", default="white", choices=("white", "bred"))
+    p.add_argument("--breed-days", type=float, default=3.0)
+    p.add_argument("--disp-frac", type=float, default=1.0)
     p.add_argument("--out", required=True, help="summary JSON path (run() output)")
     p.add_argument("--save-traj", default=None,
                    help="directory for run()'s trajectory npz (analysis mean, free forecast, truth)")
@@ -97,11 +103,15 @@ def main() -> None:
                   loc_radius=args.loc_radius, scenarios=("test_s0",), out_path=args.out,
                   init="lagged", geometry="random_columns", obs_var="psi",
                   init_lag_days=args.init_lag_days, ds={"test_s0": windows},
-                  etkf_ridge=args.etkf_ridge, save_traj=args.save_traj)
+                  etkf_ridge=args.etkf_ridge, save_traj=args.save_traj,
+                  loc_cross_layer=args.loc_cross_layer, init_ensemble_kind=args.init_ensemble,
+                  breed_days=args.breed_days, disp_frac=args.disp_frac)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
+            "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
+            "breed_days": args.breed_days, "disp_frac": args.disp_frac,
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED}
     with open(os.path.splitext(args.out)[0] + "_meta.json", "w") as fh:
