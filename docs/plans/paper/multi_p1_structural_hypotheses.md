@@ -218,6 +218,8 @@ indistinguishable from SDA2-mixed (0.997) and SDA1 (0.998). Removing training-ti
 exposure to model error entirely leaves the S1 invariance intact. This retires
 what was the third concern in R1.
 
+> **Superseded 2026-09-27.** This control predates the 2026-09-25 S1-conditioning fix (its S1 evaluation fed the prior the true parameters, so the ratio is uninformative) and uses the pre-M-tier backbone. The corrected ladder shows the opposite dependence (a truth-trained prior degrades at S1). The control is open again: SDA2-nominal-M, 3 seeds, biased S1 conditioning (`05_results.tex`, §inert).
+
 **The caveat a referee will raise, and it is fair.** Conditioning on biased
 parameters is not the same exposure as *integrating* a biased model: one is an
 input perturbation, the other compounds through time. The two are not
@@ -525,6 +527,8 @@ not cashed in.** Three issues, in descending severity:
    Training-time exposure does **not** explain the invariance. The result exists
    on disk and is simply **not in the consolidated benchmark**, which is a
    reporting gap, not an experimental one.
+
+   > **Superseded 2026-09-27.** This control predates the 2026-09-25 S1-conditioning fix (its S1 evaluation fed the prior the true parameters, so the ratio is uninformative) and uses the pre-M-tier backbone. The corrected ladder shows the opposite dependence (a truth-trained prior degrades at S1). The control is open again: SDA2-nominal-M, 3 seeds, biased S1 conditioning (`05_results.tex`, §inert).
 
 *Mitigation:* (a) state 1 and 2 rather than cash them in; (b) run **D0**, since
 weak-constraint 4D-Var is the classical method *allowed* to know about model

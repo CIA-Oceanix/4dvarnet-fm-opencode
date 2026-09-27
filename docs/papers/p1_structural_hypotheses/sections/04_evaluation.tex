@@ -87,6 +87,17 @@ states, three seeds per scheme. The earlier \emph{P1 protocol} --- one fixed
 30-observation grid, observation noise frozen per window across epochs --- is
 reported only as a reference: it overfits the frozen noise.
 
+\paragraph{The SDA priors are the exception.} They never see observations in
+training (observations enter only as the guidance cost at sampling), so the
+observing-system protocol is inert for them. But \textbf{they are trained for 400
+epochs, not 1200}: same data, backbone, schedule and three seeds, and a third of
+the budget. The 400$\to$1200 increase gained the other learned families
+$9$--$19\%$ (Section~\ref{sec:overview}), and it has not been run for SDA, so
+every SDA row --- and the prior inside every DirectUNet$\to$SDA hybrid --- is
+at a budget disadvantage of unmeasured size.
+\needsrun{SDA1/SDA2/SDA3-fix-M at 1200 epochs, three seeds, and the hybrids
+re-evaluated on those priors.}
+
 \paragraph{Inference settings.} Flows are sampled with 30 members and 20 Euler
 steps on an early-fine grid $\tau_k = 1-(1-k/20)^{1/2}$. SDA uses 30 members, 10
 guided steps and guidance weight 25; the DirectUNet$\to$SDA hybrid starts the SDA
