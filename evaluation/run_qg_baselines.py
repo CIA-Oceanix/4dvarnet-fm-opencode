@@ -578,7 +578,7 @@ def _ensemble_from_init(init_state, sigma_raw, N, disp_frac, device, cfg, seed_k
 
 
 def _bred_ensemble(cfg, dyn, window, init_state, lag_days, sigma_raw, N, disp_frac,
-                   breed_days, device, seed_key=None):
+                   breed_days, device, seed_key=None, lead_truth=None):
     """Flow-dependent DA ensemble: white-noise perturbations bred along the lagged truth.
 
     Starts `breed_days` before the initial state, from the truth in
@@ -590,9 +590,10 @@ def _bred_ensemble(cfg, dyn, window, init_state, lag_days, sigma_raw, N, disp_fr
     amplitude (mean per-point std `disp_frac * sigma_raw`) and added to
     `init_state`, so the ensemble mean is exactly the shared initial state and
     only the anomaly structure differs from the white-noise ensemble. Uses no
-    truth later than the initial state.
+    truth later than the initial state. `lead_truth` overrides the lead buffer
+    (e.g. downsampled to a coarser DA grid).
     """
-    truth = window["init_lead_truth"].float()
+    truth = (window["init_lead_truth"] if lead_truth is None else lead_truth).float()
     spd = round(86400.0 / cfg.dt)
     n_breed = max(1, round(breed_days * spd))
     start = len(truth) - 1 - math.floor(lag_days * spd) - n_breed
@@ -1044,12 +1045,13 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                 else:
                     sigma_raw = float(lead.std(0).mean())
                 if init_ensemble_kind == "bred":
-                    if is_qg1l or cross_res or is_psi_state:
+                    if is_qg1l or is_psi_state:
                         raise NotImplementedError(
-                            "bred init ensemble: same-resolution two-layer q-state DA only")
+                            "bred init ensemble: two-layer q-state DA only")
                     init_ensemble = _bred_ensemble(
                         cfg, dyn, w, shared_init, init_lag_val, sigma_raw, N_ensemble,
-                        disp_frac, breed_days, device, seed_key=seed_key)
+                        disp_frac, breed_days, device, seed_key=seed_key,
+                        lead_truth=lead if cross_res else None)
                 elif init_ensemble_kind == "white":
                     init_ensemble = _ensemble_from_init(
                         shared_init, sigma_raw, N_ensemble, disp_frac, device, cfg,

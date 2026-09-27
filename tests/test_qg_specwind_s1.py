@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import shutil
 
@@ -5,9 +6,17 @@ import pytest
 import torch
 
 from data.qg_datasets import QGDatasetSpec, assemble_split, split_dir, write_shard
-from evaluation.qg_specwind_s1 import MODE_RMS, REFERENCE, S1Levels, corrupt_amplitudes
-from evaluation.qg_specwind_s1_sweep import shapley, task_name, tasks
-from evaluation.run_qg_specwind_da import apply_s1, build_cfg, evaluate, s0_windows
+from evaluation.qg_specwind_s1 import (
+    MODE_RMS,
+    REALISTIC,
+    REFERENCE,
+    S1Levels,
+    corrupt_amplitudes,
+    corrupt_obs,
+    obs_error_frac,
+)
+from evaluation.qg_specwind_s1_sweep import realistic_tasks, shapley, task_name, tasks
+from evaluation.run_qg_specwind_da import apply_s1, build_cfg, da_cfg, evaluate, s0_windows
 from models.qg_wind_modes import FourierWindBasis
 
 TINY = QGDatasetSpec(name="tiny_s1", n_train=3, n_val=3, n_test=3, nx=16, spinup_days=1.0,
@@ -88,3 +97,35 @@ def test_shapley_is_exact_on_an_additive_toy():
     for c, x in loss.items():
         assert out["score"]["components"][c]["shapley"] == pytest.approx(x)
     assert out["score"]["interaction"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_obs_error_adds_white_and_per_pass_correlated_error():
+    obs = torch.full((200, 32), float("nan"), dtype=torch.float64)
+    obs[::2] = 0.0
+    lv = S1Levels(obs_white_frac=0.15, obs_corr_frac=0.15)
+    out = corrupt_obs(obs, 2.0, lv, key=4)
+    assert torch.isnan(out[1::2]).all()
+    err = out[::2]
+    assert float(err.std()) == pytest.approx(2.0 * (0.15 ** 2 - 0.05 ** 2 + 0.15 ** 2) ** 0.5, rel=0.15)
+    assert float(err.mean(dim=1).std()) > 0.5 * 2.0 * 0.15 * 0.5 ** 0.5
+    assert obs_error_frac(lv) == pytest.approx((0.15 ** 2 + 0.15 ** 2) ** 0.5)
+    assert corrupt_obs(obs, 2.0, S1Levels(), key=4) is obs
+
+
+def test_realistic_groups_split_parameters_and_run_on_a_coarser_da_grid(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    lv = dataclasses.replace(REALISTIC, da_nx=8)
+    only_rd = apply_s1(ws, TINY, lv.only(["rd"]))[0]
+    assert only_rd["da_params"]["rd"] == pytest.approx(ws[0]["true_params"]["rd"] * 0.9)
+    assert only_rd["da_params"]["rek"] == ws[0]["true_params"]["rek"]
+    assert only_rd["da_nx"] == 16
+    assert torch.equal(only_rd["wind_state_corrupted"], ws[0]["wind_state_true"])
+    s1 = apply_s1(ws, TINY, lv)
+    assert s1[0]["da_nx"] == 8 and s1[0]["da_params"]["rek"] == pytest.approx(ws[0]["true_params"]["rek"] * 0.5)
+    _, per_window = evaluate(s1, da_cfg(cfg, lv), "etkf", torch.device("cpu"), N=6, loc_radius=2.0,
+                             init_lag_days=0.2, breed_days=2 / 12)
+    assert len(per_window) == 2 and all(m["score"] == m["score"] for m in per_window)
+    assert da_cfg(cfg, lv).obs_noise_std_frac == pytest.approx(obs_error_frac(lv))
+    names = [t["name"] for t in realistic_tasks("realistic_shapley", "base")]
+    assert len(names) == 32 and names[0] == "s0" and names[-1] == "s1r_base"

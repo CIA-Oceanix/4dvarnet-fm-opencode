@@ -18,6 +18,7 @@ Run as a module from the repo root:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import shutil
@@ -30,7 +31,16 @@ import torch
 from data.qg import QGConfig
 from data.qg_datasets import SPECS, QGDatasetSpec, shard_indices
 from data.qg_specwind_neural import check_compatible, load_full_res_windows, with_fixed_obs
-from evaluation.qg_specwind_s1 import COMPONENTS, REFERENCE, S1Levels, s1_windows
+from evaluation.qg_specwind_s1 import (
+    COMPONENTS,
+    REALISTIC_GROUPS,
+    REALISTIC_SELECTED,
+    REALISTIC_VARIANTS,
+    REFERENCE,
+    S1Levels,
+    obs_error_frac,
+    s1_windows,
+)
 from evaluation.run_qg_baselines import run
 from models.qg_dynamics import QGDynamics
 from models.qg_wind_modes import FourierWindBasis
@@ -77,6 +87,13 @@ def s1_levels_from(kappa: float, components=COMPONENTS, base: S1Levels = REFEREN
 def apply_s1(windows: list[dict], spec: QGDatasetSpec, levels: S1Levels) -> list[dict]:
     basis = FourierWindBasis(nx=spec.nx, L=spec.L, kmax=spec.kmax)
     return s1_windows(windows, levels, spec.dt, basis.wavevectors)
+
+
+def da_cfg(cfg: QGConfig, levels: S1Levels | None) -> QGConfig:
+    """The filter's config: its observation-error fraction follows the S1 `obs` component."""
+    if levels is None or not (levels.obs_white_frac or levels.obs_corr_frac):
+        return cfg
+    return dataclasses.replace(cfg, obs_noise_std_frac=obs_error_frac(levels))
 
 
 FIELDS = ("psi1", "psi2", "q1", "q2")
@@ -163,8 +180,14 @@ def main() -> None:
     p.add_argument("--disp-frac", type=float, default=1.0)
     p.add_argument("--s1-kappa", type=float, default=0.0,
                    help="S1 intensity: multiplies the reference error levels (0 = S0)")
-    p.add_argument("--s1-components", default=",".join(COMPONENTS),
-                   help=f"comma-separated S1 components from {COMPONENTS}")
+    p.add_argument("--s1-preset", default="reference", choices=("reference", "realistic"),
+                   help="reference: legacy-analogue levels scaled by --s1-kappa; realistic: the "
+                        "realism-anchored levels (--s1-variant), switched on by --s1-kappa 1")
+    p.add_argument("--s1-variant", default=REALISTIC_SELECTED, choices=sorted(REALISTIC_VARIANTS),
+                   help="realistic-preset level set (default: the calibrated one)")
+    p.add_argument("--s1-components", default=None,
+                   help=f"comma-separated components (reference: {COMPONENTS}; "
+                        f"realistic: {REALISTIC_GROUPS}); default all")
     for comp_arg in ("amp-bias", "noise-frac", "shift-frac", "param-bias"):
         p.add_argument(f"--s1-{comp_arg}", type=float, default=None,
                        help="override the reference level of this component (before --s1-kappa)")
@@ -180,16 +203,21 @@ def main() -> None:
     cfg = build_cfg(spec, args.cols_per_day, args.obs_noise_frac, args.init_lag_days)
     t0 = time.time()
     windows, report = s0_windows(spec, args.split, args.root, idx, cfg, device)
-    base = S1Levels(**{**REFERENCE.as_dict(), **{
+    realistic = args.s1_preset == "realistic"
+    comps = (args.s1_components.split(",") if args.s1_components
+             else list(REALISTIC_GROUPS if realistic else COMPONENTS))
+    preset = REALISTIC_VARIANTS[args.s1_variant] if realistic else REFERENCE
+    base = S1Levels(**{**preset.as_dict(), **{
         k: getattr(args, f"s1_{k}") for k in ("amp_bias", "noise_frac", "shift_frac", "param_bias")
         if getattr(args, f"s1_{k}") is not None}})
-    levels = s1_levels_from(args.s1_kappa, [c for c in args.s1_components.split(",") if c], base)
+    levels = base.only(comps) if realistic else s1_levels_from(args.s1_kappa, comps, base)
     if args.s1_kappa:
         windows = apply_s1(windows, spec, levels)
+    cfg_da = da_cfg(cfg, levels if args.s1_kappa else None)
     load_s = time.time() - t0
     t0 = time.time()
     summary, per_window = evaluate(
-        windows, cfg, args.method, device, N=args.N, inflation=args.inflation,
+        windows, cfg_da, args.method, device, N=args.N, inflation=args.inflation,
         loc_radius=args.loc_radius, etkf_ridge=args.etkf_ridge,
         loc_cross_layer=args.loc_cross_layer, init_ensemble=args.init_ensemble,
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
@@ -202,7 +230,9 @@ def main() -> None:
             "breed_days": args.breed_days, "disp_frac": args.disp_frac,
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
-            "s1_kappa": args.s1_kappa, "s1_levels": levels.as_dict() if args.s1_kappa else None,
+            "s1_kappa": args.s1_kappa, "s1_preset": args.s1_preset if args.s1_kappa else None,
+            "s1_variant": args.s1_variant if args.s1_kappa and realistic else None,
+            "s1_levels": levels.as_dict() if args.s1_kappa else None,
             "per_window": per_window}
     with open(os.path.splitext(args.out)[0] + "_meta.json", "w") as fh:
         json.dump(meta, fh, indent=1)

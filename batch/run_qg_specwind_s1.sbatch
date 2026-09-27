@@ -12,12 +12,15 @@
 # (kappa, components) configuration over 20 val windows. rtx8000 only (val is regenerated from seeds).
 #   PHASE=calib sbatch --array=0-18 batch/run_qg_specwind_s1.sbatch
 #   PHASE=shapley KAPPA=2 sbatch --array=0-15 batch/run_qg_specwind_s1.sbatch
+#   PHASE=realistic_calib sbatch --array=0-4 batch/run_qg_specwind_s1.sbatch
+#   PHASE=realistic_shapley VARIANT=base sbatch --array=0-31 batch/run_qg_specwind_s1.sbatch
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
 export OMP_NUM_THREADS=4
 EXTRA=()
 [ -n "${KAPPA:-}" ] && EXTRA+=(--kappa "$KAPPA")
+[ -n "${VARIANT:-}" ] && EXTRA+=(--variant "$VARIANT")
 "$PY" -m evaluation.qg_specwind_s1_sweep --phase "${PHASE:-calib}" --task "${SLURM_ARRAY_TASK_ID:?}" \
   --disp-frac "${DISP:-1.0}" --out-dir "${OUT_DIR:-experiments/qg_specwind_s1}" \
   --root experiments/qg_datasets --device cuda "${EXTRA[@]}"

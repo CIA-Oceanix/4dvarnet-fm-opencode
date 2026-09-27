@@ -10,6 +10,11 @@ the first `--n-windows` val windows of the forced dataset under S1 errors
 * `--phase shapley --kappa K`: all 16 on/off combinations of the four
   components at kappa K, for an exact additive (Shapley) attribution of the
   degradation from S0 to full S1.
+* `--phase realistic_calib`: the realism-anchored scenario (`REALISTIC`,
+  groups forcing / rd / drag / obs / res) at the variants in `VARIANTS`
+  (realistic ranges: lower edge, base, upper edge, DA grid 64/48/32).
+* `--phase realistic_shapley --variant V`: all 32 on/off combinations of the
+  five groups at variant V.
 
     python -m evaluation.qg_specwind_s1_sweep --phase calib --list
     python -m evaluation.qg_specwind_s1_sweep --phase calib --task 3
@@ -28,11 +33,12 @@ import numpy as np
 import torch
 
 from data.qg_datasets import SPECS
-from evaluation.qg_specwind_s1 import COMPONENTS
+from evaluation.qg_specwind_s1 import COMPONENTS, REALISTIC_GROUPS, REALISTIC_VARIANTS, S1Levels
 from evaluation.run_qg_specwind_da import (
     FIELDS,
     apply_s1,
     build_cfg,
+    da_cfg,
     evaluate,
     s0_windows,
     s1_levels_from,
@@ -42,6 +48,31 @@ SPEC = "qg_specwind_gyrostat_v1"
 DA = {"method": "etkf", "loc_radius": 8.0, "etkf_ridge": 1.0, "loc_cross_layer": 1.0,
       "init_ensemble": "bred"}
 TARGETS = {"q1": (0.0, 0.25), "psi1": (0.7, 0.9)}
+
+
+VARIANTS = REALISTIC_VARIANTS
+
+
+def realistic_tasks(phase: str, variant: str | None = None) -> list[dict]:
+    if phase == "realistic_calib":
+        return [{"name": f"s1r_{v}", "levels": lv, "components": list(REALISTIC_GROUPS)}
+                for v, lv in VARIANTS.items()]
+    if variant not in VARIANTS:
+        raise ValueError(f"--phase realistic_shapley needs --variant from {sorted(VARIANTS)}")
+    out = []
+    for r in range(len(REALISTIC_GROUPS) + 1):
+        for comps in itertools.combinations(REALISTIC_GROUPS, r):
+            out.append({"name": realistic_name(variant, comps),
+                        "levels": VARIANTS[variant].only(comps), "components": list(comps)})
+    return out
+
+
+def realistic_name(variant: str, comps) -> str:
+    if not comps:
+        return "s0"
+    if tuple(comps) == REALISTIC_GROUPS:
+        return f"s1r_{variant}"
+    return f"s1r_{variant}_{'+'.join(comps)}"
 
 
 def tasks(phase: str, kappa: float | None = None) -> list[tuple[float, tuple[str, ...]]]:
@@ -66,6 +97,14 @@ def task_name(kappa: float, comps: tuple[str, ...], disp_frac: float) -> str:
 def run_task(kappa: float, comps: tuple[str, ...], out_dir: str, root: str, n_windows: int,
              device: torch.device, disp_frac: float, method: str, loc_radius: float) -> str:
     name = task_name(kappa, comps, disp_frac)
+    levels = s1_levels_from(kappa, comps)
+    return run_levels(name, levels if comps and kappa else None, kappa, list(comps), out_dir,
+                      root, n_windows, device, disp_frac, method, loc_radius)
+
+
+def run_levels(name: str, levels: S1Levels | None, kappa: float, comps: list[str], out_dir: str,
+               root: str, n_windows: int, device: torch.device, disp_frac: float, method: str,
+               loc_radius: float) -> str:
     path = os.path.join(out_dir, f"{name}.json")
     if os.path.exists(path):
         return path
@@ -74,16 +113,17 @@ def run_task(kappa: float, comps: tuple[str, ...], out_dir: str, root: str, n_wi
     idx = list(range(n_windows))
     t0 = time.time()
     windows, report = s0_windows(spec, "val", root, idx, cfg, device)
-    levels = s1_levels_from(kappa, comps)
-    if comps and kappa:
+    if levels is not None:
         windows = apply_s1(windows, spec, levels)
     load_s = time.time() - t0
     da = {**DA, "method": method, "loc_radius": loc_radius}
     t0 = time.time()
-    _, per_window = evaluate(windows, cfg, da["method"], device, loc_radius=da["loc_radius"],
+    _, per_window = evaluate(windows, da_cfg(cfg, levels), da["method"], device,
+                             loc_radius=da["loc_radius"],
                              etkf_ridge=da["etkf_ridge"], loc_cross_layer=da["loc_cross_layer"],
                              init_ensemble=da["init_ensemble"], disp_frac=disp_frac)
-    rec = {"name": name, "kappa": kappa, "components": list(comps), "levels": levels.as_dict(),
+    rec = {"name": name, "kappa": kappa, "components": list(comps),
+           "levels": levels.as_dict() if levels is not None else None,
            "da": {**da, "disp_frac": disp_frac}, "indices": idx, "load": report,
            "load_seconds": round(load_s, 1), "da_seconds": round(time.time() - t0, 1),
            "per_window": per_window}
@@ -117,9 +157,16 @@ def _metric(rec: dict, key: str) -> np.ndarray:
 
 def shapley(recs: dict, kappa: float, disp_frac: float = 1.0) -> dict | None:
     """Per-metric Shapley attribution of the S0 -> full-S1 EV loss at kappa (None if incomplete)."""
+    return shapley_over(recs, COMPONENTS,
+                        lambda c: task_name(kappa if c else 0.0, c, disp_frac))
+
+
+def shapley_over(recs: dict, components, name_of) -> dict | None:
+    """Shapley attribution over `components`; `name_of(subset)` names each subset's record."""
+    COMPONENTS = tuple(components)  # noqa: N806
     n = len(COMPONENTS)
     subsets = [c for r in range(n + 1) for c in itertools.combinations(COMPONENTS, r)]
-    names = {c: task_name(kappa if c else 0.0, c, disp_frac) for c in subsets}
+    names = {c: name_of(c) for c in subsets}
     if any(nm not in recs for nm in names.values()):
         return None
     out = {}
@@ -146,7 +193,8 @@ def shapley(recs: dict, kappa: float, disp_frac: float = 1.0) -> dict | None:
     return out
 
 
-def summarize(out_dir: str, kappa: float | None, disp_frac: float) -> dict:
+def summarize(out_dir: str, kappa: float | None, disp_frac: float,
+              variant: str | None = None) -> dict:
     recs = _load(out_dir)
     rows = []
     for name, r in recs.items():
@@ -165,6 +213,9 @@ def summarize(out_dir: str, kappa: float | None, disp_frac: float) -> dict:
     out = {"rows": rows, "targets": TARGETS}
     if kappa is not None:
         out["shapley"] = shapley(recs, kappa, disp_frac)
+    if variant is not None:
+        out["shapley"] = shapley_over(recs, REALISTIC_GROUPS,
+                                      lambda c: realistic_name(variant, c))
     with open(os.path.join(out_dir, "summary.json"), "w") as fh:
         json.dump(out, fh, indent=1)
     return out
@@ -172,7 +223,9 @@ def summarize(out_dir: str, kappa: float | None, disp_frac: float) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--phase", default="calib", choices=("calib", "shapley"))
+    p.add_argument("--phase", default="calib",
+                   choices=("calib", "shapley", "realistic_calib", "realistic_shapley"))
+    p.add_argument("--variant", default=None, choices=sorted(VARIANTS))
     p.add_argument("--kappa", type=float, default=None)
     p.add_argument("--list", action="store_true")
     p.add_argument("--task", type=int)
@@ -186,7 +239,7 @@ def main() -> None:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
     if args.summarize:
-        s = summarize(args.out_dir, args.kappa, args.disp_frac)
+        s = summarize(args.out_dir, args.kappa, args.disp_frac, args.variant)
         for r in s["rows"]:
             print(f"{r['name']:40s} psi1 med {r['median_psi1']:.3f} [{r['iqr_psi1'][0]:.2f},"
                   f"{r['iqr_psi1'][1]:.2f}] in {r['in_target_psi1']:.0%}  q1 med {r['median_q1']:.3f} "
@@ -199,13 +252,24 @@ def main() -> None:
                 print(f"shapley {key:5s} S0 {d['s0']:.3f} -> S1 {d['s1']:.3f} (loss {d['loss']:.3f}): "
                       f"{parts}  interaction {d['interaction']:+.3f}")
         return
+    out_dir = args.out_dir if args.method == "etkf" else os.path.join(args.out_dir, args.method)
+    if args.phase.startswith("realistic"):
+        todo_r = realistic_tasks(args.phase, args.variant)
+        if args.list:
+            for k, t in enumerate(todo_r):
+                print(k, t["name"])
+            return
+        t = todo_r[args.task]
+        print(run_levels(t["name"], t["levels"] if t["components"] else None, 1.0, t["components"],
+                         out_dir, args.root, args.n_windows, torch.device(args.device),
+                         args.disp_frac, args.method, args.loc_radius))
+        return
     todo = tasks(args.phase, args.kappa)
     if args.list:
         for k, (kap, comps) in enumerate(todo):
             print(k, task_name(kap, comps, args.disp_frac))
         return
     kap, comps = todo[args.task]
-    out_dir = args.out_dir if args.method == "etkf" else os.path.join(args.out_dir, args.method)
     print(run_task(kap, comps, out_dir, args.root, args.n_windows, torch.device(args.device),
                    args.disp_frac, args.method, args.loc_radius))
 

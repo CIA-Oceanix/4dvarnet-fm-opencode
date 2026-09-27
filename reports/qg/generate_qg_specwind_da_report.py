@@ -40,6 +40,8 @@ def load_runs(root: str) -> list[dict]:
         pw = sorted((w for m in metas for w in m["per_window"]), key=lambda w: w["index"])
         runs.append({"dir": d, "spec": m0["spec"], "method": m0["method"],
                      "cols": m0["cols_per_day"], "kappa": m0.get("s1_kappa", 0.0) or 0.0,
+                     "s1": (f"realistic {m0['s1_variant']}" if m0.get("s1_variant")
+                            else (f"κ = {m0['s1_kappa']:g}" if m0.get("s1_kappa") else "S0")),
                      "loc": m0["loc_radius"], "complete": len(metas) == n_shards,
                      "n_shards": n_shards, "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -185,7 +187,7 @@ def strata_table(runs, factors, cols: int, kappa: float) -> list[str]:
 
 
 def s1_table(runs, cols: int) -> list[str]:
-    lines = ["| dataset · method | κ | " + " | ".join(f"{LABEL[k]} S0 → S1" for k in FIELDS)
+    lines = ["| dataset · method | S1 | " + " | ".join(f"{LABEL[k]} S0 → S1" for k in FIELDS)
              + " | S1 windows in target (q₁ ∈ [0, 0.25], ψ₁ ∈ [0.7, 0.9]) |",
              "|---|---|" + "---|" * len(FIELDS) + "---|"]
     any_row = False
@@ -201,7 +203,7 @@ def s1_table(runs, cols: int) -> list[str]:
                 q1, p1 = _values(r, "da", "q1"), _values(r, "da", "psi1")
                 cells.append(f"q₁ {np.mean((q1 >= 0) & (q1 <= 0.25)):.0%}, "
                              f"ψ₁ {np.mean((p1 >= 0.7) & (p1 <= 0.9)):.0%}")
-                lines.append(f"| {lab} · {method.upper()} | {r['kappa']:g} | " + " | ".join(cells) + " |")
+                lines.append(f"| {lab} · {method.upper()} | {r['s1']} | " + " | ".join(cells) + " |")
                 any_row = True
     return lines if any_row else ["_No complete S1 test runs yet._"]
 
@@ -238,10 +240,12 @@ def main() -> None:
     md += ["", "## D3 — factor strata (S0, forced, ETKF, 3 columns per day)", ""] + \
         strata_table(runs, factors, 3, 0.0)
     if args.s1_kappa is not None:
-        md += ["", f"## S1 (κ = {args.s1_kappa:g}) — main runs (3 columns per day)", ""] + \
+        s1_label = next((r["s1"] for r in runs if abs(r["kappa"] - args.s1_kappa) < 1e-9
+                         and r["kappa"]), f"κ = {args.s1_kappa:g}")
+        md += ["", f"## S1 ({s1_label}) — main runs (3 columns per day)", ""] + \
             main_table(runs, 3, args.s1_kappa)
         md += ["", "## S1 against S0", ""] + s1_table(runs, 3)
-        md += ["", f"## D3 — factor strata (S1 κ = {args.s1_kappa:g}, forced, ETKF)", ""] + \
+        md += ["", f"## D3 — factor strata (S1 {s1_label}, forced, ETKF)", ""] + \
             strata_table(runs, factors, 3, args.s1_kappa)
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w") as fh:

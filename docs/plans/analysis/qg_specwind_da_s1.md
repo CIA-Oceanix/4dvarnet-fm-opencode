@@ -1,6 +1,9 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S1 (model error) — design
 
-**Status:** DRAFT v1 (2026-09-27). Follows the S0 design
+**Status:** DRAFT v2 (2026-09-27). v2 adds the realism-anchored scenario
+(§2b), which replaced the legacy-analogue κ scan as the selected S1 after
+calibration (`docs/results/qg_specwind_da_s1_calibration.md`: realistic
+"high"). Follows the S0 design
 (`docs/plans/analysis/qg_specwind_da_s0.md`) and the val-tuned S0 settings
 (`docs/results/qg_specwind_da2_val_tuning.md`). 4D-Var is deliberately out of
 scope for now; ETKF and EnKF only.
@@ -35,6 +38,26 @@ observations and metrics are the S0 ones.
   the window's dataset index, so switching a component on or off never
   changes another's draw. Attribution differences are then pure effects,
   not sampling noise.
+
+## 2b. Realism-anchored scenario (v2)
+
+At κ = 2 the legacy mix reaches the target only by inflating rd to −30%
+(about 3× real uncertainty), and it has no observation or structural error.
+The attribution then mostly measures that rd error. The realistic scenario
+(`REALISTIC_VARIANTS`) instead uses magnitudes defensible for an ocean
+reanalysis, and five attribution groups:
+
+| group | base | range tested (low → high) |
+|---|---|---|
+| `forcing` (amplitude, random, position) | +15%, 0.25 × RMS, 50 km | +10%, 0.15, 30 km → +20%, 0.35, 70 km |
+| `rd` | −10% | −5% → −15% |
+| `drag` (bottom) | −50% | −30% → −60% |
+| `obs` (white + correlated per pass, fraction of ψ₁ std) | 15% + 15% | 10% + 10% → 20% + 20% |
+| `res` (DA grid, truth 64) | 32 | 48 → 32 (plus 48 and 64 at base) |
+
+The filter's R is the total observation-error variance, diagonal; the
+per-pass correlation is not represented, as in operational systems. The
+bred ensemble breeds on the DA grid from the downsampled truth.
 
 ## 3. Calibration target
 
@@ -81,15 +104,17 @@ the attribution is known.
 
 ## 6. Test runs
 
-At the calibrated levels: ETKF and EnKF, 100 test windows of the forced and
-coupled datasets, with the free forecast, alongside the S0 DA-3 runs.
+At the selected levels (realistic "high"): ETKF and EnKF, 100 test windows
+of the forced and coupled datasets, with the free forecast, alongside the S0
+DA-3 runs (`batch/run_qg_specwind_da.sbatch` with `PRESET=realistic KAPPA=1`).
 
 ## 7. Out of scope (for now)
 
 - **4D-Var** (strong/weak constraint): excluded at the user's request.
-- **Structural error:** the one-layer DA model (needs a spectral wind hook
-  for `QG1LDynamics`), and the missing-feedback error (coupled truth, forced
-  DA model), which is physically small (about 1% of the gyrostat tendency).
+- **Other structural errors:** the one-layer DA model (needs a spectral wind
+  hook for `QG1LDynamics`), and the missing-feedback error (coupled truth,
+  forced DA model), which is physically small (about 1% of the gyrostat
+  tendency). Resolution is covered by the `res` group (v2).
 
 ## 8. Compute
 
