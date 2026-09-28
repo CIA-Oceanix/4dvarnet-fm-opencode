@@ -1,6 +1,6 @@
 # Plan: ensemble transform Kalman smoother (ETKS) on the L96 ETKF
 
-**Status:** DESIGN — ETKS built on the existing unlocalised L96 ETKF, to measure the filter-vs-smoother (sequential inference, F3) restriction term for P1. Not started. Prerequisite done: the ETKF square-root transform now keeps the unobserved anomaly directions (PR #291). Revised 2026-09-28: exact `correct` retrospective-inflation factor, its effective-lag consequence, and the tests that pin it. Revised again 2026-09-28 after the prototype (`docs/results/l96_etks_prototype.md`): `correct` confirmed as the default, `none` restricted to L ≤ 2, ensemble RTS dropped, PR 2 must score with the benchmark metric and tune λ first.
+**Status:** DESIGN — ETKS built on the existing unlocalised L96 ETKF, to measure the filter-vs-smoother (sequential inference, F3) restriction term for P1. PR 1 implemented (`ETKS` in `evaluation/baselines.py`, `tests/test_baselines_etks.py`); PR 2 (wiring, validation tuning, benchmark rows) not started. Prerequisite done: the ETKF square-root transform now keeps the unobserved anomaly directions (PR #291). Revised 2026-09-28: exact `correct` retrospective-inflation factor, its effective-lag consequence, and the tests that pin it. Revised again 2026-09-28 after the prototype (`docs/results/l96_etks_prototype.md`): `correct` confirmed as the default, `none` restricted to L ≤ 2, ensemble RTS dropped, PR 2 must score with the benchmark metric and tune λ first.
 
 ## Prototype outcome (2026-09-28)
 
