@@ -183,10 +183,14 @@ Always run tests after making changes.
   2026-09-10 "FDV2 gradient-channel NaN fix + cosine LR scheduler now the deliberate default"
   entry before reverting this default on sight.
 
-- **L96 DA benchmark inflation (as of 2026-09-23):** ETKF/EnKF use inflation **1.5 on S0 and 2.0
-  on S1** (`evaluation/run_l96.py::L96_DA_INFLATION`, the default of `evaluate_all_l96.py` and
-  `eval_da_random_layout_l96.py`). The earlier single value 2.0 is S1-tuned and over-disperses S0; see
-  the 2026-09-23 "L96 DA benchmark default inflation per case" changelog entry before changing it.
+- **L96 DA benchmark inflation (as of 2026-09-28):** per method and per case, the defaults of
+  `evaluate_all_l96.py` and `eval_da_random_layout_l96.py` (`evaluation/run_l96.py`):
+  **ETKF 1.15 on S0 and 2.5 on S1** (`L96_ETKF_INFLATION`, retuned on the validation windows after the
+  #291 square-root fix, one value per case for both observing systems;
+  `docs/results/l96_da_inflation_post291.md`), **EnKF 1.2 on S0 and 3.0 on S1** (`L96_ENKF_INFLATION`,
+  same sweep and selection rule: the shared value minimising the worse layout's RMSE loss). Read that
+  note before changing either; DA numbers produced before 2026-09-28 used 1.5 / 2.0 (and, for the ETKF,
+  the pre-#291 filter).
 
 - **Flow sampler step schedule (as of 2026-09-24):** `VanillaCFM.sample` / `PredictStateCFM.sample`
   (and their monai subclasses) integrate on the early-fine Euler grid `tau_k = 1 - (1 - k/N)^0.5`
