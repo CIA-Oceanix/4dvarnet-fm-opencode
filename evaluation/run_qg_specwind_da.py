@@ -131,7 +131,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
              inflation: float = 1.0, loc_radius: float = 8.0, etkf_ridge: float = 1.0,
              loc_cross_layer: float = 1.0, init_ensemble: str = "bred", breed_days: float = 3.0,
              disp_frac: float = 1.0, init_lag_days: float = 5.0, out_path: str | None = None,
-             save_traj: str | None = None) -> tuple[dict, list[dict]]:
+             save_traj: str | None = None, etkf_loc_mode: str = "square_root") -> tuple[dict, list[dict]]:
     """Run S0/S1 DA on prepared windows; return run()'s payload and per-window metrics."""
     traj_dir = save_traj or tempfile.mkdtemp(prefix="qgda_", dir=os.environ.get("TMPDIR", "/tmp"))
     try:
@@ -140,7 +140,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       init="lagged", geometry="random_columns", obs_var="psi",
                       init_lag_days=init_lag_days, ds={"test_s0": windows}, etkf_ridge=etkf_ridge,
                       save_traj=traj_dir, loc_cross_layer=loc_cross_layer,
-                      init_ensemble_kind=init_ensemble, breed_days=breed_days, disp_frac=disp_frac)
+                      init_ensemble_kind=init_ensemble, breed_days=breed_days, disp_frac=disp_frac,
+                      etkf_loc_mode=etkf_loc_mode)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
         per_window = []
@@ -148,7 +149,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
             m = window_metrics(traj["analyses"][k], traj["free_forecast"][k], traj["refs"][k],
                                w["true_params"], cfg, device)
             m.update({"index": int(w["init_seed_key"]), "crps": s["crps_list"][k],
-                      "level": w["specwind"]["factors"]["level"]})
+                      "level": w["specwind"]["factors"]["level"],
+                      **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()}})
             per_window.append(m)
     finally:
         if save_traj is None:
@@ -178,6 +180,8 @@ def main() -> None:
     p.add_argument("--init-ensemble", default="bred", choices=("white", "bred"))
     p.add_argument("--breed-days", type=float, default=3.0)
     p.add_argument("--disp-frac", type=float, default=1.0)
+    p.add_argument("--etkf-loc-mode", default="square_root", choices=("square_root", "ensrf"),
+                   help="localized ETKF update: legacy square_root, or the exact EnSRF (ensrf)")
     p.add_argument("--s1-kappa", type=float, default=0.0,
                    help="S1 intensity: multiplies the reference error levels (0 = S0)")
     p.add_argument("--s1-preset", default="reference", choices=("reference", "realistic"),
@@ -221,13 +225,13 @@ def main() -> None:
         loc_radius=args.loc_radius, etkf_ridge=args.etkf_ridge,
         loc_cross_layer=args.loc_cross_layer, init_ensemble=args.init_ensemble,
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
-        out_path=args.out, save_traj=args.save_traj)
+        out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
             "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
-            "breed_days": args.breed_days, "disp_frac": args.disp_frac,
+            "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode,
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": args.s1_kappa, "s1_preset": args.s1_preset if args.s1_kappa else None,

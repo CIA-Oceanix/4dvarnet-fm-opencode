@@ -968,7 +968,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
         q_var_scale=1.0, fourdvar_grad_clip=100.0, loc_cross_layer=0.0,
-        init_ensemble_kind="white", breed_days=3.0):
+        init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root"):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if loc_cross_layer > 0.0 and obs_var == "q":
@@ -988,6 +988,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         refs = []
         d = ds[scen]
         spread_t0_list = []
+        spread_ratio_list = []
         mean_init_lag_list = []
         free_ra = []
         method = None
@@ -1081,7 +1082,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
-                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
+                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
+                                  loc_mode=etkf_loc_mode)
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,
@@ -1125,7 +1127,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
-                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive)
+                                  etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
+                                  loc_mode=etkf_loc_mode)
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,
@@ -1184,6 +1187,14 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             if is_qg1l:
                 ens = ens[:, :, :per_layer]
             crps_list.append(float(np.mean(_crps(ens, ref))))
+            ens_mean = ens.mean(0)
+            ens_var = ens.var(0, ddof=1) if ens.shape[0] > 1 else np.zeros_like(ens_mean)
+            ratios = {}
+            for li in range(ref.shape[-1] // per_layer):
+                sl = slice(li * per_layer, (li + 1) * per_layer)
+                err = float(np.sqrt(np.mean((ens_mean[:, sl] - ref[:, sl]) ** 2)))
+                ratios[f"q{li + 1}"] = float(np.sqrt(np.mean(ens_var[:, sl]))) / max(err, 1e-30)
+            spread_ratio_list.append(ratios)
             fcast_rmse.append(_free_forecast_rmse(
                 cfg, dyn, w, device, forcing, shared_init, upper_only=is_qg1l,
                 psi_state=is_psi_state))
@@ -1274,6 +1285,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "traj_path": traj_path,
             "mean_init_lag_days": float(np.mean(mean_init_lag_list)) if mean_init_lag_list else None,
             "spread_t0_mean": float(np.mean(spread_t0_list)) if spread_t0_list else None,
+            "spread_ratio_list": spread_ratio_list,
         }
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "

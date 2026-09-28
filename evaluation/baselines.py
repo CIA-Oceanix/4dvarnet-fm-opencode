@@ -1019,6 +1019,35 @@ def _etkf_sqrt_transform(U: torch.Tensor, d: torch.Tensor, N1: int, d_null) -> t
     return Tmat
 
 
+def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tensor, dy: torch.Tensor,
+                              loc_Lx: torch.Tensor, loc_Ly: torch.Tensor, R_obs: torch.Tensor,
+                              ridge_frac: float, N1: int) -> torch.Tensor:
+    """Localized deterministic (EnSRF) analysis ensemble.
+
+    Sample covariances normalized by N - 1 and localized (`loc_Lx` state-obs,
+    `loc_Ly` obs-obs); the mean gets the Kalman gain K = P Hᵀ S⁻¹ and the
+    anomalies the modified gain K̃ = P Hᵀ S^(-1/2) (S^(1/2) + R^(1/2))⁻¹
+    (Andrews 1968; Whitaker & Hamill 2002), so that without localization the
+    analysis anomaly covariance is exactly (I - K H) P. `ridge_frac` x the
+    largest background obs-space variance is added to R (both in S and in
+    R^(1/2)). R_obs must be diagonal.
+    """
+    dt = A.dtype
+    A64, HA64, dy64 = A.double(), HA.double(), dy.double()
+    Pf_Ht = loc_Lx.double() * (A64.T @ HA64) / N1
+    HPH = loc_Ly.double() * (HA64.T @ HA64) / N1
+    r_diag = torch.diagonal(R_obs).double() + ridge_frac * HPH.diagonal().max()
+    S = HPH + torch.diag(r_diag)
+    lam, V = torch.linalg.eigh(0.5 * (S + S.T))
+    lam = lam.clamp_min(1e-12 * lam.max())
+    s_half = (V * lam.sqrt()) @ V.T
+    s_ihalf = (V * lam.rsqrt()) @ V.T
+    K = Pf_Ht @ ((V / lam) @ V.T)
+    K_tilde = Pf_Ht @ s_ihalf @ torch.linalg.inv(s_half + torch.diag(r_diag.sqrt()))
+    mu_a = mu.double() + K @ dy64
+    return (mu_a.unsqueeze(0) + A64 - HA64 @ K_tilde.T).to(dt)
+
+
 class ETKF:
     def __init__(
         self,
@@ -1163,7 +1192,15 @@ class ETKF:
                 HA = H(ensemble, index=t) - mu_obs.unsqueeze(0)
                 dy = y_t - mu_obs
 
-                if self.loc_radius is not None or self.loc_Lx_t is not None:
+                if (self.loc_radius is not None or self.loc_Lx_t is not None) and self.loc_mode == "ensrf":
+                    R_obs = (torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
+                             if self.R_var_vec is not None
+                             else torch.eye(od_t, device=self.device) * self.R_var)
+                    ensemble = _ensrf_localized_analysis(mu, A, HA, dy, loc_Lx, loc_Ly, R_obs,
+                                                         max(self.etkf_ridge, 0.0), N1)
+                    if self.etkf_additive > 0.0:
+                        ensemble = ensemble + torch.randn_like(ensemble) * self.etkf_additive
+                elif self.loc_radius is not None or self.loc_Lx_t is not None:
                     Pf_Ht = A.T @ HA
                     H_Pf_Ht = HA.T @ HA
                     loc_Pf_Ht = loc_Lx * Pf_Ht
@@ -1315,7 +1352,15 @@ class ETKF:
                             raise NotImplementedError("missing obs channels: unlocalized ETKF with scalar R only")
                         HA, dy = HA[:, seen], dy[seen]
 
-                    if self.loc_radius is not None or self.loc_Lx_t is not None:
+                    if (self.loc_radius is not None or self.loc_Lx_t is not None) and self.loc_mode == "ensrf":
+                        R_obs = (torch.diag(torch.tensor(self.R_var_vec, dtype=torch.float32, device=self.device))
+                                 if self.R_var_vec is not None
+                                 else torch.eye(od_t, device=self.device) * self.R_var)
+                        ens_b = _ensrf_localized_analysis(mu, A, HA, dy, loc_Lx, loc_Ly, R_obs,
+                                                          max(self.etkf_ridge, 0.0), N1)
+                        if self.etkf_additive > 0.0:
+                            ens_b = ens_b + torch.randn_like(ens_b) * self.etkf_additive
+                    elif self.loc_radius is not None or self.loc_Lx_t is not None:
                         Pf_Ht = A.T @ HA
                         H_Pf_Ht = HA.T @ HA
                         loc_Pf_Ht = loc_Lx * Pf_Ht
