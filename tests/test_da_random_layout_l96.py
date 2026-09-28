@@ -146,9 +146,11 @@ def test_build_cell_restricts_cases_and_keeps_layouts_independent_of_case_select
 
 
 def test_parse_case_inflation_accepts_scalar_and_per_case():
-    from evaluation.run_l96 import L96_DA_INFLATION, parse_case_inflation
+    from evaluation.run_l96 import L96_ENKF_INFLATION, L96_ETKF_INFLATION, parse_case_inflation
     assert parse_case_inflation("2.0") == 2.0 and parse_case_inflation(1.5) == 1.5
-    assert parse_case_inflation("s0=1.5,s1=2.0") == {"s0": 1.5, "s1": 2.0} == L96_DA_INFLATION
+    assert parse_case_inflation("s0=1.5,s1=2.0") == {"s0": 1.5, "s1": 2.0}
+    assert parse_case_inflation("s0=1.2,s1=3.0") == L96_ENKF_INFLATION
+    assert parse_case_inflation("s0=1.15,s1=2.5") == L96_ETKF_INFLATION
     with pytest.raises(ValueError):
         parse_case_inflation("s0=1.5")
 
@@ -169,3 +171,12 @@ def test_fast_ring_fill_slow_only_row_filled_with_zero():
     assert torch.equal(out[1, :8], v[1, :8])
     assert torch.equal(out[1, 8:], torch.zeros(16))
     assert torch.equal(out[[0, 2]], v[[0, 2]])
+
+
+def test_param_suffix_keeps_shared_names_and_separates_per_method_inflation():
+    from eval_da_random_layout_l96 import _param_suffix
+    shared = {"s0": 1.5, "s1": 2.0}
+    assert _param_suffix("_t", shared, shared) == "_t_infs0-1.5_s1-2.0_etkf_infs0-1.5_s1-2.0_obsj2_fw_dafw"
+    assert _param_suffix("_t", 1.0, 1.0) == "_t_obsj2_fw_dafw"
+    split = _param_suffix("_t", shared, {"s0": 1.15, "s1": 2.5})
+    assert split == "_t_infs0-1.5_s1-2.0_etkf_infs0-1.15_s1-2.5_obsj2_fw_dafw"
