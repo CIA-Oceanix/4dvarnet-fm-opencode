@@ -1,6 +1,6 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S0 (ocean only, true wind known) — experiment design
 
-**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7); DA-2 done (`docs/results/qg_specwind_da2_val_tuning.md`: ETKF radius 8, ridge 1, cross-layer weight 1, bred init). DA-3/DA-4 done (`docs/results/qg_specwind_da_s0_s1_test.md`). It designs the first DA
+**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7); DA-2 done (`docs/results/qg_specwind_da2_val_tuning.md`: ETKF radius 8, cross-layer weight 1, bred init; since 2026-09-28 with the exact localized EnSRF update and ridge 0.1, `docs/results/qg_specwind_etkf_loc_update.md`). DA-3/DA-4 done (`docs/results/qg_specwind_da_s0_s1_test.md`). It designs the first DA
 baselines on the new QG datasets:
 - the forced dataset `qg_specwind_gyrostat_v1` (Option B + eddy drag;
   `docs/results/qg_specwind_demo_dataset.md`);

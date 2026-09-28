@@ -51,7 +51,7 @@ from models.qg_wind_modes import FourierWindBasis  # noqa: E402
 
 SPEC = "qg_specwind_gyrostat_v1"
 S1_VARIANT = "base"
-METHODS = (("ETKF", "etkf", {"loc_radius": 8.0, "etkf_ridge": 1.0}),
+METHODS = (("ETKF", "etkf", {"loc_radius": 8.0, "etkf_ridge": 0.1, "etkf_loc_mode": "ensrf"}),
            ("EnKF", "enkf", {"loc_radius": 6.0, "etkf_ridge": 0.1}))
 LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂"}
 CMAP = "RdBu_r"
@@ -301,7 +301,7 @@ def budget_figure(s1_root: str, out_dir: str) -> tuple[str, dict]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default="experiments/qg_specwind_da")
-    p.add_argument("--s1-root", default="experiments/qg_specwind_s1")
+    p.add_argument("--s1-root", default="experiments/qg_specwind_s1_ensrf")
     p.add_argument("--datasets", default="experiments/qg_datasets")
     p.add_argument("--out-dir", default="reports/qg/outputs/figs")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")

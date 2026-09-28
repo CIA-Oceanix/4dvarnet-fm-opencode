@@ -22,5 +22,5 @@ EXTRA=()
 [ -n "${KAPPA:-}" ] && EXTRA+=(--kappa "$KAPPA")
 [ -n "${VARIANT:-}" ] && EXTRA+=(--variant "$VARIANT")
 "$PY" -m evaluation.qg_specwind_s1_sweep --phase "${PHASE:-calib}" --task "${SLURM_ARRAY_TASK_ID:?}" \
-  --disp-frac "${DISP:-1.0}" --out-dir "${OUT_DIR:-experiments/qg_specwind_s1}" \
+  --disp-frac "${DISP:-1.0}" --out-dir "${OUT_DIR:-experiments/qg_specwind_s1_ensrf}" \
   --root experiments/qg_datasets --device cuda "${EXTRA[@]}"

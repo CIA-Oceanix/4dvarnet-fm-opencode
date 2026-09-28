@@ -30,6 +30,7 @@ LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂", "score": 
 SPECS = {"qg_specwind_gyrostat_v1": "forced", "qg_coupled_gyrostat_v1": "coupled"}
 METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF"}
 S0 = "S0"
+ETKF_MODE = "ensrf"
 
 
 def load_runs(root: str) -> list[dict]:
@@ -49,6 +50,7 @@ def load_runs(root: str) -> list[dict]:
                      "s1": (f"realistic {m0['s1_variant']}" if m0.get("s1_variant")
                             else (f"κ = {m0['s1_kappa']:g}" if m0.get("s1_kappa") else S0)),
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
+                     "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -79,7 +81,7 @@ def _values(run: dict, tag: str, key: str) -> np.ndarray:
 
 def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0) -> dict | None:
     hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
-            and r["s1"] == s1 and r["complete"]]
+            and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)]
     return hits[0] if hits else None
 
 
@@ -193,7 +195,8 @@ def strata_table(runs: list[dict], factors: dict, cols: int, s1: str) -> list[st
 
 
 def synthesis_table(runs: list[dict], s1: str) -> list[str]:
-    cfg = {"etkf": "N = 80, inflation 1.0, **radius 8, ridge 1.0**, cross-layer weight 1, bred init",
+    cfg = {"etkf": "N = 80, inflation 1.0, **exact localized EnSRF update, radius 8, ridge 0.1**, "
+                   "cross-layer weight 1, bred init",
            "enkf": "N = 80, inflation 1.0, **radius 6**, cross-layer weight 1, bred init"}
     lines = ["| method | tuned configuration (val, DA-2) | S0 ψ₁ / q₁ | S0 score | S1 ψ₁ / q₁ | S1 score |",
              "|---|---|---|---|---|---|"]
@@ -240,7 +243,7 @@ def _fig(fig_dir: str, name: str, alt: str) -> list[str]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default="experiments/qg_specwind_da")
-    p.add_argument("--s1-root", default="experiments/qg_specwind_s1")
+    p.add_argument("--s1-root", default="experiments/qg_specwind_s1_ensrf")
     p.add_argument("--datasets", default="experiments/qg_datasets")
     p.add_argument("--s1-variant", default="base", help="realistic S1 variant reported")
     p.add_argument("--out", default="reports/qg/outputs/qg_specwind_da_report.md")
@@ -250,7 +253,7 @@ def main() -> None:
     s1 = f"realistic {args.s1_variant}"
     fig_dir = os.path.join(os.path.dirname(args.out), "figs")
     incomplete = [f"`{os.path.relpath(r['dir'], args.root)}` ({r['shards']}/{r['n_shards']})"
-                  for r in runs if not r["complete"]]
+                  for r in runs if not r["complete"] and r["mode"] in (ETKF_MODE, "-")]
     md = ["# QG gyrostat case study: DA baselines (S0 + realistic S1)", "",
           "Two-layer QG ocean (64×64, 1000 km, dt 2 h) forced by the wind-stress curl of a gyrostat "
           "atmosphere (`l63ring4`, 12 Fourier modes |k| ≤ 2) plus relative-wind eddy drag. Test sets: "
@@ -261,6 +264,10 @@ def main() -> None:
           "**Reference case (S0):** upper-layer ψ₁ observed on 3 random meridional columns per day (4.7% of "
           "the grid), each once per day, 5% noise; initial state = truth lagged about 5 days with a bred "
           "80-member ensemble; the DA model is exact and gets the true wind.", "",
+          "**Filters:** ETKF with the exact localized EnSRF update (radius 8, ridge 0.1; since 2026-09-28, "
+          "`docs/results/qg_specwind_etkf_loc_update.md` — earlier renders used a localized update with "
+          "unnormalized covariances and a full-gain anomaly update, radius 8 / ridge 1); EnKF radius 6; both "
+          "with cross-layer localization weight 1 and N = 80, inflation 1.0.", "",
           f"**S1 ({s1}, model error):** wind amplitude +15%, random wind error 25% of each mode's RMS, "
           "wind position error 50 km; rd −10%; bottom drag −50%; altimetry error 15% white + 15% "
           "correlated per pass (the filter's R = total variance, white); DA model on a 32×32 grid "

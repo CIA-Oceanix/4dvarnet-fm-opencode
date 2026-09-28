@@ -1,6 +1,6 @@
 # ETKF/EnKF on the spectral-wind QG test sets: S0 benchmark and realistic S1 (DA-3/DA-4)
 
-**Status:** RESULTS (2026-09-27). DA-3/DA-4 of
+**Status:** RESULTS (2026-09-27; ETKF rows re-run 2026-09-28 with the exact localized EnSRF update). DA-3/DA-4 of
 `docs/plans/analysis/qg_specwind_da_s0.md` and the test runs of
 `docs/plans/analysis/qg_specwind_da_s1.md`. Test windows 0–99 of the forced
 (`qg_specwind_gyrostat_v1`) and coupled (`qg_coupled_gyrostat_v1`)
@@ -12,16 +12,21 @@ datasets. All settings were fixed on val beforehand:
 `reports/qg/generate_qg_specwind_da_report.py` (figures: `reports/qg/generate_qg_specwind_da_figs.py`)
 from `experiments/qg_specwind_da/` (per-window metrics written by
 `evaluation/run_qg_specwind_da.py`). Runs used `batch/run_qg_specwind_da.sbatch`
-on rtx8000, except some S1-base shards on other GPU types. Test windows are
-read from storage, never regenerated, so the GPU type only matters for val.
+on rtx8000 (EnKF) and a100 (ETKF, re-run), plus some S1-base EnKF shards on
+other GPU types. Test windows are read from storage, never regenerated, so the
+GPU type only matters for val.
 
 **Protocol:**
 - **Observations:** upper-layer ψ₁ on random meridional columns, each once
   per day, 5% noise (S0).
 - **Initial state:** the truth lagged about 5 days, with a bred ensemble
   (N = 80).
-- **Filters:** ETKF with radius 8 and ridge 1; EnKF with radius 6; both with
-  cross-layer weight 1.
+- **Filters:** ETKF with the exact localized EnSRF update (`loc_mode="ensrf"`),
+  radius 8, ridge 0.1; EnKF with radius 6; both with cross-layer weight 1.
+  The first version of this note used the legacy localized ETKF update
+  (radius 8, ridge 1), whose two defects are documented in
+  `docs/results/qg_specwind_etkf_loc_update.md`; its numbers are quoted as
+  "old ETKF" where useful.
 - **Metrics:** EV = 1 − MSE / Var(truth) per window over 30 days, averaged
   over windows, with ψ inverted using each window's own parameters. score =
   mean of the ψ₁, ψ₂, q₁ and q₂ EVs. Intervals are bootstrap 95% over
@@ -33,33 +38,36 @@ read from storage, never regenerated, so the GPU type only matters for val.
 
 | run | ψ₁ | ψ₂ | q₁ | q₂ | score [95% CI] |
 |---|---|---|---|---|---|
-| forced · ETKF | **0.932** | *0.945* | 0.607 | *0.582* | 0.766 [0.754, 0.779] |
-| forced · EnKF | *0.929* | 0.918 | *0.635* | 0.562 | 0.761 [0.749, 0.773] |
+| forced · ETKF | **0.937** | **0.933** | *0.647* | 0.578 | *0.774* [0.762, 0.786] |
+| forced · EnKF | 0.929 | 0.918 | 0.635 | 0.562 | 0.761 [0.749, 0.773] |
 | forced · free forecast | 0.759 | 0.848 | −0.057 | 0.043 | 0.398 |
-| coupled · ETKF | **0.932** | **0.946** | 0.615 | **0.600** | **0.773** [0.760, 0.786] |
-| coupled · EnKF | *0.929* | 0.919 | **0.643** | 0.580 | *0.768* [0.755, 0.780] |
+| coupled · ETKF | *0.936* | **0.933** | **0.651** | **0.595** | **0.779** [0.767, 0.791] |
+| coupled · EnKF | 0.929 | 0.919 | 0.643 | *0.580* | 0.768 [0.755, 0.780] |
 | coupled · free forecast | 0.745 | 0.838 | −0.044 | 0.068 | 0.402 |
 
-- **Val tuning carries over to test:** ETKF score 0.766 on test against
-  0.754 on val.
-- **ETKF and EnKF are tied on the score.** ETKF is better on ψ₂ (0.945
-  against 0.918), EnKF on q₁ (0.635 against 0.607).
+(Ranked among the four DA rows.)
+
+- **Val tuning carries over to test:** ETKF score 0.774 on test against
+  0.764 on val.
+- **The ETKF is best in S0 on both datasets.** Paired ETKF − EnKF: +0.013
+  [+0.011, +0.015] forced, +0.011 [+0.009, +0.013] coupled. The exact update
+  gains +0.007 [+0.005, +0.010] over the old ETKF (0.766).
 - **D2 (forced vs coupled):** no difference on any field for either
-  filter. For example, ETKF score forced − coupled = −0.007 [−0.025,
-  +0.011], a two-sample bootstrap (paired windows share seeds, not
+  filter. For example, ETKF score forced − coupled = −0.005 [−0.022,
+  +0.012], a two-sample bootstrap (paired windows share seeds, not
   trajectories). Given the true wind, the ~1% physical feedback leaves no
   trace in the DA problem, as expected.
-- **D4 (density, forced ETKF)**, score by columns per day: 1 → 0.663,
-  2 → 0.727, 3 → 0.766, 4 → 0.792, 6 → 0.820. Monotonic with diminishing
+- **D4 (density, forced ETKF)**, score by columns per day: 1 → 0.668,
+  2 → 0.734, 3 → 0.774, 4 → 0.794, 6 → 0.817. Monotonic with diminishing
   returns, so the radius tuned at 3 columns per day did not need re-tuning.
-  q₁ shows the largest gain: 0.434 at 1 column, 0.725 at 6. The bridge
-  density (4 columns per day) adds +0.026 score for both datasets.
+  q₁ shows the largest gain: 0.459 at 1 column, 0.757 at 6. The bridge
+  density (4 columns per day) adds +0.020–0.023 score.
 - **D3 (strata, forced ETKF):** calm and windy windows trade layers. Calm
-  windows (level 0, n = 21) have lower ψ (ψ₁ 0.885, ψ₂ 0.868) but higher
-  PV (q₁ 0.701, q₂ 0.689). The strongest-wind tercile has the best ψ
-  (0.965 / 0.980) and the worst PV (0.534 / 0.473): wind-forced
+  windows (level 0, n = 21) have lower ψ (ψ₁ 0.894, ψ₂ 0.832) but higher
+  PV (q₁ 0.745, q₂ 0.691). The strongest-wind tercile has the best ψ
+  (0.967 / 0.978) and the worst PV (0.567 / 0.462): wind-forced
   small-scale PV is the hardest to reconstruct from ψ₁ columns. Slower
-  gyrostat time units (longer memory) help modestly (q₁ 0.585 → 0.625 from
+  gyrostat time units (longer memory) help modestly (q₁ 0.626 → 0.664 from
   the fast to the slow tercile). Regime groups make no difference.
 
 ## 2. Realistic S1 (base, the selected scenario)
@@ -71,56 +79,56 @@ about 0.85–0.9.
 
 | run | ψ₁ | ψ₂ | q₁ | q₂ | score [95% CI] |
 |---|---|---|---|---|---|
-| forced · ETKF | **0.854** | *0.776* | 0.390 | 0.217 | 0.559 [0.541, 0.577] |
-| forced · EnKF | 0.847 | 0.762 | *0.450* | *0.326* | *0.596* [0.578, 0.615] |
+| forced · ETKF | **0.848** | 0.757 | 0.433 | 0.277 | 0.579 [0.560, 0.598] |
+| forced · EnKF | *0.847* | 0.762 | *0.450* | *0.326* | *0.596* [0.578, 0.615] |
 | forced · free forecast | 0.127 | −0.934 | −0.254 | −0.363 | −0.356 |
-| coupled · ETKF | *0.853* | **0.786** | 0.393 | 0.237 | 0.567 [0.550, 0.584] |
-| coupled · EnKF | 0.847 | 0.771 | **0.454** | **0.343** | **0.604** [0.586, 0.622] |
+| coupled · ETKF | **0.848** | *0.766* | 0.437 | 0.295 | 0.586 [0.568, 0.605] |
+| coupled · EnKF | *0.847* | **0.771** | **0.454** | **0.343** | **0.604** [0.586, 0.622] |
 | coupled · free forecast | 0.113 | −0.914 | −0.260 | −0.352 | −0.353 |
 
-- **The calibration carries over to test:** ETKF ψ₁ is 0.854 (val 0.865),
-  q₁ 0.390 (val 0.338).
+(Ranked among the four DA rows.)
+
+- **The calibration carries over to test:** ETKF ψ₁ is 0.848 (val 0.862),
+  q₁ 0.433 (val 0.389).
 - **The DA's value grows under model error.** The free forecast collapses
   (ψ₁ 0.13, ψ₂ −0.93), while the analysis keeps ψ₁ at 0.85. Relative to the
-  free forecast, the S1 score gain (+0.92) is more than twice the S0 gain
-  (+0.37).
-- **EnKF beats ETKF under S1** (score 0.596 against 0.559), almost entirely
-  in PV (q₁ +0.06, q₂ +0.11), while the two are tied in S0. The ETKF
-  settings chosen under S0 (radius 8, ridge 1) are less robust to model
-  error than the EnKF's (radius 6, stochastic updates). The obvious
-  follow-up is tuning under S1 (inflation, R, radius).
-- **Forced ≈ coupled** under S1 as well (ETKF 0.559 against 0.567).
-- **S1 hits calm windows hardest.** In calm windows ψ₂ falls to 0.410
-  (free forecast −4.6) and ψ₁ to 0.734, against 0.873 and 0.886 in windy
+  free forecast, the S1 score gain (+0.94) is more than twice the S0 gain
+  (+0.38).
+- **The EnKF still beats the ETKF under S1, by less:** paired ETKF − EnKF
+  −0.018 [−0.022, −0.014] forced, −0.017 [−0.021, −0.014] coupled, almost
+  all in PV (q₂ −0.05). The exact update recovered part of the old gap
+  (old ETKF 0.559, −0.037): +0.020 [+0.006, +0.035] in score and +0.060
+  [+0.027, +0.098] in q₂. The remainder may come from the stochastic
+  update, or from S0-tuned settings; tuning under S1 (inflation, radius)
+  is the follow-up.
+- **Forced ≈ coupled** under S1 as well (ETKF 0.579 against 0.586).
+- **S1 hits calm windows hardest.** In calm windows ψ₂ falls to 0.345
+  (free forecast −4.6) and ψ₁ to 0.720, against 0.866 and 0.883 in windy
   ones. With no real wind signal, the wind errors inject spurious forcing
   that the ψ₁ columns cannot correct in the lower layer. PV behaves the
-  other way, as in S0: calm windows keep the higher q₁ (0.501 against
-  0.360).
-- **Slow gyrostat time units hurt ψ₂ under S1** (0.658 against 0.843 in the
+  other way, as in S0: calm windows keep the higher q₁ (0.500 against
+  0.415).
+- **Slow gyrostat time units hurt ψ₂ under S1** (0.648 against 0.826 in the
   fast tercile), probably because a persistent wind error has longer to
   build up.
 
 ## 3. Harsher realistic S1 ("high", upper edge of every range), for reference
 
+Run with the **old** ETKF update (not re-run):
+
 | run | ψ₁ | ψ₂ | q₁ | q₂ |
 |---|---|---|---|---|
-| forced · ETKF | 0.801 | 0.657 | 0.232 | −0.082 |
+| forced · old ETKF | 0.801 | 0.657 | 0.232 | −0.082 |
 | forced · EnKF | 0.805 | 0.670 | 0.376 | 0.200 |
-| coupled · ETKF | 0.799 | 0.670 | 0.234 | −0.061 |
+| coupled · old ETKF | 0.799 | 0.670 | 0.234 | −0.061 |
 | coupled · EnKF | 0.804 | 0.681 | 0.382 | 0.220 |
 
-This is the variant that meets the first target (q₁ ∈ [0, 0.25] with the
-ETKF). The EnKF's advantage in PV is larger here (q₁ +0.14).
+This is the variant that met the first target (q₁ ∈ [0, 0.25] with the old
+ETKF).
 
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.
-- **The localized ETKF's anomaly update may be over-confident (unverified).**
-  It uses the full Kalman gain on the anomalies, (I − KH)A, whose covariance
-  lacks the +KRKᵀ term of an exact square-root update. That would
-  over-contract the spread, which hurts more under model error. It is a
-  candidate explanation for EnKF > ETKF in S1, not a verified one.
-  (#291 fixed a different issue, in the unlocalized branch only.)
 - **S1 uses the S0-tuned filters.** The ETKF–EnKF ranking under S1 may
   change with S1-specific tuning.
 - **The initial state is the lagged truth in both scenarios**, which is
