@@ -115,6 +115,12 @@ ETKF). The EnKF's advantage in PV is larger here (q₁ +0.14).
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.
+- **The localized ETKF's anomaly update may be over-confident (unverified).**
+  It uses the full Kalman gain on the anomalies, (I − KH)A, whose covariance
+  lacks the +KRKᵀ term of an exact square-root update. That would
+  over-contract the spread, which hurts more under model error. It is a
+  candidate explanation for EnKF > ETKF in S1, not a verified one.
+  (#291 fixed a different issue, in the unlocalized branch only.)
 - **S1 uses the S0-tuned filters.** The ETKF–EnKF ranking under S1 may
   change with S1-specific tuning.
 - **The initial state is the lagged truth in both scenarios**, which is
