@@ -19,11 +19,16 @@ export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$MPLCONFIGDIR" sbatch_logs experiments/l96_etkf_inflation_sweep
-LAMBDAS=(1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0)
-VALSETS=(regular rlayout)
+# CELLS overrides the default grid, e.g. CELLS="regular:3.5 rlayout:1.05" (set --array to match).
+if [ -n "${CELLS:-}" ]; then
+  read -r -a TASKS <<< "$CELLS"
+else
+  TASKS=()
+  for V in regular rlayout; do for L in 1.0 1.1 1.2 1.3 1.4 1.5 1.7 2.0 2.5 3.0; do TASKS+=("$V:$L"); done; done
+fi
 i=$SLURM_ARRAY_TASK_ID
-V=${VALSETS[$((i / ${#LAMBDAS[@]}))]}
-L=${LAMBDAS[$((i % ${#LAMBDAS[@]}))]}
+V=${TASKS[$i]%%:*}
+L=${TASKS[$i]##*:}
 echo "task $i: valset=$V lambda=$L commit=$(git rev-parse --short HEAD) $(hostname) $(date +%T)"
 python -u scripts/sweep_l96_etkf_inflation.py --valset "$V" --inflation "$L" \
   --out "experiments/l96_etkf_inflation_sweep/etkf_${V}_lam${L}.json"

@@ -59,7 +59,7 @@ def main() -> None:
         for v in datasets.values():
             v.windows = v.windows[:args.n_windows]
     idx = np.array(make_obs_j_indices(8, 4, 2))
-    suffix = f"_valsweep_{args.valset}_lam{args.inflation:g}" + (f"_w{args.n_windows}" if args.n_windows else "")
+    suffix = f"_valsweep_{args.valset}_lam{args.inflation:.2f}" + (f"_w{args.n_windows}" if args.n_windows else "")
     cfg = {"inflation": args.inflation}
     kw = dict(obs_j=2, obs_interval=100, fw_randomized=True, da_fast_weights=True)
     if args.valset == "rlayout":
@@ -68,7 +68,7 @@ def main() -> None:
     run_and_cache_baselines(datasets, device, batch_size=200, da_window_steps=500, etkf_config=cfg,
                             suffix=suffix, exclude_methods=["Weak-4DVar", "Strong-4DVar", "EnKF"], **kw)
 
-    paths = glob.glob(os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws500{suffix}*.npz"))
+    paths = glob.glob(os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws500{suffix}_*obsj2*.npz"))
     assert len(paths) == 1, paths
     z = np.load(paths[0])
     out = {"valset": args.valset, "inflation": args.inflation, "n_windows": len(datasets["test_s0"]), "cases": {}}
@@ -80,7 +80,7 @@ def main() -> None:
     with open(args.out, "w") as f:
         json.dump(out, f, indent=1)
     print(json.dumps(out))
-    for f in glob.glob(os.path.join(EXP_DIR, f"*{suffix}*")):
+    for f in glob.glob(os.path.join(EXP_DIR, f"*{suffix}_*")):
         os.remove(f)
 
 
