@@ -12,7 +12,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 
 ## Findings
 
-1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 0.312 / 0.307, random S0 / S1 0.388 / 0.385 -- flat under model error. The SDA2-M prior is marginally better at S0 (0.310 / 0.382) but degrades at S1 (0.333 / 0.408): it was trained with DA params equal to the true ones, so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: ETKF 0.687.
+1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 0.312 / 0.307, random S0 / S1 0.388 / 0.385 -- flat under model error. The SDA2-M prior is marginally better at S0 (0.310 / 0.382) but degrades at S1 (0.333 / 0.408): it was trained with DA params equal to the true ones, so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: ETKS, val-tuned inflation (S0 1.1 / S1 2.5) 0.514.
 2. **400 epochs was too short; the benchmark default is now 1200 epochs** (2026-09-26). At 1200 epochs every family gains 9-19% (regular S0: DirectUNet 0.380 -> 0.340, PredictStateCFM 0.403 -> 0.341, VanillaCFM 0.430 -> 0.351), and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.
 3. **Observation-count crossover at S0**: DA (ETKF) is best at <= 10 obs per window; from ~20 obs every learned scheme beats every DA baseline, and the gap grows with density. Under model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.
 4. **Fast channels**: no crossover -- learned beat DA at every k, including slow-only (k 0, below training range). The learned slow-variable error is flat (~0.2-0.3); all the k-dependence is in the fast variables. Under model error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).
@@ -30,6 +30,10 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKF | — | 0.687 ± 0.131 | 1.478 ± 0.240 | 0.798 ± 0.220 | 1.418 ± 0.307 | 1.16 | — |
 | DA | EnKF | — | 0.711 ± 0.130 | 1.514 ± 0.247 | 0.850 ± 0.227 | 1.428 ± 0.282 | 1.20 | — |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 1.06 | — |
+| DA | ETKF, rerun after #291 (same run as the ETKS row) | — | 0.707 ± 0.134 | 1.479 ± 0.240 | 0.863 ± 0.221 | 1.376 ± 0.289 | 1.22 | — |
+| DA | ETKS | — | 0.582 ± 0.123 | 1.400 ± 0.230 | 0.770 ± 0.253 | 1.282 ± 0.295 | 1.32 | — |
+| DA | ETKF, val-tuned inflation (S0 1.1 / S1 2.5) | — | 0.625 ± 0.173 | 1.410 ± 0.230 | 0.662 ± 0.257 | 1.406 ± 0.307 | 1.06 | — |
+| DA | ETKS, val-tuned inflation (S0 1.1 / S1 2.5) | — | 0.514 ± 0.186 | 1.338 ± 0.223 | 0.566 ± 0.277 | 1.349 ± 0.299 | 1.10 | — |
 | Benchmark recipe, 400 ep | DirectUNet-M | 3/3 | 0.380 ± 0.064 | 0.379 ± 0.064 | 0.493 ± 0.314 | 0.490 ± 0.271 | 1.30 | 0.004 |
 | Benchmark recipe, 400 ep | PredictStateCFM-M | 3/3 | 0.403 ± 0.079 | 0.400 ± 0.079 | 0.509 ± 0.270 | 0.513 ± 0.243 | 1.26 | 0.005 |
 | Benchmark recipe, 400 ep | VanillaCFM-M | 3/3 | 0.430 ± 0.072 | 0.427 ± 0.070 | 0.535 ± 0.282 | 0.544 ± 0.256 | 1.24 | 0.006 |
@@ -57,6 +61,10 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 |---|---|---|---|---|---|
 | DA | ETKF | 0.331 (0.854) | 0.396 (0.786) | 0.98 (0.37) | 0.96 (0.58) |
 | DA | EnKF | 0.336 (0.906) | 0.421 (0.798) | 0.97 (0.33) | 1.08 (0.54) |
+| DA | ETKF, rerun after #291 (same run as the ETKS row) | 0.343 (0.855) | 0.441 (0.765) | 1.00 (0.37) | 1.13 (0.65) |
+| DA | ETKS | 0.293 (0.851) | 0.385 (0.724) | 0.71 (0.24) | 0.81 (0.41) |
+| DA | ETKF, val-tuned inflation (S0 1.1 / S1 2.5) | 0.283 (0.759) | 0.293 (0.786) | 0.51 (0.61) | 0.62 (0.93) |
+| DA | ETKS, val-tuned inflation (S0 1.1 / S1 2.5) | 0.252 (0.771) | 0.264 (0.745) | 0.33 (0.34) | 0.44 (0.53) |
 | Benchmark recipe, 400 ep | PredictStateCFM-M | 0.183 (0.182) | 0.228 (0.230) | 0.70 (0.70) | 0.68 (0.65) |
 | Benchmark recipe, 400 ep | VanillaCFM-M | 0.196 (0.196) | 0.239 (0.244) | 0.79 (0.80) | 0.75 (0.73) |
 | Benchmark default (1200 ep) | PredictStateCFM-M | 0.150 (0.148) | 0.194 (0.196) | 0.63 (0.63) | 0.64 (0.61) |

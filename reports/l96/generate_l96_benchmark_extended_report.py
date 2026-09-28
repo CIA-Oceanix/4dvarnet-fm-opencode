@@ -63,7 +63,8 @@ DAHERE = HERE / "l96_da_random_layout"
 ETKS_REG = ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-inf{inf}_infs0-1.5_s1-2.0"
             "_etkf_inf{inf}_obsj2_int100_fw_dafw.npz")
 ETKS_CAN = "per_window_rlayout_n10-100_k4-16_w200_d1_etks-correct-Lfull-inf{inf}_inf{inf}.npz"
-ETKS_ROWS = (("ETKS", "s0-1.5_s1-2.0", "ETKS"),
+ETKS_ROWS = (("ETKF, rerun after #291 (same run as the ETKS row)", "s0-1.5_s1-2.0", "ETKF"),
+             ("ETKS", "s0-1.5_s1-2.0", "ETKS"),
              ("ETKF, val-tuned inflation (S0 1.1 / S1 2.5)", "s0-1.1_s1-2.5", "ETKF"),
              ("ETKS, val-tuned inflation (S0 1.1 / S1 2.5)", "s0-1.1_s1-2.5", "ETKS"))
 OUT = ROOT / "reports/l96/outputs"
