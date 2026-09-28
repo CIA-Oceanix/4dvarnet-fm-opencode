@@ -45,8 +45,8 @@ from evaluation.run_qg_specwind_da import (
 )
 
 SPEC = "qg_specwind_gyrostat_v1"
-DA = {"method": "etkf", "loc_radius": 8.0, "etkf_ridge": 1.0, "loc_cross_layer": 1.0,
-      "init_ensemble": "bred"}
+DA = {"method": "etkf", "loc_radius": 8.0, "etkf_ridge": 0.1, "loc_cross_layer": 1.0,
+      "init_ensemble": "bred", "etkf_loc_mode": "ensrf"}
 TARGETS = {"q1": (0.0, 0.25), "psi1": (0.7, 0.9)}
 
 
@@ -122,7 +122,8 @@ def run_levels(name: str, levels: S1Levels | None, kappa: float, comps: list[str
     _, per_window = evaluate(windows, da_cfg(cfg, levels), da["method"], device,
                              loc_radius=da["loc_radius"],
                              etkf_ridge=da["etkf_ridge"], loc_cross_layer=da["loc_cross_layer"],
-                             init_ensemble=da["init_ensemble"], disp_frac=disp_frac)
+                             init_ensemble=da["init_ensemble"], disp_frac=disp_frac,
+                             etkf_loc_mode=da["etkf_loc_mode"])
     rec = {"name": name, "kappa": kappa, "components": list(comps),
            "levels": levels.as_dict() if levels is not None else None,
            "da": {**da, "disp_frac": disp_frac}, "indices": idx, "load": report,
@@ -232,7 +233,7 @@ def main() -> None:
     p.add_argument("--list", action="store_true")
     p.add_argument("--task", type=int)
     p.add_argument("--summarize", action="store_true")
-    p.add_argument("--out-dir", default="experiments/qg_specwind_s1")
+    p.add_argument("--out-dir", default="experiments/qg_specwind_s1_ensrf")
     p.add_argument("--root", default="experiments/qg_datasets")
     p.add_argument("--n-windows", type=int, default=20)
     p.add_argument("--disp-frac", type=float, default=1.0)

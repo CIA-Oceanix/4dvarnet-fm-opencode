@@ -14,7 +14,9 @@
 #   SPEC=qg_specwind_gyrostat_v1 METHOD=etkf COLS=3 N_WINDOWS=100 N_SHARDS=10 \
 #     sbatch --array=0-9 batch/run_qg_specwind_da.sbatch
 # Defaults are the DA-2 val-tuned settings (docs/results/qg_specwind_da2_val_tuning.md);
-# override LOC / RIDGE / CROSS / INIT to reproduce other configurations. The EnKF's tuned
+# override LOC / RIDGE / CROSS / INIT / LOCMODE to reproduce other configurations (the ETKF
+# default is the exact localized EnSRF, LOCMODE=ensrf, since 2026-09-28; LOCMODE=square_root RIDGE=1.0
+# reproduces the earlier runs). The EnKF's tuned
 # radius is 6: METHOD=enkf LOC=6.0.
 # KAPPA > 0 runs S1 at that intensity (evaluation/qg_specwind_s1.py reference levels);
 # PRESET=realistic KAPPA=1 [VARIANT=base] runs the realism-anchored S1.
@@ -24,13 +26,13 @@ PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/py
 export OMP_NUM_THREADS=4
 : "${SPEC:?set SPEC}" "${METHOD:?set METHOD}" "${N_SHARDS:?set N_SHARDS}"
 SPLIT="${SPLIT:-test}"; COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; START="${START:-0}"
-LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-1.0}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"
+LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-0.1}"; LOCMODE="${LOCMODE:-ensrf}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"
 SHARD="${SLURM_ARRAY_TASK_ID:-0}"
-OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
+OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_da --spec "$SPEC" --root experiments/qg_datasets \
   --split "$SPLIT" --start "$START" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" \
   --method "$METHOD" --cols-per-day "$COLS" --N "$ENS" --loc-radius "$LOC" --etkf-ridge "$RIDGE" \
-  --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" \
+  --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" --etkf-loc-mode "$LOCMODE" \
   --s1-preset "$PRESET" --s1-variant "$VARIANT" \
   --out "$OUT" --device cuda

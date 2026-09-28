@@ -86,10 +86,12 @@ Paired differences in score (bootstrap 95% over windows):
 
 ## Implications
 
-- **QG gyrostat benchmark:** switching the ETKF to `loc_mode="ensrf"`
-  (radius 8, ridge 0.1) would improve both scenarios and make the ETKF
-  rows correct. The switch needs the ETKF test rows re-run; this is
-  pending the user's decision.
+- **QG gyrostat benchmark: adopted (2026-09-28).** The benchmark ETKF is
+  now `loc_mode="ensrf"`, radius 8, ridge 0.1. The test rows, the report
+  and the S1 base attribution were re-run. On test: S0 0.774 (old 0.766,
+  EnKF 0.761); S1 0.579 (old 0.559, EnKF 0.596)
+  (`docs/results/qg_specwind_da_s0_s1_test.md`,
+  `docs/results/qg_specwind_da_s1_calibration.md` §3.1).
 - **Legacy QG reports** (storm-forced case, `qg_da_report.md` etc.) used the
   flawed localized update throughout. Their ETKF numbers are
   configuration-specific rather than filter-intrinsic, especially the
