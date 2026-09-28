@@ -1,6 +1,6 @@
 # ETKF/EnKF DA on the spectral-wind QG datasets, S0 (ocean only, true wind known) — experiment design
 
-**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7); DA-2 done (`docs/results/qg_specwind_da2_val_tuning.md`: ETKF radius 8, ridge 1, cross-layer weight 1, bred init). It designs the first DA
+**Status:** DRAFT v2 (2026-09-26): decisions settled (§9); DA-1 done (see the DA-1 note in §7); DA-2 done (`docs/results/qg_specwind_da2_val_tuning.md`: ETKF radius 8, ridge 1, cross-layer weight 1, bred init). DA-3/DA-4 done (`docs/results/qg_specwind_da_s0_s1_test.md`). It designs the first DA
 baselines on the new QG datasets:
 - the forced dataset `qg_specwind_gyrostat_v1` (Option B + eddy drag;
   `docs/results/qg_specwind_demo_dataset.md`);
@@ -221,8 +221,8 @@ it.
 |---|---|
 | DA-1 | Spectral hook in `QGDynamics` (the minimal part of PR-2), the `_build_dyn` dispatch, the driver `evaluation/run_qg_specwind_da.py`, and tests. One PR. |
 | DA-2 | Tuning on val (§4.1); record in `docs/results/`. **Done:** `docs/results/qg_specwind_da2_val_tuning.md`. 92 configurations, including radius extensions to 16; the selected settings are now the driver defaults. |
-| DA-3 | Main runs, bridge runs and density sensitivity (§4.2–4.3); SLURM array if the data are staged. |
-| DA-4 | Report generator and report; results doc with D1–D4. Archive the run config and estimates per the archive convention. |
+| DA-3 | Main runs, bridge runs and density sensitivity (§4.2–4.3); SLURM array if the data are staged. **Done** (100 windows per cell; the 500-window D2/D3 extension not run: D2 shows no forced–coupled difference at 100). |
+| DA-4 | Report generator and report; results doc with D1–D4. Archive the run config and estimates per the archive convention. **Done:** `reports/qg/generate_qg_specwind_da_report.py`, `docs/results/qg_specwind_da_s0_s1_test.md`. |
 
 **DA-1 note (measured, 2 windows; not results).**
 - **Cost:** ETKF with N = 80 and 3 columns per day takes 43 s per 30-day

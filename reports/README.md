@@ -69,6 +69,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md` |
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
+| `reports/qg/outputs/qg_specwind_da_report.md` | `docs/results/qg_specwind_da_s0_s1_test.md` |
 | `reports/qg/outputs/qg_spectral_wind_report.md` | `docs/results/qg_spectral_wind_calibration.md` |
 
 ## Status vocabulary
@@ -145,6 +146,7 @@ their own stated configuration.
 | `qg1l_report.md` | One-layer QG variant | **FROZEN** | old DA defaults | `reports/qg/generate_qg1l_report.py` |
 | `figure_qg_lag_loc_sweep_report.md` | Lag × localization sweep figure | **FROZEN** | old DA defaults | none in the repo |
 | `qg_spectral_wind_report.md` | First QG simulations under the Option B spectral wind drivers (storm, spectral OU, gyrostat, surrogate) | **CURRENT** — illustrative single realizations, no statistical claims | simulation only (no DA), nominal ocean, 2-year unforced spin-up + 120 days | `reports/qg/simulate_qg_spectral_wind.py` |
+| `qg_specwind_da_report.md` | ETKF/EnKF on the spectral-wind QG test sets (forced and coupled): S0 benchmark (main, bridge density, D2 forced vs coupled, D4 density curve, D3 strata) and the realistic S1 | **CURRENT** | val-tuned DA-2 settings (ETKF radius 8 / ridge 1, EnKF radius 6, cross-layer 1, bred init); S1 realistic base | `reports/qg/generate_qg_specwind_da_report.py --s1-kappa 1 --s1-variant base` |
 
 ## L63
 
