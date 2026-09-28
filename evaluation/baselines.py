@@ -1003,6 +1003,22 @@ def _expand_batch_params(params: dict, B: int, N: int) -> dict:
     return out
 
 
+def _etkf_sqrt_transform(U: torch.Tensor, d: torch.Tensor, N1: int, d_null) -> torch.Tensor:
+    """Symmetric square root sqrt(N1) (N1 I + Yᵀ Y)^(-1/2) in ensemble space.
+
+    ``U`` (N, r) and ``d`` (r,) come from a thin SVD of the (N, od) weighted
+    obs anomalies. When od < N the thin SVD has r < N columns, and the
+    directions orthogonal to them -- the ones the observations do not
+    constrain, eigenvalue ``d_null`` -- must be kept rather than zeroed:
+    dropping them collapses the analysis anomalies to rank r at every cycle.
+    """
+    Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+    if U.shape[1] < U.shape[0]:
+        null_proj = torch.eye(U.shape[0], dtype=U.dtype, device=U.device) - U @ U.T
+        Tmat = Tmat + (N1 / d_null) ** 0.5 * null_proj
+    return Tmat
+
+
 class ETKF:
     def __init__(
         self,
@@ -1178,7 +1194,7 @@ class ETKF:
                     s2 = s ** 2
                     d = s2 + N1 + self.etkf_ridge * s2.max()
                     Pw = U @ torch.diag(1.0 / d) @ U.T
-                    Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                    Tmat = _etkf_sqrt_transform(U, d, N1, N1 + self.etkf_ridge * s2.max())
                     w = (dy * r_inv) @ HA.T @ Pw
                     ensemble = mu + w @ A + Tmat @ A
                     if self.etkf_additive > 0.0:
@@ -1330,7 +1346,7 @@ class ETKF:
                         s2 = s ** 2
                         d = s2 + N1 + self.etkf_ridge * s2.max()
                         Pw = U @ torch.diag(1.0 / d) @ U.T
-                        Tmat = U @ torch.diag(torch.sqrt(N1 / d)) @ U.T
+                        Tmat = _etkf_sqrt_transform(U, d, N1, N1 + self.etkf_ridge * s2.max())
                         w = (dy * r_inv) @ HA.T @ Pw
                         ens_b = mu + w @ A + Tmat @ A
                         if self.etkf_additive > 0.0:
