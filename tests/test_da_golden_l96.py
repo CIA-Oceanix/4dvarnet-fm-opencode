@@ -59,7 +59,7 @@ SEED_DATA, SEED_RUN = 0, 1234
 
 # Pooled-mean RMSE per scheme, generated 2026-09-22 on fdv-monai-proto.
 GOLDEN = {
-    "ETKF": 0.725394,
+    "ETKF": 0.727326,  # 2026-09-28: null-space term in the square-root transform
     "EnKF": 0.731429,
     "Strong4DVar": 0.670710,
     "Weak4DVar": 0.637502,
