@@ -1,4 +1,4 @@
-"""ETKF inflation sweep on the L96 validation windows (after #291).
+"""ETKF / EnKF inflation sweep on the L96 validation windows (after #291).
 
 One (validation set, inflation) cell per call, both cases. The DA settings copy
 the benchmark runs: the regular grid as ``evaluate_all_l96.py`` in
@@ -7,7 +7,7 @@ layout as ``eval_da_random_layout_l96.py`` (fast-ring initial fill, R 0.5,
 obs_interval None). Writes RMSE (report convention), analysis-ensemble CRPS and
 pooled spread/RMSE per case to ``--out``; the trajectory caches are deleted.
 
-  python scripts/sweep_l96_etkf_inflation.py --valset regular --inflation 1.2 --out x.json
+  python scripts/sweep_l96_etkf_inflation.py --valset regular --inflation 1.2 --out x.json [--method EnKF]
 """
 from __future__ import annotations
 
@@ -49,6 +49,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--valset", choices=list(VALSETS), required=True)
     p.add_argument("--inflation", type=float, required=True)
+    p.add_argument("--method", choices=["ETKF", "EnKF"], default="ETKF")
     p.add_argument("--out", required=True)
     p.add_argument("--n-windows", type=int, default=None, help="first N windows only (smoke tests)")
     args = p.parse_args()
@@ -59,23 +60,25 @@ def main() -> None:
         for v in datasets.values():
             v.windows = v.windows[:args.n_windows]
     idx = np.array(make_obs_j_indices(8, 4, 2))
-    suffix = f"_valsweep_{args.valset}_lam{args.inflation:.2f}" + (f"_w{args.n_windows}" if args.n_windows else "")
+    suffix = f"_valsweep_{args.method}_{args.valset}_lam{args.inflation:.2f}" + (f"_w{args.n_windows}" if args.n_windows else "")
     cfg = {"inflation": args.inflation}
     kw = dict(obs_j=2, obs_interval=100, fw_randomized=True, da_fast_weights=True)
     if args.valset == "rlayout":
         cfg.update(init_fill=make_fast_ring_fill(8, 4, 2), R_var=0.5)
         kw["obs_interval"] = None
-    run_and_cache_baselines(datasets, device, batch_size=200, da_window_steps=500, etkf_config=cfg,
-                            suffix=suffix, exclude_methods=["Weak-4DVar", "Strong-4DVar", "EnKF"], **kw)
+    others = [m for m in ("ETKF", "EnKF") if m != args.method]
+    method_cfg = {"etkf_config": cfg} if args.method == "ETKF" else {"enkf_config": cfg}
+    run_and_cache_baselines(datasets, device, batch_size=200, da_window_steps=500, suffix=suffix,
+                            exclude_methods=["Weak-4DVar", "Strong-4DVar", *others], **method_cfg, **kw)
 
     paths = glob.glob(os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws500{suffix}_*obsj2*.npz"))
     assert len(paths) == 1, paths
     z = np.load(paths[0])
-    out = {"valset": args.valset, "inflation": args.inflation, "n_windows": len(datasets["test_s0"]), "cases": {}}
+    out = {"method": args.method, "valset": args.valset, "inflation": args.inflation, "n_windows": len(datasets["test_s0"]), "cases": {}}
     for c in ("s0", "s1"):
         truth = np.stack([w["true_state"].numpy()[:, idx] for w in datasets[f"test_{c}"]]).astype(np.float64)
-        out["cases"][c] = cell_metrics(z[f"{c}_ETKF_trajectories"], z[f"{c}_ETKF_ensemble_variance"],
-                                       z[f"{c}_ETKF_crps"], truth, idx)
+        k = f"{c}_{args.method}"
+        out["cases"][c] = cell_metrics(z[f"{k}_trajectories"], z[f"{k}_ensemble_variance"], z[f"{k}_crps"], truth, idx)
     z.close()
     with open(args.out, "w") as f:
         json.dump(out, f, indent=1)

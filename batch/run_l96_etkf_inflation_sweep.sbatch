@@ -9,7 +9,7 @@
 #SBATCH --job-name=l96-etkf-infl
 #SBATCH --output=sbatch_logs/l96_etkf_infl_%A_%a.out
 #SBATCH --error=sbatch_logs/l96_etkf_infl_%A_%a.err
-# ETKF inflation retuning after #291 on the L96 validation windows (50 per case,
+# ETKF (METHOD=EnKF for the EnKF) inflation retuning after #291 on the L96 validation windows (50 per case,
 # disjoint from train/val/test): {regular grid, canonical random layout} x
 # lambda in {1.0 ... 3.0}, S0 and S1 per task. One JSON per task in
 # experiments/l96_etkf_inflation_sweep/. Submit from this worktree's root.
@@ -30,6 +30,7 @@ i=$SLURM_ARRAY_TASK_ID
 V=${TASKS[$i]%%:*}
 L=${TASKS[$i]##*:}
 echo "task $i: valset=$V lambda=$L commit=$(git rev-parse --short HEAD) $(hostname) $(date +%T)"
-python -u scripts/sweep_l96_etkf_inflation.py --valset "$V" --inflation "$L" \
-  --out "experiments/l96_etkf_inflation_sweep/etkf_${V}_lam${L}.json"
+M=${METHOD:-ETKF}
+python -u scripts/sweep_l96_etkf_inflation.py --method "$M" --valset "$V" --inflation "$L" \
+  --out "experiments/l96_etkf_inflation_sweep/${M,,}_${V}_lam${L}.json"
 echo "done $V $L $(date +%T)"
