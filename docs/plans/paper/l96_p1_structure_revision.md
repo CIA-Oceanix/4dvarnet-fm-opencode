@@ -54,7 +54,7 @@ are white; model error (bias, OU-correlated forcing) breaks F2 in x, hence F3.
 |---|---|---|---|---|---|
 | ETKF / EnKF | yes | one-step Φ | yes | ensemble, through Φ | inflation |
 | ETKS (new) | yes | one-step Φ | window | ensemble, through Φ | inflation |
-| Strong-4DVar | yes | one-step Φ (hard) | window | B at t₀, point output | none |
+| Strong-4DVar | yes | one-step Φ (hard) | cycled 500-step sub-windows (6 per window) | static B at each sub-window start, point output | none |
 | Weak-4DVar | yes | one-step Φ + Q | window | B, Q, point output | Q |
 | SDA1 / SDA2 / SDA3-fix | yes | joint window, learned | window | implicit + explicit R | train spread / θ-conditioned / noisy θ |
 | DirectUNet | no | none | window | none | train spread |
@@ -76,47 +76,85 @@ moments) or any proper score (log score: conditional mutual information for the
 restriction; CRPS: Cramér distance). Identity: a restriction raises MSE and
 spread² by the same term; a misspecification raises MSE only. Diagnostic:
 unexplained share 1 − (spread/RMSE)². Classification of every matrix cell as
-restriction / misspecification / approximation goes in a table here.
+restriction / misspecification / approximation:
+
+Chain of estimators, all targeting the state over the 3000-step window given
+C = (y over the window, per-window θ, forcing z) (θ_da and the corrupted forcing
+at S1): m = E[x∣C] under the true system (**irreducible**) → m_S = E[x∣S] under
+the true system, S a summary of C (**restriction**) → m̃ = E_p̃[x∣S], the
+scheme's infinite-resource limit under its own model p̃ (**misspecification**)
+→ m̂, what is computed (**approximation**).
+
+| | EnKF (N = 30) | EnKS (ETKS, lag L) | Strong-4DVar (6 × 500 steps) | SDA1 / SDA2 / SDA3-fix |
+|---|---|---|---|---|
+| restriction | filtering: x_k from y up to k only | removed up to lag L; residual beyond (L_eff ≈ 6 / 3 cycles at S0 / S1 with λ-corrected inflation) | cycling: a sub-window ignores later sub-windows' obs; carried only by a static background | SDA1 ignores θ, z (marginalises the training spread); SDA2/3 condition on them |
+| misspecification, S0 and S1 | Gaussian (linear) update; multiplicative inflation | + linear-Gaussian backward cross-covariances; an assumed reading of inflation | hard constraint (Q = 0); Gaussian static B; mode not mean; no posterior (anomaly ≡ 0) | guidance approximates ∇log p(y∣x_τ); gw = 25 tempers the likelihood (≈ shrunk R) |
+| misspecification, added at S1 | biased Φ and forcing through every forecast; inflation cannot represent a parameter error | the same, propagated backwards | biased Φ as a hard constraint (floor ≈ 1.4) | SDA1: none (true-system training — the oracle confound); SDA2: clean-θ training given θ_da (bias leaks); SDA3-fix: noisy-θ training turns it into a restriction |
+| approximation | 30 members for 40 dims, no localisation, perturbed-obs noise, NaN repairs | + transform products | non-convex L-BFGS over 500 chaotic steps | finite network/training (400 ep), 10-step sampler, 30 members |
+
+EnKF vs EnKS differ only in restriction (the F3 identity test). Along SDA1 →
+SDA2 → SDA3-fix, restriction and misspecification swap roles (the U-model
+thesis inside one family). Already measured: θ-restriction at S0 ≈ 0 (SDA1
+0.501 vs SDA2 0.500); dynamics misspecification S1 − S0 (ETKF +0.79,
+Strong-4DVar +0.73, SDA1 0); conditioning misspecification (hybrid prior SDA2
+0.333 vs SDA3-fix 0.307 at S1). Pending: cycling restriction of 4D-Var (dws 500
+vs 3000), F3 (ETKS), likelihood tempering (gw sweep rescored for spread).
 
 **Pooled calibration (measured 2026-09-28).** The identity is about pooled
 second moments, E[var] against E[squared error of the ensemble mean] over
 windows × time × channels; calibrated = sqrt(N/(N+1)) = 0.984 for N = 30.
 The benchmark's per-window ratio (mean of time-averaged std over mean of
 per-window RMSE) is **not** that quantity and must not be used for the identity.
-Regular grid, seed 1, benchmark protocols (flows 30 × 20 early-fine; SDA gw 25,
-10 steps; hybrid τ₀ 0.1, gw 2); members re-sampled in memory, DA from the stored
-per-time ensemble variance. Unexplained share = 1 − pooled² · (N+1)/N.
+Benchmark protocols (flows 30 × 20 early-fine; SDA gw 25, 10 steps; hybrid
+τ₀ 0.1, gw 2); members re-sampled in memory
+(`reports/l96/probe_pooled_calibration.py`, array
+`batch/run_l96_pooled_calibration.sbatch`); DA from the stored per-time
+ensemble variance. Unexplained share = 1 − pooled² · (N+1)/N. Learned rows:
+mean over 3 seeds [range]; hybrids vary the DirectUNet seed with the SDA3-fix
+seed-1 prior, as in the report. Per-window ratios (regular, seed 1) for
+comparison: ETKF 0.98 / 0.37, EnKF 0.97 / 0.33, PSC 0.63, Van 0.72, SDA1 0.43,
+SDA2 0.54 / 0.64, SDA3-fix 0.46, hybrid 0.53.
 
-| scheme | RMSE S0 / S1 | per-window S0 / S1 | **pooled S0 / S1** | unexplained S0 / S1 |
-|---|---|---|---|---|
-| ETKF (pre-#291 square root) | 0.687 / 1.478 | 0.98 / 0.37 | **1.08 / 0.37** | −20% / 86% |
-| EnKF | 0.711 / 1.514 | 0.97 / 0.33 | **1.13 / 0.33** | −32% / 89% |
-| PredictStateCFM-M (1200 ep) | 0.340 / 0.337 | 0.63 / 0.64 | **0.86 / 0.86** | 24% / 23% |
-| VanillaCFM-M (1200 ep) | 0.351 / 0.347 | 0.72 / 0.73 | **0.95 / 0.96** | 7% / 5% |
-| SDA1-M | 0.500 / 0.499 | 0.43 / 0.43 | **0.59 / 0.59** | 64% / 64% |
-| SDA2-M | 0.504 / 0.514 | 0.54 / 0.64 | **0.76 / 0.90** | 40% / 16% |
-| SDA3-fix-M | 0.492 / 0.494 | 0.46 / 0.48 | **0.64 / 0.66** | 57% / 55% |
-| Hybrid DU-M(1200) → SDA3-fix-M | 0.312 / 0.307 | 0.53 / 0.55 | **0.63 / 0.64** | 60% / 57% |
+| scheme | layout | RMSE S0 / S1 | **pooled S0** | **pooled S1** | unexplained S0 / S1 |
+|---|---|---|---|---|---|
+| ETKF (pre-#291; rerun queued) | regular | 0.687 / 1.478 | **1.08** | **0.37** | −20% / 86% |
+| EnKF (rerun queued) | regular | 0.711 / 1.514 | **1.13** | **0.33** | −32% / 89% |
+| ETKF, EnKF | random | — | ⏳ | ⏳ | — |
+| PredictStateCFM-M (1200 ep) | regular | 0.341 / 0.338 | **0.85** [0.82–0.88] | **0.86** [0.83–0.89] | 25% / 24% |
+| | random | 0.444 / 0.446 | **0.86** [0.82–0.88] | **0.84** [0.80–0.87] | 24% / 28% |
+| VanillaCFM-M (1200 ep) | regular | 0.351 / 0.349 | **0.93** [0.91–0.95] | **0.94** [0.91–0.96] | 10% / 9% |
+| | random | 0.462 / 0.467 | **0.86** [0.84–0.87] | **0.85** [0.84–0.86] | 23% / 25% |
+| SDA1-M | regular | 0.501 / 0.500 | **0.59** [0.59–0.59] | **0.59** [0.59–0.59] | 64% / 64% |
+| | random | 0.613 / 0.623 | **0.55** [0.54–0.55] | **0.53** [0.53–0.54] | 69% / 71% |
+| SDA2-M | regular | 0.500 / 0.509 | **0.76** [0.76–0.76] | **0.90** [0.90–0.91] | 40% / 15% |
+| | random | 0.605 / 0.627 | **0.75** [0.74–0.75] | **0.86** [0.85–0.87] | 42% / 24% |
+| SDA3-fix-M | regular | 0.501 / 0.501 | **0.64** [0.62–0.65] | **0.66** [0.65–0.68] | 58% / 55% |
+| | random | 0.610 / 0.619 | **0.60** [0.60–0.60] | **0.62** [0.62–0.62] | 63% / 60% |
+| Hybrid DU-M(1200) → SDA3-fix-M | regular | 0.312 / 0.307 | **0.63** [0.63–0.63] | **0.64** [0.64–0.65] | 60% / 57% |
+| | random | 0.388 / 0.385 | **0.52** [0.52–0.52] | **0.52** [0.52–0.52] | 72% / 72% |
 
-RMSE column in the report's convention (mean over windows and channels of
-per-channel RMSE); every row reproduces the report's RMSE and per-window ratio.
-Readings:
+RMSE in the report's convention (mean over windows and channels of per-channel
+RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
 - **Filters**: over-dispersed at S0 once pooled (ETKF slow variables 1.40,
   fast 1.05: inflation 1.5 over-inflates the slow block), then the
   misspecification signature at S1 (86–89% unexplained). The draft's "filters
   are the best-calibrated schemes at S0" is a per-window artefact.
-- **Amortised flows (F1 = no)**: close to calibrated and invariant to model
-  error (approximation ≤ ~25%). Previously reported as strongly under-dispersed
-  — also a per-window artefact.
+- **Amortised flows (F1 = no)**: close to calibrated (0.84–0.94) on both
+  layouts and invariant to model error (approximation ≈ 10–28%). Previously
+  reported as strongly under-dispersed — a per-window artefact. VanillaCFM
+  loses some dispersion off the regular grid (0.93 → 0.86); PredictStateCFM
+  does not.
 - **Factorised learned (SDA, hybrid; F1 = yes)**: genuinely under-dispersed
-  (55–64% unexplained) and invariant; consistent with guidance tempering the
-  likelihood (gw > 1). The hybrid inherits it from its SDA sampler.
-- **SDA2**: spread *rises* at S1 (0.76 → 0.90) with RMSE up 2%: conditioned on
-  the biased θ, the prior widens (larger F); better calibration by accident,
-  not recognition of model error. SDA3-fix (noisy-θ training) does not move.
-- To redo: ETKF after #291 (the thin-SVD square root zeroed anomaly
-  directions; RMSE impact at noise level, spread impact not yet measured);
-  seeds 2–3 and the random layout; the gw sweep rescored for pooled spread.
+  (55–72% unexplained), worse on the random layout, invariant to model error;
+  consistent with guidance tempering the likelihood (gw > 1). The hybrid
+  inherits it from its SDA sampler (0.52 on the random layout). Seed ranges are
+  ≤ 0.03 everywhere, so none of this is seed noise.
+- **SDA2**: spread *rises* at S1 (0.76 → 0.90 regular, 0.75 → 0.86 random) with
+  RMSE up 2–4%: conditioned on the biased θ, the prior widens (larger F); better
+  calibration by accident, not recognition of model error. SDA3-fix (noisy-θ
+  training) does not move.
+- To redo: ETKF/EnKF on master after #291 (both layouts; SLURM 56384, branch
+  `feature/l96-da-post291`); the gw sweep rescored for pooled spread.
 
 ## 4. Section outline
 
@@ -234,7 +272,8 @@ decomposition, identity, cell classification.
 | M-trained DirectUNet / PredictStateCFM / SDA, σ = 0 and 20% | 6.1, 6.2, 6.4, 6.5 | yes |
 | δ sweep (≥ 3 levels) + one structural error, all schemes | 6.1, 6.2 | yes |
 | Perturbed-parameter ETKF | 6.2 | desirable |
-| Pooled spread/RMSE: done for the main rows (seed 1, regular); remaining: ETKF post-#291, seeds 2–3, random layout | 3, 5.5, 6.3 | ETKF post-#291: yes |
+| Pooled spread/RMSE: learned rows done (3 seeds, both layouts); DA rerun on master after #291 running (both layouts) | 3, 5.5, 6.3 | DA rerun: yes |
+| Strong-4DVar dws 3000 vs 500 (cycling restriction) | 3, 5.2 | desirable |
 | Guidance-weight sweep rescored for spread | 6.3 | desirable (cheap) |
 | SDA-local prior | 5.3 | optional |
 | `var_cost` self-supervised adaptation | 7.3 | optional / companion |
