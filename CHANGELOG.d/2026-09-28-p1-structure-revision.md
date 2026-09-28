@@ -4,3 +4,5 @@
 **Files modified:** `docs/plans/paper/l96_p1_structure_revision.md` — new SCOPING doc
 **Rationale:** C4 and C5 of the current draft are not supported; the learned rows' S1 robustness is confounded by training on the true system.
 **Verification:** `pytest tests/test_docs_layout.py -q`
+
+**Addendum (same day): pooled calibration.** `reports/l96/probe_pooled_calibration.py` re-samples an L96 ensemble eval with members kept in memory and writes pooled spread/RMSE (E[var] vs E[sq. error], windows × time × channels); outputs for PSC/Van-M 1200 ep, SDA1/2/3-fix-M and the DU→SDA3-fix hybrid (seed 1, regular grid) in `reports/l96/outputs/pooled_calibration/`. The benchmark's per-window ratio understated the flows' spread (0.63–0.72 → pooled 0.86–0.96) and hid the filters' S0 over-dispersion (0.98 → 1.08); the structure doc's §3 table and K6 are updated. Verification: every row reproduces the report's RMSE and per-window ratio.
