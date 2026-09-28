@@ -1141,6 +1141,8 @@ class ETKF:
             true_state is not None and true_state.shape[-1] == sd
         ) else None
         es_acc = _ESAccumulator(num_steps, sd, N) if ref_full is not None else None
+        transforms = [] if getattr(self, "_record_transforms", False) else None
+        nan_hit = False
 
         for t in range(1, num_steps):
             W = forcing[t - 1]
@@ -1148,6 +1150,7 @@ class ETKF:
             # NaN safety: replace blown-up members with the mean of valid members
             nan_mask = torch.isnan(ensemble).any(dim=-1)
             if nan_mask.any():
+                nan_hit = True
                 mu_nan = torch.nanmean(ensemble, dim=0)
                 ensemble[nan_mask] = mu_nan.masked_fill(mu_nan.isnan(), 0.0)
             if es_acc is not None:
@@ -1196,6 +1199,8 @@ class ETKF:
                     Pw = U @ torch.diag(1.0 / d) @ U.T
                     Tmat = _etkf_sqrt_transform(U, d, N1, N1 + self.etkf_ridge * s2.max())
                     w = (dy * r_inv) @ HA.T @ Pw
+                    if transforms is not None:
+                        transforms.append((t, w.detach().cpu(), Tmat.detach().cpu()))
                     ensemble = mu + w @ A + Tmat @ A
                     if self.etkf_additive > 0.0:
                         ensemble += torch.randn_like(ensemble) * self.etkf_additive
@@ -1203,6 +1208,7 @@ class ETKF:
                 # NaN safety after analysis
                 nan_mask = torch.isnan(ensemble).any(dim=-1)
                 if nan_mask.any():
+                    nan_hit = True
                     ensemble = torch.nan_to_num(ensemble)
                     mu_fix = torch.mean(ensemble, dim=0)
                     ensemble[nan_mask] = mu_fix
@@ -1217,6 +1223,8 @@ class ETKF:
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         rmse = np.sqrt(np.mean((analysis - ref) ** 2, axis=0))
+        if transforms is not None:
+            self._transforms, self._nan_windows = [transforms], [nan_hit]
         return BaselineResult(trajectory=analysis, rmse=rmse, ensemble=ens_traj, ensemble_variance=ens_var, es=(es_acc.es() if es_acc is not None else None))
     def assimilate_batch(
         self,
@@ -1275,6 +1283,8 @@ class ETKF:
         crps_ref = (true_state.to(device=self.device, dtype=ensemble.dtype)
                     if ref_full is not None else None)
         crps_sum = _analysis_crps_step(ensemble, crps_ref[:, 0]) if crps_ref is not None else None
+        transforms = [[] for _ in range(B)] if getattr(self, "_record_transforms", False) else None
+        nan_hit = [False] * B
 
         for t in range(1, num_steps):
             W = forcing[:, t - 1]
@@ -1292,6 +1302,7 @@ class ETKF:
                 mu_nan = torch.mean(ensemble, dim=1)
                 for b in range(B):
                     if nan_mask[b].any():
+                        nan_hit[b] = True
                         ensemble[b, nan_mask[b]] = mu_nan[b]
             for b in range(B):
                 if es_accs[b] is not None:
@@ -1348,6 +1359,8 @@ class ETKF:
                         Pw = U @ torch.diag(1.0 / d) @ U.T
                         Tmat = _etkf_sqrt_transform(U, d, N1, N1 + self.etkf_ridge * s2.max())
                         w = (dy * r_inv) @ HA.T @ Pw
+                        if transforms is not None:
+                            transforms[b].append((t, w.detach().cpu(), Tmat.detach().cpu()))
                         ens_b = mu + w @ A + Tmat @ A
                         if self.etkf_additive > 0.0:
                             ens_b += torch.randn_like(ens_b) * self.etkf_additive
@@ -1364,6 +1377,8 @@ class ETKF:
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
         ref = _safe_ref(ref, analysis, getattr(self, 'obs_operator', None))
         crps_all = (crps_sum / num_steps).detach().cpu().numpy() if crps_sum is not None else None
+        if transforms is not None:
+            self._transforms, self._nan_windows = transforms, nan_hit
         results = []
         for b in range(B):
             rmse_b = np.sqrt(np.mean((analysis[b] - ref[b]) ** 2, axis=0))
@@ -1375,6 +1390,150 @@ class ETKF:
                 es=(es_accs[b].es() if es_accs[b] is not None else None),
             ))
         return results
+
+
+def _etks_factor(w: torch.Tensor, Tmat: torch.Tensor, c: float = 1.0) -> torch.Tensor:
+    """Ensemble-space map G^(c) = 11ᵀ/N + (c 1wᵀ + T^(c)) (I − 11ᵀ/N) of one ETKF analysis.
+
+    ``c = 1`` is the analysis itself. ``c = λ^(−m)`` is the retrospective update of
+    a state separated from that analysis by m inflations, under the reading
+    "inflation ≈ model error independent of the earlier state": the mean
+    increment scales by c, the covariance reduction by c², i.e. T^(c) has
+    eigenvalues sqrt(1 − (1 − τ²) c²) on T's eigenvectors
+    (docs/plans/tech/l96_etks_smoother.md).
+    """
+    N = w.shape[0]
+    ones = torch.ones(N, dtype=w.dtype, device=w.device)
+    C = torch.full((N, N), 1.0 / N, dtype=w.dtype, device=w.device)
+    P = torch.eye(N, dtype=w.dtype, device=w.device) - C
+    if c == 1.0:
+        Tc = Tmat
+    else:
+        tau, V = torch.linalg.eigh(0.5 * (Tmat + Tmat.T))
+        tau = tau.clamp(0.0, 1.0)
+        Tc = V @ torch.diag(torch.sqrt((1.0 - (1.0 - tau ** 2) * c ** 2).clamp_min(0.0))) @ V.T
+    return C + (c * torch.outer(ones, w) + Tc) @ P
+
+
+def _etks_smooth(ensemble: np.ndarray, transforms: list, inflation: float,
+                 lag: int | None, retro_inflation: str) -> np.ndarray:
+    """Smooth a stored ETKF ensemble trajectory ``(N, T, D)`` (post-analysis,
+    post-inflation) with the recorded per-analysis ``(t, w, Tmat)``.
+
+    A state s between analyses t_{k-1} <= s < t_k is updated by the later
+    analyses k, ..., k + lag − 1 (all of them if ``lag`` is None). In
+    ``"correct"`` mode the factor of an analysis m inflations after s is scaled
+    by c = inflation^(−m), and the state at an analysis time itself is taken
+    before its inflation. States at and after the last analysis are unchanged.
+    """
+    X = torch.from_numpy(np.asarray(ensemble, dtype=np.float64))
+    out = X.clone()
+    times = [t for t, _, _ in transforms]
+    ws = [w.double() for _, w, _ in transforms]
+    Ts = [T.double() for _, _, T in transforms]
+    K = len(times)
+    N = X.shape[0]
+    correct = retro_inflation == "correct"
+
+    def product(k0: int, last: int, m0: int) -> torch.Tensor:
+        Pi = torch.eye(N, dtype=torch.float64)
+        for j in range(k0, last):
+            c = inflation ** -(j - k0 + m0) if correct else 1.0
+            Pi = _etks_factor(ws[j], Ts[j], c) @ Pi
+        return Pi
+
+    for k0 in range(K):
+        last = K if lag is None else min(K, k0 + lag)
+        if last <= k0:
+            continue
+        lo = 0 if k0 == 0 else times[k0 - 1]
+        hi = times[k0]
+        out[:, lo:hi] = torch.einsum("nm,mtd->ntd", product(k0, last, 0), X[:, lo:hi])
+        if correct and k0 > 0:
+            mu = X[:, lo].mean(0, keepdim=True)
+            pre_inflation = mu + (X[:, lo] - mu) / inflation
+            out[:, lo] = product(k0, last, 1) @ pre_inflation
+    return out.numpy().astype(np.float32)
+
+
+class ETKS(ETKF):
+    """Ensemble transform Kalman smoother on the unlocalised ETKF.
+
+    Runs the ETKF unchanged, records each analysis's ensemble-space transform,
+    and applies later transforms retrospectively to the stored ensemble
+    (``_etks_smooth``). Exact bookkeeping when the analysis is linear in
+    ensemble space: no localisation and no additive noise.
+
+    ``retro_inflation``: ``"correct"`` (default) treats inflation as model
+    error added after the earlier state; ``"none"`` applies the plain analysis
+    maps and over-corrects beyond a lag of 2 on L96, so it is limited to
+    ``lag <= 2``. Design and measurements: docs/plans/tech/l96_etks_smoother.md,
+    docs/results/l96_etks_prototype.md.
+
+    Windows where the ETKF's NaN guard replaced members are returned
+    unsmoothed (member correspondence is broken there) and listed in
+    ``self.unsmoothed_windows`` for the last call. ``es`` of a smoothed result
+    scores the smoothed ensemble at steps 1..T−1 (the filter's scores its
+    forecast ensemble).
+    """
+
+    def __init__(self, *args, lag: int | None = None, retro_inflation: str = "correct", **kwargs):
+        super().__init__(*args, **kwargs)
+        if retro_inflation not in ("correct", "none"):
+            raise ValueError(f"retro_inflation must be 'correct' or 'none', got {retro_inflation!r}")
+        if lag is not None and lag < 0:
+            raise ValueError(f"lag must be >= 0 or None, got {lag}")
+        if retro_inflation == "none" and (lag is None or lag > 2):
+            raise ValueError("retro_inflation='none' over-corrects beyond lag 2; use lag <= 2 or 'correct'")
+        if self.loc_radius is not None or self.loc_Lx_t is not None:
+            raise NotImplementedError("ETKS needs the unlocalised ETKF (ensemble-space analysis)")
+        if self.etkf_additive > 0.0:
+            raise NotImplementedError("ETKS needs etkf_additive = 0 (the analysis must be linear in ensemble space)")
+        self.lag = lag
+        self.retro_inflation = retro_inflation
+        self._record_transforms = True
+        self.store_ensemble = True
+        self.unsmoothed_windows: list[int] = []
+
+    def _smooth_result(self, result: BaselineResult, transforms: list, nan_hit: bool,
+                       ref: np.ndarray, has_truth: bool) -> BaselineResult:
+        if nan_hit:
+            return result
+        ens = _etks_smooth(result.ensemble, transforms, self.inflation, self.lag, self.retro_inflation)
+        ens_t = torch.from_numpy(ens)
+        trajectory = ens_t.double().mean(0).numpy()
+        rmse = np.sqrt(np.mean((trajectory - ref) ** 2, axis=0))
+        crps = es = None
+        if has_truth and ref.shape[-1] == self.state_dim:
+            ref_t = torch.from_numpy(np.asarray(ref, dtype=np.float32))
+            crps = _analysis_crps_step(ens_t.permute(1, 0, 2), ref_t).mean(0).numpy()
+            acc = _ESAccumulator(ens.shape[1], self.state_dim, ens.shape[0])
+            for t in range(1, ens.shape[1]):
+                acc.step(ens[:, t], ref[t])
+            es = acc.es()
+        return BaselineResult(trajectory=trajectory, rmse=rmse, ensemble=ens,
+                              ensemble_variance=ens_t.var(0).numpy(), es=es, crps=crps)
+
+    def _ref(self, observations, true_state, trajectory) -> np.ndarray:
+        base = observations if true_state is None else true_state
+        return _safe_ref(base.detach().cpu().numpy(), trajectory, getattr(self, "obs_operator", None))
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None, **kwargs) -> BaselineResult:
+        result = super().assimilate(observations, obs_mask, forcing, true_state=true_state, **kwargs)
+        self.unsmoothed_windows = [0] if self._nan_windows[0] else []
+        ref = self._ref(observations, true_state, result.trajectory)
+        return self._smooth_result(result, self._transforms[0], self._nan_windows[0], ref,
+                                   true_state is not None)
+
+    def assimilate_batch(self, observations, obs_mask, forcing, true_state=None, **kwargs) -> list:
+        results = super().assimilate_batch(observations, obs_mask, forcing, true_state=true_state, **kwargs)
+        self.unsmoothed_windows = [b for b, hit in enumerate(self._nan_windows) if hit]
+        out = []
+        for b, result in enumerate(results):
+            ref = self._ref(observations[b], None if true_state is None else true_state[b], result.trajectory)
+            out.append(self._smooth_result(result, self._transforms[b], self._nan_windows[b], ref,
+                                           true_state is not None))
+        return out
 
 
 class EnKF:
