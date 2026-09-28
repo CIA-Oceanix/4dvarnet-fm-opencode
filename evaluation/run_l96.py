@@ -8,7 +8,7 @@ import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.lorenz96 import Lorenz96Config
-from evaluation.baselines import ETKF, EnKF, ObsOperator, Strong4DVar, Weak4DVar
+from evaluation.baselines import ETKF, ETKS, EnKF, ObsOperator, Strong4DVar, Weak4DVar
 from models.lorenz96_dynamics import Lorenz96Dynamics
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -315,14 +315,18 @@ def evaluate_baseline(method, dataset, cfg, device, return_trajs=False, batch_si
 
 def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None,
                              weak_config=None, strong_config=None, enkf_config=None,
-                             etkf_config=None, suffix="", exclude_methods=None,
+                             etkf_config=None, suffix="", exclude_methods=None, etks_config=None,
                              obs_j=2, s1_j=None, eval_j=None, obs_interval=100,
                              fw_randomized=False, da_fast_weights=False, save_members=False,
                              keep_members=False):
     """``save_members``: ETKF/EnKF also keep their full ensembles and write them as
     ``*_members.npz`` (``members`` (W, T, D, N) and ``truth`` (W, T, D) in the evaluated
     subspace, the layout of the neural ``members_<case>.npz``), to node-local /tmp unless
-    ``keep_members`` (see ``da_members_path``)."""
+    ``keep_members`` (see ``da_members_path``).
+
+    ``etks_config``: kwargs of ``ETKS`` (``inflation`` one value or per case, ``lag``,
+    ``retro_inflation``, ...). ETKS runs only when it is given; callers put its
+    settings in ``suffix``, since they are not part of the cache name."""
     if s1_j is None:
         s1_j = obs_j
     if eval_j is None:
@@ -363,7 +367,9 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
     etkf_cfg = etkf_config or {}
 
     exclude = set(exclude_methods or [])
-    active_methods = [m for m in _BASELINE_METHODS if m not in exclude]
+    if etks_config is None:
+        exclude.add("ETKS")
+    active_methods = [m for m in _BASELINE_METHODS + ["ETKS"] if m not in exclude]
 
     dt_l96 = 0.001
     NO = 8
@@ -411,8 +417,12 @@ def run_and_cache_baselines(datasets, device, batch_size=1, da_window_steps=None
             pool["ETKF"] = ETKF(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
                                   dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
                                   **_case_cfg(etkf_cfg, case_name))
+        if "ETKS" not in exclude:
+            pool["ETKS"] = ETKS(dt=dt_l96, device=device, coupling_exponent=coupling_exponent,
+                                  dynamics=dyn, obs_operator=obs_op, NO=NO, J=(J_truth if case_name == "s0" else s1_J),
+                                  **_case_cfg(etks_config, case_name))
         if save_members:
-            for m in ("EnKF", "ETKF"):
+            for m in ("EnKF", "ETKF", "ETKS"):
                 if m in pool:
                     pool[m].store_ensemble = True
         baseline_pool[case_name] = pool

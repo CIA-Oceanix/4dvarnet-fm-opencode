@@ -39,7 +39,7 @@ from evaluation.run_l96 import (EXP_DIR, L96_DA_INFLATION, _baseline_traj_path, 
                                 run_and_cache_baselines)
 
 OUT_DIR = os.path.join(EXP_DIR, "l96_da_random_layout")
-METHODS = ("ETKF", "EnKF", "Strong-4DVar")
+METHODS = ("ETKF", "EnKF", "Strong-4DVar", "ETKS")
 NUM_SLOW = 8
 MAX_REDRAWS = 1000
 
@@ -136,12 +136,16 @@ def main() -> None:
     p.add_argument("--inflation", type=parse_case_inflation, default=L96_DA_INFLATION,
                    help="ETKF/EnKF inflation, one value or per case 's0=1.5,s1=2.0' (default)")
     p.add_argument("--da-window-steps", type=int, default=500)
-    p.add_argument("--methods", nargs="+", default=list(METHODS), choices=METHODS)
+    p.add_argument("--methods", nargs="+", default=[m for m in METHODS if m != "ETKS"], choices=METHODS)
     p.add_argument("--cases", nargs="+", default=list(CASES), choices=list(CASES))
     p.add_argument("--r-var", type=float, default=R_VAR,
                    help="obs noise variance for the drawn layouts AND the DA's R (default 0.5)")
     p.add_argument("--data-cache", default=DEFAULT_CACHE)
     p.add_argument("--device", default=None)
+    p.add_argument("--etks-inflation", type=parse_case_inflation, default=None,
+                   help="ETKS inflation (default: --inflation)")
+    p.add_argument("--etks-lag", default="full", help="ETKS lag in analyses, or 'full'")
+    p.add_argument("--etks-retro-inflation", choices=["correct", "none"], default="correct")
     args = p.parse_args()
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -158,6 +162,9 @@ def main() -> None:
         tag += f"_r{args.r_var:g}"
     if set(args.cases) != set(CASES):
         tag += "_" + "".join(sorted(args.cases))
+    etks_inflation = args.etks_inflation if args.etks_inflation is not None else args.inflation
+    if "ETKS" in args.methods:
+        tag += f"_etks-{args.etks_retro_inflation}-L{args.etks_lag}-inf{inflation_tag(etks_inflation)}"
     print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation {args.inflation}, {len(cell['test_s0'])} runs per case")
 
     out_tag = f"{tag}_inf{inflation_tag(args.inflation)}"
@@ -170,6 +177,9 @@ def main() -> None:
         enkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
         etkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
         strong_config={"max_iter": 10, "lr": 0.2, "init_fill": fill, "R_var": args.r_var},
+        etks_config=({"inflation": etks_inflation, "init_fill": fill, "R_var": args.r_var,
+                      "lag": None if args.etks_lag == "full" else int(args.etks_lag),
+                      "retro_inflation": args.etks_retro_inflation} if "ETKS" in args.methods else None),
         suffix=tag, exclude_methods=["Weak-4DVar"] + [m for m in METHODS if m not in args.methods],
         obs_j=2, obs_interval=None, fw_randomized=True, da_fast_weights=True,
     )
@@ -180,6 +190,9 @@ def main() -> None:
                "da_fast_weights": True, "step0_observed": True, "init_fill": "fast_ring_linear",
                "da_window_steps": args.da_window_steps, "cases_run": list(args.cases), "min_obs_per_da_window": 1,
                "source": _param_suffix(tag, args.inflation), "cases": {}}
+    if "ETKS" in args.methods:
+        summary["etks"] = {"inflation": etks_inflation, "lag": args.etks_lag,
+                           "retro_inflation": args.etks_retro_inflation}
     arrays = {}
     for case, key in CASES.items():
         if case not in args.cases:
