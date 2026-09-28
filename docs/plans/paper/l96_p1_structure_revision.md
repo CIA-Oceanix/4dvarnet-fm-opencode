@@ -117,9 +117,10 @@ SDA2 0.54 / 0.64, SDA3-fix 0.46, hybrid 0.53.
 
 | scheme | layout | RMSE S0 / S1 | **pooled S0** | **pooled S1** | unexplained S0 / S1 |
 |---|---|---|---|---|---|
-| ETKF (pre-#291; rerun queued) | regular | 0.687 / 1.478 | **1.08** | **0.37** | −20% / 86% |
-| EnKF (rerun queued) | regular | 0.711 / 1.514 | **1.13** | **0.33** | −32% / 89% |
-| ETKF, EnKF | random | — | ⏳ | ⏳ | — |
+| ETKF (master, after #291) | regular | 0.708 / 1.479 | **1.11** | **0.37** | −27% / 86% |
+| | random | 0.860 / 1.375 | **1.25** | **0.66** | −62% / 55% |
+| EnKF | regular | 0.710 / 1.515 | **1.13** | **0.33** | −33% / 89% |
+| | random | 0.849 / 1.428 | **1.24** | **0.54** | −59% / 69% |
 | PredictStateCFM-M (1200 ep) | regular | 0.341 / 0.338 | **0.85** [0.82–0.88] | **0.86** [0.83–0.89] | 25% / 24% |
 | | random | 0.444 / 0.446 | **0.86** [0.82–0.88] | **0.84** [0.80–0.87] | 24% / 28% |
 | VanillaCFM-M (1200 ep) | regular | 0.351 / 0.349 | **0.93** [0.91–0.95] | **0.94** [0.91–0.96] | 10% / 9% |
@@ -135,10 +136,20 @@ SDA2 0.54 / 0.64, SDA3-fix 0.46, hybrid 0.53.
 
 RMSE in the report's convention (mean over windows and channels of per-channel
 RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
-- **Filters**: over-dispersed at S0 once pooled (ETKF slow variables 1.40,
-  fast 1.05: inflation 1.5 over-inflates the slow block), then the
-  misspecification signature at S1 (86–89% unexplained). The draft's "filters
-  are the best-calibrated schemes at S0" is a per-window artefact.
+- **Filters** (rerun on master after #291, SLURM 56384; EnKF reproduces its
+  stored RMSE within 0.1%, the random layouts match the archived file exactly):
+  over-dispersed at S0 once pooled — 1.11–1.13 regular, 1.24–1.25 random, the
+  slow block most (1.26–1.57): the per-case inflation 1.5 over-inflates — then
+  the misspecification signature at S1 (86–89% unexplained regular, 55–69%
+  random, carried by the fast block: 0.32–0.59). The draft's "filters are the
+  best-calibrated schemes at S0" is a per-window artefact.
+- **#291 and the inflation default**: the fixed ETKF is worse at S0 (regular
+  0.687 → 0.708, random 0.798 → 0.860) and equal or better at S1 (1.478 →
+  1.479, 1.418 → 1.375). The S0 inflation 1.5 was tuned for the buggy square
+  root (which dropped anomaly directions); with those directions kept it
+  over-disperses. ETKF is no longer the best DA baseline at the current
+  default; `L96_DA_INFLATION` must be retuned for the fixed ETKF on the
+  validation windows before any ETKF number is quoted.
 - **Amortised flows (F1 = no)**: close to calibrated (0.84–0.94) on both
   layouts and invariant to model error (approximation ≈ 10–28%). Previously
   reported as strongly under-dispersed — a per-window artefact. VanillaCFM
@@ -153,8 +164,9 @@ RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
   RMSE up 2–4%: conditioned on the biased θ, the prior widens (larger F); better
   calibration by accident, not recognition of model error. SDA3-fix (noisy-θ
   training) does not move.
-- To redo: ETKF/EnKF on master after #291 (both layouts; SLURM 56384, branch
-  `feature/l96-da-post291`); the gw sweep rescored for pooled spread.
+- To redo: ETKF inflation retuning after #291 (validation windows, both
+  layouts, S0 and S1), then the ETKF rows; the gw sweep rescored for pooled
+  spread.
 
 ## 4. Section outline
 
@@ -272,7 +284,8 @@ decomposition, identity, cell classification.
 | M-trained DirectUNet / PredictStateCFM / SDA, σ = 0 and 20% | 6.1, 6.2, 6.4, 6.5 | yes |
 | δ sweep (≥ 3 levels) + one structural error, all schemes | 6.1, 6.2 | yes |
 | Perturbed-parameter ETKF | 6.2 | desirable |
-| Pooled spread/RMSE: learned rows done (3 seeds, both layouts); DA rerun on master after #291 running (both layouts) | 3, 5.5, 6.3 | DA rerun: yes |
+| Pooled spread/RMSE: done (learned 3 seeds, DA after #291, both layouts) | 3, 5.5, 6.3 | — |
+| ETKF inflation retuning after #291 (validation windows, both layouts, S0/S1) | every ETKF number | yes |
 | Strong-4DVar dws 3000 vs 500 (cycling restriction) | 3, 5.2 | desirable |
 | Guidance-weight sweep rescored for spread | 6.3 | desirable (cheap) |
 | SDA-local prior | 5.3 | optional |
