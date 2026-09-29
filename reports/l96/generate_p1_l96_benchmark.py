@@ -51,11 +51,17 @@ import _inputs  # noqa: E402
 HERE = _inputs.root("p1_benchmark", "here")
 DA_BASES = (HERE, _inputs.shared())
 
-DA_TRAJ_CANDIDATES = [
-    "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
-    "l96_baselines_trajectories_dws500_s0c_s1cfix_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz",
-]
-DA_METHODS = ["ETKF", "EnKF", "Strong-4DVar"]
+DA_CURRENT = HERE / "da_current_2026-09-29"
+_DA_NEW = "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz"
+DA_SOURCES = {
+    "ETKF": (_DA_NEW, "ETKF", "λ 1.15 / 2.5"),
+    "EnKF": (_DA_NEW, "EnKF", "λ 1.2 / 3.0"),
+    "ETKS": ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0"
+             "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz", "ETKS", "λ 1.15 / 2.5"),
+    "Strong-4DVar": ("l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz",
+                     "Strong_4DVar", "—"),
+}
+DA_METHODS = list(DA_SOURCES)
 CASES = ("s0", "s1")
 
 
@@ -135,28 +141,25 @@ def deterministic(path: Path, group: str = "all_obs"):
 
 
 def da_rows(truth, group):
-    """DA baselines from the cached trajectory archive, or None if absent.
+    """DA baselines from the current benchmark runs (``DA_SOURCES``), or None if absent.
 
-    EnKF/ETKF additionally store `*_ensemble_variance`, so a spread is available
-    for them; Strong-4DVar is deterministic and gets an em-dash. No members are
-    stored for any of them, so a proper ensemble CRPS cannot be formed here --
-    the MAE column is the point-forecast proxy and is NOT comparable to the
-    generative families' ensemble CRPS.
+    The ensemble schemes store their per-time ensemble variance and the
+    per-window analysis-ensemble CRPS, so they get spread and CRPS; Strong-4DVar
+    is deterministic and gets its MAE (the CRPS of a point forecast) and an
+    em-dash for spread.
     """
-    path = next((base / c for base in DA_BASES
-                 for c in DA_TRAJ_CANDIDATES if (base / c).exists()), None)
-    if path is None:
+    files = {fn for fn, _, _ in DA_SOURCES.values()}
+    if not all((DA_CURRENT / fn).exists() for fn in files):
         return None, None
-    z = np.load(path)
     idx = make_obs_j_indices()
+    sel = lambda a: a[..., idx] if a.shape[-1] > len(idx) else a  # noqa: E731
+    loaded = {fn: np.load(DA_CURRENT / fn) for fn in files}
     rows = []
-    for method in DA_METHODS:
-        key = method.replace("-", "_")
+    for method, (fn, key, params) in DA_SOURCES.items():
+        z = loaded[fn]
         m = {}
         for case in CASES:
-            traj = z[f"{case}_{key}_trajectories"].astype(np.float64)
-            if traj.shape[-1] > len(idx):
-                traj = traj[..., idx]
+            traj = sel(z[f"{case}_{key}_trajectories"].astype(np.float64))
             t = truth[case]
             m[case] = dict(
                 rmse=_groups_from_per_window(np.sqrt(((traj - t) ** 2).mean(axis=1)))[group],
@@ -164,13 +167,14 @@ def da_rows(truth, group):
             )
             vkey = f"{case}_{key}_ensemble_variance"
             if vkey in z.files:
-                v = z[vkey].astype(np.float64)
-                if v.shape[-1] > len(idx):
-                    v = v[..., idx]
+                v = sel(z[vkey].astype(np.float64))
                 m[case]["spread"] = _groups_from_per_window(
                     np.sqrt(np.clip(v, 0, None)).mean(axis=1))[group]
-        rows.append(dict(label=method, params="—", flag="", m=m))
-    return rows, path.name
+            ckey = f"{case}_{key}_crps"
+            if ckey in z.files:
+                m[case]["crps"] = _groups_from_per_window(sel(z[ckey].astype(np.float64)))[group]
+        rows.append(dict(label=method, params=params, flag="", m=m))
+    return rows, sorted(files)
 
 
 def ms(a: np.ndarray) -> str:
@@ -190,7 +194,7 @@ def best_idx(rows, key):
 # "split on the first underscore" fallback -- so underscore-free display names
 # pass through unchanged, while raw experiment dir names would render as "A1".
 FIGURE_SCHEMES = [
-    ("Truth-ref ETKF", ("da", "ETKF")),
+    ("ETKS", ("da", "ETKS")),
     ("Strong-4DVar", ("da", "Strong-4DVar")),
     ("DirectUNet-M", ("det", "P1_directunet_monaiM_noaug_l96", "ens1_no1")),
     ("VanillaCFM-M", ("gen", "A1_vanillacfm_monaiM_l96", "ens30_no20")),
@@ -239,15 +243,14 @@ def figure_trajectories(case, truth_shape):
     (worse) object than the table reports.
     """
     est = {}
-    da_path = next((base / c for base in DA_BASES
-                    for c in DA_TRAJ_CANDIDATES if (base / c).exists()), None)
     idx = make_obs_j_indices()
     for label, spec in FIGURE_SCHEMES:
         if spec[0] == "da":
-            if da_path is None:
+            fn, key_method, _ = DA_SOURCES[spec[1]]
+            if not (DA_CURRENT / fn).exists():
                 continue
-            z = np.load(da_path)
-            key = f"{case}_{spec[1].replace('-', '_')}_trajectories"
+            z = np.load(DA_CURRENT / fn)
+            key = f"{case}_{key_method}_trajectories"
             if key not in z.files:
                 continue
             traj = z[key].astype(np.float64)
@@ -332,14 +335,17 @@ def main():
       "so the families are budget-matched *within this report*. The benchmark default has since "
       "moved DirectUNet and the CFMs to 1200 epochs, but **the SDA priors (SDA1/SDA2/SDA3-fix) have "
       "not been retrained at 1200 epochs**: the SDA rows of the extended report, and the prior of "
-      "every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. Two other parts of this report "
-      "are out of date: the DA baselines (section 1) predate the DA-side `fast_weights` fix and the "
-      "per-case inflation (current: ETKF S0 0.687, S1/S0 2.0-2.2x), and the SDA rows use guidance "
-      "weight 20 (validation-tuned: 25).\n")
+      "every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. The SDA rows use guidance "
+      "weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows "
+      "(updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, "
+      "the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: "
+      "ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA "
+      "rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model).\n")
     A("## Protocol\n")
     A("| family | protocol | columns |\n|---|---|---|")
-    A("| DA baselines | per-window assimilation over dws=500 | RMSE/MAE; spread where an "
-      "ensemble variance is cached (EnKF/ETKF). No members are stored, so no ensemble CRPS |")
+    A("| DA baselines | per-window assimilation (dws=500, DA fast weights); ETKS = the ETKF plus a "
+      "full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; MAE (the CRPS "
+      "of a point forecast) for Strong-4DVar |")
     A("| Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance "
       "(1.0 calibrated, ~0.35 collapsed) |")
     A("| Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper "
@@ -358,7 +364,8 @@ def main():
             A("|---|---|---|---|---|---|---|---|---|")
         else:
             extra = "var ratio" if mode == "det" else "sp/RMSE (S0)"
-            A(f"| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 MAE | S1 MAE | {extra} | note |")
+            err = "CRPS (MAE for 4D-Var)" if mode == "da" else "MAE"
+            A(f"| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 {err} | S1 {err} | {extra} | note |")
             A("|---|---|---|---|---|---|---|---|---|")
         avail = [r for r in rows if r["m"] and not r["flag"]]
         best = min((r["m"]["s0"]["rmse"].mean() for r in avail), default=None)
@@ -377,6 +384,10 @@ def main():
             if mode == "gen":
                 c0, c1 = ms(r["m"]["s0"]["crps"]), ms(r["m"]["s1"]["crps"])
                 sp = f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
+            elif mode == "da" and "crps" in r["m"]["s0"]:
+                c0, c1 = f"{r['m']['s0']['crps'].mean():.4f}", f"{r['m']['s1']['crps'].mean():.4f}"
+                sp = (f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
+                      if "spread" in r["m"]["s0"] else "—")
             else:
                 c0 = f"{r['m']['s0']['mae'].mean():.4f}"
                 c1 = f"{r['m']['s1']['mae'].mean():.4f}"
@@ -390,8 +401,9 @@ def main():
 
     if da:
         emit("1. DA baselines", da, "da")
-        A(f"\nSource: `{da_file}`. S0 trajectories are stored in the full 40D state and indexed "
-          "to the 24D observed subspace; S1 is already reduced.\n")
+        A("\nSources (report bundle `da_current_2026-09-29/`): " + ", ".join(f"`{f}`" for f in da_file)
+          + ". S0 trajectories are stored in the full 40D state and indexed to the 24D observed "
+          "subspace; S1 is already reduced. Rows and protocol: `l96_benchmark_extended.md`.\n")
     emit("2. Deterministic point estimators", out["det"], "det")
     if tau0:
         A("\n### The flows' tau=0 mean components, as deterministic estimators (S0)\n")
@@ -414,9 +426,11 @@ def main():
           + f" — flow matching is {100 * (bests['det'] - bests['fm']) / bests['det']:.0f}% better "
           f"than the deterministic baseline and {100 * (bests['sda'] - bests['fm']) / bests['sda']:.0f}% "
           "better than SDA, at matched tier, parameter count, schedule and data.\n")
+    da_ratios = [_ratio(r["m"], "rmse") for r in out.get("da", []) if r["m"]]
+    da_span = f"{min(da_ratios):.1f}-{max(da_ratios):.1f}x" if da_ratios else "~2x"
     A("- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially "
       "flat under model error (ratio ~1.00) because it never uses a forward model; the DA "
-      "baselines degrade by ~1.7x, since their forward operator carries the bias. That makes "
+      f"baselines degrade by {da_span}, since their forward operator carries the bias. That makes "
       "the S1 column the strongest argument for the learned schemes, and it is a structural "
       "difference rather than a tuning one.")
     A("- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; "
@@ -437,8 +451,8 @@ def main():
     A("- DA baselines receive the same per-window parameters as truth generation (S0) or their "
       "biased `*_da` counterparts (S1); the learned schemes see observations only. This is what "
       "makes the comparison apples-to-apples, and also why their S1 behaviour differs so much.")
-    A("- No ensemble members are cached for the DA baselines, so their MAE column is a point "
-      "proxy and is not comparable to the generative families' ensemble CRPS.")
+    A("- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable "
+      "to the generative families' ensemble CRPS; Strong-4DVar's column is its MAE.")
     A("- SDA is the only learned family with a tuned inference hyper-parameter (`gw`).")
     A("- SDA budget: 400 epochs here, like every row. Do not set these SDA rows against 1200-epoch "
       "DirectUNet/CFM results: the SDA priors have not been retrained at the 1200-epoch default.")

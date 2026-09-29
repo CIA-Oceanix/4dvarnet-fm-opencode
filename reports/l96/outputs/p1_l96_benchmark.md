@@ -4,13 +4,13 @@ Two-scale L96, `obs_interval=100`, `obs_j=2` (24D observed space), 200 shared ca
 
 **One recipe for every learned row**: monai backbone, `data.normalize: true`, cosine annealing, 400 epochs, `batch_size: 16`, lr 1e-3, grad clip 10.0, **no obs-density augmentation**. Deviations are called out per row. Unrolled/4DVarNet schemes are out of P1 scope.
 
-**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, so the families are budget-matched *within this report*. The benchmark default has since moved DirectUNet and the CFMs to 1200 epochs, but **the SDA priors (SDA1/SDA2/SDA3-fix) have not been retrained at 1200 epochs**: the SDA rows of the extended report, and the prior of every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. Two other parts of this report are out of date: the DA baselines (section 1) predate the DA-side `fast_weights` fix and the per-case inflation (current: ETKF S0 0.687, S1/S0 2.0-2.2x), and the SDA rows use guidance weight 20 (validation-tuned: 25).
+**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, so the families are budget-matched *within this report*. The benchmark default has since moved DirectUNet and the CFMs to 1200 epochs, but **the SDA priors (SDA1/SDA2/SDA3-fix) have not been retrained at 1200 epochs**: the SDA rows of the extended report, and the prior of every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. The SDA rows use guidance weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows (updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model).
 
 ## Protocol
 
 | family | protocol | columns |
 |---|---|---|
-| DA baselines | per-window assimilation over dws=500 | RMSE/MAE; spread where an ensemble variance is cached (EnKF/ETKF). No members are stored, so no ensemble CRPS |
+| DA baselines | per-window assimilation (dws=500, DA fast weights); ETKS = the ETKF plus a full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; MAE (the CRPS of a point forecast) for Strong-4DVar |
 | Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance (1.0 calibrated, ~0.35 collapsed) |
 | Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper ensemble CRPS; `spread/RMSE` (1.0 calibrated) |
 | SDA | guided `ens30`, `gw=20`, `r_var=0.5` | as above. **Must** use `eval_sda_l96.py`: SDA1 is an unconditional prior and the unguided sampler returns climatological spread |
@@ -21,13 +21,14 @@ A single draw from a generative model is a strictly worse estimator than its ens
 
 ## 1. DA baselines
 
-| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 MAE | S1 MAE | sp/RMSE (S0) | note |
+| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS (MAE for 4D-Var) | S1 CRPS (MAE for 4D-Var) | sp/RMSE (S0) | note |
 |---|---|---|---|---|---|---|---|---|
-| ETKF | — | 0.8662 ± 0.1455 | 1.4748 ± 0.2415 | 1.703 | 0.6124 | 1.0322 | 1.127 |  |
-| EnKF | — | 0.8943 ± 0.1350 | 1.5123 ± 0.2487 | 1.691 | 0.6369 | 1.0842 | 1.089 |  |
-| **Strong-4DVar** | — | **0.7383 ± 0.1915** | 1.4369 ± 0.2331 | 1.946 | 0.4850 | 0.9892 | — |  |
+| ETKF | λ 1.15 / 2.5 | 0.6102 ± 0.1480 | 1.4093 ± 0.2300 | 2.310 | 0.2704 | 0.7580 | 0.607 |  |
+| EnKF | λ 1.2 / 3.0 | 0.6414 ± 0.1434 | 1.4159 ± 0.2287 | 2.207 | 0.2866 | 0.7634 | 0.647 |  |
+| **ETKS** | λ 1.15 / 2.5 | **0.4969 ± 0.1644** | 1.3380 ± 0.2237 | 2.692 | 0.2382 | 0.7706 | 0.412 |  |
+| Strong-4DVar | — | 0.7028 ± 0.1991 | 1.4362 ± 0.2325 | 2.044 | 0.4464 | 0.9879 | — |  |
 
-Source: `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw.npz`. S0 trajectories are stored in the full 40D state and indexed to the 24D observed subspace; S1 is already reduced.
+Sources (report bundle `da_current_2026-09-29/`): `l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz`, `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz`, `l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz`. S0 trajectories are stored in the full 40D state and indexed to the 24D observed subspace; S1 is already reduced. Rows and protocol: `l96_benchmark_extended.md`.
 
 
 ## 2. Deterministic point estimators
@@ -77,9 +78,9 @@ Source: `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_f
 
 ## Cross-family reading
 
-Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.5063, DA baselines 0.7383 — flow matching is 27% better than the deterministic baseline and 33% better than SDA, at matched tier, parameter count, schedule and data.
+Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.5063, DA baselines 0.4969 — flow matching is 27% better than the deterministic baseline and 33% better than SDA, at matched tier, parameter count, schedule and data.
 
-- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by ~1.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
+- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by 2.0-2.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
 - **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
 - **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
 - **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row still loses 1.6%, and on the random observing system it degrades about as much as the unconditional SDA1 (1.5% vs 2.0% at gw 25).
@@ -88,7 +89,7 @@ Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.50
 ## Caveats
 
 - DA baselines receive the same per-window parameters as truth generation (S0) or their biased `*_da` counterparts (S1); the learned schemes see observations only. This is what makes the comparison apples-to-apples, and also why their S1 behaviour differs so much.
-- No ensemble members are cached for the DA baselines, so their MAE column is a point proxy and is not comparable to the generative families' ensemble CRPS.
+- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable to the generative families' ensemble CRPS; Strong-4DVar's column is its MAE.
 - SDA is the only learned family with a tuned inference hyper-parameter (`gw`).
 - SDA budget: 400 epochs here, like every row. Do not set these SDA rows against 1200-epoch DirectUNet/CFM results: the SDA priors have not been retrained at the 1200-epoch default.
 - The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).
@@ -99,18 +100,18 @@ Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.50
 
 Best / median / worst windows, ranked by Strong-4DVar per-window RMSE (the same convention as the consolidated benchmark, so window choices are comparable across reports). Rows are Truth / Obs / one best scheme per subcategory; columns are the state and |error| maps for the slow X (8D) and fast Y (16D) blocks. Generative rows are plotted as their **ensemble mean** — the estimator their RMSE column scores.
 
-| case | rank | window | 4DVar win-RMSE | Truth-ref ETKF | Strong-4DVar | DirectUNet-M | VanillaCFM-M | SDA1-M |
+| case | rank | window | 4DVar win-RMSE | ETKS | Strong-4DVar | DirectUNet-M | VanillaCFM-M | SDA1-M |
 |---|---|---|---|---|---|---|---|---|
-| S0 | best | 155 | 0.407 | 0.687 | 0.407 | 0.403 | 0.266 | 0.395 |
-| S0 | median | 187 | 0.794 | 0.939 | 0.794 | 0.535 | 0.325 | 0.570 |
-| S0 | worst | 58 | 1.432 | 0.889 | 1.432 | 0.539 | 0.452 | 0.602 |
-| S1 | best | 35 | 0.977 | 0.980 | 0.977 | 0.408 | 0.249 | 0.363 |
-| S1 | median | 198 | 1.482 | 1.507 | 1.482 | 0.500 | 0.320 | 0.499 |
-| S1 | worst | 75 | 1.991 | 2.005 | 1.991 | 0.645 | 0.497 | 0.774 |
+| S0 | best | 146 | 0.352 | 0.437 | 0.352 | 0.391 | 0.277 | 0.405 |
+| S0 | median | 2 | 0.773 | 1.137 | 0.773 | 0.632 | 0.517 | 0.727 |
+| S0 | worst | 56 | 1.497 | 0.724 | 1.497 | 0.651 | 0.580 | 0.629 |
+| S1 | best | 35 | 0.975 | 0.882 | 0.975 | 0.408 | 0.249 | 0.363 |
+| S1 | median | 10 | 1.474 | 1.341 | 1.474 | 0.525 | 0.332 | 0.496 |
+| S1 | worst | 75 | 1.990 | 1.778 | 1.990 | 0.645 | 0.497 | 0.774 |
 
 **Observing system.** `obs_mask` is a single 1-D mask over time shared by every dimension, so slow and fast are observed at exactly the same instants: **30 observed timesteps per window** (`obs_interval=100` over T=3000). What differs between them is spatial, not temporal — all 8 slow X are observed, but only 16 of the 32 fast Y (`obs_j=2` of `J=4`), which is why the fast block is 16 rows.
 
-Each observation is drawn as a 11-column band rather than a single 1/3000 column, which would be ~0.15 px and mostly vanish under rasterization. That is display-only and inflates the Obs row's |error| column (labelled 'obs noise') by ~1.7%; the undistorted values are S0/best 0.7067, S0/median 0.7216, S0/worst 0.7199, S1/best 0.7013, S1/median 0.6845, S1/worst 0.7327.
+Each observation is drawn as a 11-column band rather than a single 1/3000 column, which would be ~0.15 px and mostly vanish under rasterization. That is display-only and inflates the Obs row's |error| column (labelled 'obs noise') by ~1.7%; the undistorted values are S0/best 0.7003, S0/median 0.7113, S0/worst 0.6836, S1/best 0.7013, S1/median 0.7116, S1/worst 0.7327.
 
 ![S0 best](figures/p1_l96_hovm_s0_best.png)
 ![S0 median](figures/p1_l96_hovm_s0_median.png)
