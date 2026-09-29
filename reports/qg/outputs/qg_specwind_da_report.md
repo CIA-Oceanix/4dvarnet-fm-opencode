@@ -23,18 +23,20 @@ The gyrostat drives domain-scale wind-stress-curl patterns with regime changes; 
 | method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
 |---|---|---|---|---|---|---|
 | _free forecast_ | 0.759 | 0.848 | -0.057 | 0.043 | 0.398 |  |
-| ETKF (radius 8) | **0.937** | **0.933** | **0.647** | **0.578** | **0.774** | [0.762, 0.786] |
-| EnKF (radius 6) | *0.929* | *0.918* | *0.635* | *0.562* | *0.761* | [0.749, 0.773] |
+| ETKF (radius 8) | *0.937* | *0.933* | *0.647* | *0.578* | *0.774* | [0.762, 0.786] |
+| EnKF (radius 6) | 0.929 | 0.918 | 0.635 | 0.562 | 0.761 | [0.749, 0.773] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.961** | **0.948** | **0.717** | **0.588** | **0.804** | [0.793, 0.815] |
 
 **Coupled dataset**
 
 | method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
 |---|---|---|---|---|---|---|
 | _free forecast_ | 0.745 | 0.838 | -0.044 | 0.068 | 0.402 |  |
-| ETKF (radius 8) | **0.936** | **0.933** | **0.651** | **0.595** | **0.779** | [0.767, 0.791] |
-| EnKF (radius 6) | *0.929* | *0.919* | *0.643* | *0.580* | *0.768* | [0.755, 0.780] |
+| ETKF (radius 8) | *0.936* | *0.933* | *0.651* | *0.595* | *0.779* | [0.767, 0.791] |
+| EnKF (radius 6) | 0.929 | 0.919 | 0.643 | 0.580 | 0.768 | [0.755, 0.780] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.962** | **0.951** | **0.726** | **0.611** | **0.813** | [0.802, 0.823] |
 
-(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row.)
+(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
 
 ## 3. DA baselines — S1 (realistic base), 3 columns per day
 
@@ -43,18 +45,20 @@ The gyrostat drives domain-scale wind-stress-curl patterns with regime changes; 
 | method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
 |---|---|---|---|---|---|---|
 | _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |
-| ETKF (radius 8) | **0.848** | *0.757* | *0.433* | *0.277* | *0.579* | [0.560, 0.598] |
-| EnKF (radius 6) | *0.847* | **0.762** | **0.450** | **0.326** | **0.596** | [0.578, 0.615] |
+| ETKF (radius 8) | *0.848* | *0.757* | 0.433 | 0.277 | 0.579 | [0.560, 0.598] |
+| EnKF (radius 6) | 0.847 | **0.762** | *0.450* | **0.326** | *0.596* | [0.578, 0.615] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.872** | 0.741 | **0.504** | *0.290* | **0.602** | [0.581, 0.621] |
 
 **Coupled dataset**
 
 | method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
 |---|---|---|---|---|---|---|
 | _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |
-| ETKF (radius 8) | **0.848** | *0.766* | *0.437* | *0.295* | *0.586* | [0.568, 0.605] |
-| EnKF (radius 6) | *0.847* | **0.771** | **0.454** | **0.343** | **0.604** | [0.586, 0.622] |
+| ETKF (radius 8) | *0.848* | *0.766* | 0.437 | 0.295 | 0.586 | [0.568, 0.605] |
+| EnKF (radius 6) | 0.847 | **0.771** | *0.454* | **0.343** | *0.604* | [0.586, 0.622] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.872** | 0.746 | **0.512** | *0.311* | **0.610** | [0.590, 0.630] |
 
-(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row.)
+(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
 
 ![S0 vs S1 per field](figs/qg_specwind_da_s0_s1.png)
 
@@ -127,6 +131,11 @@ Independent samples (paired windows share seeds but not trajectories), two-sampl
 | EnKF | q₁ | 0.635 | 0.643 | -0.009 [-0.039, +0.023] |
 | EnKF | q₂ | 0.562 | 0.580 | -0.019 [-0.060, +0.022] |
 | EnKF | score | 0.761 | 0.768 | -0.007 [-0.025, +0.010] |
+| EnKS (ETKF smoother) | ψ₁ | 0.961 | 0.962 | -0.001 [-0.008, +0.007] |
+| EnKS (ETKF smoother) | ψ₂ | 0.948 | 0.951 | -0.003 [-0.018, +0.012] |
+| EnKS (ETKF smoother) | q₁ | 0.717 | 0.726 | -0.010 [-0.035, +0.016] |
+| EnKS (ETKF smoother) | q₂ | 0.588 | 0.611 | -0.022 [-0.064, +0.018] |
+| EnKS (ETKF smoother) | score | 0.804 | 0.813 | -0.009 [-0.024, +0.006] |
 
 **S1 (realistic base)**
 
@@ -142,6 +151,11 @@ Independent samples (paired windows share seeds but not trajectories), two-sampl
 | EnKF | q₁ | 0.450 | 0.454 | -0.004 [-0.030, +0.023] |
 | EnKF | q₂ | 0.326 | 0.343 | -0.017 [-0.052, +0.017] |
 | EnKF | score | 0.596 | 0.604 | -0.007 [-0.033, +0.018] |
+| EnKS (ETKF smoother) | ψ₁ | 0.872 | 0.872 | -0.000 [-0.025, +0.024] |
+| EnKS (ETKF smoother) | ψ₂ | 0.741 | 0.746 | -0.005 [-0.105, +0.096] |
+| EnKS (ETKF smoother) | q₁ | 0.504 | 0.512 | -0.008 [-0.036, +0.020] |
+| EnKS (ETKF smoother) | q₂ | 0.290 | 0.311 | -0.021 [-0.059, +0.016] |
+| EnKS (ETKF smoother) | score | 0.602 | 0.610 | -0.009 [-0.037, +0.020] |
 
 ## 7. Factor strata (forced, ETKF, 3 columns per day)
 

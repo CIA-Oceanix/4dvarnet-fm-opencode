@@ -4,7 +4,7 @@ In the style of `generate_qg_reconstruction_figs.py` (the legacy QG DA report):
 
 * reconstruction panels for 3 test windows of the forced dataset (best / median
   / worst by the ETKF's S0 per-window score) in S0 and in the realistic S1
-  (base): rows truth | free forecast | ETKF | EnKF, columns psi1 | psi2 | q1 | q2
+  (base): rows truth | free forecast | ETKF | EnKF | EnKS, columns psi1 | psi2 | q1 | q2
   at day 27;
 * a DA-cycle animation (ETKF) per window and scenario: observed column, true
   and DA wind-stress curl, truth / analysis for q1, psi1, psi2, q2;
@@ -52,7 +52,9 @@ from models.qg_wind_modes import FourierWindBasis  # noqa: E402
 SPEC = "qg_specwind_gyrostat_v1"
 S1_VARIANT = "base"
 METHODS = (("ETKF", "etkf", {"loc_radius": 8.0, "etkf_ridge": 0.1, "etkf_loc_mode": "ensrf"}),
-           ("EnKF", "enkf", {"loc_radius": 6.0, "etkf_ridge": 0.1}))
+           ("EnKF", "enkf", {"loc_radius": 6.0, "etkf_ridge": 0.1}),
+           ("EnKS (smoother)", "enks", {"loc_radius": 8.0, "etkf_ridge": 0.1, "etkf_loc_mode": "ensrf",
+                                        "enks_lag": 12}))
 LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂"}
 CMAP = "RdBu_r"
 INK, MUTED, GRID = "#1f2a30", "#5b6b72", "#e3e8ea"
@@ -243,7 +245,7 @@ def density_figure(runs: list[dict], out_dir: str) -> str:
 
 
 def s0_s1_figure(runs: list[dict], out_dir: str) -> str:
-    fig, axes = plt.subplots(1, 2, figsize=(11, 3.9), sharey=True)
+    fig, axes = plt.subplots(1, len(METHODS), figsize=(5.5 * len(METHODS), 3.9), sharey=True)
     x = np.arange(len(FIELDS))
     for ax, (name, method, _) in zip(axes, METHODS):
         s0 = _find(runs, SPEC, method, 3)
