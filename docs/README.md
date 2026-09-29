@@ -131,6 +131,6 @@ thread has a synthesis note, cite it rather than the notes it summarises:
 | L96 τ-consistency of the CFM operators | `docs/results/l96_cfm_tau_consistency_synthesis.md` (#261) |
 | L96 flow blends and velocity ensembles (VanillaCFM / PredictStateCFM) | `docs/results/l96_cfm_velocity_ensembles.md` |
 | L96 PredictStateCFM skip connection (parameterization vs loss weight) | `docs/results/l96_psc_skip_connection.md` |
-| L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_benchmark.md` (benchmark rows, val-tuned inflation); prototype: `docs/results/l96_etks_prototype.md` |
+| L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_default_inflation.md` (canonical row, benchmark inflation 1.15 / 2.5); `docs/results/l96_etks_benchmark.md` (other inflations, validation sweep); prototype: `docs/results/l96_etks_prototype.md` |
  The
 L96/QG/L63 number tables are under `reports/*/outputs/`.
