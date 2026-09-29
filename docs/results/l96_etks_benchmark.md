@@ -74,14 +74,17 @@ Spread/RMSE:
    - The prototype's S0 regular figure (−17.7% under its own metric) is reproduced exactly under the benchmark metric.
 2. **The old benchmark S0 inflation (1.5) is too high on the post-#291 ETKF** — the same finding as #295, which moved the default to S0 1.15 / S1 2.5 (`docs/results/l96_da_inflation_post291.md`).
    - Tuned on validation, λ = 1.1 improves the S0 ETKF by 12% (regular) and 23% (random) on test, and its CRPS by 17% / 34%.
-   - Hypothesis, not tested here: the #291 transform fix keeps spread that the old thin-SVD transform dropped. That matters most on the random layouts (12–24 observed channels for 30 members), so the fix lowered the optimal inflation. This is consistent with the rerun ETKF at λ = 1.5 being 8% *worse* than the published pre-#291 row on random S0 (0.864 vs 0.798), while regular S1 is unchanged (1.479 vs 1.478).
+   - Hypothesis, not tested here: the #291 transform fix keeps spread that the old thin-SVD transform dropped. That matters most on the random layouts (12–24 observed channels for 30 members), so the fix lowered the optimal inflation. This is consistent with the rerun ETKF at λ = 1.5 being 8% *worse* than the pre-#291 row on random S0 (0.864 vs 0.798), while regular S1 is unchanged (1.479 vs 1.478). #295 measured the same (`docs/results/l96_da_inflation_post291.md`).
    - This sweep selects the same S1 value as #295 (2.5) and S0 1.1 vs its 1.15. The criteria differ: CRPS relative to each layout's best here, versus the worse layout's RMSE loss in #295. The ETKS's optimum equals the ETKF's in both cases, so the smoother needs no inflation of its own.
 3. **S1 has no single good inflation.** λ = 2.5 helps the regular grid (−4.7%) and hurts the random layouts (+2.2%). A per-layout inflation, or adaptive inflation, would be needed to do better. The tuned S1 rows are not uniformly better, and the best random-S1 ETKF/ETKS row is the ETKS at λ = 2.0.
 4. **Best ETKF/ETKS rows.** ETKS at the validation-selected λ:
-   - regular S0 **0.514** (published ETKF 0.687, −25%), S1 **1.338** (published 1.478);
-   - random S0 **0.566** (published 0.798, −29%).
+   - regular S0 **0.514**, S1 **1.338**; random S0 **0.566**, S1 1.349.
+   - Against the current benchmark ETKF (#298: 1.15 / 2.5; regular S0 0.610, S1 1.409; random S0 0.679, S1 1.407): −16% / −5% regular, −17% / −4% random. These are not paired: a different run, and λ 1.1 vs 1.15 at S0.
+   - Against the pre-#291 benchmark ETKF (0.687 regular S0, 0.798 random S0): −25% / −29%.
 
-   For comparison, the learned schemes are at ≈0.34 (regular S0) and ≈0.44 (random S0). DA's S0 deficit narrows from ~2× to ~1.5× regular and ~1.3× random; filtering and mistuned inflation account for roughly half of the regular-grid gap.
+   For comparison, the learned schemes are at ≈0.34 (regular S0) and ≈0.44 (random S0). DA's regular-S0 deficit goes from 2.0× (pre-#291 ETKF, 0.687) to 1.8× (retuned benchmark ETKF, 0.610) to 1.5× (ETKS, 0.514).
+   Roughly, of the original 0.35 gap, the inflation retune removes 0.08 and smoothing another 0.10 (at the two runs' slightly different S0 λ); about half remains.
+   On random S0 the ETKS is at 1.3×.
 5. **Calibration.**
    - At the tuned λ, both filter and smoother are under-dispersed (ETKS spread/RMSE 0.33–0.53), because the CRPS criterion trades spread for accuracy.
    - At S1 the tuned ETKS has a slightly *worse* CRPS than the tuned ETKF on the regular grid (+1.6%) despite 5% lower RMSE: smoothing shrinks spread further.
@@ -89,7 +92,7 @@ Spread/RMSE:
 
 ## Status and follow-ups
 
-- The report shows three groups of DA rows: the published pre-#291 ETKF/EnKF rows (unchanged), the ETKF rerun plus ETKS at the benchmark λ, and both at the validation λ.
+- The report shows the benchmark ETKF/EnKF rows (#298, at the #295 defaults) followed by two paired ETKF + ETKS groups from this PR: λ 1.5 / 2.0 and λ 1.1 / 2.5.
 - **Not done here:**
   - an ETKS row at exactly the new benchmark default (1.15 / 2.5, #295);
   - the #243 obs-count sweep and RMSE(t);

@@ -102,6 +102,18 @@ at S0 the EnKF RMSE at the new default is 12% (regular) / 16% (random) lower tha
 
 ## Caveats
 
+- **The shared S1 value over-inflates dense-time, sparse-channel observing
+  systems** (found on the test-set factorial grid after the rerun,
+  `reports/l96/outputs/l96_benchmark_extended.md` finding 3b): with 4 observed
+  fast channels both filters get worse beyond ~50 obs per window at S1 (ETKF
+  1.57 → 2.31, EnKF 1.74 → 3.15 from 50 to 100 obs), while with 8–16 channels
+  they improve monotonically. Inflation is applied per analysis, so it
+  compounds with the number of analyses on the poorly observed directions; the
+  canonical random distribution (n_obs 10–100, k 4–16) the value was tuned on
+  averages this away. The regular grid (30 analyses) preferring more inflation
+  than the random layout (≈ 55 on average) is consistent with an optimum set
+  per unit time rather than per analysis — a hypothesis, not tested here.
+
 - 50 windows, unseeded ensembles: differences below ~1% between neighbouring
   λ are within noise (e.g. regular S0 1.15–1.25).
 - No benchmark row has been rerun at the new defaults yet; every ETKF/EnKF
