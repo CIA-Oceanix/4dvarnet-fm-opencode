@@ -28,7 +28,8 @@ import numpy as np
 FIELDS = ("psi1", "psi2", "q1", "q2")
 LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂", "score": "score"}
 SPECS = {"qg_specwind_gyrostat_v1": "forced", "qg_coupled_gyrostat_v1": "coupled"}
-METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF"}
+METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF", "enks": "EnKS (ETKF smoother)"}
+METHODS = ("etkf", "enkf", "enks")
 S0 = "S0"
 ETKF_MODE = "ensrf"
 
@@ -51,6 +52,7 @@ def load_runs(root: str) -> list[dict]:
                             else (f"κ = {m0['s1_kappa']:g}" if m0.get("s1_kappa") else S0)),
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
                      "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
+                     "lag": m0.get("enks_lag"),
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -111,14 +113,16 @@ def _table(header: list[str], rows: list[tuple]) -> list[str]:
 
 def scenario_table(runs: list[dict], spec: str, cols: int, s1: str) -> list[str]:
     rows, base = [], None
-    for method in ("etkf", "enkf"):
+    for method in METHODS:
         r = _find(runs, spec, method, cols, s1)
         if r is None:
             continue
         base = base or r
         vals = [float(_values(r, "da", k).mean()) for k in FIELDS + ("score",)]
         ci = _boot_mean(_values(r, "da", "score"))
-        rows.append((f"{METHOD_NAME[method]} (radius {r['loc']:g})", vals,
+        lag = (f", lag {r['lag'] if r['lag'] is not None else 'whole window'}"
+               if method == "enks" else "")
+        rows.append((f"{METHOD_NAME[method]} (radius {r['loc']:g}{lag})", vals,
                      [f"[{ci[0]:.3f}, {ci[1]:.3f}]"], True))
     if base is None:
         return ["_No complete runs yet._"]
@@ -131,7 +135,7 @@ def d2_table(runs: list[dict], cols: int, s1: str) -> list[str]:
     lines = ["| method | field | forced | coupled | forced − coupled [95% CI] |", "|---|---|---|---|---|"]
     rng = np.random.default_rng(1)
     any_row = False
-    for method in ("etkf", "enkf"):
+    for method in METHODS:
         a = _find(runs, "qg_specwind_gyrostat_v1", method, cols, s1)
         b = _find(runs, "qg_coupled_gyrostat_v1", method, cols, s1)
         if a is None or b is None:
@@ -290,7 +294,9 @@ def main() -> None:
         for spec, lab in SPECS.items():
             md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(runs, spec, 3, s) + [""]
         md += ["(Best per column **bolded**, second-best *italicized*, among the DA methods; the free "
-               "forecast is a reference row.)", ""]
+               "forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the "
+               "ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not "
+               "a filter.)", ""]
     md += _fig(fig_dir, "qg_specwind_da_s0_s1.png", "S0 vs S1 per field")
     md += ["## 4. Configuration synthesis and S1 error budget", "",
            "Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): vertical "

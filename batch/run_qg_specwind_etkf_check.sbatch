@@ -10,7 +10,7 @@
 #SBATCH --error=sbatch_logs/qg_etkf_check_%A_%a.err
 # Localized ETKF update check on val (evaluation/qg_specwind_etkf_check.py): one task = one
 # configuration over 20 val windows. rtx8000 only (val is regenerated from seeds).
-#   sbatch --array=0-15 batch/run_qg_specwind_etkf_check.sbatch
+#   sbatch --array=0-25 batch/run_qg_specwind_etkf_check.sbatch   (16-25: localized EnKS lags)
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python

@@ -133,7 +133,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
              inflation: float = 1.0, loc_radius: float = 8.0, etkf_ridge: float = 0.1,
              loc_cross_layer: float = 1.0, init_ensemble: str = "bred", breed_days: float = 3.0,
              disp_frac: float = 1.0, init_lag_days: float = 5.0, out_path: str | None = None,
-             save_traj: str | None = None, etkf_loc_mode: str = "ensrf") -> tuple[dict, list[dict]]:
+             save_traj: str | None = None, etkf_loc_mode: str = "ensrf",
+             enks_lag: int | None = None) -> tuple[dict, list[dict]]:
     """Run S0/S1 DA on prepared windows; return run()'s payload and per-window metrics."""
     traj_dir = save_traj or tempfile.mkdtemp(prefix="qgda_", dir=os.environ.get("TMPDIR", "/tmp"))
     try:
@@ -143,7 +144,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       init_lag_days=init_lag_days, ds={"test_s0": windows}, etkf_ridge=etkf_ridge,
                       save_traj=traj_dir, loc_cross_layer=loc_cross_layer,
                       init_ensemble_kind=init_ensemble, breed_days=breed_days, disp_frac=disp_frac,
-                      etkf_loc_mode=etkf_loc_mode)
+                      etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
         per_window = []
@@ -169,7 +170,8 @@ def main() -> None:
     p.add_argument("--n-windows", type=int, default=100)
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--n-shards", type=int, default=1)
-    p.add_argument("--method", default="etkf", choices=("etkf", "enkf"))
+    p.add_argument("--method", default="etkf", choices=("etkf", "enkf", "enks"),
+                   help="enks = localized EnKS smoother on the EnSRF ETKF")
     p.add_argument("--cols-per-day", type=int, default=3)
     p.add_argument("--obs-noise-frac", type=float, default=0.05)
     p.add_argument("--init-lag-days", type=float, default=5.0)
@@ -182,6 +184,8 @@ def main() -> None:
     p.add_argument("--init-ensemble", default="bred", choices=("white", "bred"))
     p.add_argument("--breed-days", type=float, default=3.0)
     p.add_argument("--disp-frac", type=float, default=1.0)
+    p.add_argument("--enks-lag", type=int, default=None,
+                   help="EnKS lag in analyses (default: the whole window)")
     p.add_argument("--etkf-loc-mode", default="ensrf", choices=("square_root", "ensrf"),
                    help="localized ETKF update: legacy square_root, or the exact EnSRF (ensrf)")
     p.add_argument("--s1-kappa", type=float, default=0.0,
@@ -227,13 +231,14 @@ def main() -> None:
         loc_radius=args.loc_radius, etkf_ridge=args.etkf_ridge,
         loc_cross_layer=args.loc_cross_layer, init_ensemble=args.init_ensemble,
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
-        out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode)
+        out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
+        enks_lag=args.enks_lag)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
             "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
-            "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode,
+            "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode, "enks_lag": args.enks_lag,
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": args.s1_kappa, "s1_preset": args.s1_preset if args.s1_kappa else None,
