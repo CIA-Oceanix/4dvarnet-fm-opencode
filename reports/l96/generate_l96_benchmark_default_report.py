@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT / "reports" / "l96"))
 from generate_p1_l96_benchmark import deterministic, generative  # noqa: E402
 from scripts.check_l96_testset_consistency import check_da, check_learned  # noqa: E402
 import _inputs  # noqa: E402
+import per_window_summary  # noqa: E402
 
 REPORT = "benchmark_default"
 SHARED = _inputs.shared()
@@ -288,6 +289,8 @@ def main() -> None:
     for r in learned:
         if r["kind"] == "det":
             A.append(f"| {r['group']} | {r['label']} | {np.mean(r['regular_vr']['s0']):.3f} | {np.mean(r['canonical_vr']['s0']):.3f} |")
+    A.append("")
+    A += per_window_summary.section()
     A.append("\n## Caveats\n")
     A.append("- P1 and SDA rows are single runs; benchmark-default rows are 3 seeds.")
     A.append("- The SDA guidance weight (20) was tuned on the regular grid, not re-tuned for the random set.")
