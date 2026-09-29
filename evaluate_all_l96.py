@@ -21,6 +21,7 @@ from evaluation.run_l96 import (
     _BASELINE_METHODS,
     L96_ENKF_INFLATION,
     L96_ETKF_INFLATION,
+    inflation_tag,
     make_obs_j_indices,
     parse_case_inflation,
     run_and_cache_baselines,
@@ -34,7 +35,7 @@ def run_baselines(datasets, device, da_window_steps=None,
                   enkf_inflation=None, etkf_inflation=None, suffix="",
                   weak_config=None, strong_config=None, exclude_methods=None,
                   obs_j=2, s1_j=None, eval_j=None, obs_interval=100, fw_randomized=False,
-                  da_fast_weights=False, save_members=False, keep_members=False):
+                  da_fast_weights=False, save_members=False, keep_members=False, etks_config=None):
     print("\n── Running L96 Baselines ──")
     enkf_config = {"inflation": enkf_inflation} if enkf_inflation else None
     etkf_config = {"inflation": etkf_inflation} if etkf_inflation else None
@@ -53,7 +54,8 @@ def run_baselines(datasets, device, da_window_steps=None,
                                        fw_randomized=fw_randomized,
                                        da_fast_weights=da_fast_weights,
                                        save_members=save_members,
-                                       keep_members=keep_members)
+                                       keep_members=keep_members,
+                                       etks_config=etks_config)
     return results
 
 
@@ -104,6 +106,8 @@ def main():
     parser.add_argument("--suffix", type=str, default="")
     parser.add_argument("--skip-weak", action="store_true", default=False)
     parser.add_argument("--skip-strong", action="store_true", default=False)
+    parser.add_argument("--skip-enkf", action="store_true", default=False)
+    parser.add_argument("--skip-etkf", action="store_true", default=False)
     parser.add_argument("--save-members", action="store_true", default=False,
                         help="ETKF/EnKF: also write the full ensembles (*_members.npz) for rank histograms")
     parser.add_argument("--keep-members", action="store_true", default=False,
@@ -130,7 +134,24 @@ def main():
                         help="test cases to run (e.g. --cases s0 to redo only S0)")
     parser.add_argument("--da-fast-weights", action="store_true",
                         help="pass each window's fast_weights (S0 true, S1 *_da) to the DA model")
+    parser.add_argument("--data-cache", type=str, default=None,
+                        help="load the S0/S1 windows from this .pt (e.g. a validation set) instead of "
+                             "the generated/cached test windows")
+    parser.add_argument("--etks", action="store_true",
+                        help="also run the ETKS smoother (evaluation/baselines.py::ETKS)")
+    parser.add_argument("--etks-inflation", type=parse_case_inflation, default=None,
+                        help="ETKS inflation, one value or per case (default: --etkf-inflation)")
+    parser.add_argument("--etks-lag", type=str, default="full",
+                        help="ETKS lag in analyses, or 'full' for the whole window")
+    parser.add_argument("--etks-retro-inflation", choices=["correct", "none"], default="correct")
     args = parser.parse_args()
+    etks_config = None
+    if args.etks:
+        etks_lag = None if args.etks_lag == "full" else int(args.etks_lag)
+        etks_inflation = args.etks_inflation if args.etks_inflation is not None else args.etkf_inflation
+        etks_config = {"inflation": etks_inflation, "lag": etks_lag,
+                       "retro_inflation": args.etks_retro_inflation}
+        args.suffix += f"_etks-{args.etks_retro_inflation}-L{args.etks_lag}-inf{inflation_tag(etks_inflation)}"
 
     randomize = json.loads(args.randomize) if args.randomize else {}
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -168,7 +189,11 @@ def main():
         exclude.append("Weak-4DVar")
     if args.skip_strong:
         exclude.append("Strong-4DVar")
-    active_methods = [m for m in _BASELINE_METHODS if m not in exclude]
+    if args.skip_enkf:
+        exclude.append("EnKF")
+    if args.skip_etkf:
+        exclude.append("ETKF")
+    active_methods = [m for m in _BASELINE_METHODS + (["ETKS"] if args.etks else []) if m not in exclude]
     if exclude:
         print(f"  Skipping: {', '.join(exclude)}")
 
@@ -184,7 +209,10 @@ def main():
     ds_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_int{args.obs_interval}_nwin{args.num_test_windows}{tag}.pt")
     ref_cache = os.path.join(EXP_DIR, f"l96_datasets_obsj{args.obs_j}_nwin{args.num_test_windows}{tag}.pt")
     t0 = time.time()
-    if os.path.exists(ds_cache) and not args.regenerate_data:
+    if args.data_cache:
+        print(f"  Loading windows from {args.data_cache}...")
+        datasets = torch.load(args.data_cache, weights_only=False)
+    elif os.path.exists(ds_cache) and not args.regenerate_data:
         print(f"  Loading cached datasets ({ds_cache})...")
         datasets = torch.load(ds_cache, weights_only=False)
     elif os.path.exists(ref_cache) and not args.regenerate_data:
@@ -225,7 +253,8 @@ def main():
                                       fw_randomized="fast_weights" in randomize,
                                       da_fast_weights=args.da_fast_weights,
                                       save_members=args.save_members,
-                                      keep_members=args.keep_members)
+                                      keep_members=args.keep_members,
+                                      etks_config=etks_config)
 
     print("\n── L96 S0/S1 Comparison Table ──")
     headers = ["Case"]

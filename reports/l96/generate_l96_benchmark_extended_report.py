@@ -61,6 +61,15 @@ DAHERE = HERE / "l96_da_random_layout"
 DANEW = HERE / "da_inflation_2026-09-28"
 NEWINF = "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
 DANEW_PW = DANEW / "l96_da_random_layout" / f"per_window_rlayout_n10-100_k4-16_w200_d1{NEWINF}.npz"
+# ETKS (docs/results/l96_etks_benchmark.md): `correct` retro-inflation, full window, with the ETKF rerun
+# alongside; `inf` is the ETKF/ETKS inflation of the run (benchmark default, or validation-selected).
+ETKS_REG = ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-inf{inf}_infs0-1.5_s1-2.0"
+            "_etkf_inf{inf}_obsj2_int100_fw_dafw.npz")
+ETKS_CAN = "per_window_rlayout_n10-100_k4-16_w200_d1_etks-correct-Lfull-inf{inf}_inf{inf}.npz"
+ETKS_ROWS = (("ETKF, pre-#295 inflation S0 1.5 / S1 2.0 (same run as the next row)", "s0-1.5_s1-2.0", "ETKF"),
+             ("ETKS, inflation S0 1.5 / S1 2.0", "s0-1.5_s1-2.0", "ETKS"),
+             ("ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row)", "s0-1.1_s1-2.5", "ETKF"),
+             ("ETKS, inflation S0 1.1 / S1 2.5 (ETKS validation selection)", "s0-1.1_s1-2.5", "ETKS"))
 OUT = ROOT / "reports/l96/outputs"
 CACHE = ROOT / "experiments" / "l96_benchmark_extended_metrics.json"
 CASES = ("s0", "s1")
@@ -171,6 +180,19 @@ def da_main() -> list[dict]:
             rr = p[f"{c}_{k}_rmse_all_obs"]
             rec["can"][c] = {"rmse": rr, "crps": float(p[f"{c}_{k}_crps_all_obs"].mean()) if m != "Strong-4DVar" else None,
                              "sp": float(p[f"{c}_{k}_spread_all_obs"].mean() / rr.mean()) if m != "Strong-4DVar" else None}
+        out.append(rec)
+    for label, inf, m in ETKS_ROWS:
+        z = np.load(HERE / ETKS_REG.format(inf=inf))
+        p = np.load(DAHERE / ETKS_CAN.format(inf=inf))
+        rec = {"label": label, "reg": {}, "can": {}}
+        for c in CASES:
+            t = sel(z[f"{c}_{m}_trajectories"])
+            r = G(np.sqrt(((t - tr[c]) ** 2).mean(1)))["all_obs"]
+            rec["reg"][c] = {"rmse": r, "crps": float(G(sel(z[f"{c}_{m}_crps"]))["all_obs"].mean()),
+                             "sp": float(G(np.sqrt(np.clip(sel(z[f"{c}_{m}_ensemble_variance"]), 0, None)).mean(1))["all_obs"].mean() / r.mean())}
+            rr = p[f"{c}_{m}_rmse_all_obs"]
+            rec["can"][c] = {"rmse": rr, "crps": float(p[f"{c}_{m}_crps_all_obs"].mean()),
+                             "sp": float(p[f"{c}_{m}_spread_all_obs"].mean() / rr.mean())}
         out.append(rec)
     return out
 
@@ -592,6 +614,8 @@ def main() -> None:
         errors += check_da(str(DA243 / f"per_window_rlayout_n10-100_k4-16_w200_d1_{tag}.npz"), manifest)
     errors += check_da(str(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz"), manifest)
     errors += check_da(str(DANEW_PW), manifest)
+    for inf in sorted({inf for _, inf, _ in ETKS_ROWS}):
+        errors += check_da(str(DAHERE / ETKS_CAN.format(inf=inf)), manifest)
     for sub, root in (("l96_testsets_factorial", FACT), ("l96_testsets_ood", OOD)):
         for ts in sorted((SHARED / sub).glob("l96_testset_*.pt")):
             cell = ts.stem.replace("l96_testset_", "")

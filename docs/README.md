@@ -115,7 +115,7 @@ sweep at S0*, which **must share one protocol**).
 | `docs/plans/tech/multi_test_suite_redesign.md` | PROPOSAL v1 2026-09-22; Phase A1 implemented. |
 | `docs/plans/tech/qg_batched_generation_datasets.md` | DRAFT v2 2026-09-26 (decisions settled: 5000/500/500, forced spin-up, train-time regeneration, physical Option C coupling plus a labelled feedback-gain sweep). Batched GPU generation of QG windows for Options B and C (per-window parameters, a co-stepped gyrostat for C). A dataset framework: `SeedSequence` streams, a separate test entropy, leakage checks, a Sobol factor design, and a lean storage format. Measured: ~100× from batching (0.026 ms per window-step), coupled 1.2–1.4× one-way, 1000/100/100 in ~5–10 min against ~10 h serial, 41 GB → ~5 GB storage. Nothing implemented. |
 | `docs/plans/tech/qg_hydra_migration.md` | DRAFT v1 2026-09-19. Moving QG's argparse entry point onto Hydra without orphaning the archived checkpoints; nothing implemented. |
-| `docs/plans/tech/l96_etks_smoother.md` | **DESIGN** rev. 2026-09-28. ETKS on the unlocalised L96 ETKF (filter-vs-smoother F3 term for P1). Prototype done (`docs/results/l96_etks_prototype.md`): `correct` retro-inflation default, ensemble RTS dropped. PR 1 (code: `ETKS` in `evaluation/baselines.py`) implemented; PR 2 (wiring, val-tuned benchmark rows) not started. |
+| `docs/plans/tech/l96_etks_smoother.md` | **DESIGN** rev. 2026-09-28. ETKS on the unlocalised L96 ETKF (filter-vs-smoother F3 term for P1). Prototype done (`docs/results/l96_etks_prototype.md`): `correct` retro-inflation default, ensemble RTS dropped. PR 1 (code) and PR 2 (wiring, val-tuned benchmark rows, `docs/results/l96_etks_benchmark.md`) implemented. |
 | `docs/plans/tech/l96_cond_extra_dim.md` | DESIGN — `cond_extra_dim` conditioning separation (Option B1). |
 | `docs/plans/tech/l96_fdv_torch_compile_notes.md` | NOTES — why `torch.compile` / JAX were shelved for FDV. |
 | `docs/plans/tech/archive.md` | NOTES — run-artifact layout and the `evaluation.archive` resolver. |
@@ -131,6 +131,6 @@ thread has a synthesis note, cite it rather than the notes it summarises:
 | L96 τ-consistency of the CFM operators | `docs/results/l96_cfm_tau_consistency_synthesis.md` (#261) |
 | L96 flow blends and velocity ensembles (VanillaCFM / PredictStateCFM) | `docs/results/l96_cfm_velocity_ensembles.md` |
 | L96 PredictStateCFM skip connection (parameterization vs loss weight) | `docs/results/l96_psc_skip_connection.md` |
-| L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_prototype.md` (prototype; not benchmark rows) |
+| L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_benchmark.md` (benchmark rows, val-tuned inflation); prototype: `docs/results/l96_etks_prototype.md` |
  The
 L96/QG/L63 number tables are under `reports/*/outputs/`.
