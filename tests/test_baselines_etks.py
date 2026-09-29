@@ -153,7 +153,28 @@ def _kalman_rts(m0, P0, F, H, R, obs, mask):
     return ms, Ps
 
 
-def test_linear_gaussian_matches_exact_rts_smoother():
+@pytest.fixture
+def highest_matmul_precision():
+    """Exact float32 matmuls for the exactness checks. Any module may set
+    torch.set_float32_matmul_precision process-wide ('medium' allows bfloat16
+    matmuls on CPUs with a fast bf16 path, e.g. AMX); restored afterwards."""
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    yield
+    torch.set_float32_matmul_precision(previous)
+
+
+def _matmul_diagnostics() -> str:
+    flags = set()
+    try:
+        with open("/proc/cpuinfo") as f:
+            flags = {w for w in f.read().split() if "bf16" in w or w.startswith("amx")}
+    except OSError:
+        pass
+    return f"float32 matmul precision {torch.get_float32_matmul_precision()!r}, CPU bf16/AMX flags {sorted(flags)}"
+
+
+def test_linear_gaussian_matches_exact_rts_smoother(highest_matmul_precision):
     """lambda = 1 and N - 1 >= D: the ETKF is the Kalman filter of its initial
     sample moments and the ETKS is the RTS smoother, exactly up to float32.
     od = 2 < N exercises the null-space term of the #291 transform."""
@@ -173,10 +194,10 @@ def test_linear_gaussian_matches_exact_rts_smoother():
     x0 = init.double().numpy()
     ms, Ps = _kalman_rts(x0.mean(0), np.cov(x0.T), F.double().numpy(), H, R_var * np.eye(len(idx)),
                          obs.double().numpy(), mask.numpy())
-    np.testing.assert_allclose(res.trajectory, ms, atol=2e-4)
+    np.testing.assert_allclose(res.trajectory, ms, atol=2e-4, err_msg=_matmul_diagnostics())
     ens = res.ensemble.astype(np.float64)
     cov = np.einsum("ntd,nte->tde", ens - ens.mean(0), ens - ens.mean(0)) / (N - 1)
-    np.testing.assert_allclose(cov, Ps, atol=2e-4)
+    np.testing.assert_allclose(cov, Ps, atol=2e-4, err_msg=_matmul_diagnostics())
 
 
 # 5 -------------------------------------------------------------------------
