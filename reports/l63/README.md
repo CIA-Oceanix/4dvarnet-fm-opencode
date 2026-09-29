@@ -105,9 +105,6 @@ Best classical baseline (Weak-4DVar) and each mean model's own standalone
 | PredictStateCFM-L (flat) | SDA3 | 0.786 | 0.991 | 0.758 | 0.992 |
 | CFM-L (cos) | FlowPrior | 0.937 | 0.987 | 0.769 | 0.991 |
 | PredictStateCFM-L (flat) | FlowPrior | 0.746 | 0.991 | 0.638 | 0.994 |
-| DirectUNet-M (flat) | FlowPrior | — | — | — | — |
-
-DirectUNet-M(flat) × FlowPrior intentionally not run (see background above).
 
 **Notes:**
 - All SDA cells use `guidance_weight=20`, `N_outer=10`, `N_ensemble=50`,
