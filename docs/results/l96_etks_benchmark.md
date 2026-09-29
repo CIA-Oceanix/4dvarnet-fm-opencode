@@ -1,6 +1,6 @@
 # L96 ETKS benchmark rows: validation-tuned inflation and test results
 
-**Status:** RESULTS (2026-09-28). PR 2 of `docs/plans/tech/l96_etks_smoother.md`: the ETKS (`correct` retro-inflation, full window) on the 200 P1 test windows, regular grid and random layouts, S0 and S1. Two inflation settings: the ETKF's benchmark λ (S0 1.5 / S1 2.0) and the λ selected on the validation windows (S0 1.1 / S1 2.5). The ETKF was rerun in the same jobs for paired comparisons.
+**Status:** RESULTS (2026-09-28). PR 2 of `docs/plans/tech/l96_etks_smoother.md`: the ETKS (`correct` retro-inflation, full window) on the 200 P1 test windows, regular grid and random layouts, S0 and S1. Two inflation settings: the pre-#295 benchmark λ (S0 1.5 / S1 2.0) and the λ selected here on the validation windows (S0 1.1 / S1 2.5). #295 independently retuned the benchmark ETKF default to S0 1.15 / S1 2.5 (`docs/results/l96_da_inflation_post291.md`), close to the selection here but not equal; no ETKS row was run at exactly 1.15 / 2.5. The ETKF was rerun in the same jobs for paired comparisons.
 
 **Numbers:** `reports/l96/outputs/l96_benchmark_extended.md` (ETKS rows of the main and CRPS tables). The validation sweep comes from `batch/run_l96_etks_val_tuning.sbatch` + `evaluation/l96_etks_select_inflation.py`, and the test rows from `batch/run_l96_etks_test.sbatch`. The paired statistics below were computed from the same bundle files.
 
@@ -72,10 +72,10 @@ Spread/RMSE:
    - It is better in 170–200 of 200 windows in every cell, and all intervals exclude zero.
    - The gain is smaller under model error, as predicted in the P1 plan. It is also smaller on the random layouts at S0 (−10.8% vs −17.7% at λ = 1.5).
    - The prototype's S0 regular figure (−17.7% under its own metric) is reproduced exactly under the benchmark metric.
-2. **The benchmark S0 inflation (1.5) is too high on the post-#291 ETKF.**
+2. **The old benchmark S0 inflation (1.5) is too high on the post-#291 ETKF** — the same finding as #295, which moved the default to S0 1.15 / S1 2.5 (`docs/results/l96_da_inflation_post291.md`).
    - Tuned on validation, λ = 1.1 improves the S0 ETKF by 12% (regular) and 23% (random) on test, and its CRPS by 17% / 34%.
    - Hypothesis, not tested here: the #291 transform fix keeps spread that the old thin-SVD transform dropped. That matters most on the random layouts (12–24 observed channels for 30 members), so the fix lowered the optimal inflation. This is consistent with the rerun ETKF at λ = 1.5 being 8% *worse* than the published pre-#291 row on random S0 (0.864 vs 0.798), while regular S1 is unchanged (1.479 vs 1.478).
-   - The benchmark default (`L96_DA_INFLATION`) and the published ETKF/EnKF rows are not changed in this PR.
+   - This sweep selects the same S1 value as #295 (2.5) and S0 1.1 vs its 1.15. The criteria differ: CRPS relative to each layout's best here, versus the worse layout's RMSE loss in #295. The ETKS's optimum equals the ETKF's in both cases, so the smoother needs no inflation of its own.
 3. **S1 has no single good inflation.** λ = 2.5 helps the regular grid (−4.7%) and hurts the random layouts (+2.2%). A per-layout inflation, or adaptive inflation, would be needed to do better. The tuned S1 rows are not uniformly better, and the best random-S1 ETKF/ETKS row is the ETKS at λ = 2.0.
 4. **Best ETKF/ETKS rows.** ETKS at the validation-selected λ:
    - regular S0 **0.514** (published ETKF 0.687, −25%), S1 **1.338** (published 1.478);
@@ -91,6 +91,6 @@ Spread/RMSE:
 
 - The report shows three groups of DA rows: the published pre-#291 ETKF/EnKF rows (unchanged), the ETKF rerun plus ETKS at the benchmark λ, and both at the validation λ.
 - **Not done here:**
-  - changing the benchmark inflation default (a separate decision; it would also need the EnKF checked);
+  - an ETKS row at exactly the new benchmark default (1.15 / 2.5, #295);
   - the #243 obs-count sweep and RMSE(t);
   - speeding up the ETKS smoothing, which is currently about the filter's cost again, on CPU.

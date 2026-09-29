@@ -69,6 +69,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md` |
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
+| `reports/l96/outputs/da_inflation_sweep/` | `docs/results/l96_da_inflation_post291.md` |
 | `reports/qg/outputs/qg_specwind_da_report.md` | `docs/results/qg_specwind_da_s0_s1_test.md` |
 | `reports/qg/outputs/qg_spectral_wind_report.md` | `docs/results/qg_spectral_wind_calibration.md` |
 
@@ -135,6 +136,16 @@ example `cfm_tau_consistency/`, `rank_histograms/`).
 The QG DA defaults changed on 2026-09-12 (`etkf_ridge`) and 2026-09-16
 (`loc_radius` 2.0 / 1.0, `etkf_ridge` 0.1). Reports from before those dates keep
 their own stated configuration.
+
+**Localized ETKF caveat (2026-09-28).** Every localized-ETKF number in the
+QG reports below, except `qg_specwind_da_report.md`, used the legacy
+`ETKF(loc_mode="square_root")` update. Its gain divides R by N − 1
+(unnormalized covariances), and it applies the full gain to the anomalies,
+which over-contracts the spread. The tuned `etkf_ridge` partly stood in for
+R, so those ETKF rows reflect that configuration, not an exact ETKF; the
+EnKF rows are unaffected (`docs/results/qg_specwind_etkf_loc_update.md`).
+The reports are left as they are. `qg_specwind_da_report.md` uses the exact
+EnSRF update (`loc_mode="ensrf"`).
 
 | report | question | status | protocol | generator |
 |---|---|---|---|---|

@@ -4,6 +4,14 @@
 `docs/plans/analysis/qg_specwind_da_s0.md` (§4.1). Tuned on 20 val windows
 of the forced dataset `qg_specwind_gyrostat_v1`; test untouched.
 
+**Update (2026-09-28):** every ETKF number in this note used the legacy
+localized update, which divides R by N − 1 and over-contracts the spread.
+The large tuned ridge (1.0) partly compensated for that. The benchmark
+ETKF now uses the exact localized EnSRF update at the same radius with
+ridge 0.1 (`docs/results/qg_specwind_etkf_loc_update.md`). The other
+selections still hold for the EnSRF ETKF: cross-layer weight 1, bred init,
+radius 6–8. EnKF numbers are unaffected.
+
 **Setup:**
 - **Observations:** upper-layer ψ₁ on 3 random meridional columns per day
   (4.7% of the grid), each once per day, with 5% noise. The lower layer is

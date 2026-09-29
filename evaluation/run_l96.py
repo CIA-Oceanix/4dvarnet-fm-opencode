@@ -43,7 +43,8 @@ def make_obs_j_indices(NO, J_truth, J_obs):
     return tuple(X_idx + Y_idx)
 
 
-L96_DA_INFLATION = {"s0": 1.5, "s1": 2.0}
+L96_ENKF_INFLATION = {"s0": 1.2, "s1": 3.0}
+L96_ETKF_INFLATION = {"s0": 1.15, "s1": 2.5}
 
 
 def parse_case_inflation(value) -> float | dict:

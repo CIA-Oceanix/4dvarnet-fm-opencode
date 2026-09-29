@@ -34,7 +34,7 @@ import torch
 from data.obs_times import resample_obs_variable
 from eval_da_obs_count_l96 import CASES, DEFAULT_CACHE, R_VAR, per_window_metrics
 from evaluation.estimate_metrics import _groups_from_per_window
-from evaluation.run_l96 import (EXP_DIR, L96_DA_INFLATION, _baseline_traj_path, inflation_tag,
+from evaluation.run_l96 import (EXP_DIR, L96_ENKF_INFLATION, L96_ETKF_INFLATION, _baseline_traj_path, inflation_tag,
                                 make_fast_ring_fill, make_obs_j_indices, parse_case_inflation,
                                 run_and_cache_baselines)
 
@@ -102,26 +102,27 @@ def build_cell(datasets: dict, windows: list[int], n_draws: int, n_obs_range, fa
     return cell, layouts
 
 
-def _param_suffix(tag: str, inflation: float | dict) -> str:
-    inf = f"_inf{inflation_tag(inflation)}_etkf_inf{inflation_tag(inflation)}" if inflation != 1.0 else ""
+def _param_suffix(tag: str, enkf_inflation: float | dict, etkf_inflation: float | dict) -> str:
+    inf = (f"_inf{inflation_tag(enkf_inflation)}" if enkf_inflation != 1.0 else "") + \
+        (f"_etkf_inf{inflation_tag(etkf_inflation)}" if etkf_inflation != 1.0 else "")
     return f"{tag}{inf}_obsj2_fw_dafw"
 
 
-def _traj_path(tag: str, inflation: float | dict, da_window_steps: int) -> str:
-    return os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws{da_window_steps}{_param_suffix(tag, inflation)}.npz")
+def _traj_path(tag: str, inflations: tuple, da_window_steps: int) -> str:
+    return os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws{da_window_steps}{_param_suffix(tag, *inflations)}.npz")
 
 
-def load_trajectories(tag: str, inflation: float | dict, da_window_steps: int, cases, methods) -> dict:
+def load_trajectories(tag: str, inflations: tuple, da_window_steps: int, cases, methods) -> dict:
     """``{case_Method_key: array}`` from the combined npz, or from the
     per-method files ``run_and_cache_baselines`` leaves when not every case ran."""
-    combined = _traj_path(tag, inflation, da_window_steps)
+    combined = _traj_path(tag, inflations, da_window_steps)
     if os.path.exists(combined):
         return dict(np.load(combined))
     out = {}
     for case in cases:
         for method in methods:
             prefix = f"{case}_{method.replace('-', '_')}"
-            path = _baseline_traj_path(case, method, f"_dws{da_window_steps}", _param_suffix(tag, inflation))
+            path = _baseline_traj_path(case, method, f"_dws{da_window_steps}", _param_suffix(tag, *inflations))
             with np.load(path) as z:
                 out.update({f"{prefix}_{k}": z[k] for k in z.files})
     return out
@@ -133,8 +134,10 @@ def main() -> None:
     p.add_argument("--fast-range", type=int, nargs=2, default=[4, 16])
     p.add_argument("--n-windows", type=int, default=200)
     p.add_argument("--n-draws", type=int, default=1)
-    p.add_argument("--inflation", type=parse_case_inflation, default=L96_DA_INFLATION,
-                   help="ETKF/EnKF inflation, one value or per case 's0=1.5,s1=2.0' (default)")
+    p.add_argument("--inflation", type=parse_case_inflation, default=None,
+                   help="ETKF and EnKF inflation, one value or per case 's0=1.5,s1=2.0'; overrides the two below")
+    p.add_argument("--enkf-inflation", type=parse_case_inflation, default=L96_ENKF_INFLATION)
+    p.add_argument("--etkf-inflation", type=parse_case_inflation, default=L96_ETKF_INFLATION)
     p.add_argument("--da-window-steps", type=int, default=500)
     p.add_argument("--methods", nargs="+", default=[m for m in METHODS if m != "ETKS"], choices=METHODS)
     p.add_argument("--cases", nargs="+", default=list(CASES), choices=list(CASES))
@@ -143,10 +146,11 @@ def main() -> None:
     p.add_argument("--data-cache", default=DEFAULT_CACHE)
     p.add_argument("--device", default=None)
     p.add_argument("--etks-inflation", type=parse_case_inflation, default=None,
-                   help="ETKS inflation (default: --inflation)")
+                   help="ETKS inflation (default: the ETKF's)")
     p.add_argument("--etks-lag", default="full", help="ETKS lag in analyses, or 'full'")
     p.add_argument("--etks-retro-inflation", choices=["correct", "none"], default="correct")
     args = p.parse_args()
+    enkf_inf, etkf_inf = (args.inflation, args.inflation) if args.inflation is not None else (args.enkf_inflation, args.etkf_inflation)
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     datasets = torch.load(args.data_cache, weights_only=False)
@@ -162,20 +166,20 @@ def main() -> None:
         tag += f"_r{args.r_var:g}"
     if set(args.cases) != set(CASES):
         tag += "_" + "".join(sorted(args.cases))
-    etks_inflation = args.etks_inflation if args.etks_inflation is not None else args.inflation
+    etks_inflation = args.etks_inflation if args.etks_inflation is not None else etkf_inf
     if "ETKS" in args.methods:
         tag += f"_etks-{args.etks_retro_inflation}-L{args.etks_lag}-inf{inflation_tag(etks_inflation)}"
-    print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation {args.inflation}, {len(cell['test_s0'])} runs per case")
+    print(f"n_obs {lo}-{hi}, k {flo}-{fhi}, inflation EnKF {enkf_inf} ETKF {etkf_inf}, {len(cell['test_s0'])} runs per case")
 
-    out_tag = f"{tag}_inf{inflation_tag(args.inflation)}"
+    out_tag = f"{tag}_inf{inflation_tag(enkf_inf)}" + ("" if etkf_inf == enkf_inf else f"_etkf_inf{inflation_tag(etkf_inf)}")
     os.makedirs(OUT_DIR, exist_ok=True)
     torch.save(layouts, os.path.join(OUT_DIR, f"layouts{out_tag}.pt"))
 
     fill = make_fast_ring_fill(8, 4, 2)
     run_and_cache_baselines(
         cell, device, batch_size=200, da_window_steps=args.da_window_steps,
-        enkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
-        etkf_config={"inflation": args.inflation, "init_fill": fill, "R_var": args.r_var},
+        enkf_config={"inflation": enkf_inf, "init_fill": fill, "R_var": args.r_var},
+        etkf_config={"inflation": etkf_inf, "init_fill": fill, "R_var": args.r_var},
         strong_config={"max_iter": 10, "lr": 0.2, "init_fill": fill, "R_var": args.r_var},
         etks_config=({"inflation": etks_inflation, "init_fill": fill, "R_var": args.r_var,
                       "lag": None if args.etks_lag == "full" else int(args.etks_lag),
@@ -183,13 +187,14 @@ def main() -> None:
         suffix=tag, exclude_methods=["Weak-4DVar"] + [m for m in METHODS if m not in args.methods],
         obs_j=2, obs_interval=None, fw_randomized=True, da_fast_weights=True,
     )
-    z = load_trajectories(tag, args.inflation, args.da_window_steps, args.cases, args.methods)
+    z = load_trajectories(tag, (enkf_inf, etkf_inf), args.da_window_steps, args.cases, args.methods)
 
     summary = {"n_obs_range": [lo, hi], "fast_range": [flo, fhi], "windows": [int(w) for w in windows],
-               "n_draws": args.n_draws, "inflation": args.inflation, "N_ensemble": 30, "r_var": args.r_var,
+               "n_draws": args.n_draws, "inflation": enkf_inf if enkf_inf == etkf_inf else None,
+               "inflation_by_method": {"EnKF": enkf_inf, "ETKF": etkf_inf}, "N_ensemble": 30, "r_var": args.r_var,
                "da_fast_weights": True, "step0_observed": True, "init_fill": "fast_ring_linear",
                "da_window_steps": args.da_window_steps, "cases_run": list(args.cases), "min_obs_per_da_window": 1,
-               "source": _param_suffix(tag, args.inflation), "cases": {}}
+               "source": _param_suffix(tag, enkf_inf, etkf_inf), "cases": {}}
     if "ETKS" in args.methods:
         summary["etks"] = {"inflation": etks_inflation, "lag": args.etks_lag,
                            "retro_inflation": args.etks_retro_inflation}

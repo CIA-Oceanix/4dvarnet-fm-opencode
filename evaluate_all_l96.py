@@ -19,7 +19,8 @@ from data.lorenz96 import (
 from evaluation.run_l96 import (
     _BASELINE_CASES,
     _BASELINE_METHODS,
-    L96_DA_INFLATION,
+    L96_ENKF_INFLATION,
+    L96_ETKF_INFLATION,
     inflation_tag,
     make_obs_j_indices,
     parse_case_inflation,
@@ -92,10 +93,10 @@ def print_table(rows, headers):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default=None)
-    parser.add_argument("--enkf-inflation", type=parse_case_inflation, default=L96_DA_INFLATION,
-                        help="one value for S0 and S1, or per case 's0=1.5,s1=2.0' (default)")
-    parser.add_argument("--etkf-inflation", type=parse_case_inflation, default=L96_DA_INFLATION,
-                        help="one value for S0 and S1, or per case 's0=1.5,s1=2.0' (default)")
+    parser.add_argument("--enkf-inflation", type=parse_case_inflation, default=L96_ENKF_INFLATION,
+                        help="one value for S0 and S1, or per case 's0=1.2,s1=3.0' (default)")
+    parser.add_argument("--etkf-inflation", type=parse_case_inflation, default=L96_ETKF_INFLATION,
+                        help="one value for S0 and S1, or per case 's0=1.15,s1=2.5' (default)")
     parser.add_argument("--da-window-steps", type=int, default=500)
     parser.add_argument("--num-test-windows", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=20)

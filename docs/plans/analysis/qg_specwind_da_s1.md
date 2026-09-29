@@ -4,7 +4,8 @@
 (§2b), which replaced the legacy-analogue κ scan as the S1. **Selected:
 realistic base** (`docs/results/qg_specwind_da_s1_calibration.md`), whose
 ETKF ψ₁ of about 0.85–0.9 matches the user's revised aim. Test runs done
-(`docs/results/qg_specwind_da_s0_s1_test.md`). Follows the S0 design
+(`docs/results/qg_specwind_da_s0_s1_test.md`); the ETKF rows and the base
+attribution were re-run with the exact localized EnSRF update on 2026-09-28. Follows the S0 design
 (`docs/plans/analysis/qg_specwind_da_s0.md`) and the val-tuned S0 settings
 (`docs/results/qg_specwind_da2_val_tuning.md`). 4D-Var is deliberately out of
 scope for now; ETKF and EnKF only.
