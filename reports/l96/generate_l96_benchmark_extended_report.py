@@ -40,6 +40,7 @@ from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
 from generate_p1_l96_benchmark import generative  # noqa: E402
 from scripts.check_l96_testset_consistency import check_da, check_learned  # noqa: E402
 import _inputs  # noqa: E402
+import per_window_summary  # noqa: E402
 
 REPORT = "benchmark_extended"
 SHARED = _inputs.shared()
@@ -668,6 +669,7 @@ def main() -> None:
     A += probes_section(cache)
     A += tuning_section(cache)
     A += marginal_section()
+    A += [""] + per_window_summary.section()
     A += ["\n## Caveats\n",
           "- Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.",
           "- SDA priors (alone and inside the hybrids) are trained for 400 epochs; a 1200-epoch SDA run is pending.",

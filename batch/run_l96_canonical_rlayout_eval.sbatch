@@ -21,7 +21,8 @@ set -euo pipefail
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-sda-nanfix
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
-export MPLCONFIGDIR="/tmp/mplconfig_${SLURM_JOB_ID}"
+NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP" 2>/dev/null || { NODE_TMP="/tmp/${USER}_slurm_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP"; }
+export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
 mkdir -p "$MPLCONFIGDIR" sbatch_logs
 R=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 TESTSET=$R/experiments/l96_testset_rlayout_n10-100_k4-16_w200_d1.pt

@@ -101,6 +101,8 @@ early-fine Euler steps (`ens30_no20`), SDA with the guided `ens30_gw20` protocol
 1.5 (S0) / 2.0 (S1) and CRPS on the analysis ensemble. The consolidated report
 uses the older protocol (`ens30_no10` uniform steps, DA inflation 2.0).
 
+The three current reports (`l96_benchmark_default.md`, `l96_benchmark_extended.md`, `p1_l96_benchmark.md`) end with the same section, a per-window RMSE / EV / CRPS summary of the current benchmark rows (`reports/l96/per_window_summary.py`, `benchmark_extended` inputs). The consolidated report is not updated: it uses the old protocol, and the scoping docs quote its digits.
+
 | report | question | status | protocol | generator |
 |---|---|---|---|---|
 | `l96_benchmark_default.md` | DA vs learned schemes under the benchmark-default training recipe, on the regular and the random observing system | **CURRENT** — SDA2/SDA3 S1 rows re-evaluated on the biased DA parameters in #265 | current | `reports/l96/generate_l96_benchmark_default_report.py` |

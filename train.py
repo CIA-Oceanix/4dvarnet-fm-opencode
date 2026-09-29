@@ -18,7 +18,6 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-torch.set_float32_matmul_precision('medium')
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +625,9 @@ def save_trajectories(model, dataset, device, model_type, save_path,
 
 @hydra.main(config_path="config", config_name="lorenz63_default", version_base="1.3")
 def main(cfg: DictConfig):
+    # Training only: set here, not at import, so importing train (evaluation, tests)
+    # does not switch float32 matmuls to bfloat16 process-wide.
+    torch.set_float32_matmul_precision('medium')
     print(OmegaConf.to_yaml(cfg))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
