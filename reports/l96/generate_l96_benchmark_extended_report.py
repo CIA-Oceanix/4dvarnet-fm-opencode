@@ -58,6 +58,9 @@ FACT = HERE / "eval_factorial"
 OOD = HERE / "eval_ood"
 DA243 = _inputs.root(REPORT, "da_random_layout") / "l96_da_random_layout"
 DAHERE = HERE / "l96_da_random_layout"
+DANEW = HERE / "da_inflation_2026-09-28"
+NEWINF = "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
+DANEW_PW = DANEW / "l96_da_random_layout" / f"per_window_rlayout_n10-100_k4-16_w200_d1{NEWINF}.npz"
 OUT = ROOT / "reports/l96/outputs"
 CACHE = ROOT / "experiments" / "l96_benchmark_extended_metrics.json"
 CASES = ("s0", "s1")
@@ -147,9 +150,9 @@ def da_main() -> list[dict]:
     corrected inflation-2.0 run. Random set: the random-layout DA runs on the canonical layouts."""
     truth = torch.load(REG_TEST, weights_only=False)
     tr = {c: np.stack([w["true_state"].numpy()[:, IDX] for w in truth[f"test_{c}"]]) for c in CASES}
-    zc = np.load(HERE / "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.5_s1-2.0_etkf_infs0-1.5_s1-2.0_obsj2_int100_fw_dafw.npz")
+    zc = np.load(DANEW / f"l96_baselines_trajectories_dws500_s0c_crps{NEWINF}_obsj2_int100_fw_dafw.npz")
     z2 = np.load(RANDOM_OBS_TIMES / "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz")
-    pc = np.load(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz")
+    pc = np.load(DANEW_PW)
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     sel = lambda a: a[..., IDX] if a.shape[-1] > len(IDX) else a  # noqa: E731
     out = []
@@ -279,6 +282,9 @@ def _cell_scores(root: Path, cell: str, name: str, cache: dict, case: str):
 
 
 def _da_cell(tag: str, method: str, case: str) -> float | None:
+    if method != "Strong-4DVar":
+        f = DANEW / "l96_da_random_layout" / f"summary_{tag}{NEWINF}.json"
+        return json.load(open(f))["cases"][case][method]["rmse"]["all_obs"]["mean"] if f.exists() else None
     for d in (DA243, DAHERE):
         s0 = d / f"summary_{tag}_s0_inf1.5.json"
         both = d / f"summary_{tag}_inf2.0.json"
@@ -400,7 +406,7 @@ def binned_canonical(cache: dict) -> list[str]:
     d = torch.load(CAN_TEST, weights_only=False)
     nobs = {c: np.array([int(w["obs_mask"].sum()) for w in d[f"test_{c}"]]) for c in CASES}
     kf = {c: np.array([int((~torch.isnan(w["obs"][w["obs_mask"], 8:])).sum(1)[0]) for w in d[f"test_{c}"]]) for c in CASES}
-    pc = np.load(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz")
+    pc = np.load(DANEW_PW)
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     A = ["\n### Canonical random test set, windows binned by their own obs count / fast channels\n",
          "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> SDA3-fix-M "
@@ -499,6 +505,8 @@ def marginal_section() -> list[str]:
         b15 = js(HERE / "l96_baselines_dws500_s0c_infs0-1.5_s1-2.0_etkf_infs0-1.5_s1-2.0_obsj2_int200_fw_dafw.json")
         r15 = js(HERE / "l96_baselines_dws500_s0c_inf1.5_etkf_inf1.5_obsj2_int100_fw_dafw.json")
         r20 = js(RANDOM_OBS_TIMES / "l96_baselines_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.json")
+        n15 = js(DANEW / f"l96_baselines_dws500_s0c{NEWINF}_obsj2_int200_fw_dafw.json")
+        n30 = js(DANEW / f"l96_baselines_dws500_s0c_crps{NEWINF}_obsj2_int100_fw_dafw.json")
     except FileNotFoundError:
         return ["\n## 7. Marginal value of observations (DA)\n", "pending"]
     b30 = {"s0": {"ETKF": r15["s0"]["ETKF"], "EnKF": r15["s0"]["EnKF"], "Strong-4DVar": r20["s0"]["Strong-4DVar"]},
@@ -511,9 +519,13 @@ def marginal_section() -> list[str]:
          "(recomputed from the RMSEs; the paper rounds its Strong-4D-Var ratio to 6.2x from the rounded percentages).\n",
          "| scheme | setting | S0 15 -> 30 | S1 15 -> 30 | ratio |", "|---|---|---|---|---|"]
     for m in M:
-        for lab, a, b, c, d in (("paper (no fast_weights)",) + paper[m],
-                                ("original data + fast_weights, inflation 2.0", leg15["s0"][m]["mean"], leg30["s0"][m]["mean"], leg15["s1"][m]["mean"], leg30["s1"][m]["mean"]),
-                                ("benchmark data + fast_weights, inflation S0 1.5 / S1 2.0", b15["s0"][m]["mean"], b30["s0"][m]["mean"], b15["s1"][m]["mean"], b30["s1"][m]["mean"])):
+        rows = [("paper (no fast_weights)",) + paper[m],
+                ("original data + fast_weights, inflation 2.0", leg15["s0"][m]["mean"], leg30["s0"][m]["mean"], leg15["s1"][m]["mean"], leg30["s1"][m]["mean"]),
+                ("benchmark data + fast_weights, inflation S0 1.5 / S1 2.0 (ETKF before #291)", b15["s0"][m]["mean"], b30["s0"][m]["mean"], b15["s1"][m]["mean"], b30["s1"][m]["mean"])]
+        if m != "Strong-4DVar":
+            rows.append(("benchmark data, current inflation (ETKF 1.15 / 2.5, EnKF 1.2 / 3.0)", n15["s0"][m]["mean"], n30["s0"][m]["mean"],
+                         n15["s1"][m]["mean"], n30["s1"][m]["mean"]))
+        for lab, a, b, c, d in rows:
             g0, g1 = (a - b) / a, (c - d) / c
             A.append(f"| {m} | {lab} | {a:.3f} -> {b:.3f} ({100 * g0:.1f}%) | {c:.3f} -> {d:.3f} ({100 * g1:.1f}%) | {g0 / g1:.1f}x |")
     return A
@@ -538,10 +550,16 @@ def findings(da, learned) -> list[str]:
              f"PredictStateCFM {fmt(m('Benchmark recipe, 400 ep', 'PredictStateCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'PredictStateCFM-M', 'reg'))}, "
              f"VanillaCFM {fmt(m('Benchmark recipe, 400 ep', 'VanillaCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'VanillaCFM-M', 'reg'))}), "
              "and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.")
-    A.append("3. **Observation-count crossover at S0**: DA (ETKF) is best at <= 10 obs per window; from ~20 obs every learned "
-             "scheme beats every DA baseline, and the gap grows with density. Under model error (S1) the learned schemes win "
-             "at every density. PredictStateCFM / SDA are best when sparse, DirectUNet when dense; SDA and DirectUNet are "
-             "complementary, which is why the hybrid works.")
+    A.append("3. **Observation-count crossover at S0**: DA (ETKF / EnKF) is best at <= 10 obs per window; from ~20 obs "
+             "DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1 alone is caught again by "
+             "the retuned ETKF when dense (all 16 fast channels: 0.353 vs 0.359 at 100 obs, 0.299 vs 0.351 at 300). Under "
+             "model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, "
+             "DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.")
+    A.append("3b. **The shared S1 inflation over-inflates dense-time, sparse-channel cells**: at S1 with 4 observed fast "
+             "channels the filters get *worse* beyond ~50 obs per window (ETKF 1.57 -> 2.31, EnKF 1.74 -> 3.15 from 50 to "
+             "100 obs); with 8-16 channels they improve monotonically. Inflation is applied at every analysis, so it "
+             "compounds on the poorly observed fast directions; the canonical random distribution it was tuned on "
+             "(`docs/results/l96_da_inflation_post291.md`) averages this away. The k-averaged S1 table inherits it.")
     A.append("4. **Fast channels**: no crossover -- learned beat DA at every k, including slow-only (k 0, below training range). "
              "The learned slow-variable error is flat (~0.2-0.3); all the k-dependence is in the fast variables. Under model "
              "error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).")
@@ -554,7 +572,8 @@ def findings(da, learned) -> list[str]:
              f"while SDA3-fix-M, trained on noisy DA params, does not ({fmt(m(*sd3, 'reg'))} -> {fmt(m(*sd3, 'reg', 's1'))}). "
              "Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).")
     A.append("7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights "
-             "fix (6.4-7.0x); the filters' 1.9x does not (1.1x at the original setting, 1.6-1.7x at the benchmark inflation).")
+             "fix (6.4-7.0x); the filters keep most of the value of observations: 1.1x at the original setting, 1.6-1.7x "
+             "at the old benchmark inflation, 1.8-1.9x at the current one (ETKF 1.15 / 2.5, EnKF 1.2 / 3.0).")
     e3, p1 = ("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3"), ("Benchmark default (1200 ep)", "PredictStateCFM-M")
     A.append(f"8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, "
              f"one shared trajectory) gives regular / random S0 {fmt(m(*e3, 'reg'))} / {fmt(m(*e3, 'can'))} vs "
@@ -572,6 +591,7 @@ def main() -> None:
     for tag in ("inf2.0", "s0_inf1.5"):
         errors += check_da(str(DA243 / f"per_window_rlayout_n10-100_k4-16_w200_d1_{tag}.npz"), manifest)
     errors += check_da(str(DAHERE / "per_window_rlayout_n10-100_k4-16_w200_d1_infs0-1.5_s1-2.0.npz"), manifest)
+    errors += check_da(str(DANEW_PW), manifest)
     for sub, root in (("l96_testsets_factorial", FACT), ("l96_testsets_ood", OOD)):
         for ts in sorted((SHARED / sub).glob("l96_testset_*.pt")):
             cell = ts.stem.replace("l96_testset_", "")
@@ -592,6 +612,10 @@ def main() -> None:
          "on the canonical random observing system (the exact obs the DA baselines assimilated). S0 = true parameters, "
          "S1 = biased DA model / corrupted forcing. Every learned result passed the test-set consistency check "
          "(dataset + truth window for window); DA runs matched the canonical layouts.\n",
+         "**DA inflation (2026-09-28)**: every ETKF / EnKF row uses the per-method defaults retuned on the validation "
+         "windows after the ETKF square-root fix (#291, #295): ETKF S0 1.15 / S1 2.5, EnKF S0 1.2 / S1 3.0 "
+         "(`docs/results/l96_da_inflation_post291.md`); the old rows (S0 1.5 / S1 2.0, ETKF before #291) remain only in "
+         "the marginal-value comparison (section 7). Strong-4DVar has no inflation and is unchanged.\n",
          "**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old "
          "`_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 "
          "retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on "
