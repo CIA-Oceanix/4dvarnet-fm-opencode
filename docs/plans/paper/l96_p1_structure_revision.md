@@ -117,10 +117,12 @@ SDA2 0.54 / 0.64, SDA3-fix 0.46, hybrid 0.53.
 
 | scheme | layout | RMSE S0 / S1 | **pooled S0** | **pooled S1** | unexplained S0 / S1 |
 |---|---|---|---|---|---|
-| ETKF (master, after #291) | regular | 0.708 / 1.479 | **1.11** | **0.37** | −27% / 86% |
-| | random | 0.860 / 1.375 | **1.25** | **0.66** | −62% / 55% |
-| EnKF | regular | 0.710 / 1.515 | **1.13** | **0.33** | −33% / 89% |
-| | random | 0.849 / 1.428 | **1.24** | **0.54** | −59% / 69% |
+| ETKF (λ 1.15 / 2.5, after #291) | regular | 0.610 / 1.409 | **0.78** | **0.60** | 37% / 63% |
+| | random | 0.679 / 1.407 | **0.88** | **0.99** | 19% / −1% |
+| EnKF (λ 1.2 / 3.0) | regular | 0.641 / 1.416 | **0.84** | **0.73** | 26% / 45% |
+| | random | 0.706 / 1.484 | **0.96** | **1.11** | 5% / −26% |
+| ETKS (λ 1.15 / 2.5, full window) | regular | 0.497 / 1.338 | **0.47** | **0.34** | 77% / 88% |
+| | random | 0.572 / 1.347 | **0.64** | **0.61** | 58% / 61% |
 | PredictStateCFM-M (1200 ep) | regular | 0.341 / 0.338 | **0.85** [0.82–0.88] | **0.86** [0.83–0.89] | 25% / 24% |
 | | random | 0.444 / 0.446 | **0.86** [0.82–0.88] | **0.84** [0.80–0.87] | 24% / 28% |
 | VanillaCFM-M (1200 ep) | regular | 0.351 / 0.349 | **0.93** [0.91–0.95] | **0.94** [0.91–0.96] | 10% / 9% |
@@ -136,20 +138,40 @@ SDA2 0.54 / 0.64, SDA3-fix 0.46, hybrid 0.53.
 
 RMSE in the report's convention (mean over windows and channels of per-channel
 RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
-- **Filters** (rerun on master after #291, SLURM 56384; EnKF reproduces its
-  stored RMSE within 0.1%, the random layouts match the archived file exactly):
-  over-dispersed at S0 once pooled — 1.11–1.13 regular, 1.24–1.25 random, the
-  slow block most (1.26–1.57): the per-case inflation 1.5 over-inflates — then
-  the misspecification signature at S1 (86–89% unexplained regular, 55–69%
-  random, carried by the fast block: 0.32–0.59). The draft's "filters are the
-  best-calibrated schemes at S0" is a per-window artefact.
-- **#291 and the inflation default**: the fixed ETKF is worse at S0 (regular
-  0.687 → 0.708, random 0.798 → 0.860) and equal or better at S1 (1.478 →
-  1.479, 1.418 → 1.375). The S0 inflation 1.5 was tuned for the buggy square
-  root (which dropped anomaly directions); with those directions kept it
-  over-disperses. ETKF is no longer the best DA baseline at the current
-  default; `L96_DA_INFLATION` must be retuned for the fixed ETKF on the
-  validation windows before any ETKF number is quoted.
+- **DA rows** are the current benchmark (2026-09-29): fixed ETKF square root
+  (#291), per-method inflation retuned on validation windows (#295), all
+  benchmark cells rerun (#298), ETKS (#297/#299). Pooled from the stored
+  per-time ensemble variances (`da_current` bundle files).
+- **Filters at S0**: mildly under-dispersed at the RMSE-tuned inflation (0.78–0.96
+  pooled). The earlier "over-dispersed at S0" (1.08–1.25) belonged to the old
+  1.5 inflation; the draft's "best-calibrated schemes at S0" was a per-window
+  artefact either way.
+- **Filters at S1 — aggregate vs structure**: on the regular grid still
+  over-confident (0.60 / 0.73). On the random layout the high S1 inflation buys
+  aggregate calibration (0.99 / 1.11) but puts the spread in the wrong place:
+  slow block over-dispersed (1.69 / 1.95), fast block under (0.90 / 1.00). A
+  scalar state-space inflation can match the total error, not where it comes
+  from — the U-model argument, measured.
+- **ETKS**: the best DA scheme (0.497 regular / 0.572 random S0) and the most
+  over-confident (pooled 0.34–0.64): smoothing cuts spread faster than error.
+- **F3 identity fails** (paired ETKF/ETKS of one run; pooled over windows × time
+  × channels):
+
+  | case | MSE_F − MSE_S | var_F − var_S | E‖m_F − m_S‖² |
+  |---|---|---|---|
+  | regular S0 | 0.14 | 0.23 | 0.55 |
+  | random S0 | 0.14 | 0.30 | 0.55 |
+  | regular S1 | 0.24 | 0.53 | 0.92 |
+  | random S1 | 0.20 | 1.49 | 1.65 |
+
+  For an exact filter/smoother the three columns are equal. The smoother moves
+  the means ~4× more than it reduces the error and removes spread faster than
+  error: its retrospective update is dominated by sampling error (30 members,
+  40D, no localisation, 3000-step window). The measured ETKS gain (16–19% at
+  S0) is the restriction term *minus* smoother noise, a lower bound; under an
+  uncorrelated-noise assumption the noise variance is ≈ (0.55 − 0.14)/2 ≈ 0.2
+  and the restriction term could be ~2× the measured gap. A larger ensemble or
+  a localised smoother is needed before K1 can be stated as a restriction.
 - **Amortised flows (F1 = no)**: close to calibrated (0.84–0.94) on both
   layouts and invariant to model error (approximation ≈ 10–28%). Previously
   reported as strongly under-dispersed — a per-window artefact. VanillaCFM
@@ -164,9 +186,8 @@ RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
   RMSE up 2–4%: conditioned on the biased θ, the prior widens (larger F); better
   calibration by accident, not recognition of model error. SDA3-fix (noisy-θ
   training) does not move.
-- To redo: ETKF inflation retuning after #291 (validation windows, both
-  layouts, S0 and S1), then the ETKF rows; the gw sweep rescored for pooled
-  spread.
+- To redo: SDA rows at 1200 epochs (SLURM 56907, running); the gw sweep
+  rescored for pooled spread.
 
 ## 4. Section outline
 
@@ -198,15 +219,15 @@ decomposition, identity, cell classification.
 
 **§5 Results A — with a perfect model: what each choice costs** (restriction terms)
 - 5.1 Overview / regime map: all schemes, S0 and S1, vs density; DA best ≤ 10 obs at S0, learned from ~20; learned degrade out of range. ✅ `l96_benchmark_extended.md` §1, §3, §5
-- 5.2 F3: ETKF vs ETKS(L) vs Strong/Weak-4DVar; RMSE(L) restriction curve; identity check; share of the DA–learned gap due to filtering. At the default inflation the inflation-corrected ETKS reaches back only ~6 / 3 cycles (S0 / S1), so it measures filter vs short-lag smoother; the full-window term needs the ensemble RTS smoother (triggered follow-up in the ETKS plan). ⏳ ETKS (plan `l96_etks_smoother.md` on branch `feature/l96-etks`); ✅ ETKF/Strong-4DVar
-- 5.3 F2 and its source: mechanistic one-step prior (Weak-4DVar, ETKS) vs learned joint prior (SDA), both factorised, both window. 🟡 (SDA 0.501 vs Strong-4DVar 0.703; needs Weak-4DVar, ETKS, SDA 1200 ep). Optional SDA-local (learned one-step) isolates F2 itself.
+- 5.2 F3: ETKF vs ETKS(L) vs Strong/Weak-4DVar; RMSE(L) restriction curve; identity check; share of the DA–learned gap due to filtering. ✅ ETKS measured (#297/#299: −16–19% RMSE at S0, −4–5% at S1, full window, `correct` retro-inflation); DA's regular-S0 deficit vs the learned schemes 2.0× (old ETKF) → 1.8× (retuned) → 1.46× (ETKS). 🟡 the identity fails (§3): the gain is restriction minus smoother sampling noise; needs a localised or larger-ensemble smoother to isolate the restriction term.
+- 5.3 F2 and its source: mechanistic one-step prior (Weak-4DVar, ETKS) vs learned joint prior (SDA), both factorised, both window. 🟡 at a perfect model the mechanistic smoother and the learned prior are level: ETKS 0.497 vs SDA1-M 0.501 (400 ep; regular S0), random 0.572 vs 0.613; Strong-4DVar 0.703. Needs SDA at 1200 ep (running) and Weak-4DVar. Optional SDA-local (learned one-step) isolates F2 itself.
 - 5.4 F1: factorised (SDA) vs amortised (DirectUNet/CFM): in-distribution accuracy vs robustness to the observing system (×1.21–1.22 vs ×1.24–1.32, fixed-grid ×2.7–3.3) and out-of-range densities (SDA 0.35→0.32 vs DirectUNet 0.17→0.34 from 300 to 1000 obs). ✅ with SDA budget caveat ⏳
-- 5.5 U-state at S0: pooled calibration (§3 table: filters over-dispersed 1.08–1.13, flows 0.86–0.95, SDA/hybrid 0.59–0.76); unexplained share; one paragraph on rank histograms (no class-specific shape deficit). ✅ `docs/results/l96_rank_histograms_c4.md`
+- 5.5 U-state at S0: pooled calibration (§3 table: filters mildly under-dispersed 0.78–0.96 at the tuned inflation, ETKS 0.47–0.64, flows 0.85–0.93, SDA/hybrid 0.52–0.76); unexplained share; one paragraph on rank histograms (no class-specific shape deficit). ✅ `docs/results/l96_rank_histograms_c4.md`
 
 **§6 Results B — under model error: which choices become misspecifications**
-- 6.1 Marginal value of observations vs δ (headline): Strong-4DVar flat at the model-error floor (1.43→1.38 from 30 to 1000 obs; 7.0× collapse 15→30), filters partial (1.6–1.7×), Weak-4DVar, ETKS, M-trained learned. Main figure: panel per scheme, x = density, line per δ. 🟡
+- 6.1 Marginal value of observations vs δ (headline): Strong-4DVar flat at the model-error floor (1.43→1.38 from 30 to 1000 obs; 7.0× collapse 15→30), filters keep most of it (1.8–1.9× at the current inflation, #298), Weak-4DVar, ETKS, M-trained learned. Main figure: panel per scheme, x = density, line per δ. 🟡
 - 6.2 U-model: δ ≤ σ vs δ > σ vs structural. SDA2 (clean θ) leaks, SDA3-fix (noisy θ) flat (hybrid 0.310→0.333 vs 0.312→0.307) ✅; perturbed-parameter ETKF ⏳; M-trained σ = 0 / 20% ⏳; Weak-4DVar Q ⏳.
-- 6.3 Calibration under model error: explicit-through-Φ breaks (ETKF pooled 1.08→0.37, unexplained −20%→86%; EnKF 1.13→0.33), implicit invariant (flows ≤ 25% unexplained; SDA/hybrid under-dispersed ~60% at both); SDA2's accidental S1 widening; guidance-weight/inflation symmetry (rescore the gw sweep for spread). ✅ / ⏳ rescoring
+- 6.3 Calibration under model error: explicit-through-Φ breaks on the regular grid (ETKF pooled 0.78→0.60, EnKF 0.84→0.73) and on the random layout keeps aggregate spread only by misplacing it (slow over-, fast under-dispersed, §3), implicit invariant (flows ≤ 25% unexplained; SDA/hybrid under-dispersed ~60% at both); SDA2's accidental S1 widening; guidance-weight/inflation symmetry (rescore the gw sweep for spread). ✅ / ⏳ rescoring
 - 6.4 Value of true-system data: learned-on-truth minus learned-on-M (the "oracle gap"); what reanalysis-trained ML implicitly spends. Absorbs old C6 (model sensitivity ≠ posterior sensitivity) once de-confounded. ⏳
 - 6.5 Complementarity: DirectUNet → SDA3-fix hybrid as the composition the matrix predicts (0.312/0.307 regular, beats ETKF in the sparsest bin). ✅ (rerun with M-trained prior ⏳)
 
@@ -224,12 +245,12 @@ decomposition, identity, cell classification.
 
 | claim | column | reading | status |
 |---|---|---|---|
-| **K1** Filtering is a restriction: smoothing recovers part of the DA deficit at S0, and the identity holds. | F3 | restriction | ⏳ ETKS |
+| **K1** Filtering is a restriction: smoothing recovers part of the DA deficit at S0 (ETKS −16–19%), and the identity holds. | F3 | restriction | 🟡 gain ✅; identity fails — smoother sampling noise (§3); needs localised / larger-ensemble smoother |
 | **K2** Keeping H, R explicit buys observing-system and out-of-range robustness; amortisation buys in-distribution accuracy. | F1 | amortised under shift = misspecification | ✅ (SDA budget ⏳) |
 | **K3** A learned window prior beats the mechanistic one-step prior at a perfect model. | F2 / source | approximation vs restriction | 🟡 |
 | **K4** Model error makes the hard constraint a misspecification: its marginal value of observations collapses; filters and soft constraints keep part of it. (headline) | U-model × F2 | misspecification | 🟡 (Strong ✅, Weak ⏳, sweep ⏳) |
 | **K5** Representing model uncertainty converts misspecification into restriction, only while δ ≤ σ; state-space (Q, inflation) converts partially. | U-model | restriction ↔ misspecification | 🟡 (SDA2/3 ✅) |
-| **K6** Explicit uncertainty carried by Φ is tunable to calibration when its assumptions hold (here over-inflated) and overconfident when they fail; implicit amortised uncertainty is near-calibrated and invariant; factorised learned samplers are under-dispersed (tempered likelihood) but invariant. | U-state × F1 | misspecification vs approximation | ✅ pooled, seed 1 (oracle caveat; ETKF post-#291 ⏳) |
+| **K6** Explicit uncertainty carried by Φ can be tuned to aggregate calibration, but not to its structure: overconfident under model error, or calibrated in total with the spread in the wrong variables (slow over-, fast under-dispersed); implicit amortised uncertainty is near-calibrated and invariant; factorised learned samplers are under-dispersed (tempered likelihood) but invariant. | U-state × F1 | misspecification vs approximation | ✅ pooled (learned 3 seeds, DA current; oracle caveat) |
 | **K7** Oracle gap: the value of true-system data. | source | — | ⏳ |
 | **K8** The best scheme composes an amortised Ψ_mean with a factorised, explicit-R sampler. | F1 × U-state | — | ✅ |
 
@@ -278,14 +299,15 @@ decomposition, identity, cell classification.
 
 | run | sections | blocks submission |
 |---|---|---|
-| ETKS (plan on `feature/l96-etks`) | 5.2, 5.3, 6.1 | yes |
+| ETKS | 5.2, 5.3, 6.1 | ✅ done (#297/#299) |
+| Localised or larger-ensemble smoother (isolate the F3 restriction term) | 5.2, K1 | desirable |
 | Weak-4DVar on L96 (`evaluation/tune_l96_weak4dvar.py`, then benchmark) | 5.3, 6.1, 6.2 | yes |
-| SDA priors at 1200 epochs | 5.3, 5.4 | yes |
+| SDA priors at 1200 epochs (+ gw / hybrid re-tune) | 5.3, 5.4 | yes — running (SLURM 56907) |
 | M-trained DirectUNet / PredictStateCFM / SDA, σ = 0 and 20% | 6.1, 6.2, 6.4, 6.5 | yes |
 | δ sweep (≥ 3 levels) + one structural error, all schemes | 6.1, 6.2 | yes |
 | Perturbed-parameter ETKF | 6.2 | desirable |
 | Pooled spread/RMSE: done (learned 3 seeds, DA after #291, both layouts) | 3, 5.5, 6.3 | — |
-| ETKF inflation retuning after #291 (validation windows, both layouts, S0/S1) | every ETKF number | yes |
+| ETKF/EnKF inflation retuning after #291 + benchmark rerun | every DA number | ✅ done (#295, #298) |
 | Strong-4DVar dws 3000 vs 500 (cycling restriction) | 3, 5.2 | desirable |
 | Guidance-weight sweep rescored for spread | 6.3 | desirable (cheap) |
 | SDA-local prior | 5.3 | optional |
