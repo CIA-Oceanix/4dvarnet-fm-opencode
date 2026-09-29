@@ -14,7 +14,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 
 ## Findings
 
-1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 0.312 / 0.307, random S0 / S1 0.388 / 0.385 -- flat under model error. The SDA2-M prior is marginally better at S0 (0.310 / 0.382) but degrades at S1 (0.333 / 0.408): it was trained with DA params equal to the true ones, so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: ETKS, inflation S0 1.1 / S1 2.5 (ETKS validation selection) 0.514.
+1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 0.312 / 0.307, random S0 / S1 0.388 / 0.385 -- flat under model error. The SDA2-M prior is marginally better at S0 (0.310 / 0.382) but degrades at S1 (0.333 / 0.408): it was trained with DA params equal to the true ones, so the +10% S1 parameter bias leaks into the posterior. Best DA on regular S0: ETKS 0.497.
 2. **400 epochs was too short; the benchmark default is now 1200 epochs** (2026-09-26). At 1200 epochs every family gains 9-19% (regular S0: DirectUNet 0.380 -> 0.340, PredictStateCFM 0.403 -> 0.341, VanillaCFM 0.430 -> 0.351), and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.
 3. **Observation-count crossover at S0**: DA (ETKF / EnKF) is best at <= 10 obs per window; from ~20 obs DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1 alone is caught again by the retuned ETKF when dense (all 16 fast channels: 0.353 vs 0.359 at 100 obs, 0.299 vs 0.351 at 300). Under model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.
 3b. **The shared S1 inflation over-inflates dense-time, sparse-channel cells**: at S1 with 4 observed fast channels the filters get *worse* beyond ~50 obs per window (ETKF 1.57 -> 2.31, EnKF 1.74 -> 3.15 from 50 to 100 obs); with 8-16 channels they improve monotonically. Inflation is applied at every analysis, so it compounds on the poorly observed fast directions; the canonical random distribution it was tuned on (`docs/results/l96_da_inflation_post291.md`) averages this away. The k-averaged S1 table inherits it.
@@ -33,6 +33,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKF | — | 0.610 ± 0.148 | 1.409 ± 0.230 | 0.679 ± 0.243 | 1.407 ± 0.308 | 1.11 | — |
 | DA | EnKF | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 | 1.10 | — |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 1.06 | — |
+| DA | ETKS | — | 0.497 ± 0.164 | 1.338 ± 0.224 | 0.572 ± 0.258 | 1.347 ± 0.298 | 1.15 | — |
 | DA | ETKF, pre-#295 inflation S0 1.5 / S1 2.0 (same run as the next row) | — | 0.707 ± 0.134 | 1.479 ± 0.240 | 0.863 ± 0.221 | 1.376 ± 0.289 | 1.22 | — |
 | DA | ETKS, inflation S0 1.5 / S1 2.0 | — | 0.582 ± 0.123 | 1.400 ± 0.230 | 0.770 ± 0.253 | 1.282 ± 0.295 | 1.32 | — |
 | DA | ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row) | — | 0.625 ± 0.173 | 1.410 ± 0.230 | 0.662 ± 0.257 | 1.406 ± 0.307 | 1.06 | — |
@@ -64,6 +65,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 |---|---|---|---|---|---|
 | DA | ETKF | 0.270 (0.758) | 0.306 (0.786) | 0.61 (0.61) | 0.72 (0.93) |
 | DA | EnKF | 0.287 (0.763) | 0.320 (0.837) | 0.65 (0.74) | 0.76 (1.05) |
+| DA | ETKS | 0.238 (0.771) | 0.269 (0.744) | 0.41 (0.34) | 0.54 (0.53) |
 | DA | ETKF, pre-#295 inflation S0 1.5 / S1 2.0 (same run as the next row) | 0.343 (0.855) | 0.441 (0.765) | 1.00 (0.37) | 1.13 (0.65) |
 | DA | ETKS, inflation S0 1.5 / S1 2.0 | 0.293 (0.851) | 0.385 (0.724) | 0.71 (0.24) | 0.81 (0.41) |
 | DA | ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row) | 0.283 (0.759) | 0.293 (0.786) | 0.51 (0.61) | 0.62 (0.93) |

@@ -66,7 +66,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/cfm_tau_consistency/sampler/` | `docs/results/l96_cfm_sampler_schedule.md` |
 | `reports/l96/outputs/cfm_tau_consistency/t5/` | `docs/results/l96_cfm_tau_consistency_t5.md` |
 | `reports/l96/outputs/l96_benchmark_default.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
-| `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md` |
+| `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md`, `docs/results/l96_etks_default_inflation.md` |
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
 | `reports/l96/outputs/da_inflation_sweep/` | `docs/results/l96_da_inflation_post291.md` |
