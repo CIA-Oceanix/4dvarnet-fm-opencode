@@ -1,0 +1,10 @@
+# @package _global_
+# SDA1-M (unconditional prior) at the 1200-epoch benchmark budget (config/l96_benchmark_default.yaml,
+# 2026-09-26): identical to B4_sda1_monaiM_l96 except stage-1 epochs 400 -> 1200, so the SDA
+# rows are budget-matched with the 1200-epoch DirectUNet / CFM rows.
+defaults:
+  - /experiment/B4_sda1_monaiM_l96
+  - _self_
+training:
+  stage1:
+    epochs: 1200
