@@ -20,45 +20,45 @@ The gyrostat drives domain-scale wind-stress-curl patterns with regime changes; 
 
 **Forced dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.759 | 0.848 | -0.057 | 0.043 | 0.398 |  |
-| ETKF (radius 8) | *0.937* | *0.933* | *0.647* | *0.578* | *0.774* | [0.762, 0.786] |
-| EnKF (radius 6) | 0.929 | 0.918 | 0.635 | 0.562 | 0.761 | [0.749, 0.773] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.961** | **0.948** | **0.717** | **0.588** | **0.804** | [0.793, 0.815] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.759 | 0.848 | -0.057 | 0.043 | 0.398 |  |  |  |
+| ETKF (radius 8) | *0.937* | *0.933* | *0.647* | *0.578* | *0.774* | [0.762, 0.786] | *5.875* | 0.72 |
+| EnKF (radius 6) | 0.929 | 0.918 | 0.635 | 0.562 | 0.761 | [0.749, 0.773] | 6.016 | — |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.966** | **0.959** | **0.727** | **0.596** | **0.812** | [0.801, 0.823] | **5.315** | 0.67 |
 
 **Coupled dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.745 | 0.838 | -0.044 | 0.068 | 0.402 |  |
-| ETKF (radius 8) | *0.936* | *0.933* | *0.651* | *0.595* | *0.779* | [0.767, 0.791] |
-| EnKF (radius 6) | 0.929 | 0.919 | 0.643 | 0.580 | 0.768 | [0.755, 0.780] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.962** | **0.951** | **0.726** | **0.611** | **0.813** | [0.802, 0.823] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.745 | 0.838 | -0.044 | 0.068 | 0.402 |  |  |  |
+| ETKF (radius 8) | *0.936* | *0.933* | *0.651* | *0.595* | *0.779* | [0.767, 0.791] | *5.735* | 0.73 |
+| EnKF (radius 6) | 0.929 | 0.919 | 0.643 | 0.580 | 0.768 | [0.755, 0.780] | 5.847 | — |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.967** | **0.959** | **0.734** | **0.615** | **0.819** | [0.808, 0.830] | **5.155** | 0.67 |
 
-(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
+(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row; CRPS is ranked lowest-best; spread/RMSE q₁ (median over windows) is not ranked: 1 is calibrated. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
 
 ## 3. DA baselines — S1 (realistic base), 3 columns per day
 
 **Forced dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |
-| ETKF (radius 8) | *0.848* | *0.757* | 0.433 | 0.277 | 0.579 | [0.560, 0.598] |
-| EnKF (radius 6) | 0.847 | **0.762** | *0.450* | **0.326** | *0.596* | [0.578, 0.615] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.872** | 0.741 | **0.504** | *0.290* | **0.602** | [0.581, 0.621] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |  |  |
+| ETKF (radius 8) | *0.848* | *0.757* | 0.433 | 0.277 | 0.579 | [0.560, 0.598] | 7.880 | 0.70 |
+| EnKF (radius 6) | 0.847 | **0.762** | *0.450* | **0.326** | *0.596* | [0.578, 0.615] | *7.711* | — |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.881** | 0.738 | **0.522** | *0.309* | **0.612** | [0.590, 0.633] | **7.437** | 0.63 |
 
 **Coupled dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |
-| ETKF (radius 8) | *0.848* | *0.766* | 0.437 | 0.295 | 0.586 | [0.568, 0.605] |
-| EnKF (radius 6) | 0.847 | **0.771** | *0.454* | **0.343** | *0.604* | [0.586, 0.622] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.872** | 0.746 | **0.512** | *0.311* | **0.610** | [0.590, 0.630] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |  |  |
+| ETKF (radius 8) | *0.848* | *0.766* | 0.437 | 0.295 | 0.586 | [0.568, 0.605] | 7.733 | 0.70 |
+| EnKF (radius 6) | 0.847 | **0.771** | *0.454* | **0.343** | *0.604* | [0.586, 0.622] | *7.575* | — |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.880** | 0.741 | **0.530** | *0.330* | **0.620** | [0.598, 0.641] | **7.270** | 0.63 |
 
-(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
+(Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row; CRPS is ranked lowest-best; spread/RMSE q₁ (median over windows) is not ranked: 1 is calibrated. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
 
 ### S1-tuned filters (observation-error variance × 6), 3 columns per day
 
@@ -66,21 +66,21 @@ Same S1, with the filters' R scaled on val to absorb the model error (`docs/resu
 
 **Forced dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |
-| ETKF (radius 8) | *0.865* | 0.791 | *0.473* | 0.402 | 0.633 | [0.615, 0.650] |
-| EnKF (radius 6) | 0.861 | *0.798* | 0.468 | *0.409* | *0.634* | [0.617, 0.650] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.891** | **0.800** | **0.537** | **0.429** | **0.664** | [0.648, 0.680] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |  |  |
+| ETKF (radius 8) | *0.865* | *0.791* | *0.473* | 0.402 | 0.633 | [0.615, 0.650] | *7.364* | 0.87 |
+| EnKF (radius 6) | 0.861 | **0.798** | 0.468 | *0.409* | *0.634* | [0.617, 0.650] | 7.394 | 0.86 |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.894** | 0.783 | **0.547** | **0.437** | **0.665** | [0.646, 0.683] | **6.935** | 0.84 |
 
 **Coupled dataset**
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |
-| ETKF (radius 8) | *0.865* | 0.799 | *0.481* | 0.421 | *0.642* | [0.624, 0.659] |
-| EnKF (radius 6) | 0.860 | **0.805** | 0.474 | *0.428* | *0.642* | [0.626, 0.658] |
-| EnKS (ETKF smoother) (radius 8, lag 12) | **0.891** | *0.804* | **0.545** | **0.448** | **0.672** | [0.655, 0.688] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |  |  |
+| ETKF (radius 8) | *0.865* | *0.799* | *0.481* | 0.421 | *0.642* | [0.624, 0.659] | *7.204* | 0.88 |
+| EnKF (radius 6) | 0.860 | **0.805** | 0.474 | *0.428* | *0.642* | [0.626, 0.658] | 7.243 | 0.86 |
+| EnKS (ETKF smoother) (radius 8, no lag cutoff, time taper 8 d) | **0.893** | 0.786 | **0.556** | **0.456** | **0.673** | [0.653, 0.691] | **6.774** | 0.84 |
 
 ![S0 vs S1 per field](figs/qg_specwind_da_s0_s1.png)
 
@@ -121,19 +121,19 @@ Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): v
 
 *forced*
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.759 | 0.848 | -0.057 | 0.043 | 0.398 |  |
-| ETKF (radius 8) | **0.950** | **0.943** | **0.695** | **0.589** | **0.794** | [0.783, 0.805] |
-| EnKF (radius 6) | *0.945* | *0.932* | *0.688* | *0.580* | *0.786* | [0.775, 0.798] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.759 | 0.848 | -0.057 | 0.043 | 0.398 |  |  |  |
+| ETKF (radius 8) | **0.950** | **0.943** | **0.695** | **0.589** | **0.794** | [0.783, 0.805] | **5.477** | 0.66 |
+| EnKF (radius 6) | *0.945* | *0.932* | *0.688* | *0.580* | *0.786* | [0.775, 0.798] | *5.590* | — |
 
 *coupled*
 
-| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
-|---|---|---|---|---|---|---|
-| _free forecast_ | 0.745 | 0.838 | -0.044 | 0.068 | 0.402 |  |
-| ETKF (radius 8) | **0.951** | **0.945** | **0.702** | **0.610** | **0.802** | [0.791, 0.813] |
-| EnKF (radius 6) | *0.945* | *0.933* | *0.695* | *0.598* | *0.793* | [0.782, 0.804] |
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶, lower is better) | spread/RMSE q₁ |
+|---|---|---|---|---|---|---|---|---|
+| _free forecast_ | 0.745 | 0.838 | -0.044 | 0.068 | 0.402 |  |  |  |
+| ETKF (radius 8) | **0.951** | **0.945** | **0.702** | **0.610** | **0.802** | [0.791, 0.813] | **5.303** | 0.67 |
+| EnKF (radius 6) | *0.945* | *0.933* | *0.695* | *0.598* | *0.793* | [0.782, 0.804] | *5.425* | — |
 
 ## 6. Forced vs coupled
 
@@ -153,11 +153,11 @@ Independent samples (paired windows share seeds but not trajectories), two-sampl
 | EnKF | q₁ | 0.635 | 0.643 | -0.009 [-0.039, +0.023] |
 | EnKF | q₂ | 0.562 | 0.580 | -0.019 [-0.060, +0.022] |
 | EnKF | score | 0.761 | 0.768 | -0.007 [-0.025, +0.010] |
-| EnKS (ETKF smoother) | ψ₁ | 0.961 | 0.962 | -0.001 [-0.008, +0.007] |
-| EnKS (ETKF smoother) | ψ₂ | 0.948 | 0.951 | -0.003 [-0.018, +0.012] |
-| EnKS (ETKF smoother) | q₁ | 0.717 | 0.726 | -0.010 [-0.035, +0.016] |
-| EnKS (ETKF smoother) | q₂ | 0.588 | 0.611 | -0.022 [-0.064, +0.018] |
-| EnKS (ETKF smoother) | score | 0.804 | 0.813 | -0.009 [-0.024, +0.006] |
+| EnKS (ETKF smoother) | ψ₁ | 0.966 | 0.967 | -0.000 [-0.007, +0.006] |
+| EnKS (ETKF smoother) | ψ₂ | 0.959 | 0.959 | -0.001 [-0.013, +0.011] |
+| EnKS (ETKF smoother) | q₁ | 0.727 | 0.734 | -0.007 [-0.033, +0.019] |
+| EnKS (ETKF smoother) | q₂ | 0.596 | 0.615 | -0.019 [-0.060, +0.022] |
+| EnKS (ETKF smoother) | score | 0.812 | 0.819 | -0.007 [-0.022, +0.009] |
 
 **S1 (realistic base)**
 
@@ -173,11 +173,11 @@ Independent samples (paired windows share seeds but not trajectories), two-sampl
 | EnKF | q₁ | 0.450 | 0.454 | -0.004 [-0.030, +0.023] |
 | EnKF | q₂ | 0.326 | 0.343 | -0.017 [-0.052, +0.017] |
 | EnKF | score | 0.596 | 0.604 | -0.007 [-0.033, +0.018] |
-| EnKS (ETKF smoother) | ψ₁ | 0.872 | 0.872 | -0.000 [-0.025, +0.024] |
-| EnKS (ETKF smoother) | ψ₂ | 0.741 | 0.746 | -0.005 [-0.105, +0.096] |
-| EnKS (ETKF smoother) | q₁ | 0.504 | 0.512 | -0.008 [-0.036, +0.020] |
-| EnKS (ETKF smoother) | q₂ | 0.290 | 0.311 | -0.021 [-0.059, +0.016] |
-| EnKS (ETKF smoother) | score | 0.602 | 0.610 | -0.009 [-0.037, +0.020] |
+| EnKS (ETKF smoother) | ψ₁ | 0.881 | 0.880 | +0.000 [-0.024, +0.024] |
+| EnKS (ETKF smoother) | ψ₂ | 0.738 | 0.741 | -0.004 [-0.118, +0.110] |
+| EnKS (ETKF smoother) | q₁ | 0.522 | 0.530 | -0.008 [-0.035, +0.021] |
+| EnKS (ETKF smoother) | q₂ | 0.309 | 0.330 | -0.021 [-0.058, +0.016] |
+| EnKS (ETKF smoother) | score | 0.612 | 0.620 | -0.008 [-0.038, +0.023] |
 
 ## 7. Factor strata (forced, ETKF, 3 columns per day)
 

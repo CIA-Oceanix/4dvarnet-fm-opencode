@@ -20,7 +20,8 @@
 # radius is 6: METHOD=enkf LOC=6.0.
 # KAPPA > 0 runs S1 at that intensity (evaluation/qg_specwind_s1.py reference levels);
 # PRESET=realistic KAPPA=1 [VARIANT=base] runs the realism-anchored S1. METHOD=enks [ENKSLAG=L] runs the
-# localized EnKS smoother on the EnSRF ETKF (lag L analyses, val-tuned default 12; ENKSLAG=0 = whole window).
+# localized EnKS smoother on the EnSRF ETKF: time taper ENKSTAPER days (val-tuned 8; 0 disables) and optional
+# hard lag ENKSLAG analyses (0 = none; the earlier benchmark used ENKSLAG=12 ENKSTAPER=0).
 # RSCALE multiplies the filter's observation-error variance (S1-tuned value 6: docs/results/qg_specwind_s1_tuning.md).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
@@ -30,13 +31,13 @@ NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; m
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
 : "${SPEC:?set SPEC}" "${METHOD:?set METHOD}" "${N_SHARDS:?set N_SHARDS}"
 SPLIT="${SPLIT:-test}"; COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; START="${START:-0}"
-LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-0.1}"; LOCMODE="${LOCMODE:-ensrf}"; ENKSLAG="${ENKSLAG:-12}"; RSCALE="${RSCALE:-1.0}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"
+LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-0.1}"; LOCMODE="${LOCMODE:-ensrf}"; ENKSLAG="${ENKSLAG:-0}"; RSCALE="${RSCALE:-1.0}"; ENKSTAPER="${ENKSTAPER:-8}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"
 SHARD="${SLURM_ARRAY_TASK_ID:-0}"
-OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
+OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)$([ "$METHOD" = enks ] && echo "_tau${ENKSTAPER}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_da --spec "$SPEC" --root experiments/qg_datasets \
   --split "$SPLIT" --start "$START" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" \
   --method "$METHOD" --cols-per-day "$COLS" --N "$ENS" --loc-radius "$LOC" --etkf-ridge "$RIDGE" \
-  --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" --etkf-loc-mode "$LOCMODE" --r-scale "$RSCALE" $([ "$METHOD" = enks ] && echo "--enks-lag $ENKSLAG" || true) \
+  --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" --etkf-loc-mode "$LOCMODE" --r-scale "$RSCALE" $([ "$METHOD" = enks ] && echo "--enks-lag $ENKSLAG" || true) $([ "$METHOD" = enks ] && echo "--enks-taper-days $ENKSTAPER" || true) \
   --s1-preset "$PRESET" --s1-variant "$VARIANT" \
   --out "$OUT" --device cuda

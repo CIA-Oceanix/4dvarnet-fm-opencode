@@ -33,6 +33,8 @@ METHODS = ("etkf", "enkf", "enks")
 S0 = "S0"
 ETKF_MODE = "ensrf"
 S1_TUNED_R = 6.0
+ENKS_LAG = None
+ENKS_TAPER = 8.0
 
 
 def load_runs(root: str) -> list[dict]:
@@ -54,6 +56,7 @@ def load_runs(root: str) -> list[dict]:
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
                      "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
                      "lag": m0.get("enks_lag"), "r_scale": float(m0.get("r_scale", 1.0) or 1.0),
+                     "taper": m0.get("enks_taper_days"),
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -86,7 +89,8 @@ def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0,
           r_scale: float = 1.0) -> dict | None:
     hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
             and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)
-            and abs(r["r_scale"] - r_scale) < 1e-9]
+            and abs(r["r_scale"] - r_scale) < 1e-9
+            and (method != "enks" or ((r["lag"] or None) == ENKS_LAG and r["taper"] == ENKS_TAPER))]
     return hits[0] if hits else None
 
 
@@ -123,15 +127,26 @@ def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: flo
         base = base or r
         vals = [float(_values(r, "da", k).mean()) for k in FIELDS + ("score",)]
         ci = _boot_mean(_values(r, "da", "score"))
-        lag = (f", lag {r['lag'] if r['lag'] is not None else 'whole window'}"
-               if method == "enks" else "")
+        lag = ""
+        if method == "enks":
+            lag = f", lag {r['lag']}" if r["lag"] else (", no lag cutoff" if r["taper"] else ", whole window")
+            lag += f", time taper {r['taper']:g} d" if r["taper"] is not None else ""
+        crps = float(np.mean([w["crps"] for w in r["per_window"]])) * 1e6
+        spread = [w["spread_ratio_q1"] for w in r["per_window"] if "spread_ratio_q1" in w]
         rows.append((f"{METHOD_NAME[method]} (radius {r['loc']:g}{lag})", vals,
-                     [f"[{ci[0]:.3f}, {ci[1]:.3f}]"], True))
+                     [f"[{ci[0]:.3f}, {ci[1]:.3f}]", crps,
+                      f"{np.median(spread):.2f}" if spread else "—"], True))
     if base is None:
         return ["_No complete runs yet._"]
+    ranked = sorted({round(x[2][1], 3) for x in rows})
+    for i, (name, vals, extras, rk) in enumerate(rows):
+        v = round(extras[1], 3)
+        mk = "**" if v == ranked[0] else ("*" if len(ranked) > 1 and v == ranked[1] else "")
+        rows[i] = (name, vals, [extras[0], f"{mk}{extras[1]:.3f}{mk}", extras[2]], rk)
     vals = [float(_values(base, "free", k).mean()) for k in FIELDS + ("score",)]
-    rows.insert(0, ("_free forecast_", vals, [""], False))
-    return _table(["method"] + [LABEL[k] for k in FIELDS] + ["score", "score 95% CI"], rows)
+    rows.insert(0, ("_free forecast_", vals, ["", "", ""], False))
+    return _table(["method"] + [LABEL[k] for k in FIELDS]
+                  + ["score", "score 95% CI", "CRPS q (×10⁻⁶, lower is better)", "spread/RMSE q₁"], rows)
 
 
 def d2_table(runs: list[dict], cols: int, s1: str) -> list[str]:
@@ -297,7 +312,8 @@ def main() -> None:
         for spec, lab in SPECS.items():
             md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(runs, spec, 3, s) + [""]
         md += ["(Best per column **bolded**, second-best *italicized*, among the DA methods; the free "
-               "forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the "
+               "forecast is a reference row; CRPS is ranked lowest-best; spread/RMSE q₁ (median over windows) is "
+               "not ranked: 1 is calibrated. The EnKS is the localized ensemble Kalman smoother on the "
                "ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not "
                "a filter.)", ""]
     tuned = [r for r in runs if r["s1"] == s1 and abs(r["r_scale"] - S1_TUNED_R) < 1e-9 and r["complete"]]

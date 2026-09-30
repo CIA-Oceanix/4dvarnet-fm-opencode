@@ -104,7 +104,9 @@ S1 (realistic base), 3 columns per day; forced / coupled:
   [−0.004, +0.002] / −0.000 [−0.004, +0.003]. On val the ETKF led by 0.005.
 - **The EnKS leads the S1-tuned filters** by +0.031 [+0.026, +0.036] /
   +0.030 [+0.025, +0.035], mostly in q₁ (0.537 / 0.545 against 0.473 /
-  0.481 for the ETKF).
+  0.481 for the ETKF). These are lag-12 numbers. With the later τ = 8-day
+  time taper (`docs/results/qg_specwind_enks.md`) the EnKS scores 0.665 /
+  0.673.
 - **Spread is near calibrated** for all three (spread/RMSE 0.84–0.88,
   against 0.64–0.70 S0-tuned).
 
