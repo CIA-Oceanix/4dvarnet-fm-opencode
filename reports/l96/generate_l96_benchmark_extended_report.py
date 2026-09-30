@@ -102,14 +102,20 @@ def rows() -> list[tuple]:
     R.append(("Flow ensemble, 1200 ep (3 networks)", "PredictStateCFM-M x3", [REGE / "ens3_psc123" / FL],
               [CAN / "ens3_psc123" / FL]))
     for lab, name in (("SDA1-M", "B4_sda1_monaiM_l96"), ("SDA2-M", "A3_sda2_monaiM_l96"), ("SDA3-fix-M", "A3_sda3fix_monaiM_l96")):
-        R.append(("SDA, gw 25", lab, seeds(f"{name}_seed{{s}}", REGE, "ens30_gw25"), seeds(f"{name}_seed{{s}}", CAN, "ens30_gw25")))
+        R.append(("SDA, 400 ep, gw 25", lab, seeds(f"{name}_seed{{s}}", REGE, "ens30_gw25"), seeds(f"{name}_seed{{s}}", CAN, "ens30_gw25")))
+    for lab, name in (("SDA1-M", "B4_sda1_monaiM_ep1200_l96"), ("SDA2-M", "A3_sda2_monaiM_ep1200_l96"),
+                      ("SDA3-fix-M", "A3_sda3fix_monaiM_ep1200_l96")):
+        R.append(("SDA, 1200 ep, gw 25", lab, seeds(f"{name}_seed{{s}}", REGE, "ens30_gw25"), seeds(f"{name}_seed{{s}}", CAN, "ens30_gw25")))
     for lab, name in (("SDA1-S+", "B4_sda1_monaiSplus_l96"), ("SDA1-L", "B4_sda1_monaiL_l96")):
         R.append(("SDA, gw 20", lab, [P1 / name / "ens30_gw20"], [CAN / name / "ens30_gw20"]))
     for lab, name in (("DirectUNet-M(400 ep) -> SDA2-M", "hybrid_DU{s}_A3_sda2_monaiM_l96"),
                       ("DirectUNet-M(400 ep) -> SDA1-M", "hybrid_DU{s}_B4_sda1_monaiM_l96"),
                       ("DirectUNet-M(1200 ep) -> SDA2-M", "hybrid_DU1200s{s}_A3_sda2_monaiM_l96"),
                       ("DirectUNet-M(1200 ep) -> SDA3-fix-M", "hybrid_DU1200s{s}_A3_sda3fix_monaiM_l96")):
-        R.append(("Hybrid (tau0 0.1, gw 2)", lab, seeds(name, REGE, "tau0.1_gw2"), seeds(name, CAN, "tau0.1_gw2")))
+        R.append(("Hybrid, 400-ep SDA prior (tau0 0.1, gw 2)", lab, seeds(name, REGE, "tau0.1_gw2"), seeds(name, CAN, "tau0.1_gw2")))
+    for lab, name in (("DirectUNet-M(1200 ep) -> SDA2-M", "hybrid_DU1200s{s}_A3_sda2_monaiM_ep1200_l96"),
+                      ("DirectUNet-M(1200 ep) -> SDA3-fix-M", "hybrid_DU1200s{s}_A3_sda3fix_monaiM_ep1200_l96")):
+        R.append(("Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2)", lab, seeds(name, REGE, "tau0.1_gw2"), seeds(name, CAN, "tau0.1_gw2")))
     for lab, name, sub in (("DirectUNet-M", "P1_directunet_monaiM_noaug_l96", D), ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", FL),
                            ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", FL)):
         R.append(("P1 fixed obs (reference)", lab, [P1 / name / sub], [(CAN if sub == D else N20) / name / sub]))
@@ -433,15 +439,15 @@ def binned_canonical(cache: dict) -> list[str]:
     pc = np.load(DANEW_PW)
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     A = ["\n### Canonical random test set, windows binned by their own obs count / fast channels\n",
-         "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> SDA3-fix-M "
-         "(the best scheme, 3 seeds).\n"]
+         "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M (400 ep) gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> "
+         "SDA3-fix-M(1200) (the best scheme, 3 seeds).\n"]
     for c in CASES:
         s = {}
         for lab, f in LEARNED_CURVES:
             dirs = [pick(CAN / f.format(s=x)) or pick(N20 / f.format(s=x)) for x in (1, 2, 3)]
             s[lab] = np.mean([score_dir(p, cache)[c]["rmse"] for p in dirs], axis=0)
         s["SDA1-M"] = np.mean([score_dir(CAN / f"B4_sda1_monaiM_l96_seed{x}" / "ens30_gw25", cache)[c]["rmse"] for x in (1, 2, 3)], axis=0)
-        hyb = [CAN / f"hybrid_DU1200s{x}_A3_sda3fix_monaiM_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
+        hyb = [CAN / f"hybrid_DU1200s{x}_A3_sda3fix_monaiM_ep1200_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
         if all(done(h) for h in hyb):
             s["Hybrid DU1200->SDA3-fix"] = np.mean([score_dir(h, cache)[c]["rmse"] for h in hyb], axis=0)
         s["ETKF"], s["EnKF"], s["Strong-4DVar"] = pc[f"{c}_ETKF_rmse_all_obs"], pc[f"{c}_EnKF_rmse_all_obs"], p2[f"{c}_Strong_4DVar_rmse_all_obs"]
@@ -559,11 +565,11 @@ def findings(da, learned) -> list[str]:
     row = {(r["group"], r["label"]): r for r in learned}
     m = lambda g, lab, t, c="s0": None if row[(g, lab)][t] is None else float(row[(g, lab)][t][c]["rmse"].mean())  # noqa: E731
     best_da = min(da, key=lambda r: r["reg"]["s0"]["rmse"].mean())
-    hg = "Hybrid (tau0 0.1, gw 2)"
+    hg = "Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2)"
     h2, h3 = (hg, "DirectUNet-M(1200 ep) -> SDA2-M"), (hg, "DirectUNet-M(1200 ep) -> SDA3-fix-M")
     A = ["## Findings\n"]
-    A.append(f"1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M hybrid** (tau0 0.1, gw 2; the SDA3-fix prior is "
-             f"also the better one on the validation windows): regular S0 / S1 {fmt(m(*h3, 'reg'))} / {fmt(m(*h3, 'reg', 's1'))}, "
+    A.append(f"1. **Best scheme: the DirectUNet-M(1200 ep) -> SDA3-fix-M(1200 ep) hybrid** (tau0 0.1, gw 2, re-validated "
+             f"with the 1200-epoch priors; the SDA3-fix prior is also the better one on the validation windows): regular S0 / S1 {fmt(m(*h3, 'reg'))} / {fmt(m(*h3, 'reg', 's1'))}, "
              f"random S0 / S1 {fmt(m(*h3, 'can'))} / {fmt(m(*h3, 'can', 's1'))} -- flat under model error. The SDA2-M prior "
              f"is marginally better at S0 ({fmt(m(*h2, 'reg'))} / {fmt(m(*h2, 'can'))}) but degrades at S1 "
              f"({fmt(m(*h2, 'reg', 's1'))} / {fmt(m(*h2, 'can', 's1'))}): it was trained with DA params equal to the true ones, "
@@ -575,7 +581,7 @@ def findings(da, learned) -> list[str]:
              f"VanillaCFM {fmt(m('Benchmark recipe, 400 ep', 'VanillaCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'VanillaCFM-M', 'reg'))}), "
              "and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.")
     A.append("3. **Observation-count crossover at S0**: DA (ETKF / EnKF) is best at <= 10 obs per window; from ~20 obs "
-             "DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1 alone is caught again by "
+             "DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1 alone (the factorial column is the 400-epoch prior) is caught again by "
              "the retuned ETKF when dense (all 16 fast channels: 0.353 vs 0.359 at 100 obs, 0.299 vs 0.351 at 300). Under "
              "model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, "
              "DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.")
@@ -589,7 +595,7 @@ def findings(da, learned) -> list[str]:
              "error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).")
     A.append("5. **Beyond the training range**: learned models are weak at 6 obs and degrade with 1000 obs (DirectUNet "
              "0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least. Noise shifts are handled gracefully.")
-    sd2, sd3 = ("SDA, gw 25", "SDA2-M"), ("SDA, gw 25", "SDA3-fix-M")
+    sd2, sd3 = ("SDA, 1200 ep, gw 25", "SDA2-M"), ("SDA, 1200 ep, gw 25", "SDA3-fix-M")
     A.append("6. **Params conditioning matters once it is tested.** P1's SDA3 was inert by construction (training DA params "
              "equalled the true ones), and every S1 evaluation before 2026-09-25 fed the conditioned priors the TRUE params. "
              f"With the biased DA params at S1, SDA2-M degrades ({fmt(m(*sd2, 'reg'))} -> {fmt(m(*sd2, 'reg', 's1'))} regular) "
@@ -657,10 +663,12 @@ def main() -> None:
          "conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA "
          "baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read "
          "the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.\n",
-         "**SDA training budget**: every SDA prior -- SDA1/SDA2/SDA3-fix-M, SDA1-S+/L, and the prior of every "
-         "DirectUNet -> SDA hybrid -- is a **400-epoch** checkpoint. The SDA priors have not been retrained at the "
-         "1200-epoch benchmark default, so SDA rows are budget-matched only with the 400-epoch rows, not with the "
-         "1200-epoch DirectUNet/CFM rows (which gained 9-19% from the longer budget).\n"]
+         "**SDA training budget (2026-09-30)**: SDA1/SDA2/SDA3-fix-M are now trained at both budgets. The "
+         "`SDA, 1200 ep` and `Hybrid, 1200-ep SDA prior` rows are budget-matched with the 1200-epoch DirectUNet/CFM "
+         "rows (configs `*_ep1200_l96`, identical to the 400-epoch ones apart from the epoch count); the validation "
+         "re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The `SDA, 400 ep`, "
+         "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows, the SDA columns of the observation-count / "
+         "fast-channel / probe tables and the section-6 sweeps use the 400-epoch priors.\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")
@@ -672,7 +680,7 @@ def main() -> None:
     A += [""] + per_window_summary.section()
     A += ["\n## Caveats\n",
           "- Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.",
-          "- SDA priors (alone and inside the hybrids) are trained for 400 epochs; a 1200-epoch SDA run is pending.",
+          "- SDA columns of the factorial, probe and tuning sections are the 400-epoch priors; the 1200-epoch priors are in the main table only.",
           "- The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean "
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
