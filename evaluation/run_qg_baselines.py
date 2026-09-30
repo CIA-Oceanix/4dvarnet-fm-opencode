@@ -969,7 +969,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
         q_var_scale=1.0, fourdvar_grad_clip=100.0, loc_cross_layer=0.0,
-        init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root", enks_lag=None):
+        init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root", enks_lag=None,
+        enks_taper_steps=None):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if loc_cross_layer > 0.0 and obs_var == "q":
@@ -1086,7 +1087,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
                                   loc_mode=etkf_loc_mode,
-                                  **({"lag": enks_lag} if method_name == "enks" else {}))
+                                  **({"lag": enks_lag, "taper_steps": enks_taper_steps}
+                                     if method_name == "enks" else {}))
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,
@@ -1133,7 +1135,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
                                   loc_mode=etkf_loc_mode,
-                                  **({"lag": enks_lag} if method_name == "enks" else {}))
+                                  **({"lag": enks_lag, "taper_steps": enks_taper_steps}
+                                     if method_name == "enks" else {}))
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,

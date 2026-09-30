@@ -1056,7 +1056,7 @@ def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tenso
 
 
 def _enks_smooth_localized(ensemble: torch.Tensor, records: list, lag: int | None, N1: int,
-                           chunk: int = 32) -> torch.Tensor:
+                           chunk: int = 32, taper_steps: float | None = None) -> torch.Tensor:
     """Localized EnKS: apply each recorded EnSRF analysis to the earlier states.
 
     ``ensemble`` (N, T, D) is the stored filter trajectory (post-analysis at
@@ -1066,18 +1066,29 @@ def _enks_smooth_localized(ensemble: torch.Tensor, records: list, lag: int | Non
     that analysis between the state points and its observations:
     mean += C S⁻¹dy, anomalies −= HA_k (C M)ᵀ. Without localization, with
     N − 1 ≥ D and a linear model, this is the RTS smoother of the filter.
+
+    ``taper_steps`` (τ, in model steps) localizes in time as well: the
+    cross-covariance of a state s with analysis k is multiplied by the
+    Gaspari–Cohn weight GC((t_k − s) / τ), which is 1 at s = t_k and 0 from
+    t_k − s = 2τ on (states beyond are skipped). It can replace or complement
+    the hard ``lag`` cutoff.
     """
     X = ensemble.clone()
     times = [r[0] for r in records]
     for k, (tk, HA, v, M, Lx) in enumerate(records):
         lo = 0 if lag is None or k - lag < 0 else times[k - lag]
+        if taper_steps is not None:
+            lo = max(lo, tk - int(np.ceil(2.0 * taper_steps)) + 1)
         Z = HA @ M.T
-        for c0 in range(lo, tk, chunk):
+        for c0 in range(max(lo, 0), tk, chunk):
             c1 = min(tk, c0 + chunk)
             Xs = X[:, c0:c1]
             mu = Xs.mean(0, keepdim=True)
             As = Xs - mu
             C = Lx.unsqueeze(0) * torch.einsum("ntd,no->tdo", As, HA) / N1
+            if taper_steps is not None:
+                gap = torch.arange(tk - c0, tk - c1, -1, dtype=torch.float64, device=X.device)
+                C = C * _gc_matrix(gap / taper_steps).to(C.dtype)[:, None, None]
             mu = mu + torch.einsum("tdo,o->td", C, v).unsqueeze(0)
             As = As - torch.einsum("no,tdo->ntd", Z, C)
             X[:, c0:c1] = mu + As
@@ -1548,8 +1559,11 @@ class EnKS(ETKF):
     additive noise, so each analysis is fully described by the record.
     """
 
-    def __init__(self, *args, lag: int | None = None, **kwargs):
+    def __init__(self, *args, lag: int | None = None, taper_steps: float | None = None, **kwargs):
         super().__init__(*args, **kwargs)
+        if taper_steps is not None and taper_steps <= 0:
+            raise ValueError(f"taper_steps must be > 0 or None, got {taper_steps}")
+        self.taper_steps = taper_steps
         if self.loc_mode != "ensrf" or (self.loc_radius is None and self.loc_Lx_t is None):
             raise NotImplementedError("EnKS needs the localized ETKF with loc_mode='ensrf'")
         if self.inflation != 1.0 or self.etkf_additive > 0.0:
@@ -1566,7 +1580,8 @@ class EnKS(ETKF):
         finally:
             self._enks_record = None
         ens = torch.from_numpy(np.asarray(res.ensemble, dtype=np.float32)).to(self.device)
-        ens = _enks_smooth_localized(ens, records, self.lag, self.N_ensemble - 1)
+        ens = _enks_smooth_localized(ens, records, self.lag, self.N_ensemble - 1,
+                                     taper_steps=self.taper_steps)
         ens_np = ens.cpu().numpy()
         trajectory = ens_np.mean(0).astype(np.float64)
         ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()

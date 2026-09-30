@@ -96,3 +96,22 @@ def test_enks_refuses_unsupported_settings():
         EnKS(**{**kw, "inflation": 1.1})
     with pytest.raises(ValueError):
         EnKS(**kw, lag=0)
+
+
+def test_time_taper_recovers_the_untapered_smoother_when_wide_and_damps_when_narrow():
+    kw, init, obs, mask, T, D, _ = _setup(seed=7)
+
+    def smooth(**extra):
+        s = EnKS(**kw, **extra)
+        s.init_ensemble = init.clone()
+        return s.assimilate(obs, mask, torch.zeros(T), true_state=torch.zeros(T, D)).trajectory
+
+    full, wide, narrow = smooth(), smooth(taper_steps=1e6), smooth(taper_steps=1.0)
+    np.testing.assert_allclose(wide, full, atol=1e-5)
+    assert not np.allclose(narrow[:9], full[:9], atol=1e-5)
+    f = ETKF(**kw)
+    f.init_ensemble = init.clone()
+    filt = f.assimilate(obs, mask, torch.zeros(T), true_state=torch.zeros(T, D)).trajectory
+    np.testing.assert_allclose(narrow[:2], filt[:2], atol=1e-5)
+    with pytest.raises(ValueError):
+        EnKS(**kw, taper_steps=0.0)
