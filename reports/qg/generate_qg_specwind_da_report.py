@@ -32,6 +32,7 @@ METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF", "enks": "EnKS (ETKF smoother)"}
 METHODS = ("etkf", "enkf", "enks")
 S0 = "S0"
 ETKF_MODE = "ensrf"
+S1_TUNED_R = 6.0
 
 
 def load_runs(root: str) -> list[dict]:
@@ -52,7 +53,7 @@ def load_runs(root: str) -> list[dict]:
                             else (f"κ = {m0['s1_kappa']:g}" if m0.get("s1_kappa") else S0)),
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
                      "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
-                     "lag": m0.get("enks_lag"),
+                     "lag": m0.get("enks_lag"), "r_scale": float(m0.get("r_scale", 1.0) or 1.0),
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -81,9 +82,11 @@ def _values(run: dict, tag: str, key: str) -> np.ndarray:
     return np.array([w[f"ev_{tag}_{key}"] for w in run["per_window"]])
 
 
-def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0) -> dict | None:
+def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0,
+          r_scale: float = 1.0) -> dict | None:
     hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
-            and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)]
+            and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)
+            and abs(r["r_scale"] - r_scale) < 1e-9]
     return hits[0] if hits else None
 
 
@@ -111,10 +114,10 @@ def _table(header: list[str], rows: list[tuple]) -> list[str]:
     return lines
 
 
-def scenario_table(runs: list[dict], spec: str, cols: int, s1: str) -> list[str]:
+def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: float = 1.0) -> list[str]:
     rows, base = [], None
     for method in METHODS:
-        r = _find(runs, spec, method, cols, s1)
+        r = _find(runs, spec, method, cols, s1, r_scale)
         if r is None:
             continue
         base = base or r
@@ -297,6 +300,14 @@ def main() -> None:
                "forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the "
                "ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not "
                "a filter.)", ""]
+    tuned = [r for r in runs if r["s1"] == s1 and abs(r["r_scale"] - S1_TUNED_R) < 1e-9 and r["complete"]]
+    if tuned:
+        md += [f"### S1-tuned filters (observation-error variance × {S1_TUNED_R:g}), 3 columns per day", "",
+               "Same S1, with the filters' R scaled on val to absorb the model error "
+               "(`docs/results/qg_specwind_s1_tuning.md`); inflation > 1 diverges here. The rows above use "
+               "the S0-tuned filters.", ""]
+        for spec, lab in SPECS.items():
+            md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(runs, spec, 3, s1, S1_TUNED_R) + [""]
     md += _fig(fig_dir, "qg_specwind_da_s0_s1.png", "S0 vs S1 per field")
     md += ["## 4. Configuration synthesis and S1 error budget", "",
            "Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): vertical "

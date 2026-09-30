@@ -134,7 +134,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
              loc_cross_layer: float = 1.0, init_ensemble: str = "bred", breed_days: float = 3.0,
              disp_frac: float = 1.0, init_lag_days: float = 5.0, out_path: str | None = None,
              save_traj: str | None = None, etkf_loc_mode: str = "ensrf",
-             enks_lag: int | None = None) -> tuple[dict, list[dict]]:
+             enks_lag: int | None = None, r_scale: float = 1.0) -> tuple[dict, list[dict]]:
     """Run S0/S1 DA on prepared windows; return run()'s payload and per-window metrics."""
     traj_dir = save_traj or tempfile.mkdtemp(prefix="qgda_", dir=os.environ.get("TMPDIR", "/tmp"))
     try:
@@ -144,7 +144,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       init_lag_days=init_lag_days, ds={"test_s0": windows}, etkf_ridge=etkf_ridge,
                       save_traj=traj_dir, loc_cross_layer=loc_cross_layer,
                       init_ensemble_kind=init_ensemble, breed_days=breed_days, disp_frac=disp_frac,
-                      etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag)
+                      etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag, obs_var_r_scale=r_scale)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
         per_window = []
@@ -184,6 +184,8 @@ def main() -> None:
     p.add_argument("--init-ensemble", default="bred", choices=("white", "bred"))
     p.add_argument("--breed-days", type=float, default=3.0)
     p.add_argument("--disp-frac", type=float, default=1.0)
+    p.add_argument("--r-scale", type=float, default=1.0,
+                   help="multiply the filter's observation-error variance (absorbs model error)")
     p.add_argument("--enks-lag", type=int, default=12,
                    help="EnKS lag in analyses (val-tuned default 12 = 4 days at 3 columns per day; "
                         "0 = the whole window)")
@@ -233,13 +235,13 @@ def main() -> None:
         loc_cross_layer=args.loc_cross_layer, init_ensemble=args.init_ensemble,
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
         out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
-        enks_lag=args.enks_lag or None)
+        enks_lag=args.enks_lag or None, r_scale=args.r_scale)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
             "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
-            "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode, "enks_lag": args.enks_lag,
+            "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode, "enks_lag": args.enks_lag, "r_scale": args.r_scale,
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": args.s1_kappa, "s1_preset": args.s1_preset if args.s1_kappa else None,

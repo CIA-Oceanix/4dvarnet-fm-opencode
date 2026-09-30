@@ -132,6 +132,17 @@ The localized EnKS on this ETKF (lag 12 analyses = 4 days) gains about +0.03
 over the filter in S0 (0.804 / 0.813) and about +0.02 in S1 (0.602 / 0.610).
 In S1 it ties the EnKF. Details: `docs/results/qg_specwind_enks.md`.
 
+## 3c. S1-tuned filters
+
+With the filters' observation-error variance scaled × 6 on val (the model
+error absorbed as observation error; inflation > 1 diverges), S1 test scores
+rise to:
+- ETKF 0.633 / 0.642;
+- EnKF 0.634 / 0.642 (a tie with the ETKF);
+- EnKS 0.664 / 0.672.
+
+Details: `docs/results/qg_specwind_s1_tuning.md`.
+
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.

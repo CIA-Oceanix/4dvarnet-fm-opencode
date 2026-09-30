@@ -60,6 +60,28 @@ The gyrostat drives domain-scale wind-stress-curl patterns with regime changes; 
 
 (Best per column **bolded**, second-best *italicized*, among the DA methods; the free forecast is a reference row. The EnKS is the localized ensemble Kalman smoother on the ETKF: it also uses observations after each time, so it is a reanalysis-type estimate, not a filter.)
 
+### S1-tuned filters (observation-error variance × 6), 3 columns per day
+
+Same S1, with the filters' R scaled on val to absorb the model error (`docs/results/qg_specwind_s1_tuning.md`); inflation > 1 diverges here. The rows above use the S0-tuned filters.
+
+**Forced dataset**
+
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
+|---|---|---|---|---|---|---|
+| _free forecast_ | 0.127 | -0.934 | -0.254 | -0.363 | -0.356 |  |
+| ETKF (radius 8) | *0.865* | 0.791 | *0.473* | 0.402 | 0.633 | [0.615, 0.650] |
+| EnKF (radius 6) | 0.861 | *0.798* | 0.468 | *0.409* | *0.634* | [0.617, 0.650] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.891** | **0.800** | **0.537** | **0.429** | **0.664** | [0.648, 0.680] |
+
+**Coupled dataset**
+
+| method | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI |
+|---|---|---|---|---|---|---|
+| _free forecast_ | 0.113 | -0.914 | -0.260 | -0.352 | -0.353 |  |
+| ETKF (radius 8) | *0.865* | 0.799 | *0.481* | 0.421 | *0.642* | [0.624, 0.659] |
+| EnKF (radius 6) | 0.860 | **0.805** | 0.474 | *0.428* | *0.642* | [0.626, 0.658] |
+| EnKS (ETKF smoother) (radius 8, lag 12) | **0.891** | *0.804* | **0.545** | **0.448** | **0.672** | [0.655, 0.688] |
+
 ![S0 vs S1 per field](figs/qg_specwind_da_s0_s1.png)
 
 ## 4. Configuration synthesis and S1 error budget
