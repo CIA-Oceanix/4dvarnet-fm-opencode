@@ -73,3 +73,26 @@ def test_flag_rejected_outside_subgrad_state(mode):
     with pytest.raises(ValueError, match="zero_prior_input"):
         F.FourDVarNetSolver(state_dim=D, hidden_channels=[4, 8], time_emb_dim=8, N_outer=3,
                             update_input=mode, unet_backbone="unet1d", zero_prior_input=True)
+
+
+
+def _grads(aux: float, detach: bool) -> tuple:
+    torch.manual_seed(1)
+    m = F.FourDVarNetSolver(state_dim=D, hidden_channels=[4, 8], time_emb_dim=8, N_outer=3, dropout=0.0,
+                            update_input="subgrad+state", unet_backbone="unet1d",
+                            aux_var_cost_weight=aux, aux_detach_x_final=detach).train()
+    m.compute_loss(_Batch()).backward()
+    solver = torch.cat([p.grad.flatten() for p in m.unet.parameters() if p.grad is not None])
+    prior = torch.cat([p.grad.flatten() for p in m.prior_unet.parameters() if p.grad is not None])
+    return solver, prior
+
+
+def test_aux_detach_leaves_the_solver_gradient_of_the_supervised_loss():
+    """With aux_detach_x_final the aux prior cost trains Phi only: the solver UNet's
+    gradient equals that of the same model without the aux loss."""
+    base_solver, _ = _grads(aux=0.0, detach=False)
+    det_solver, det_prior = _grads(aux=0.01, detach=True)
+    raw_solver, _ = _grads(aux=0.01, detach=False)
+    torch.testing.assert_close(det_solver, base_solver)
+    assert not torch.allclose(raw_solver, base_solver)
+    assert det_prior.abs().sum() > 0

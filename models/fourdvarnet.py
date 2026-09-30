@@ -839,6 +839,7 @@ class FourDVarNetSolver(nn.Module):
                  true_dynamics_dt=None,
                  true_dynamics_NO=8,
                  zero_prior_input=False,
+                 aux_detach_x_final=False,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
                  true_dynamics_coupling_exponent=1.6,
@@ -1000,6 +1001,9 @@ class FourDVarNetSolver(nn.Module):
         if zero_prior_input and update_input != "subgrad+state":
             raise ValueError("zero_prior_input is an ablation of update_input='subgrad+state' only")
         self.zero_prior_input = zero_prior_input
+        # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
+        # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
+        self.aux_detach_x_final = aux_detach_x_final
         # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
         # (see that validation above -- both None for every other mode).
         # obs_var_indices: which of state_dim's channels
@@ -1335,7 +1339,8 @@ class FourDVarNetSolver(nn.Module):
             loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
             numel = x_final.numel()
-            prior_cost_pred = _prior_cost(self.prior_unet, x_final, residual=self.prior_residual) / numel
+            x_aux = x_final.detach() if self.aux_detach_x_final else x_final
+            prior_cost_pred = _prior_cost(self.prior_unet, x_aux, residual=self.prior_residual) / numel
             prior_cost_true = _prior_cost(self.prior_unet, batch.states, residual=self.prior_residual) / numel
             loss = loss + self.aux_var_cost_weight * (prior_cost_pred + prior_cost_true)
         return loss
