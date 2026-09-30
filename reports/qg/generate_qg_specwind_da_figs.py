@@ -54,7 +54,7 @@ S1_VARIANT = "base"
 METHODS = (("ETKF", "etkf", {"loc_radius": 8.0, "etkf_ridge": 0.1, "etkf_loc_mode": "ensrf"}),
            ("EnKF", "enkf", {"loc_radius": 6.0, "etkf_ridge": 0.1}),
            ("EnKS (smoother)", "enks", {"loc_radius": 8.0, "etkf_ridge": 0.1, "etkf_loc_mode": "ensrf",
-                                        "enks_lag": 12}))
+                                        "enks_lag": None, "enks_taper_days": 8.0}))
 LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂"}
 CMAP = "RdBu_r"
 INK, MUTED, GRID = "#1f2a30", "#5b6b72", "#e3e8ea"

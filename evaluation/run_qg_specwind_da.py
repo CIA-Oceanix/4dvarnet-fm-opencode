@@ -187,13 +187,14 @@ def main() -> None:
     p.add_argument("--init-ensemble", default="bred", choices=("white", "bred"))
     p.add_argument("--breed-days", type=float, default=3.0)
     p.add_argument("--disp-frac", type=float, default=1.0)
-    p.add_argument("--enks-taper-days", type=float, default=None,
-                   help="EnKS time taper width in days (Gaspari-Cohn, zero beyond twice it)")
+    p.add_argument("--enks-taper-days", type=float, default=8.0,
+                   help="EnKS time taper width in days (Gaspari-Cohn, zero beyond twice it; val-tuned 8; "
+                        "<= 0 disables it)")
     p.add_argument("--r-scale", type=float, default=1.0,
                    help="multiply the filter's observation-error variance (absorbs model error)")
-    p.add_argument("--enks-lag", type=int, default=12,
-                   help="EnKS lag in analyses (val-tuned default 12 = 4 days at 3 columns per day; "
-                        "0 = the whole window)")
+    p.add_argument("--enks-lag", type=int, default=0,
+                   help="EnKS hard lag in analyses (0 = none; the benchmark uses the time taper instead, "
+                        "which beat lag 12 on val)")
     p.add_argument("--etkf-loc-mode", default="ensrf", choices=("square_root", "ensrf"),
                    help="localized ETKF update: legacy square_root, or the exact EnSRF (ensrf)")
     p.add_argument("--s1-kappa", type=float, default=0.0,
@@ -240,7 +241,8 @@ def main() -> None:
         loc_cross_layer=args.loc_cross_layer, init_ensemble=args.init_ensemble,
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
         out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
-        enks_lag=args.enks_lag or None, r_scale=args.r_scale, enks_taper_days=args.enks_taper_days)
+        enks_lag=args.enks_lag or None, r_scale=args.r_scale,
+        enks_taper_days=args.enks_taper_days if args.enks_taper_days and args.enks_taper_days > 0 else None)
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,

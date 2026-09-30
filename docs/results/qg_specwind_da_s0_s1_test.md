@@ -128,9 +128,11 @@ ETKF).
 
 ## 3b. Smoother (localized EnKS)
 
-The localized EnKS on this ETKF (lag 12 analyses = 4 days) gains about +0.03
-over the filter in S0 (0.804 / 0.813) and about +0.02 in S1 (0.602 / 0.610).
-In S1 it ties the EnKF. Details: `docs/results/qg_specwind_enks.md`.
+The localized EnKS on this ETKF gains about +0.04 over the filter in S0
+(0.812 / 0.819) and about +0.03 in S1 (0.612 / 0.620); in S1 it also beats
+the EnKF. It uses a time taper of τ = 8 days with no lag cutoff, which
+replaced the earlier lag of 12 analyses (0.804 / 0.813 and 0.602 / 0.610).
+Details: `docs/results/qg_specwind_enks.md`.
 
 ## 3c. S1-tuned filters
 
@@ -139,7 +141,7 @@ error absorbed as observation error; inflation > 1 diverges), S1 test scores
 rise to:
 - ETKF 0.633 / 0.642;
 - EnKF 0.634 / 0.642 (a tie with the ETKF);
-- EnKS 0.664 / 0.672.
+- EnKS 0.665 / 0.673 with the τ = 8-day taper (0.664 / 0.672 with lag 12).
 
 Details: `docs/results/qg_specwind_s1_tuning.md`.
 

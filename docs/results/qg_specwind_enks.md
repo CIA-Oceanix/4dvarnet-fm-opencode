@@ -1,6 +1,7 @@
 # Localized EnKS on the QG gyrostat benchmark (smoother vs filter)
 
-**Status:** RESULTS (2026-09-29). A localized ensemble Kalman smoother (EnKS)
+**Status:** RESULTS (2026-09-29; time taper added 2026-09-30, §"Time taper" —
+the benchmark EnKS is now **no lag cutoff, time taper τ = 8 days**). A localized ensemble Kalman smoother (EnKS)
 on the benchmark ETKF, the counterpart for the localized QG setting of the
 L96 ETKS (`docs/results/l96_etks_benchmark.md`). The L96 ETKS works in
 ensemble space on the unlocalized ETKF, so it does not apply here.
@@ -110,13 +111,58 @@ Paired differences (bootstrap 95%), forced / coupled:
 - **Spread/RMSE in q₁ (median)** falls from 0.72 to 0.68 in S0 and from 0.70
   to 0.64 in S1: the smoother is more under-dispersed than the filter.
 
+## Time taper (2026-09-30)
+
+A hard lag lets every analysis within it act at full strength and drops the
+rest abruptly. The time taper (`EnKS(taper_steps=...)`, `--enks-taper-days`)
+instead multiplies the cross-covariance of state s with analysis k by the
+Gaspari–Cohn weight GC((t_k − s)/τ), which is 1 at t_k and 0 from 2τ on.
+Both the mean and the anomaly updates scale with it. A test checks that a
+very wide τ reproduces the untapered smoother.
+
+**Val sweep** (`evaluation/qg_specwind_enks_tuning.py`, SLURM 57338, 20
+windows). S1 uses the S1-tuned R × 6 (`docs/results/qg_specwind_s1_tuning.md`).
+
+| | S0 | S1-tuned (R × 6) |
+|---|---|---|
+| lag 12 (previous benchmark) | 0.798 | 0.673 |
+| lag 24 | 0.802 (+0.004) | 0.658 (−0.014) |
+| whole window, no taper | — | 0.632 (−0.040) |
+| taper τ = 2 d, no lag | 0.787 (−0.010) | 0.671 (−0.001) |
+| taper τ = 4 d | 0.799 (+0.001) | **0.682** (+0.009 [+0.004, +0.017]) |
+| **taper τ = 8 d** | **0.806** (+0.008 [+0.006, +0.010]) | *0.679* (+0.007 [+0.004, +0.010]) |
+| taper τ = 16 d | *0.805* (+0.007) | 0.662 (−0.011) |
+
+- **Longer hard lags still hurt under S1, even at the tuned R × 6.** The
+  unobserved ψ₂ degrades: 0.745 over the whole window, against 0.873 at lag
+  12.
+- **Selected: τ = 8 days, no lag cutoff.** It is best in S0, within noise of
+  τ = 4 d in S1, and it has the best CRPS in both. One setting serves both
+  scenarios and replaces the lag hyperparameter.
+
+**Test** (100 windows, forced / coupled; paired taper − lag 12):
+
+| | lag 12 | **taper τ = 8 d** | taper − lag 12 | CRPS q (×10⁻⁶), lag 12 → taper |
+|---|---|---|---|---|
+| S0 | 0.804 / 0.813 | **0.812 / 0.819** | +0.009 [+0.008, +0.010] / +0.006 [+0.004, +0.008] | 5.39 → 5.32 / 5.20 → 5.16 |
+| S1, S0-tuned filters | 0.602 / 0.610 | **0.612 / 0.620** | +0.011 [+0.006, +0.015] / +0.010 [+0.006, +0.014] | 7.56 → 7.44 / 7.38 → 7.27 |
+| S1-tuned (R × 6) | 0.664 / 0.672 | 0.665 / 0.673 | +0.001 [−0.004, +0.004] / +0.001 [−0.004, +0.005] | 6.99 → 6.94 / 6.83 → 6.77 |
+
+- **The taper is better than lag 12 or tied everywhere**, and its CRPS is
+  better in all six cases.
+- **In S1-tuned it ties on the score**, with slightly lower ψ₂ (−0.017 /
+  −0.018) offset by q gains.
+- **Its margin over the ETKF filter** is +0.039 / +0.040 in S0, +0.034 in S1
+  S0-tuned and +0.032 / +0.031 in S1-tuned.
+
 ## Caveats
 
 - **The EnKS is a smoother.** It uses observations after each time, so it is
   a reanalysis-type estimate. It is reported next to the filters, not
   instead of them.
-- **Same localization as the analysis.** Each analysis's state–observation
-  localization is reused for the earlier states, as is standard for a
-  localized EnKS. A time-dependent localization, tapering with lag, could
-  make longer lags safe under model error.
+- **Same spatial localization as the analysis.** Each analysis's
+  state–observation localization is reused for the earlier states. The time
+  taper (above) now limits how far back it acts. A taper width that depends
+  on the scenario, or grows with the model's error-growth time scale, was
+  not tried.
 - **Lag tuned on 20 val windows at one density.**

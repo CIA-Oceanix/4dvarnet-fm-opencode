@@ -33,8 +33,8 @@ METHODS = ("etkf", "enkf", "enks")
 S0 = "S0"
 ETKF_MODE = "ensrf"
 S1_TUNED_R = 6.0
-ENKS_LAG = 12
-ENKS_TAPER = None
+ENKS_LAG = None
+ENKS_TAPER = 8.0
 
 
 def load_runs(root: str) -> list[dict]:
@@ -129,8 +129,8 @@ def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: flo
         ci = _boot_mean(_values(r, "da", "score"))
         lag = ""
         if method == "enks":
-            lag = f", lag {r['lag'] if r['lag'] is not None else 'whole window'}"
-            lag += f", taper {r['taper']:g} d" if r["taper"] is not None else ""
+            lag = f", lag {r['lag']}" if r["lag"] else (", no lag cutoff" if r["taper"] else ", whole window")
+            lag += f", time taper {r['taper']:g} d" if r["taper"] is not None else ""
         crps = float(np.mean([w["crps"] for w in r["per_window"]])) * 1e6
         spread = [w["spread_ratio_q1"] for w in r["per_window"] if "spread_ratio_q1" in w]
         rows.append((f"{METHOD_NAME[method]} (radius {r['loc']:g}{lag})", vals,
