@@ -154,16 +154,31 @@ RMSE); every learned row reproduces the report's 3-seed RMSE. Readings:
   from — the U-model argument, measured.
 - **ETKS**: the best DA scheme (0.497 regular / 0.572 random S0) and the most
   over-confident (pooled 0.34–0.64): smoothing cuts spread faster than error.
-- **F3 identity — first computation withdrawn (2026-09-29).** It compared the
-  ETKS with a *separate* ETKF run (independent, unseeded initial ensemble): the
-  ETKS returns only its smoothed ensemble and discards its own filter pass. The
-  mean-shift term E‖m_F − m_S‖² therefore included the run-to-run difference of
-  two independent filters, and the "identity fails / smoother moves the means
-  4× more than it reduces the error" reading does not stand. The MSE and spread
-  gaps (and the reported 16–19% ETKS gain) are expected-value comparisons and
-  remain valid. Recomputation with the ETKS's own filter pass captured (one
-  ensemble realisation), plus the 30- vs 100-member check: SLURM 56997
-  (`scripts/etks_ensemble_check.py`).
+- **F3 identity (2026-09-30), filter and smoother from one ensemble** (the
+  ETKS's own filter pass captured; SLURM 56997,
+  `reports/l96/outputs/etks_identity/`; the first computation, against an
+  independent ETKF run, is withdrawn). Exact filter/smoother: all three equal.
+
+  | case | members | MSE_F − MSE_S | var_F − var_S | E‖m_F − m_S‖² | shift / gap |
+  |---|---|---|---|---|---|
+  | regular S0 (test) | 30 | 0.159 | 0.227 | 0.296 | 1.9 |
+  | regular S0 (val) | 30 → 100 | 0.154 → 0.207 | 0.242 → 0.259 | 0.322 → 0.275 | 2.1 → **1.3** |
+  | random S0 (val) | 30 → 100 | 0.144 → 0.213 | 0.344 → 0.332 | 0.380 → 0.311 | 2.6 → **1.5** |
+  | regular S1 (val) | 30 → 100 | 0.241 → 0.249 | 0.532 → 0.564 | 0.941 → 0.928 | 3.9 → 3.7 |
+  | random S1 (val) | 30 → 100 | 0.165 → 0.259 | 1.184 → 1.250 | 1.426 → 1.458 | 8.7 → 5.6 |
+
+  **At S0 the identity is approached as the ensemble grows** — the 30-member
+  mismatch is sampling error, so filtering is an information restriction (K1).
+  **At S1 it fails at any ensemble size** — the misspecification signature.
+  This is the restriction/misspecification distinction of §3, measured on one
+  estimator pair.
+- **Ensemble size (sensitivity, option 2 of 2026-09-30):** the benchmark stays at
+  30 members. At 100 members (validation, λ 1.15 / 2.5, not re-tuned yet) the
+  ETKS gains 20% at regular S0 (0.510 → 0.406) and 13% at random S0 (0.583 →
+  0.510), the ETKF 9%, and S1 barely moves (−5% smoothing gain at either size).
+  DA's regular-S0 deficit vs the learned schemes would be ~1.2× at 100 members
+  vs 1.46× at 30: the paper states the range. 100-member inflation sweep:
+  SLURM 57357; test rows at the selected λ follow.
 - **Amortised flows (F1 = no)**: close to calibrated (0.84–0.94) on both
   layouts and invariant to model error (approximation ≈ 10–28%). Previously
   reported as strongly under-dispersed — a per-window artefact. VanillaCFM
@@ -211,7 +226,7 @@ decomposition, identity, cell classification.
 
 **§5 Results A — with a perfect model: what each choice costs** (restriction terms)
 - 5.1 Overview / regime map: all schemes, S0 and S1, vs density; DA best ≤ 10 obs at S0, learned from ~20; learned degrade out of range. ✅ `l96_benchmark_extended.md` §1, §3, §5
-- 5.2 F3: ETKF vs ETKS(L) vs Strong/Weak-4DVar; RMSE(L) restriction curve; identity check; share of the DA–learned gap due to filtering. ✅ ETKS measured (#297/#299: −16–19% RMSE at S0, −4–5% at S1, full window, `correct` retro-inflation); DA's regular-S0 deficit vs the learned schemes 2.0× (old ETKF) → 1.8× (retuned) → 1.46× (ETKS). ⏳ identity test being recomputed with the ETKS's own filter pass (§3; first computation withdrawn).
+- 5.2 F3: ETKF vs ETKS(L) vs Strong/Weak-4DVar; RMSE(L) restriction curve; identity check; share of the DA–learned gap due to filtering. ✅ ETKS measured (#297/#299: −16–19% RMSE at S0, −4–5% at S1, full window, `correct` retro-inflation); DA's regular-S0 deficit vs the learned schemes 2.0× (old ETKF) → 1.8× (retuned) → 1.46× (ETKS). ✅ identity (§3): approached at S0 as the ensemble grows (restriction), fails at S1 at any size (misspecification). DA deficit 1.46× at 30 members, ~1.2× at 100 (sensitivity row pending).
 - 5.3 F2 and its source: mechanistic one-step prior (Weak-4DVar, ETKS) vs learned joint prior (SDA), both factorised, both window. 🟡 at a perfect model the mechanistic smoother and the learned prior are level: ETKS 0.497 vs SDA1-M 0.501 (400 ep; regular S0), random 0.572 vs 0.613; Strong-4DVar 0.703. Needs SDA at 1200 ep (running) and Weak-4DVar. Optional SDA-local (learned one-step) isolates F2 itself.
 - 5.4 F1: factorised (SDA) vs amortised (DirectUNet/CFM): in-distribution accuracy vs robustness to the observing system (×1.21–1.22 vs ×1.24–1.32, fixed-grid ×2.7–3.3) and out-of-range densities (SDA 0.35→0.32 vs DirectUNet 0.17→0.34 from 300 to 1000 obs). ✅ with SDA budget caveat ⏳
 - 5.5 U-state at S0: pooled calibration (§3 table: filters mildly under-dispersed 0.78–0.96 at the tuned inflation, ETKS 0.47–0.64, flows 0.85–0.93, SDA/hybrid 0.52–0.76); unexplained share; one paragraph on rank histograms (no class-specific shape deficit). ✅ `docs/results/l96_rank_histograms_c4.md`
@@ -237,7 +252,7 @@ decomposition, identity, cell classification.
 
 | claim | column | reading | status |
 |---|---|---|---|
-| **K1** Filtering is a restriction: smoothing recovers part of the DA deficit at S0 (ETKS −16–19%), and the identity holds. | F3 | restriction | 🟡 gain ✅; identity ⏳ (recomputation with the ETKS's own filter, SLURM 56997) |
+| **K1** Filtering is a restriction: smoothing recovers part of the DA deficit at S0 (ETKS −16–19%), and the identity holds. | F3 | restriction | ✅ gain; identity approached at S0 with 100 members, fails at S1 (§3) |
 | **K2** Keeping H, R explicit buys observing-system and out-of-range robustness; amortisation buys in-distribution accuracy. | F1 | amortised under shift = misspecification | ✅ (SDA budget ⏳) |
 | **K3** A learned window prior beats the mechanistic one-step prior at a perfect model. | F2 / source | approximation vs restriction | 🟡 |
 | **K4** Model error makes the hard constraint a misspecification: its marginal value of observations collapses; filters and soft constraints keep part of it. (headline) | U-model × F2 | misspecification | 🟡 (Strong ✅, Weak ⏳, sweep ⏳) |
@@ -292,7 +307,7 @@ decomposition, identity, cell classification.
 | run | sections | blocks submission |
 |---|---|---|
 | ETKS | 5.2, 5.3, 6.1 | ✅ done (#297/#299) |
-| Localised or larger-ensemble smoother (isolate the F3 restriction term) | 5.2, K1 | desirable |
+| 100-member ETKS: inflation sweep (SLURM 57357) + test sensitivity rows | 5.2, K1, DA-deficit range | yes (sensitivity row) |
 | Weak-4DVar on L96 (`evaluation/tune_l96_weak4dvar.py`, then benchmark) | 5.3, 6.1, 6.2 | yes |
 | SDA priors at 1200 epochs (+ gw / hybrid re-tune) | 5.3, 5.4 | yes — running (SLURM 56907) |
 | M-trained DirectUNet / PredictStateCFM / SDA, σ = 0 and 20% | 6.1, 6.2, 6.4, 6.5 | yes |
