@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --account=odyssey
 #SBATCH --partition=Odyssey_GPU
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=06:00:00
 #SBATCH --array=0-35%6
-#SBATCH --exclude=sl-mee-br-202,sl-mee-br-203,sl-mee-br-204,sl-mee-br-205,sl-mee-br-208,sl-mee-br-210,sl-mee-br-211,sl-mee-br-212,sl-mee-br-213,sl-mee-br-214,sl-mee-br-215,sl-mee-br-216
+#SBATCH --exclude=sl-mee-br-202,sl-mee-br-203,sl-mee-br-204,sl-mee-br-205,sl-mee-br-208,sl-mee-br-209,sl-mee-br-210,sl-mee-br-211,sl-mee-br-212,sl-mee-br-213,sl-mee-br-214,sl-mee-br-215,sl-mee-br-216
 #SBATCH --job-name=l96-fmscore
 #SBATCH --output=sbatch_logs/l96_fmscore_%A_%a.out
 #SBATCH --error=sbatch_logs/l96_fmscore_%A_%a.err
