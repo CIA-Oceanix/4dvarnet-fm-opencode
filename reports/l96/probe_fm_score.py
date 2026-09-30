@@ -51,14 +51,38 @@ def noise(chunk: int, shape: tuple[int, ...], k: int) -> np.ndarray:
     return np.random.default_rng(1000 + chunk).standard_normal(shape + (k,))
 
 
-def score_ensemble(path: Path, mu: np.ndarray, sd: np.ndarray, k: int, chunk: int,
-                   ref_truth: np.ndarray) -> dict:
-    z = np.load(path)
-    members, truth = z["members"], z["truth"]
-    assert np.allclose(truth, ref_truth, atol=1e-4), path
+SCALE_TAUS = (0.25, 0.5, 0.75, 0.95)
+SCALES = np.exp(np.linspace(np.log(0.125), np.log(8.0), 41))
+KDE_C = 1 + (1.06 * 30 ** -0.2) ** 2
+
+
+def accumulate_scales(err: np.ndarray, var: np.ndarray, acc: np.ndarray) -> None:
+    for i, tau in enumerate(SCALE_TAUS):
+        for j, c in enumerate(list(SCALES) + [KDE_C]):
+            acc[i, j] += gaussian_score(err, c * var, tau).sum(axis=(0, 1))
+
+
+def finish_scales(acc: np.ndarray, n: int, mse: np.ndarray, spread2: np.ndarray) -> dict:
+    out = {}
+    for g, s in GROUPS.items():
+        a = acc[..., s].sum(-1) / (n * (s.stop - s.start))
+        row = {"pooled_spread_skill": float(np.sqrt(spread2[s].sum() / mse[s].sum()))}
+        for i, tau in enumerate(SCALE_TAUS):
+            k = int(a[i, :-1].argmin())
+            row[str(tau)] = {"c1": float(a[i, 20]), "c_star": float(SCALES[k]),
+                             "at_c_star": float(a[i, k]), "kde_var": float(a[i, -1])}
+        out[g] = row
+    return out
+
+
+def score_members(members: np.ndarray, truth: np.ndarray, mu: np.ndarray, sd: np.ndarray,
+                  k: int = 4, chunk: int = 10, label: str = "") -> dict:
+    """All FMS variants plus the variance-rescaling sweep, members (W, T, 24, M) in memory."""
     W = truth.shape[0]
     sums = {v: {tau: np.zeros(24) for tau in TAUS} for v in ("ens", "kde", "snap", "gauss")}
     ess_snap = {tau: 0.0 for tau in TAUS}
+    acc = np.zeros((len(SCALE_TAUS), len(SCALES) + 1, 24))
+    mse, spread2 = np.zeros(24), np.zeros(24)
     n = 0
     for c0 in range(0, W, chunk):
         m = (members[c0:c0 + chunk].astype(np.float64) - mu[:, None]) / sd[:, None]
@@ -67,6 +91,9 @@ def score_ensemble(path: Path, mu: np.ndarray, sd: np.ndarray, k: int, chunk: in
         var = m.var(axis=-1, ddof=1)
         err = t - m.mean(axis=-1)
         h2 = silverman_h2(m)[..., None]
+        accumulate_scales(err, var, acc)
+        mse += (err ** 2).sum(axis=(0, 1))
+        spread2 += var.sum(axis=(0, 1))
         for tau in TAUS:
             sums["gauss"][tau] += gaussian_score(err, var, tau).sum(axis=(0, 1))
             if tau == 0.0:
@@ -82,10 +109,20 @@ def score_ensemble(path: Path, mu: np.ndarray, sd: np.ndarray, k: int, chunk: in
             sums["snap"][tau] += s.sum(axis=(0, 1))
             ess_snap[tau] += e[..., 0].sum()
         n += t.shape[0] * t.shape[1]
-        print(f"  {path.parent.name}/{path.name} windows {c0 + t.shape[0]}/{W}", flush=True)
+        print(f"  {label} windows {c0 + t.shape[0]}/{W}", flush=True)
     out = {v: {str(tau): pooled(sums[v][tau] / n) for tau in TAUS} for v in sums}
     out["snap_ess"] = {str(tau): ess_snap[tau] / n for tau in TAUS}
+    out["scale"] = finish_scales(acc, n, mse, spread2)
+    out["rmse"] = float(np.sqrt((((truth - members.mean(-1)) ** 2).mean(axis=1))).mean())
     return out
+
+
+def score_ensemble(path: Path, mu: np.ndarray, sd: np.ndarray, k: int, chunk: int,
+                   ref_truth: np.ndarray) -> dict:
+    z = np.load(path)
+    members, truth = z["members"], z["truth"]
+    assert np.allclose(truth, ref_truth, atol=1e-4), path
+    return score_members(members, truth, mu, sd, k, chunk, f"{path.parent.name}/{path.name}")
 
 
 def gauss_rows(mean: np.ndarray, var: np.ndarray, truth: np.ndarray, mu: np.ndarray,

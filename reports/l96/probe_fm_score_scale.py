@@ -11,32 +11,14 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from evaluation.fm_score import gaussian_score  # noqa: E402
 from reports.l96.generate_p1_l96_benchmark import DA_SOURCES, make_obs_j_indices  # noqa: E402
-from reports.l96.probe_fm_score import DA_DIR, ENSEMBLES, GROUPS, HERE, norm_stats  # noqa: E402
+from reports.l96.probe_fm_score import (  # noqa: E402
+    DA_DIR, ENSEMBLES, HERE, SCALE_TAUS, SCALES, accumulate_scales, finish_scales, norm_stats,
+)
 
-TAUS = (0.25, 0.5, 0.75, 0.95)
-SCALES = np.exp(np.linspace(np.log(0.125), np.log(8.0), 41))
-KDE_C = 1 + (1.06 * 30 ** -0.2) ** 2
-
-
-def accumulate(err, var, acc):
-    for i, tau in enumerate(TAUS):
-        for j, c in enumerate(list(SCALES) + [KDE_C]):
-            acc[i, j] += gaussian_score(err, c * var, tau).sum(axis=(0, 1))
-
-
-def finish(acc, n, mse, spread2):
-    out = {}
-    for g, s in GROUPS.items():
-        a = acc[..., s].sum(-1) / (n * (s.stop - s.start))
-        row = {"pooled_spread_skill": float(np.sqrt(spread2[s].sum() / mse[s].sum()))}
-        for i, tau in enumerate(TAUS):
-            k = int(a[i, :-1].argmin())
-            row[str(tau)] = {"c1": float(a[i, 20]), "c_star": float(SCALES[k]),
-                             "at_c_star": float(a[i, k]), "kde_var": float(a[i, -1])}
-        out[g] = row
-    return out
+TAUS = SCALE_TAUS
+accumulate = accumulate_scales
+finish = finish_scales
 
 
 def main(case, name):
