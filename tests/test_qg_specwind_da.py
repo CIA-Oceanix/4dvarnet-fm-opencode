@@ -152,3 +152,18 @@ def test_etkf_runs_with_bred_init_and_vertical_localization(built, tmp_path):
     with pytest.raises(NotImplementedError):
         run("etkf", cfg, device=torch.device("cpu"), N_ensemble=6, loc_radius=2.0,
             scenarios=("test_s0",), obs_var="q", ds={"test_s0": ws}, loc_cross_layer=0.5)
+
+
+def test_localized_enks_runs_end_to_end_and_smooths_the_filter(built, tmp_path):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    kw = dict(device=torch.device("cpu"), N_ensemble=6, inflation=1.0, loc_radius=2.0,
+              scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+              init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, etkf_ridge=0.1,
+              loc_cross_layer=1.0, init_ensemble_kind="bred", breed_days=2 / 12,
+              etkf_loc_mode="ensrf")
+    filt = run("etkf", cfg, **kw)["scenarios"]["test_s0"]
+    smooth = run("enks", cfg, enks_lag=2, **kw)["scenarios"]["test_s0"]
+    assert smooth["expvar_full"] == smooth["expvar_full"]
+    assert smooth["rmse_list"] != filt["rmse_list"]
+    assert len(smooth["spread_ratio_list"]) == 2

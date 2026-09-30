@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from data.qg import QGConfig, make_qg_s0_s1_datasets
 from evaluation.baselines import (
     ETKF,
+    EnKS,
     EnKF,
     ObsOperator,
     _build_qg_col_loc_matrices,
@@ -968,7 +969,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
         q_var_scale=1.0, fourdvar_grad_clip=100.0, loc_cross_layer=0.0,
-        init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root"):
+        init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root", enks_lag=None):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if loc_cross_layer > 0.0 and obs_var == "q":
@@ -1066,7 +1067,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                     (w["target_state_q"] if obs_var == "q"
                      else w["target_state_psi"]).std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None and method_name in ("enkf", "etkf"):
+                if loc_radius is not None and method_name in ("enkf", "etkf", "enks"):
                     Lx_t, Ly_t = _build_qg_loc_matrices(
                         dyn.state_dim, per_time, 2, cfg.ny, cfg.nx,
                         loc_radius, device)
@@ -1076,14 +1077,16 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                elif method_name == "etkf":
-                    method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
+                elif method_name in ("etkf", "enks"):
+                    method = (EnKS if method_name == "enks" else ETKF)(
+                                  N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
-                                  loc_mode=etkf_loc_mode)
+                                  loc_mode=etkf_loc_mode,
+                                  **({"lag": enks_lag} if method_name == "enks" else {}))
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,
@@ -1100,7 +1103,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             else:  # obs_var in ("psi", "psi_state")
                 field_std = float(w["target_state_psi"].std())
                 Lx_t = Ly_t = None
-                if loc_radius is not None and method_name in ("enkf", "etkf"):
+                if loc_radius is not None and method_name in ("enkf", "etkf", "enks"):
                     if cfg.cols_sampling == "random" or "obs2_points" in w:
                         cols_t = (_event_column_groups(cfg, w) if cfg.cols_sampling == "random"
                                  else _event_columns(cfg, w))
@@ -1121,14 +1124,16 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t)
-                elif method_name == "etkf":
-                    method = ETKF(N_ensemble=N_ensemble, R_var=r_var,
+                elif method_name in ("etkf", "enks"):
+                    method = (EnKS if method_name == "enks" else ETKF)(
+                                  N_ensemble=N_ensemble, R_var=r_var,
                                   inflation=inflation, device=device, dynamics=dyn,
                                   obs_operator=obs_op, loc_radius=loc_radius,
                                   noise_init_std=field_std,
                                   loc_Lx_t=Lx_t, loc_Ly_t=Ly_t,
                                   etkf_ridge=etkf_ridge, etkf_additive=etkf_additive,
-                                  loc_mode=etkf_loc_mode)
+                                  loc_mode=etkf_loc_mode,
+                                  **({"lag": enks_lag} if method_name == "enks" else {}))
                 elif method_name in ("strong4dvar", "weak4dvar"):
                     method = QG4DVar(
                         cfg, dyn, obs_op, da_window_steps=da_window_steps,

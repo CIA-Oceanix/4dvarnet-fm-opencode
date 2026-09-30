@@ -1021,7 +1021,8 @@ def _etkf_sqrt_transform(U: torch.Tensor, d: torch.Tensor, N1: int, d_null) -> t
 
 def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tensor, dy: torch.Tensor,
                               loc_Lx: torch.Tensor, loc_Ly: torch.Tensor, R_obs: torch.Tensor,
-                              ridge_frac: float, N1: int) -> torch.Tensor:
+                              ridge_frac: float, N1: int, record: list | None = None,
+                              t: int | None = None) -> torch.Tensor:
     """Localized deterministic (EnSRF) analysis ensemble.
 
     Sample covariances normalized by N - 1 and localized (`loc_Lx` state-obs,
@@ -1031,6 +1032,10 @@ def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tenso
     analysis anomaly covariance is exactly (I - K H) P. `ridge_frac` x the
     largest background obs-space variance is added to R (both in S and in
     R^(1/2)). R_obs must be diagonal.
+
+    With ``record`` a list, appends ``(t, HA, S⁻¹dy, M, loc_Lx)`` with
+    M = S^(-1/2) (S^(1/2) + R^(1/2))⁻¹, everything a localized EnKS needs to
+    apply this analysis retrospectively (``_enks_smooth_localized``).
     """
     dt = A.dtype
     A64, HA64, dy64 = A.double(), HA.double(), dy.double()
@@ -1042,10 +1047,41 @@ def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tenso
     lam = lam.clamp_min(1e-12 * lam.max())
     s_half = (V * lam.sqrt()) @ V.T
     s_ihalf = (V * lam.rsqrt()) @ V.T
-    K = Pf_Ht @ ((V / lam) @ V.T)
-    K_tilde = Pf_Ht @ s_ihalf @ torch.linalg.inv(s_half + torch.diag(r_diag.sqrt()))
-    mu_a = mu.double() + K @ dy64
-    return (mu_a.unsqueeze(0) + A64 - HA64 @ K_tilde.T).to(dt)
+    v = ((V / lam) @ V.T) @ dy64
+    M = s_ihalf @ torch.linalg.inv(s_half + torch.diag(r_diag.sqrt()))
+    if record is not None:
+        record.append((t, HA.detach().float(), v.float(), M.float(), loc_Lx))
+    mu_a = mu.double() + Pf_Ht @ v
+    return (mu_a.unsqueeze(0) + A64 - HA64 @ (Pf_Ht @ M).T).to(dt)
+
+
+def _enks_smooth_localized(ensemble: torch.Tensor, records: list, lag: int | None, N1: int,
+                           chunk: int = 32) -> torch.Tensor:
+    """Localized EnKS: apply each recorded EnSRF analysis to the earlier states.
+
+    ``ensemble`` (N, T, D) is the stored filter trajectory (post-analysis at
+    analysis times). Analyses are applied in time order; analysis k updates
+    the states s in [t_{k-lag}, t_k) (all s < t_k if ``lag`` is None) with the
+    cross-covariance C = L ∘ (A_sᵀ HA_k) / (N − 1), using the localization of
+    that analysis between the state points and its observations:
+    mean += C S⁻¹dy, anomalies −= HA_k (C M)ᵀ. Without localization, with
+    N − 1 ≥ D and a linear model, this is the RTS smoother of the filter.
+    """
+    X = ensemble.clone()
+    times = [r[0] for r in records]
+    for k, (tk, HA, v, M, Lx) in enumerate(records):
+        lo = 0 if lag is None or k - lag < 0 else times[k - lag]
+        Z = HA @ M.T
+        for c0 in range(lo, tk, chunk):
+            c1 = min(tk, c0 + chunk)
+            Xs = X[:, c0:c1]
+            mu = Xs.mean(0, keepdim=True)
+            As = Xs - mu
+            C = Lx.unsqueeze(0) * torch.einsum("ntd,no->tdo", As, HA) / N1
+            mu = mu + torch.einsum("tdo,o->td", C, v).unsqueeze(0)
+            As = As - torch.einsum("no,tdo->ntd", Z, C)
+            X[:, c0:c1] = mu + As
+    return X
 
 
 class ETKF:
@@ -1200,7 +1236,8 @@ class ETKF:
                              if self.R_var_vec is not None
                              else torch.eye(od_t, device=self.device) * self.R_var)
                     ensemble = _ensrf_localized_analysis(mu, A, HA, dy, loc_Lx, loc_Ly, R_obs,
-                                                         max(self.etkf_ridge, 0.0), N1)
+                                                         max(self.etkf_ridge, 0.0), N1,
+                                                         record=getattr(self, "_enks_record", None), t=t)
                     if self.etkf_additive > 0.0:
                         ensemble = ensemble + torch.randn_like(ensemble) * self.etkf_additive
                 elif self.loc_radius is not None or self.loc_Lx_t is not None:
@@ -1499,6 +1536,44 @@ def _etks_smooth(ensemble: np.ndarray, transforms: list, inflation: float,
             pre_inflation = mu + (X[:, lo] - mu) / inflation
             out[:, lo] = product(k0, last, 1) @ pre_inflation
     return out.numpy().astype(np.float32)
+
+
+class EnKS(ETKF):
+    """Localized ensemble Kalman smoother on the exact localized EnSRF (``loc_mode="ensrf"``).
+
+    Runs the localized ETKF unchanged, records each analysis
+    (``_ensrf_localized_analysis(record=...)``) and applies it to the earlier
+    stored states within ``lag`` analyses (``_enks_smooth_localized``; all
+    earlier states if None). Inflation must be 1 and there must be no
+    additive noise, so each analysis is fully described by the record.
+    """
+
+    def __init__(self, *args, lag: int | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.loc_mode != "ensrf" or (self.loc_radius is None and self.loc_Lx_t is None):
+            raise NotImplementedError("EnKS needs the localized ETKF with loc_mode='ensrf'")
+        if self.inflation != 1.0 or self.etkf_additive > 0.0:
+            raise NotImplementedError("EnKS needs inflation = 1 and etkf_additive = 0")
+        if lag is not None and lag < 1:
+            raise ValueError(f"lag must be >= 1 or None, got {lag}")
+        self.lag = lag
+
+    def assimilate(self, observations, obs_mask, forcing, true_state=None, **kwargs):
+        self._enks_record = []
+        try:
+            res = super().assimilate(observations, obs_mask, forcing, true_state=true_state, **kwargs)
+            records = self._enks_record
+        finally:
+            self._enks_record = None
+        ens = torch.from_numpy(np.asarray(res.ensemble, dtype=np.float32)).to(self.device)
+        ens = _enks_smooth_localized(ens, records, self.lag, self.N_ensemble - 1)
+        ens_np = ens.cpu().numpy()
+        trajectory = ens_np.mean(0).astype(np.float64)
+        ref = observations.cpu().numpy() if true_state is None else true_state.cpu().numpy()
+        ref = _safe_ref(ref, trajectory, getattr(self, "obs_operator", None))
+        rmse = np.sqrt(np.mean((trajectory - ref) ** 2, axis=0))
+        return BaselineResult(trajectory=trajectory, rmse=rmse, ensemble=ens_np,
+                              ensemble_variance=ens_np.var(0, ddof=1))
 
 
 class ETKS(ETKF):

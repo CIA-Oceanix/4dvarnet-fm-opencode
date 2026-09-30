@@ -7,6 +7,8 @@ the spread. `loc_mode="ensrf"` is the exact localized EnSRF
 (`evaluation.baselines._ensrf_localized_analysis`). Each task runs one
 configuration on the first 20 val windows of the forced dataset, in S0 or in
 the realistic S1 (base), and records per-window EVs and spread/RMSE ratios.
+Tasks 16-25 run the localized EnKS (`EnKS`, smoother on the EnSRF ETKF,
+radius 8, ridge 0.1) at lags 3, 6, 12, 24 analyses and the whole window.
 
     python -m evaluation.qg_specwind_etkf_check --list
     python -m evaluation.qg_specwind_etkf_check --task 3
@@ -37,11 +39,18 @@ def configs() -> list[dict]:
         out.append({"scen": scen, "method": "enkf", "mode": "-", "loc": 6.0, "ridge": 0.1})
         for loc, ridge in itertools.product((4.0, 6.0, 8.0), (0.0, 0.1)):
             out.append({"scen": scen, "method": "etkf", "mode": "ensrf", "loc": loc, "ridge": ridge})
+    for scen in ("s0", "s1"):
+        for lag in (3, 6, 12, 24, None):
+            out.append({"scen": scen, "method": "enks", "mode": "ensrf", "loc": 8.0, "ridge": 0.1,
+                        "lag": lag})
     return out
 
 
 def name(c: dict) -> str:
-    return f"{c['scen']}_{c['method']}_{c['mode']}_loc{c['loc']:g}_r{c['ridge']:g}"
+    base = f"{c['scen']}_{c['method']}_{c['mode']}_loc{c['loc']:g}_r{c['ridge']:g}"
+    if c["method"] == "enks":
+        base += f"_lag{c['lag'] if c['lag'] is not None else 'all'}"
+    return base
 
 
 def run_task(task: int, out_dir: str, root: str, n_windows: int, device: torch.device) -> str:
@@ -58,7 +67,8 @@ def run_task(task: int, out_dir: str, root: str, n_windows: int, device: torch.d
     t0 = time.time()
     _, per_window = evaluate(windows, da_cfg(cfg, levels), c["method"], device, loc_radius=c["loc"],
                              etkf_ridge=c["ridge"],
-                             etkf_loc_mode=c["mode"] if c["method"] == "etkf" else "square_root")
+                             etkf_loc_mode=c["mode"] if c["method"] in ("etkf", "enks") else "square_root",
+                             enks_lag=c.get("lag"))
     os.makedirs(out_dir, exist_ok=True)
     with open(path, "w") as fh:
         json.dump({"config": c, "name": name(c), "load": report, "da_seconds": round(time.time() - t0, 1),

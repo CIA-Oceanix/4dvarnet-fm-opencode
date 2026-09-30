@@ -126,6 +126,12 @@ Run with the **old** ETKF update (not re-run):
 This is the variant that met the first target (q₁ ∈ [0, 0.25] with the old
 ETKF).
 
+## 3b. Smoother (localized EnKS)
+
+The localized EnKS on this ETKF (lag 12 analyses = 4 days) gains about +0.03
+over the filter in S0 (0.804 / 0.813) and about +0.02 in S1 (0.602 / 0.610).
+In S1 it ties the EnKF. Details: `docs/results/qg_specwind_enks.md`.
+
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.
