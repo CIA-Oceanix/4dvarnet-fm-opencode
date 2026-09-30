@@ -12,7 +12,8 @@
 # S-tier value): does a prior_unet trained as a prior make subgrad beat FDV1 at M too?
 # Same recipe and evals as batch/run_l96b_fdv_seeds.sbatch (1200 epochs, then the
 # deterministic eval on both benchmark test sets at the solver's own N_outer). Resumes from
-# checkpoints/stage1_last.ckpt if resubmitted.
+# checkpoints/stage1_last.ckpt if resubmitted. FDV_CFG selects the config (default the aux01
+# run; L96B_fdvsubgrad_monaiM_aux01_noprior = the same with the x - Phi(x) input zeroed).
 set -euo pipefail
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-etks
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
@@ -22,7 +23,7 @@ NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; m
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
 mkdir -p "$MPLCONFIGDIR" sbatch_logs
 R=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
-C=L96B_fdvsubgrad_monaiM_aux01; SEED=1
+C=${FDV_CFG:-L96B_fdvsubgrad_monaiM_aux01}; SEED=1
 NAME=${C}_seed${SEED}; SUB=ens1_no10
 [ -f experiments/$NAME/checkpoints/stage1_best.ckpt ] && [ -f experiments/$NAME/results.json ] || \
   python train.py --config-name experiment/$C hydra.run.dir=. hydra.output_subdir=null training.seed=${SEED} \

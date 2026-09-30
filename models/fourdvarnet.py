@@ -469,7 +469,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
                          prior_residual=False, detach_var_cost_grad=False,
                          x_tau=None, beta_tau=None,
-                         prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
+                         prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
+                         zero_prior_input=False):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -636,7 +637,10 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         return torch.cat([x, obs_clean], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
-        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
+        # channel layout); Phi is then trained by the aux prior loss only.
+        g_prior = (torch.zeros_like(x) if zero_prior_input
+                   else x - _prior_ae(prior_unet, x, tau, residual=prior_residual))
         return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "subgrad+state+xtau":
         assert x_tau is not None and beta_tau is not None, (
@@ -682,7 +686,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
                        detach_var_cost_grad=False, x_tau=None, beta_tau=None,
-                       prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
+                       prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
+                       zero_prior_input=False):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -733,7 +738,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                x_tau=x_tau, beta_tau=beta_tau,
                                prior_ode_forcing=prior_ode_forcing,
                                prior_ode_params=prior_ode_params,
-                               true_dynamics=true_dynamics).transpose(1, 2)
+                               true_dynamics=true_dynamics,
+                               zero_prior_input=zero_prior_input).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -832,6 +838,7 @@ class FourDVarNetSolver(nn.Module):
                  obs_var_indices=None,
                  true_dynamics_dt=None,
                  true_dynamics_NO=8,
+                 zero_prior_input=False,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
                  true_dynamics_coupling_exponent=1.6,
@@ -990,6 +997,9 @@ class FourDVarNetSolver(nn.Module):
         # (which would instead collapse the fed signal to subgrad+state's
         # own proxy).
         self.detach_var_cost_grad = detach_var_cost_grad
+        if zero_prior_input and update_input != "subgrad+state":
+            raise ValueError("zero_prior_input is an ablation of update_input='subgrad+state' only")
+        self.zero_prior_input = zero_prior_input
         # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
         # (see that validation above -- both None for every other mode).
         # obs_var_indices: which of state_dim's channels
@@ -1195,7 +1205,7 @@ class FourDVarNetSolver(nn.Module):
                 grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
                 self.prior_residual, self.detach_var_cost_grad,
                 prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
-                true_dynamics=self.true_dynamics,
+                true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
                 use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
