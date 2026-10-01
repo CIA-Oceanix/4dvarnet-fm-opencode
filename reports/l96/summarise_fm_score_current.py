@@ -100,7 +100,8 @@ def ranked(cells: list[tuple[float, str] | None]) -> list[str]:
     return out
 
 
-def main(in_dir: Path, out_md: Path, out_json: Path | None) -> None:
+def build(in_dir: Path, heading: str = "##") -> tuple[list[str], dict]:
+    """The markdown section and the {(scheme, layout, case): statistics} table."""
     _, sd = norm_stats()
     w2 = sd ** 2
     table, raw, seeds = {}, {}, {}
@@ -112,7 +113,7 @@ def main(in_dir: Path, out_md: Path, out_json: Path | None) -> None:
             raw[(name, lay, case)] = a
             table[(name, lay, case)] = stats_for(a, w2)
             seeds[name] = n
-    L = ["## Distributional score FMS_τ (current benchmark)", "",
+    L = [f"{heading} Distributional score FMS_τ (current benchmark)", "",
          "FMS_τ(q) = E‖E_q[x₁ | x_τ] − x₁*‖² on the path x_τ = τ x₁ + (1−τ) x₀ (x₀ ~ N(0, I) in the z-scored "
          "space), reported in **physical units²** (σ_c²-weighted over the 24 observed channels). τ = 0 is the MSE "
          "of the ensemble mean; each τ ∈ (0, 1) is strictly proper; for a Gaussian forecast it is minimised at "
@@ -188,6 +189,11 @@ def main(in_dir: Path, out_md: Path, out_json: Path | None) -> None:
                 continue
             L.append(f"| {name} | {tau} | " + " | ".join(row) + " |")
     L.append("")
+    return L, table
+
+
+def main(in_dir: Path, out_md: Path, out_json: Path | None) -> None:
+    L, table = build(in_dir)
     out_md.parent.mkdir(parents=True, exist_ok=True)
     out_md.write_text("\n".join(L) + "\n")
     if out_json is not None:

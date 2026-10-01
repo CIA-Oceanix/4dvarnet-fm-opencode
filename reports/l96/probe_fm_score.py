@@ -20,11 +20,13 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _inputs  # noqa: E402
 from evaluation.fm_score import ensemble_score, gaussian_score, silverman_h2  # noqa: E402
-from reports.l96.generate_p1_l96_benchmark import DA_SOURCES, make_obs_j_indices  # noqa: E402
+from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
 
-ROOT = Path("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments")
-HERE = ROOT / "l96/report_inputs/p1_benchmark/here"
+ROOT = _inputs.shared()
+HERE = _inputs.root("p1_benchmark", "here")
 DA_DIR = HERE / "da_current_2026-09-29"
 TAUS = (0.0, 0.25, 0.5, 0.75, 0.95)
 GROUPS = {"slow": slice(0, 8), "fast": slice(8, 24), "all": slice(0, 24)}
@@ -191,6 +193,7 @@ def gauss_rows(mean: np.ndarray, var: np.ndarray, truth: np.ndarray, mu: np.ndar
 
 
 def main() -> None:
+    from reports.l96.generate_p1_l96_benchmark import DA_SOURCES
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--k", type=int, default=4)
@@ -199,7 +202,7 @@ def main() -> None:
     ap.add_argument("--only", nargs="*", default=None)
     args = ap.parse_args()
     mu, sd = norm_stats()
-    idx = make_obs_j_indices()
+    idx = np.array(make_obs_j_indices(8, 4, 2))
     results: dict = json.loads(args.out.read_text()) if args.out.exists() else {}
     for case in args.cases:
         truth = np.load(HERE / ENSEMBLES["VanillaCFM-M"] / f"members_{case}.npz")["truth"]

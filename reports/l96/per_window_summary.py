@@ -3,7 +3,7 @@
 One section, shared by ``l96_benchmark_extended.md``, ``l96_benchmark_default.md``
 and ``p1_l96_benchmark.md``. It reads the ``benchmark_extended`` input bundle (the
 current benchmark: DA at the #295 inflation, the ETKS of #299, 1200-epoch
-DirectUNet / CFM, SDA gw 25, the best hybrid) whatever report embeds it, so the
+DirectUNet / CFM / SDA (gw 25), the best hybrid) whatever report embeds it, so the
 three copies are identical.
 
 Per window, on the 24 observed channels of the 200 P1 test windows:
@@ -113,8 +113,9 @@ def rows() -> list[tuple[str, str, dict | None, dict | None]]:
            ("DA", "EnKF (inflation 1.2 / 3.0)", _da_regular(reg_da, "EnKF", truth), _da_random(can_da, can_da_pw, "EnKF", truth)),
            ("DA", "ETKS (inflation 1.15 / 2.5)", _da_regular(reg_etks, "ETKS", truth), _da_random(can_etks, can_etks_pw, "ETKS", truth)),
            ("DA", "Strong-4DVar", _da_regular(reg_strong, "Strong-4DVar", truth), _da_random(None, can_strong_pw, "Strong-4DVar", truth))]
-    for lab, name in (("SDA1-M", "B4_sda1_monaiM_l96"), ("SDA2-M", "A3_sda2_monaiM_l96"), ("SDA3-fix-M", "A3_sda3fix_monaiM_l96")):
-        out.append(("SDA (gw 25, 400 ep)", lab, _learned([REGE / f"{name}_seed{s}" / "ens30_gw25" for s in SEEDS], truth),
+    for lab, name in (("SDA1-M", "B4_sda1_monaiM_ep1200_l96"), ("SDA2-M", "A3_sda2_monaiM_ep1200_l96"),
+                      ("SDA3-fix-M", "A3_sda3fix_monaiM_ep1200_l96")):
+        out.append(("SDA (gw 25, 1200 ep)", lab, _learned([REGE / f"{name}_seed{s}" / "ens30_gw25" for s in SEEDS], truth),
                     _learned([CAN / f"{name}_seed{s}" / "ens30_gw25" for s in SEEDS], truth)))
     for fam, lab, name, sub in (("DirectUNet (1200 ep)", "DirectUNet-M", "directunet", "ens1_no1"),
                                 ("CFM (1200 ep)", "PredictStateCFM-M", "predictstatecfm", "ens30_no20"),
@@ -122,8 +123,8 @@ def rows() -> list[tuple[str, str, dict | None, dict | None]]:
         run = f"L96B_{name}_monaiM_ep1200_seed{{s}}"
         out.append((fam, lab, _learned([HERE / run.format(s=s) / sub for s in SEEDS], truth),
                     _learned([CAN / run.format(s=s) / sub for s in SEEDS], truth)))
-    hyb = "hybrid_DU1200s{s}_A3_sda3fix_monaiM_l96"
-    out.append(("*reference*", "*Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M*",
+    hyb = "hybrid_DU1200s{s}_A3_sda3fix_monaiM_ep1200_l96"
+    out.append(("*reference*", "*Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M(1200 ep)*",
                 _learned([REGE / hyb.format(s=s) / "tau0.1_gw2" for s in SEEDS], truth),
                 _learned([CAN / hyb.format(s=s) / "tau0.1_gw2" for s in SEEDS], truth)))
     return out
@@ -141,8 +142,8 @@ def section(heading: str = "##") -> list[str]:
     A = [f"{heading} Per-window RMSE / EV / CRPS summary (current benchmark)\n",
          "Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from "
          "the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation "
-         "(#298), the ETKS is the #299 row, and DirectUNet / CFM are at 1200 epochs. The SDA priors are the 400-epoch "
-         "checkpoints (not retrained at 1200). The hybrid is shown for reference.\n",
+         "(#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; "
+         "the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.\n",
          "Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; "
          "**EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled "
          "EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is "

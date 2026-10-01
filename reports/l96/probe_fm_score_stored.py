@@ -17,28 +17,29 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from reports.l96.generate_p1_l96_benchmark import make_obs_j_indices  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _inputs  # noqa: E402
+from evaluation.run_l96 import make_obs_j_indices  # noqa: E402
 from reports.l96.probe_fm_score import norm_stats, pooled_from_windows, window_gaussian  # noqa: E402
 
-R = Path("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode")
-EXT = R / "experiments/l96/report_inputs/benchmark_extended/here"
-DA_REG = R / "experiments/l96/report_inputs/p1_benchmark/here/da_current_2026-09-29"
+EXT = _inputs.root("benchmark_extended", "here")
+DA_REG = _inputs.root("p1_benchmark", "here") / "da_current_2026-09-29"
+DA_RAND = EXT / "da_inflation_2026-09-28"
+NEWINF = "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
+ETKS = "etks-correct-Lfull-infs0-1.15_s1-2.5"
 DU = {"reg": EXT, "rand": EXT / "eval_rlayout_n10-100_k4-16_w200"}
 DA = {
     "reg": {
-        "ETKF": DA_REG / "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz",
-        "EnKF": DA_REG / "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz",
-        "ETKS": DA_REG / ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0"
-                          "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz"),
+        "ETKF": DA_REG / f"l96_baselines_trajectories_dws500_s0c_crps{NEWINF}_obsj2_int100_fw_dafw.npz",
+        "EnKF": DA_REG / f"l96_baselines_trajectories_dws500_s0c_crps{NEWINF}_obsj2_int100_fw_dafw.npz",
+        "ETKS": DA_REG / f"l96_baselines_trajectories_dws500_s0c_test_{ETKS}{NEWINF}_obsj2_int100_fw_dafw.npz",
         "Strong_4DVar": DA_REG / "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz",
     },
     "rand": {
-        "ETKF": R / ("4dvarnet-fm-l96-da-rerun/experiments/l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1"
-                     "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_fw_dafw.npz"),
-        "EnKF": R / ("4dvarnet-fm-l96-da-rerun/experiments/l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1"
-                     "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_fw_dafw.npz"),
-        "ETKS": R / ("4dvarnet-fm-l96-etks/experiments/l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1"
-                     "_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.15_s1-2.5_etkf_infs0-1.15_s1-2.5_obsj2_fw_dafw.npz"),
+        "ETKF": DA_RAND / f"l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1{NEWINF}_obsj2_fw_dafw.npz",
+        "EnKF": DA_RAND / f"l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1{NEWINF}_obsj2_fw_dafw.npz",
+        "ETKS": EXT / (f"l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1_{ETKS}"
+                       "_infs0-1.15_s1-2.5_etkf_infs0-1.15_s1-2.5_obsj2_fw_dafw.npz"),
     },
 }
 
@@ -52,7 +53,7 @@ def save(out: Path, stem: str, arrays: dict) -> None:
 
 def main(out: Path) -> None:
     mu, sd = norm_stats()
-    idx = make_obs_j_indices()
+    idx = np.array(make_obs_j_indices(8, 4, 2))
     out.mkdir(parents=True, exist_ok=True)
     for lay in ("reg", "rand"):
         for case in ("s0", "s1"):
