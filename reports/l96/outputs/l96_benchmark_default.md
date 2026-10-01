@@ -67,7 +67,7 @@ Two-scale L96, 24D observed space (8 slow + 16 fast), 200 shared test windows, S
 
 ## Per-window RMSE / EV / CRPS summary (current benchmark)
 
-Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM are at 1200 epochs. The SDA priors are the 400-epoch checkpoints (not retrained at 1200). The hybrid is shown for reference.
+Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.
 
 Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; **EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is averaged over channels. Seeds are averaged per window; cells are mean ± sd over the 200 windows. Per column, the best value is in **bold** and the second best in *italics*. Deterministic schemes have no CRPS. The random-layout Strong-4DVar trajectories were not kept, so that cell has no EV.
 
@@ -79,13 +79,13 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.497 ± 0.164 | 1.338 ± 0.224 | 0.572 ± 0.258 | 1.347 ± 0.298 |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 |
-| SDA (gw 25, 400 ep) | SDA1-M | 3 | 0.501 ± 0.083 | 0.500 ± 0.083 | 0.612 ± 0.233 | 0.624 ± 0.229 |
-| SDA (gw 25, 400 ep) | SDA2-M | 3 | 0.500 ± 0.086 | 0.509 ± 0.089 | 0.605 ± 0.230 | 0.627 ± 0.226 |
-| SDA (gw 25, 400 ep) | SDA3-fix-M | 3 | 0.501 ± 0.083 | 0.501 ± 0.084 | 0.610 ± 0.234 | 0.619 ± 0.228 |
+| SDA (gw 25, 1200 ep) | SDA1-M | 3 | 0.464 ± 0.083 | 0.462 ± 0.081 | 0.572 ± 0.230 | 0.585 ± 0.228 |
+| SDA (gw 25, 1200 ep) | SDA2-M | 3 | 0.453 ± 0.085 | 0.465 ± 0.088 | 0.550 ± 0.220 | 0.575 ± 0.218 |
+| SDA (gw 25, 1200 ep) | SDA3-fix-M | 3 | 0.455 ± 0.081 | 0.455 ± 0.079 | 0.562 ± 0.228 | 0.573 ± 0.221 |
 | DirectUNet (1200 ep) | DirectUNet-M | 3 | *0.340* ± 0.062 | 0.339 ± 0.063 | 0.450 ± 0.315 | *0.444* ± 0.269 |
 | CFM (1200 ep) | PredictStateCFM-M | 3 | 0.341 ± 0.078 | *0.338* ± 0.079 | *0.443* ± 0.260 | 0.447 ± 0.233 |
 | CFM (1200 ep) | VanillaCFM-M | 3 | 0.351 ± 0.079 | 0.349 ± 0.080 | 0.462 ± 0.277 | 0.468 ± 0.250 |
-| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M* | 3 | **0.312** ± 0.060 | **0.307** ± 0.061 | **0.388** ± 0.225 | **0.385** ± 0.203 |
+| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M(1200 ep)* | 3 | **0.293** ± 0.060 | **0.289** ± 0.060 | **0.367** ± 0.221 | **0.367** ± 0.201 |
 
 **EV** (higher is better)
 
@@ -95,13 +95,13 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.802 ± 0.070 | 0.258 ± 0.076 | 0.754 ± 0.135 | 0.028 ± 0.564 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.872 ± 0.077 | 0.350 ± 0.084 | 0.818 ± 0.143 | 0.222 ± 0.259 |
 | DA | Strong-4DVar | — | 0.745 ± 0.124 | 0.229 ± 0.072 | — | — |
-| SDA (gw 25, 400 ep) | SDA1-M | 3 | 0.893 ± 0.013 | 0.893 ± 0.012 | 0.823 ± 0.118 | 0.813 ± 0.119 |
-| SDA (gw 25, 400 ep) | SDA2-M | 3 | 0.893 ± 0.013 | 0.888 ± 0.012 | 0.827 ± 0.115 | 0.811 ± 0.116 |
-| SDA (gw 25, 400 ep) | SDA3-fix-M | 3 | 0.893 ± 0.013 | 0.892 ± 0.012 | 0.824 ± 0.118 | 0.816 ± 0.117 |
+| SDA (gw 25, 1200 ep) | SDA1-M | 3 | 0.908 ± 0.013 | 0.908 ± 0.012 | 0.842 ± 0.114 | 0.833 ± 0.115 |
+| SDA (gw 25, 1200 ep) | SDA2-M | 3 | 0.912 ± 0.013 | 0.906 ± 0.013 | 0.853 ± 0.104 | 0.839 ± 0.105 |
+| SDA (gw 25, 1200 ep) | SDA3-fix-M | 3 | 0.911 ± 0.013 | 0.911 ± 0.011 | 0.847 ± 0.111 | 0.839 ± 0.109 |
 | DirectUNet (1200 ep) | DirectUNet-M | 3 | *0.950* ± 0.011 | *0.950* ± 0.011 | 0.889 ± 0.142 | *0.892* ± 0.124 |
 | CFM (1200 ep) | PredictStateCFM-M | 3 | 0.947 ± 0.016 | 0.947 ± 0.016 | *0.890* ± 0.116 | 0.889 ± 0.108 |
 | CFM (1200 ep) | VanillaCFM-M | 3 | 0.944 ± 0.016 | 0.944 ± 0.016 | 0.882 ± 0.123 | 0.879 ± 0.116 |
-| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M* | 3 | **0.957** ± 0.011 | **0.958** ± 0.011 | **0.916** ± 0.095 | **0.916** ± 0.090 |
+| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M(1200 ep)* | 3 | **0.961** ± 0.011 | **0.961** ± 0.011 | **0.921** ± 0.092 | **0.922** ± 0.087 |
 
 **CRPS** (lower is better)
 
@@ -111,13 +111,13 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.287 ± 0.069 | 0.763 ± 0.124 | 0.320 ± 0.109 | 0.837 ± 0.186 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.238 ± 0.085 | 0.771 ± 0.142 | 0.269 ± 0.122 | 0.744 ± 0.179 |
 | DA | Strong-4DVar | — | — | — | — | — |
-| SDA (gw 25, 400 ep) | SDA1-M | 3 | 0.255 ± 0.037 | 0.254 ± 0.036 | 0.312 ± 0.108 | 0.320 ± 0.107 |
-| SDA (gw 25, 400 ep) | SDA2-M | 3 | 0.239 ± 0.031 | 0.240 ± 0.032 | 0.287 ± 0.087 | 0.292 ± 0.082 |
-| SDA (gw 25, 400 ep) | SDA3-fix-M | 3 | 0.249 ± 0.034 | 0.247 ± 0.034 | 0.303 ± 0.101 | 0.305 ± 0.095 |
+| SDA (gw 25, 1200 ep) | SDA1-M | 3 | 0.235 ± 0.037 | 0.234 ± 0.035 | 0.294 ± 0.107 | 0.302 ± 0.107 |
+| SDA (gw 25, 1200 ep) | SDA2-M | 3 | 0.213 ± 0.031 | 0.218 ± 0.032 | 0.258 ± 0.080 | 0.266 ± 0.076 |
+| SDA (gw 25, 1200 ep) | SDA3-fix-M | 3 | 0.223 ± 0.033 | 0.223 ± 0.032 | 0.278 ± 0.098 | 0.282 ± 0.092 |
 | DirectUNet (1200 ep) | DirectUNet-M | 3 | — | — | — | — |
 | CFM (1200 ep) | PredictStateCFM-M | 3 | *0.150* ± 0.033 | *0.148* ± 0.034 | *0.194* ± 0.115 | *0.196* ± 0.102 |
 | CFM (1200 ep) | VanillaCFM-M | 3 | 0.152 ± 0.033 | 0.151 ± 0.034 | 0.202 ± 0.129 | 0.205 ± 0.115 |
-| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M* | 3 | **0.147** ± 0.026 | **0.144** ± 0.027 | **0.184** ± 0.111 | **0.180** ± 0.097 |
+| *reference* | *Hybrid DirectUNet-M(1200 ep) -> SDA3-fix-M(1200 ep)* | 3 | **0.137** ± 0.026 | **0.136** ± 0.026 | **0.175** ± 0.112 | **0.173** ± 0.098 |
 
 
 ## Caveats
