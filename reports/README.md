@@ -65,6 +65,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/cfm_tau_consistency/l96b/` | `docs/results/l96_cfm_tau_consistency_l96b.md` |
 | `reports/l96/outputs/cfm_tau_consistency/sampler/` | `docs/results/l96_cfm_sampler_schedule.md` |
 | `reports/l96/outputs/cfm_tau_consistency/t5/` | `docs/results/l96_cfm_tau_consistency_t5.md` |
+| `reports/l96/outputs/fm_score/fm_score_bootstrap.md` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/current/` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/fm_score_current.md` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/fm_score_p1_400ep.json` | `docs/results/l96_p1_fm_score.md` |

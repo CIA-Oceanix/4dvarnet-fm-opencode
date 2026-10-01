@@ -4,7 +4,7 @@
 ETKF/ETKS re-run with their ensembles), regular grid and random layouts, S0 and S1; plus the
 earlier pilot on the 400-epoch P1 rows.
 
-**Numbers:** `reports/l96/outputs/fm_score/fm_score_current.md` (tables, from the per-run JSONs in `reports/l96/outputs/fm_score/current/`), pilot `reports/l96/outputs/fm_score/fm_score_p1_400ep.json` and `reports/l96/outputs/fm_score/scale/`.
+**Numbers:** `reports/l96/outputs/fm_score/fm_score_bootstrap.md` (physical units, 95% window-bootstrap intervals, paired tests; values in `fm_score_bootstrap.json`), `reports/l96/outputs/fm_score/fm_score_current.md` (tables, from the per-run JSONs in `reports/l96/outputs/fm_score/current/`), pilot `reports/l96/outputs/fm_score/fm_score_p1_400ep.json` and `reports/l96/outputs/fm_score/scale/`.
 
 ## Metric
 
@@ -42,7 +42,47 @@ Code: `evaluation/fm_score.py` (+ `tests/test_fm_score.py`),
 `reports/l96/probe_fm_score.py`, `reports/l96/probe_fm_score_scale.py`.
 Outputs: `reports/l96/outputs/fm_score/`.
 
-## Current benchmark rows
+## Physical units with 95% window-bootstrap intervals (2026-10-01/02)
+
+Plan `docs/plans/analysis/l96_p1_fm_score_bootstrap.md`. Per-window arrays for every row
+(SLURM 57752/57753 learned, 57763 DA members; CPU for DirectUNet-M, Strong-4DVar and the
+benchmark-file ETKF/EnKF/ETKS); seeds averaged per window; 2000-replicate window bootstrap,
+paired against PredictStateCFM-M. FMS in physical units² (σ_c²-weighted); full tables in
+`reports/l96/outputs/fm_score/fm_score_bootstrap.md`. DA rows use the **benchmark files**
+(Gaussian form); every row reproduces its benchmark RMSE.
+
+**Checks (A3).** Learned rows reproduce the previous night's run within 0.08% (RMSE) and 0.2%
+(FMS). The DA member re-runs do not: the DA ensembles are unseeded, and two realisations of
+the ETKS differ by 2% in RMSE at S0 (0.493 vs 0.503 regular; 0.579 vs 0.568 random) and 4–7% in
+FMS(0.75); the benchmark files (0.497 / 0.572) lie between. This realisation noise is the DA
+analogue of seed variability and is **not** in the window bootstrap; at S1 the realisations
+agree within 0.2%.
+
+Key results (regular S0 / regular S1 / random S0 / random S1):
+
+- **Hybrid crossover is significant.** Paired vs PredictStateCFM-M, the hybrid wins at τ = 0
+  (Δ −0.042 / −0.041 / −0.094 / −0.093, 192–200 of 200 windows) and loses or ties at τ = 0.75
+  (Δ +0.0012 [+0.0003, +0.0021] / +0.0006 [−0.0002, +0.0014] / +0.012 [+0.007, +0.017] /
+  +0.011 [+0.006, +0.016]).
+- **Best distribution at τ = 0.75: the flows** (PredictStateCFM-M 0.0565 / 0.0558 / 0.0722 /
+  0.0725; VanillaCFM-M within 0.0005–0.003, significant except regular S0).
+- **DirectUNet-M has a slightly better mean than PredictStateCFM-M on the regular grid**
+  (τ = 0: Δ −0.0125 [−0.017, −0.009] at S0) and the worst τ = 0.75 of the learned rows
+  (point mass: its score stays at its MSE).
+- **Calibration loss at τ = 0.75** (%, [95% CI]): ETKF 11 [9, 14] / 22 [21, 24] / 3 [2, 4] /
+  12 [8, 17]; ETKS 35 / 62 / 19 / 45; flows 0–3 everywhere; SDA1 18 / 18 / 21 / 25;
+  SDA2 7 / 3 / 5 / 2; SDA3-fix 14 / 13 / 15 / 15; hybrid 16 / 15 / 27 / 28.
+- **Aggregate calibration is not calibration.** On random S1 the ETKF's pooled spread/skill is
+  0.99 [0.94, 1.03] — nominally calibrated — yet its calibration loss at τ = 0.75 is 12% [8, 17]
+  (c* 3.5); the EnKF (spread/skill 1.11) loses 0% at τ = 0.5 and 7% [4, 10] at τ = 0.75. The
+  large-τ score weights the elements where the spread is small relative to the error: a scalar
+  inflation can match the total error but not where it occurs (structure doc K6), and FMS
+  measures it.
+- **Non-Gaussian shape** (KDE vs Gaussian at the same variance): flows −1.4 to −3.5%, SDA2 −1.8
+  to −4.6%, all intervals excluding 0; DA ensembles +4 to +8% at S0 and +17 to +30% at S1 at
+  τ = 0.75 (short-tailed, over-confident).
+
+## Current benchmark rows (z-units, pooled, first run)
 
 Members are re-sampled in memory with the benchmark protocols (flows 30 × 20 early-fine
 steps; SDA gw 25, 10 steps; hybrid DU-M(1200, seeds 1–3) → SDA3-fix-M(1200, seed 1),
