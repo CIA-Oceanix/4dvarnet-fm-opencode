@@ -1,8 +1,8 @@
 """FM-operator score of DA ensemble dumps (``*_members.npz`` from --save-members).
 
-Scores every members file under ``root`` with ``probe_fm_score.score_members``
-and writes ``<out>/<prefix><file stem>.json``. Run in the job that wrote the
-dumps: they live on node-local storage (``evaluation/members_store.py``).
+Scores every members file under ``root`` with ``probe_fm_score.window_members``
+and writes ``<out>/<prefix><file stem>.npz`` (per window) and ``.json`` (pooled).
+Run in the job that wrote the dumps: they live on node-local storage (``evaluation/members_store.py``).
 
 usage: python reports/l96/probe_fm_score_da.py ROOT OUT_DIR [PREFIX]
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from reports.l96.probe_fm_score import norm_stats, score_members  # noqa: E402
+from reports.l96.probe_fm_score import norm_stats, pooled_from_windows, window_members  # noqa: E402
 
 
 def main(root: Path, out: Path, prefix: str = "") -> None:
@@ -25,7 +25,9 @@ def main(root: Path, out: Path, prefix: str = "") -> None:
         z = np.load(f)
         members, truth = z["members"], z["truth"]
         assert members.shape[2] == 24 and truth.shape == members.shape[:3], (f, members.shape, truth.shape)
-        stats = score_members(members, truth, mu, sd, label=f.name)
+        arrays = window_members(members, truth, mu, sd, label=f.name)
+        np.savez(out / f"{prefix}{f.stem}.npz", **{k: v.astype(np.float32) for k, v in arrays.items()})
+        stats = pooled_from_windows(arrays)
         dest = out / f"{prefix}{f.stem}.json"
         dest.write_text(json.dumps(stats, indent=1))
         print(f"FMSCORE {f.name}: rmse {stats['rmse']:.4f} -> {dest}", flush=True)

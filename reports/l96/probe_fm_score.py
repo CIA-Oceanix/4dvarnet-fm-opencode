@@ -75,46 +75,103 @@ def finish_scales(acc: np.ndarray, n: int, mse: np.ndarray, spread2: np.ndarray)
     return out
 
 
-def score_members(members: np.ndarray, truth: np.ndarray, mu: np.ndarray, sd: np.ndarray,
-                  k: int = 4, chunk: int = 10, label: str = "") -> dict:
-    """All FMS variants plus the variance-rescaling sweep, members (W, T, 24, M) in memory."""
+GROUP_LIST = tuple(GROUPS)
+VARIANTS = ("gauss", "ens", "kde", "snap")
+
+
+def window_scale_sums(err: np.ndarray, var: np.ndarray, w2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-window group means of the Gaussian FMS at c * var (time-mean), z and sigma^2-weighted.
+
+    Returns two (w, n_groups, n_scale_taus, n_scales + 1) arrays; the last scale is the KDE inflation.
+    """
+    cs = list(SCALES) + [KDE_C]
+    z = np.zeros((err.shape[0], len(GROUP_LIST), len(SCALE_TAUS), len(cs)))
+    ph = np.zeros_like(z)
+    for i, tau in enumerate(SCALE_TAUS):
+        for j, c in enumerate(cs):
+            g = gaussian_score(err, c * var, tau).mean(axis=1)
+            for k, name in enumerate(GROUP_LIST):
+                sl = GROUPS[name]
+                z[:, k, i, j] = g[:, sl].mean(axis=1)
+                ph[:, k, i, j] = (g[:, sl] * w2[sl]).mean(axis=1)
+    return z, ph
+
+
+def window_members(members: np.ndarray, truth: np.ndarray, mu: np.ndarray, sd: np.ndarray,
+                   k: int = 4, chunk: int = 10, label: str = "") -> dict[str, np.ndarray]:
+    """Per-window arrays of every FMS variant (time-mean, z-units) and the sweep sums."""
     W = truth.shape[0]
-    sums = {v: {tau: np.zeros(24) for tau in TAUS} for v in ("ens", "kde", "snap", "gauss")}
-    ess_snap = {tau: 0.0 for tau in TAUS}
-    acc = np.zeros((len(SCALE_TAUS), len(SCALES) + 1, 24))
-    mse, spread2 = np.zeros(24), np.zeros(24)
-    n = 0
+    w2 = sd ** 2
+    out = {f"fms_{v}": np.zeros((W, 24, len(TAUS))) for v in VARIANTS}
+    out.update(se=np.zeros((W, 24)), var=np.zeros((W, 24)), snap_ess=np.zeros((W, len(TAUS))),
+               scale_z=np.zeros((W, len(GROUP_LIST), len(SCALE_TAUS), len(SCALES) + 1)))
+    out["scale_phys"] = np.zeros_like(out["scale_z"])
     for c0 in range(0, W, chunk):
-        m = (members[c0:c0 + chunk].astype(np.float64) - mu[:, None]) / sd[:, None]
-        t = (truth[c0:c0 + chunk].astype(np.float64) - mu) / sd
+        sl = slice(c0, min(c0 + chunk, W))
+        m = (members[sl].astype(np.float64) - mu[:, None]) / sd[:, None]
+        t = (truth[sl].astype(np.float64) - mu) / sd
         x0 = noise(c0, t.shape, k)
         var = m.var(axis=-1, ddof=1)
         err = t - m.mean(axis=-1)
         h2 = silverman_h2(m)[..., None]
-        accumulate_scales(err, var, acc)
-        mse += (err ** 2).sum(axis=(0, 1))
-        spread2 += var.sum(axis=(0, 1))
-        for tau in TAUS:
-            sums["gauss"][tau] += gaussian_score(err, var, tau).sum(axis=(0, 1))
+        out["se"][sl] = (err ** 2).mean(axis=1)
+        out["var"][sl] = var.mean(axis=1)
+        out["scale_z"][sl], out["scale_phys"][sl] = window_scale_sums(err, var, w2)
+        for i, tau in enumerate(TAUS):
+            out["fms_gauss"][sl, :, i] = gaussian_score(err, var, tau).mean(axis=1)
             if tau == 0.0:
                 for v in ("ens", "kde", "snap"):
-                    sums[v][tau] += (err ** 2).sum(axis=(0, 1))
-                ess_snap[tau] += m.shape[-1] * t.shape[0] * t.shape[1]
+                    out[f"fms_{v}"][sl, :, i] = out["se"][sl]
+                out["snap_ess"][sl, i] = m.shape[-1]
                 continue
             s, _ = ensemble_score(m, t, tau, x0)
-            sums["ens"][tau] += s.sum(axis=(0, 1))
+            out["fms_ens"][sl, :, i] = s.mean(axis=1)
             s, _ = ensemble_score(m, t, tau, x0, h2=h2)
-            sums["kde"][tau] += s.sum(axis=(0, 1))
+            out["fms_kde"][sl, :, i] = s.mean(axis=1)
             s, e = ensemble_score(m, t, tau, x0, block_axes=(2,))
-            sums["snap"][tau] += s.sum(axis=(0, 1))
-            ess_snap[tau] += e[..., 0].sum()
-        n += t.shape[0] * t.shape[1]
-        print(f"  {label} windows {c0 + t.shape[0]}/{W}", flush=True)
-    out = {v: {str(tau): pooled(sums[v][tau] / n) for tau in TAUS} for v in sums}
-    out["snap_ess"] = {str(tau): ess_snap[tau] / n for tau in TAUS}
-    out["scale"] = finish_scales(acc, n, mse, spread2)
-    out["rmse"] = float(np.sqrt((((truth - members.mean(-1)) ** 2).mean(axis=1))).mean())
+            out["fms_snap"][sl, :, i] = s.mean(axis=1)
+            out["snap_ess"][sl, i] = e[..., 0].mean(axis=1)
+        print(f"  {label} windows {sl.stop}/{W}", flush=True)
+    out["rmse_phys"] = np.sqrt(out["se"]) * sd
     return out
+
+
+def window_gaussian(err: np.ndarray, var: np.ndarray, sd: np.ndarray) -> dict[str, np.ndarray]:
+    """Per-window arrays for a Gaussian forecast given z-unit err/var (W, T, 24); var = 0 for a point."""
+    out = {"fms_gauss": np.stack([gaussian_score(err, var, tau).mean(axis=1) for tau in TAUS], axis=-1),
+           "se": (err ** 2).mean(axis=1), "var": var.mean(axis=1)}
+    out["scale_z"], out["scale_phys"] = window_scale_sums(err, var, sd ** 2)
+    out["rmse_phys"] = np.sqrt(out["se"]) * sd
+    return out
+
+
+def pooled_from_windows(arr: dict[str, np.ndarray]) -> dict:
+    """The pooled JSON of the earlier probes, derived from the per-window arrays."""
+    out = {}
+    for v in VARIANTS:
+        if f"fms_{v}" in arr:
+            out[v] = {str(tau): pooled(arr[f"fms_{v}"][:, :, i].mean(axis=0)) for i, tau in enumerate(TAUS)}
+    if "snap_ess" in arr:
+        out["snap_ess"] = {str(tau): float(arr["snap_ess"][:, i].mean()) for i, tau in enumerate(TAUS)}
+    scale = {}
+    for k, g in enumerate(GROUP_LIST):
+        sl = GROUPS[g]
+        a = arr["scale_z"][:, k].mean(axis=0)
+        row = {"pooled_spread_skill": float(np.sqrt(arr["var"][:, sl].sum() / arr["se"][:, sl].sum()))}
+        for i, tau in enumerate(SCALE_TAUS):
+            j = int(a[i, :-1].argmin())
+            row[str(tau)] = {"c1": float(a[i, 20]), "c_star": float(SCALES[j]),
+                             "at_c_star": float(a[i, j]), "kde_var": float(a[i, -1])}
+        scale[g] = row
+    out["scale"] = scale
+    out["rmse"] = float(arr["rmse_phys"].mean())
+    return out
+
+
+def score_members(members: np.ndarray, truth: np.ndarray, mu: np.ndarray, sd: np.ndarray,
+                  k: int = 4, chunk: int = 10, label: str = "") -> dict:
+    """All FMS variants plus the variance-rescaling sweep, members (W, T, 24, M) in memory (pooled)."""
+    return pooled_from_windows(window_members(members, truth, mu, sd, k, chunk, label))
 
 
 def score_ensemble(path: Path, mu: np.ndarray, sd: np.ndarray, k: int, chunk: int,

@@ -129,7 +129,7 @@ regular only), DirectUNet-M (point), PredictStateCFM-M, VanillaCFM-M, SDA1-M, SD
 ## C. Paper inserts (`docs/papers/p1_structural_hypotheses/`)
 
 Placement follows the current LaTeX; the mapping to the revised structure
-(`docs/plans/paper/l96_p1_structure_revision.md` on `feature/p1-structure-revision`) is given per
+(`l96_p1_structure_revision.md`, only on branch `feature/p1-structure-revision`) is given per
 item. Values in brackets are filled from A.
 
 ### C1. §3 — new subsection "The flow operator as a scoring rule" (revised structure: §3, after Ψ_mean + Ψ_anom)

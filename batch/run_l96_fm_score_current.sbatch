@@ -27,7 +27,7 @@ R=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode
 E=$R/experiments
 L=$E/l96
 S12=$R/4dvarnet-fm-sda-ep1200/experiments
-OUT=$E/l96_fm_score_current
+OUT=$E/l96_fm_score_current_v2
 mkdir -p "$OUT"
 NS=$E/l96_norm_stats_obsj2.pt
 declare -A DS=([reg]=$E/l96_datasets_obsj2_int100_nwin200.pt [rand]=$E/l96_testset_rlayout_n10-100_k4-16_w200_d1.pt)
@@ -63,5 +63,5 @@ case $ROW in
 esac
 echo "task $SLURM_ARRAY_TASK_ID: $name $LAY | commit $(git rev-parse --short HEAD) | $(hostname) | $(date +%T)"
 python -u reports/l96/probe_fm_score_eval.py "${ARGS[@]}" "${COMMON[@]}"
-for c in s0 s1; do cp "$NODE_TMP/fmscore_$c.json" "$OUT/${name}_${LAY}_$c.json"; done
+for c in s0 s1; do for x in json npz; do cp "$NODE_TMP/fmscore_$c.$x" "$OUT/${name}_${LAY}_$c.$x"; done; done
 echo "done $name $LAY $(date +%T)"

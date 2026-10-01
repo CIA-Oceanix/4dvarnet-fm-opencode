@@ -26,7 +26,7 @@ export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NOD
 mkdir -p "$MPLCONFIGDIR" sbatch_logs
 export PYTHONPATH=$PWD FDV_MEMBERS_TMP="$NODE_TMP/members"
 CACHE=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_datasets_obsj2_int100_nwin200.pt
-OUT=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_fm_score_current
+OUT=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_fm_score_current_v2
 [ "$(sha256sum "$(readlink -f "$CACHE")" | cut -d" " -f1)" = "8eba1f87c73beb5449a66f17fd66c9a53b7900e69003eecd51fc991c3a823aae" ] || { echo "test cache is not the P1 cache"; exit 1; }
 RANDOMIZE='{"F": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "c1": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "eps": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}}'
 INF="s0=1.15,s1=2.5"
