@@ -10,7 +10,7 @@
 #SBATCH --error=sbatch_logs/qg_enks_tuning_%A_%a.err
 # EnKS lag / time-taper tuning on val (evaluation/qg_specwind_enks_tuning.py): one task = one EnKS
 # configuration (S0 or S1-tuned) over 20 val windows. rtx8000 only (val is regenerated from seeds).
-#   sbatch --array=0-12 batch/run_qg_specwind_enks_tuning.sbatch
+#   sbatch --array=0-32 batch/run_qg_specwind_enks_tuning.sbatch   (13-26: ensemble size; 27-32: N=320 re-tune, use --time=05:00:00 --mem=96G)
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python

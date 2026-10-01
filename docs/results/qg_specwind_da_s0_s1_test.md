@@ -145,6 +145,15 @@ rise to:
 
 Details: `docs/results/qg_specwind_s1_tuning.md`.
 
+## 3d. Large ensemble (N = 320)
+
+The benchmark uses N = 80. At N = 320, with localization re-tuned for S0,
+test scores rise to:
+- S0: ETKF 0.794 / 0.800, EnKS 0.841 / 0.847 (+0.02 / +0.03);
+- S1-tuned: ETKF 0.641 / 0.650, EnKS 0.675 / 0.683 (about +0.01).
+
+Rankings are unchanged. Details: `docs/results/qg_specwind_ensemble_size.md`.
+
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.

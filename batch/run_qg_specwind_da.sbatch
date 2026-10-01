@@ -33,7 +33,7 @@ export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NOD
 SPLIT="${SPLIT:-test}"; COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; START="${START:-0}"
 LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-0.1}"; LOCMODE="${LOCMODE:-ensrf}"; ENKSLAG="${ENKSLAG:-0}"; RSCALE="${RSCALE:-1.0}"; ENKSTAPER="${ENKSTAPER:-8}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"
 SHARD="${SLURM_ARRAY_TASK_ID:-0}"
-OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)$([ "$METHOD" = enks ] && echo "_tau${ENKSTAPER}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
+OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)$([ "$METHOD" = enks ] && echo "_tau${ENKSTAPER}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)$([ "$ENS" != 80 ] && echo "_N${ENS}" || true)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_da --spec "$SPEC" --root experiments/qg_datasets \
   --split "$SPLIT" --start "$START" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" \

@@ -105,6 +105,21 @@ Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): v
 
 ![S1 error budget](figs/qg_specwind_da_s1_budget.png)
 
+### Large-ensemble reference (N = 320)
+
+The benchmark uses N = 80. At N = 320, S0 is still not converged (val: +0.022 for the EnKS from 80 to 320), while S1 saturates by N = 160. In S0 the N = 320 rows use settings re-tuned at that size (wider localization). Use these rows to quote converged skill, for instance against learned methods (`docs/results/qg_specwind_ensemble_size.md`).
+
+| scenario | dataset | method (N = 320 settings) | score N = 80 | score N = 320 | N 320 − 80 [95% CI] | CRPS q (×10⁻⁶) N = 80 → 320 |
+|---|---|---|---|---|---|---|
+| S0 | forced | ETKF (radius 12) | 0.774 | **0.794** | +0.020 [+0.018, +0.023] | 5.875 → 5.530 |
+| S0 | forced | EnKS (ETKF smoother) (radius 12, taper 16 d) | 0.812 | **0.841** | +0.029 [+0.026, +0.032] | 5.315 → 4.775 |
+| S0 | coupled | ETKF (radius 12) | 0.779 | **0.800** | +0.021 [+0.019, +0.024] | 5.735 → 5.371 |
+| S0 | coupled | EnKS (ETKF smoother) (radius 12, taper 16 d) | 0.819 | **0.847** | +0.028 [+0.025, +0.031] | 5.155 → 4.623 |
+| S1-tuned (realistic base, R × 6) | forced | ETKF (radius 8) | 0.633 | **0.641** | +0.008 [+0.007, +0.009] | 7.364 → 7.258 |
+| S1-tuned (realistic base, R × 6) | forced | EnKS (ETKF smoother) (radius 8, taper 8 d) | 0.665 | **0.675** | +0.010 [+0.009, +0.012] | 6.935 → 6.811 |
+| S1-tuned (realistic base, R × 6) | coupled | ETKF (radius 8) | 0.642 | **0.650** | +0.008 [+0.007, +0.009] | 7.204 → 7.099 |
+| S1-tuned (realistic base, R × 6) | coupled | EnKS (ETKF smoother) (radius 8, taper 8 d) | 0.673 | **0.683** | +0.011 [+0.009, +0.012] | 6.774 → 6.643 |
+
 ## 5. Observation density (S0, forced, ETKF)
 
 | columns per day | ψ₁ | ψ₂ | q₁ | q₂ | score |

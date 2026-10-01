@@ -56,7 +56,7 @@ def load_runs(root: str) -> list[dict]:
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
                      "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
                      "lag": m0.get("enks_lag"), "r_scale": float(m0.get("r_scale", 1.0) or 1.0),
-                     "taper": m0.get("enks_taper_days"),
+                     "taper": m0.get("enks_taper_days"), "N": int(m0.get("N", 80)),
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -89,7 +89,7 @@ def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0,
           r_scale: float = 1.0) -> dict | None:
     hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
             and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)
-            and abs(r["r_scale"] - r_scale) < 1e-9
+            and abs(r["r_scale"] - r_scale) < 1e-9 and r["N"] == 80
             and (method != "enks" or ((r["lag"] or None) == ENKS_LAG and r["taper"] == ENKS_TAPER))]
     return hits[0] if hits else None
 
@@ -147,6 +147,47 @@ def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: flo
     rows.insert(0, ("_free forecast_", vals, ["", "", ""], False))
     return _table(["method"] + [LABEL[k] for k in FIELDS]
                   + ["score", "score 95% CI", "CRPS q (×10⁻⁶, lower is better)", "spread/RMSE q₁"], rows)
+
+
+LARGE_N = 320
+LARGE_N_SETTINGS = {
+    S0: {"etkf": {"loc": 12.0}, "enks": {"loc": 12.0, "taper": 16.0}},
+    "S1": {"etkf": {"loc": 8.0}, "enks": {"loc": 8.0, "taper": 8.0}},
+}
+
+
+def _find_large(runs: list[dict], spec: str, method: str, s1: str, r_scale: float) -> dict | None:
+    want = LARGE_N_SETTINGS[S0 if s1 == S0 else "S1"][method]
+    hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == 3
+            and r["s1"] == s1 and r["complete"] and r["N"] == LARGE_N
+            and abs(r["r_scale"] - r_scale) < 1e-9 and abs(r["loc"] - want["loc"]) < 1e-9
+            and (method != "enks" or r["taper"] == want["taper"])]
+    return hits[0] if hits else None
+
+
+def large_ensemble_table(runs: list[dict], s1: str) -> list[str]:
+    lines = ["| scenario | dataset | method (N = 320 settings) | score N = 80 | score N = 320 | N 320 − 80 [95% CI] | "
+             "CRPS q (×10⁻⁶) N = 80 → 320 |", "|---|---|---|---|---|---|---|"]
+    rng = np.random.default_rng(2)
+    any_row = False
+    for scen, label, r_scale in ((S0, "S0", 1.0), (s1, f"S1-tuned ({s1}, R × {S1_TUNED_R:g})", S1_TUNED_R)):
+        for spec, lab in SPECS.items():
+            for method in ("etkf", "enks"):
+                big = _find_large(runs, spec, method, scen, r_scale)
+                small = _find(runs, spec, method, 3, scen, r_scale)
+                if big is None or small is None:
+                    continue
+                d = _values(big, "da", "score") - _values(small, "da", "score")
+                m = d[rng.integers(0, len(d), (10000, len(d)))].mean(1)
+                want = LARGE_N_SETTINGS[S0 if scen == S0 else "S1"][method]
+                desc = f"radius {want['loc']:g}" + (f", taper {want['taper']:g} d" if method == "enks" else "")
+                crps = [float(np.mean([w["crps"] for w in r["per_window"]])) * 1e6 for r in (small, big)]
+                lines.append(f"| {label} | {lab} | {METHOD_NAME[method]} ({desc}) | "
+                             f"{_values(small, 'da', 'score').mean():.3f} | **{_values(big, 'da', 'score').mean():.3f}** | "
+                             f"{d.mean():+.3f} [{np.percentile(m, 2.5):+.3f}, {np.percentile(m, 97.5):+.3f}] | "
+                             f"{crps[0]:.3f} → {crps[1]:.3f} |")
+                any_row = True
+    return lines if any_row else ["_No complete N = 320 runs yet._"]
 
 
 def d2_table(runs: list[dict], cols: int, s1: str) -> list[str]:
@@ -334,6 +375,12 @@ def main() -> None:
            "windows, all 32 on/off combinations; largest share in bold):", ""]
     md += budget_table(args.s1_root, args.s1_variant) + [""]
     md += _fig(fig_dir, "qg_specwind_da_s1_budget.png", "S1 error budget")
+    md += ["### Large-ensemble reference (N = 320)", "",
+           "The benchmark uses N = 80. At N = 320, S0 is still not converged (val: +0.022 for the EnKS "
+           "from 80 to 320), while S1 saturates by N = 160. In S0 the N = 320 rows use settings re-tuned "
+           "at that size (wider localization). Use these rows to quote converged skill, for instance "
+           "against learned methods (`docs/results/qg_specwind_ensemble_size.md`).", ""]
+    md += large_ensemble_table(runs, s1) + [""]
     md += ["## 5. Observation density (S0, forced, ETKF)", ""] + density_table(runs) + [""]
     md += _fig(fig_dir, "qg_specwind_da_density.png", "observation density")
     md += ["**Bridge density (4 columns per day), both datasets:**", ""]
