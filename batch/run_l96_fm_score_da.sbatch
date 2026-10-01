@@ -30,6 +30,9 @@ OUT=/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/l96_fm_scor
 [ "$(sha256sum "$(readlink -f "$CACHE")" | cut -d" " -f1)" = "8eba1f87c73beb5449a66f17fd66c9a53b7900e69003eecd51fc991c3a823aae" ] || { echo "test cache is not the P1 cache"; exit 1; }
 RANDOMIZE='{"F": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "c1": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "eps": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}}'
 INF="s0=1.15,s1=2.5"
+if ls experiments/l96_baselines_dws500_*etks-correct-Lfull-infs0-1.15_s1-2.5*.json >/dev/null 2>&1; then
+  echo "results cache in $PWD/experiments: the evaluators would skip every method and dump no members; move it aside"; exit 1
+fi
 echo "task $SLURM_ARRAY_TASK_ID | commit $(git rev-parse --short HEAD) | $(hostname) | $(date +%T)"
 if [ "$SLURM_ARRAY_TASK_ID" = 0 ]; then
   python -u evaluate_all_l96.py --data-cache "$CACHE" --da-window-steps 500 --num-test-windows 200 --t-max 3.0 \
