@@ -149,6 +149,8 @@ def main() -> None:
                    help="ETKS inflation (default: the ETKF's)")
     p.add_argument("--etks-lag", default="full", help="ETKS lag in analyses, or 'full'")
     p.add_argument("--etks-retro-inflation", choices=["correct", "none"], default="correct")
+    p.add_argument("--save-members", action="store_true",
+                   help="ETKF/EnKF/ETKS also write *_members.npz (node-local /tmp unless FDV_KEEP_MEMBERS=1)")
     args = p.parse_args()
     enkf_inf, etkf_inf = (args.inflation, args.inflation) if args.inflation is not None else (args.enkf_inflation, args.etkf_inflation)
 
@@ -186,6 +188,7 @@ def main() -> None:
                       "retro_inflation": args.etks_retro_inflation} if "ETKS" in args.methods else None),
         suffix=tag, exclude_methods=["Weak-4DVar"] + [m for m in METHODS if m not in args.methods],
         obs_j=2, obs_interval=None, fw_randomized=True, da_fast_weights=True,
+        save_members=args.save_members,
     )
     z = load_trajectories(tag, (enkf_inf, etkf_inf), args.da_window_steps, args.cases, args.methods)
 

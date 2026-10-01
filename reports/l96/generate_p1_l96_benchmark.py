@@ -48,6 +48,7 @@ from evaluation.estimate_metrics import _groups_from_per_window  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _inputs  # noqa: E402
 import per_window_summary  # noqa: E402
+import fm_score_summary  # noqa: E402
 
 HERE = _inputs.root("p1_benchmark", "here")
 DA_BASES = (HERE, _inputs.shared())
@@ -458,6 +459,8 @@ def main():
     A("- **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is "
       "not only about sampling.\n")
     for line in per_window_summary.section():
+        A(line)
+    for line in fm_score_summary.section():
         A(line)
     A("## Caveats\n")
     A("- DA baselines receive the same per-window parameters as truth generation (S0) or their "
