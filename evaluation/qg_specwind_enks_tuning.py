@@ -7,7 +7,11 @@ The benchmark EnKS uses a hard lag of 12 analyses, chosen at R x 1
   beyond 2τ) instead of a hard lag.
 
 Radius 8, ridge 0.1, EnSRF, 20 val windows of the forced dataset; S1 is the
-realistic base.
+realistic base. Tasks 13-26 check ensemble-size convergence at the benchmark
+settings: ETKF and EnKS (taper 8 d) at N = 40, 80, 160, 320, in S0 and
+S1-tuned. The N = 80 EnKS runs are tasks 4 and 11. Tasks 27-32 re-tune radius
+(8, 12, 16) and taper (8, 16 d) at N = 320 in S0, where N = 80 is not
+converged.
 
     python -m evaluation.qg_specwind_enks_tuning --list
     python -m evaluation.qg_specwind_enks_tuning --task 3
@@ -40,10 +44,24 @@ def configs() -> list[dict]:
             out.append({"scen": scen, "lag": None, "tau": None})
         for tau in (2.0, 4.0, 8.0, 16.0):
             out.append({"scen": scen, "lag": None, "tau": tau})
+    for scen in ("s0", "s1"):
+        out.append({"scen": scen, "method": "etkf", "N": 80, "lag": None, "tau": None})
+        for method in ("etkf", "enks"):
+            for n in (40, 160, 320):
+                out.append({"scen": scen, "method": method, "N": n, "lag": None,
+                            "tau": 8.0 if method == "enks" else None})
+    for loc, tau in ((8.0, 16.0), (12.0, 8.0), (12.0, 16.0), (16.0, 16.0)):
+        out.append({"scen": "s0", "method": "enks", "N": 320, "lag": None, "tau": tau, "loc": loc})
+    for loc in (12.0, 16.0):
+        out.append({"scen": "s0", "method": "etkf", "N": 320, "lag": None, "tau": None, "loc": loc})
     return out
 
 
 def name(c: dict) -> str:
+    if "N" in c:
+        loc = f"_loc{c['loc']:g}" if c.get("loc", 8.0) != 8.0 else ""
+        return (f"{c['scen']}_{c['method']}_N{c['N']}{loc}"
+                + (f"_tau{c['tau']:g}d" if c["tau"] is not None else ""))
     lag = "all" if c["lag"] is None else c["lag"]
     return f"{c['scen']}_enks_lag{lag}" + (f"_tau{c['tau']:g}d" if c["tau"] is not None else "")
 
@@ -60,7 +78,8 @@ def run_task(task: int, out_dir: str, root: str, n_windows: int, device: torch.d
     if levels is not None:
         windows = apply_s1(windows, spec, levels)
     t0 = time.time()
-    _, per_window = evaluate(windows, da_cfg(cfg, levels), "enks", device, loc_radius=8.0, etkf_ridge=0.1,
+    _, per_window = evaluate(windows, da_cfg(cfg, levels), c.get("method", "enks"), device,
+                             N=c.get("N", 80), loc_radius=c.get("loc", 8.0), etkf_ridge=0.1,
                              etkf_loc_mode="ensrf", enks_lag=c["lag"], enks_taper_days=c["tau"],
                              r_scale=R_BY_SCEN[c["scen"]])
     os.makedirs(out_dir, exist_ok=True)
