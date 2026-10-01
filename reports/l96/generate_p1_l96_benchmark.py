@@ -91,6 +91,7 @@ FM = [
     ("PredictStateCFM-L(lr3e-4)", "A2_predictstatecfm_monaiL_lr3e4_l96", "ens30_no20", "23.5 M", "lr 3e-4"),
     ("PredictStateCFM-L(lr5e-4)", "A2_predictstatecfm_monaiL_lr5e4_l96", "ens30_no20", "23.5 M", "lr 5e-4"),
 ]
+SDA1200_FLAG = "1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match"
 SDA = [
     ("SDA1-S+", "B4_sda1_monaiSplus_l96", "ens30_gw20", "1.48 M", ""),
     ("SDA1-M", "B4_sda1_monaiM_l96", "ens30_gw20", "5.89 M", ""),
@@ -98,6 +99,9 @@ SDA = [
     ("SDA2-M", "A3_sda2_monaiM_l96", "ens30_gw20", "5.89 M", ""),
     ("SDA3-M", "A3_sda3_monaiM_l96", "ens30_gw20", "5.89 M", "bias never active in training (DA params = truth): identical to SDA2 by construction"),
     ("SDA3-fix-M", "A3_sda3fix_monaiM_l96_seed1", "ens30_gw20", "5.89 M", "SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26)"),
+    ("SDA1-M, 1200 ep", "B4_sda1_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
+    ("SDA2-M, 1200 ep", "A3_sda2_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
+    ("SDA3-fix-M, 1200 ep", "A3_sda3fix_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
 ]
 # tau=0 mean components, read from eval_mean_component.py's JSON.
 TAU0_LABELS = {
@@ -120,6 +124,9 @@ def _crps(members: np.ndarray, truth: np.ndarray) -> np.ndarray:
 
 
 def generative(path: Path, group: str = "all_obs"):
+    if not path.exists():
+        z = np.load(path.with_name(path.name.replace("members_", "scores_")))
+        return {k: _groups_from_per_window(z[k].astype(np.float64))[group] for k in ("rmse", "crps", "spread")}
     z = np.load(path)
     m = z["members"].astype(np.float64)
     t = z["truth"].astype(np.float64)
@@ -291,12 +298,13 @@ def main():
             m, ok = {}, True
             for case in CASES:
                 path = HERE / exp / sub / f"{fn}_{case}.npz"
-                if not path.exists():
+                scores = path.with_name(f"scores_{case}.npz")
+                if not path.exists() and not (kind == "gen" and scores.exists()):
                     missing.append(f"{label} [{case}]: {path}")
                     ok = False
                     continue
                 m[case] = generative(path, args.group) if kind == "gen" else deterministic(path, args.group)
-                if case not in truth:
+                if case not in truth and path.exists():
                     z = np.load(path)
                     truth[case] = z["truth"].astype(np.float64)
                     del z
@@ -334,10 +342,10 @@ def main():
     A("**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept "
       "as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, "
       "so the families are budget-matched *within this report*. The benchmark default has since "
-      "moved DirectUNet and the CFMs to 1200 epochs, but **the SDA priors (SDA1/SDA2/SDA3-fix) have "
-      "not been retrained at 1200 epochs**: the SDA rows of the extended report, and the prior of "
-      "every DirectUNet -> SDA hybrid, are still these 400-epoch checkpoints. The SDA rows use guidance "
-      "weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows "
+      "moved DirectUNet and the CFMs to 1200 epochs, and the SDA priors have since been retrained at "
+      "1200 epochs too: section 4 adds those rows (seed 1, the validation-tuned guidance weight 25), "
+      "flagged because they sit outside this report's 400-epoch budget match; they do not enter the "
+      "cross-family bests. The 400-epoch SDA rows use guidance weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows "
       "(updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, "
       "the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: "
       "ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA "
@@ -445,7 +453,8 @@ def main():
       "worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 "
       "at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row "
       "still loses 1.6%, and on the random observing system it degrades about as much as the "
-      "unconditional SDA1 (1.5% vs 2.0% at gw 25).")
+      "unconditional SDA1 (1.5% vs 2.0% at gw 25). At 1200 epochs (flagged rows) every SDA prior gains "
+      "7-9% at S0 and the pattern holds: SDA2 still loses at S1, SDA3-fix does not.")
     A("- **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is "
       "not only about sampling.\n")
     for line in per_window_summary.section():
@@ -457,8 +466,9 @@ def main():
     A("- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable "
       "to the generative families' ensemble CRPS; Strong-4DVar's column is its MAE.")
     A("- SDA is the only learned family with a tuned inference hyper-parameter (`gw`).")
-    A("- SDA budget: 400 epochs here, like every row. Do not set these SDA rows against 1200-epoch "
-      "DirectUNet/CFM results: the SDA priors have not been retrained at the 1200-epoch default.")
+    A("- SDA budget: the unflagged SDA rows are 400-epoch priors, like every other row here; the "
+      "flagged `1200 ep` rows are the benchmark-budget priors (seed 1; 3-seed rows in "
+      "`l96_benchmark_extended.md`) and are not budget-matched with this report's other families.")
     A("- The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure "
       "at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).")
     A("- L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: "

@@ -275,6 +275,57 @@
           "spread": 0.23978910534641365
         }
       }
+    },
+    {
+      "label": "SDA1-M, 1200 ep",
+      "params": "5.89 M",
+      "flag": "1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match",
+      "metrics": {
+        "s0": {
+          "rmse": 0.45770124215526364,
+          "crps": 0.23212407755401832,
+          "spread": 0.1866841358548566
+        },
+        "s1": {
+          "rmse": 0.45635188865246834,
+          "crps": 0.23086968450802772,
+          "spread": 0.18717191648004672
+        }
+      }
+    },
+    {
+      "label": "SDA2-M, 1200 ep",
+      "params": "5.89 M",
+      "flag": "1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match",
+      "metrics": {
+        "s0": {
+          "rmse": 0.4505849285910405,
+          "crps": 0.21389145373202742,
+          "spread": 0.23993569415425134
+        },
+        "s1": {
+          "rmse": 0.46117200542313397,
+          "crps": 0.21707323145984814,
+          "spread": 0.2946107581153452
+        }
+      }
+    },
+    {
+      "label": "SDA3-fix-M, 1200 ep",
+      "params": "5.89 M",
+      "flag": "1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match",
+      "metrics": {
+        "s0": {
+          "rmse": 0.45637981725730414,
+          "crps": 0.22069193439966014,
+          "spread": 0.2189476674514006
+        },
+        "s1": {
+          "rmse": 0.4585824672291099,
+          "crps": 0.22162659253226782,
+          "spread": 0.22645834901755016
+        }
+      }
     }
   ],
   "da": [
