@@ -1,0 +1,22 @@
+# @package _global_
+# FDV1-M (L96B_fdv1_monaiM) with the observation input y replaced by the masked
+# residual (x - y) * mask (update_input resid+state). Same architecture, parameters, loss
+# (no aux) and initialisation as FDV1-M, so it isolates the observation representation
+# (raw y with missing = 0, vs a residual that is 0 where unobserved).
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: resid+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2
