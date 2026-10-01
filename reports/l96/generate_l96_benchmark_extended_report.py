@@ -344,7 +344,7 @@ def curve(cells: list[tuple[str, str]], cache: dict, case: str) -> dict:
             vals = [v for v in (_cell_scores(root, tag, fmt_.format(s=s), cache, case) for s in ((1, 2, 3) if kind == "fact" else (1,)))
                     if v is not None]
             res[lab].append(float(np.mean(vals)) if vals else None)
-        res["SDA1-M"].append(_cell_scores(root, tag, "B4_sda1_monaiM_l96_seed1", cache, case))
+        res["SDA1-M"].append(_cell_scores(root, tag, "B4_sda1_monaiM_ep1200_l96_seed1", cache, case))
         for m in ("ETKF", "EnKF", "Strong-4DVar"):
             res[m].append(_da_cell(tag, m, case))
     return res
@@ -399,7 +399,7 @@ def curve_figure(path: Path, xs: list, curves: dict, xlabel: str, logx: bool, sh
 def density_sections(cache: dict) -> list[str]:
     A = ["## 3. Performance vs number of observation times per window\n",
          "Identical obs for every scheme: the #243 factorial layouts (20 windows x 3 draws; learned = 3-seed mean, "
-         "SDA1-M seed 1 at gw 25) and the out-of-range probes (`*`: 6, 300, 1000 obs; learned seed 1). "
+         "SDA1-M at 1200 epochs, seed 1, gw 25) and the out-of-range probes (`*`: 6, 300, 1000 obs; learned seed 1). "
          "All 16 observed fast channels. Shaded: outside the training range (10-300).\n"]
     ns = [6, 10, 20, 30, 50, 75, 100, 300, 1000]
     cells = [(f"rlayout_n{n}-{n}_k16-16_w20_d3", "ood" if n in (6, 300, 1000) else "fact") for n in ns]
@@ -439,14 +439,14 @@ def binned_canonical(cache: dict) -> list[str]:
     pc = np.load(DANEW_PW)
     p2 = np.load(DA243 / "per_window_rlayout_n10-100_k4-16_w200_d1_inf2.0.npz")
     A = ["\n### Canonical random test set, windows binned by their own obs count / fast channels\n",
-         "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M (400 ep) gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> "
+         "Learned: 400-epoch benchmark recipe, 3-seed mean; SDA1-M (1200 ep) gw 25, 3 seeds; hybrid DirectUNet-M(1200) -> "
          "SDA3-fix-M(1200) (the best scheme, 3 seeds).\n"]
     for c in CASES:
         s = {}
         for lab, f in LEARNED_CURVES:
             dirs = [pick(CAN / f.format(s=x)) or pick(N20 / f.format(s=x)) for x in (1, 2, 3)]
             s[lab] = np.mean([score_dir(p, cache)[c]["rmse"] for p in dirs], axis=0)
-        s["SDA1-M"] = np.mean([score_dir(CAN / f"B4_sda1_monaiM_l96_seed{x}" / "ens30_gw25", cache)[c]["rmse"] for x in (1, 2, 3)], axis=0)
+        s["SDA1-M"] = np.mean([score_dir(CAN / f"B4_sda1_monaiM_ep1200_l96_seed{x}" / "ens30_gw25", cache)[c]["rmse"] for x in (1, 2, 3)], axis=0)
         hyb = [CAN / f"hybrid_DU1200s{x}_A3_sda3fix_monaiM_ep1200_l96" / "tau0.1_gw2" for x in (1, 2, 3)]
         if all(done(h) for h in hyb):
             s["Hybrid DU1200->SDA3-fix"] = np.mean([score_dir(h, cache)[c]["rmse"] for h in hyb], axis=0)
@@ -464,7 +464,7 @@ def probes_section(cache: dict) -> list[str]:
     tags = [("n6-6_k16-16", "6 obs"), ("n30-30_k0-0", "slow-only (k 0)"), ("n30-30_k2-2", "k 2"), ("n300-300_k16-16", "300 obs"),
             ("n1000-1000_k16-16", "1000 obs"), ("n30-30_k16-16_r0.25", "noise R 0.25"), ("n30-30_k16-16_r1", "noise R 1.0")]
     A = ["\n## 5. Out-of-range probes\n",
-         "Training range: n_obs 10-300, k 4-16, R 0.5. 20 windows x 3 draws; learned seed 1, SDA1-M gw 25; DA told the "
+         "Training range: n_obs 10-300, k 4-16, R 0.5. 20 windows x 3 draws; learned seed 1, SDA1-M (1200 ep) gw 25; DA told the "
          "true R. Reference in-range cell: 30 obs, k 16.\n",
          "| probe | " + " | ".join(["DirectUNet-M", "PredictStateCFM-M", "VanillaCFM-M", "SDA1-M", "ETKF", "Strong-4DVar"]) + " |",
          "|" + "---|" * 7]
@@ -473,7 +473,7 @@ def probes_section(cache: dict) -> list[str]:
         vals = []
         for c in CASES:
             vals.append([_cell_scores(OOD, cell, f"{f.format(s=1)}", cache, c) for _, f in LEARNED_CURVES]
-                        + [_cell_scores(OOD, cell, "B4_sda1_monaiM_l96_seed1", cache, c), _da_cell(cell, "ETKF", c), _da_cell(cell, "Strong-4DVar", c)])
+                        + [_cell_scores(OOD, cell, "B4_sda1_monaiM_ep1200_l96_seed1", cache, c), _da_cell(cell, "ETKF", c), _da_cell(cell, "Strong-4DVar", c)])
         A.append(f"| {lab} | " + " | ".join(f"{fmt(a, 2)} / {fmt(b, 2)}" for a, b in zip(*vals)) + " |")
     A.append("\nCells are S0 / S1 RMSE.")
     return A
@@ -581,8 +581,9 @@ def findings(da, learned) -> list[str]:
              f"VanillaCFM {fmt(m('Benchmark recipe, 400 ep', 'VanillaCFM-M', 'reg'))} -> {fmt(m('Benchmark default (1200 ep)', 'VanillaCFM-M', 'reg'))}), "
              "and the family gaps largely close; ~85% of the 3000-window DirectUNet gain is training length, not data.")
     A.append("3. **Observation-count crossover at S0**: DA (ETKF / EnKF) is best at <= 10 obs per window; from ~20 obs "
-             "DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1 alone (the factorial column is the 400-epoch prior) is caught again by "
-             "the retuned ETKF when dense (all 16 fast channels: 0.353 vs 0.359 at 100 obs, 0.299 vs 0.351 at 300). Under "
+             "DirectUNet and the CFMs beat every DA baseline, and the gap grows with density. SDA1-M at 1200 epochs stays "
+             "ahead of the retuned ETKF at every density from ~20 obs (all 16 fast channels: 0.329 vs 0.353 at 100 obs, "
+             "0.296 vs 0.299 at 300); the 400-epoch prior did not (0.359 at 100, 0.351 at 300). Under "
              "model error (S1) the learned schemes win at every density. PredictStateCFM / SDA are best when sparse, "
              "DirectUNet when dense; SDA and DirectUNet are complementary, which is why the hybrid works.")
     A.append("3b. **The shared S1 inflation over-inflates dense-time, sparse-channel cells**: at S1 with 4 observed fast "
@@ -593,8 +594,9 @@ def findings(da, learned) -> list[str]:
     A.append("4. **Fast channels**: no crossover -- learned beat DA at every k, including slow-only (k 0, below training range). "
              "The learned slow-variable error is flat (~0.2-0.3); all the k-dependence is in the fast variables. Under model "
              "error, more fast obs make DA's *slow* variables worse (biased slow-fast coupling).")
-    A.append("5. **Beyond the training range**: learned models are weak at 6 obs and degrade with 1000 obs (DirectUNet "
-             "0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least. Noise shifts are handled gracefully.")
+    A.append("5. **Beyond the training range**: learned models are weak at 6 obs and the amortised ones degrade with "
+             "1000 obs (DirectUNet 0.17 -> 0.34 from 300 to 1000); VanillaCFM degrades least, and SDA1-M (1200 ep), "
+             "whose likelihood is explicit, keeps improving (0.30 -> 0.25). Noise shifts are handled gracefully.")
     sd2, sd3 = ("SDA, 1200 ep, gw 25", "SDA2-M"), ("SDA, 1200 ep, gw 25", "SDA3-fix-M")
     A.append("6. **Params conditioning matters once it is tested.** P1's SDA3 was inert by construction (training DA params "
              "equalled the true ones), and every S1 evaluation before 2026-09-25 fed the conditioned priors the TRUE params. "
@@ -666,9 +668,9 @@ def main() -> None:
          "**SDA training budget (2026-09-30)**: SDA1/SDA2/SDA3-fix-M are now trained at both budgets. The "
          "`SDA, 1200 ep` and `Hybrid, 1200-ep SDA prior` rows are budget-matched with the 1200-epoch DirectUNet/CFM "
          "rows (configs `*_ep1200_l96`, identical to the 400-epoch ones apart from the epoch count); the validation "
-         "re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The `SDA, 400 ep`, "
-         "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows, the SDA columns of the observation-count / "
-         "fast-channel / probe tables and the section-6 sweeps use the 400-epoch priors.\n"]
+         "re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The SDA1-M columns of the "
+         "observation-count / fast-channel / probe tables are the 1200-epoch prior as well. The `SDA, 400 ep`, "
+         "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows and the section-6 sweeps use the 400-epoch priors.\n"]
     A += findings(da, learned)
     A += main_tables(da, learned)
     A.append("")
@@ -680,7 +682,7 @@ def main() -> None:
     A += [""] + per_window_summary.section()
     A += ["\n## Caveats\n",
           "- Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.",
-          "- SDA columns of the factorial, probe and tuning sections are the 400-epoch priors; the 1200-epoch priors are in the main table only.",
+          "- The SDA1-M columns of the observation-count, fast-channel and probe tables are the 1200-epoch prior (seed 1 on the factorial and probe cells, 3 seeds on the binned random set); the section-6 tuning sweeps are the 400-epoch priors.",
           "- The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean "
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
