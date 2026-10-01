@@ -67,6 +67,7 @@ else:
         assert len(per) == 1, per
         z.update({f"{c}_ETKS_{k}": v for k, v in np.load(per[0]).items()})
 nw = len(datasets[f"test_{CASES[0]}"])
+PER_WINDOW = {}
 out = {"valset": valset, "N": N, "inflation": INF, "n_windows": nw, "cases": {}}
 assert len(FILTER) == len(CASES) * nw, (len(FILTER), nw)
 for ci, c in enumerate(CASES):
@@ -79,6 +80,8 @@ for ci, c in enumerate(CASES):
         v = np.clip(sel(np.asarray(vv)), 0, None).astype(np.float64)
         se = (t - tr) ** 2
         r[m] = {"t": t, "mse": float(se.mean()), "var": float(v.mean()), "rmse": float(np.sqrt(se.mean(1)).mean())}
+        PER_WINDOW[f"{c}_{m}_rmse"] = np.sqrt(se.mean(1))
+        PER_WINDOW[f"{c}_{m}_spread"] = np.sqrt(v).mean(1)
     out["cases"][c] = {
         "rmse_F": r["ETKF"]["rmse"], "rmse_S": r["ETKS"]["rmse"],
         "pooled_F": float(np.sqrt(r["ETKF"]["var"] / r["ETKF"]["mse"])),
@@ -86,6 +89,9 @@ for ci, c in enumerate(CASES):
         "mse_gap": r["ETKF"]["mse"] - r["ETKS"]["mse"], "var_gap": r["ETKF"]["var"] - r["ETKS"]["var"],
         "mean_shift_sq": float(((r["ETKF"]["t"] - r["ETKS"]["t"]) ** 2).mean()),
     }
+for c in CASES:
+    PER_WINDOW[f"{c}_ETKS_crps"] = sel(np.asarray(z[f"{c}_ETKS_crps"]))
+np.savez_compressed(out_path.replace(".json", "_per_window.npz"), **PER_WINDOW)
 json.dump(out, open(out_path, "w"), indent=1)
 print(json.dumps(out))
 for f in glob.glob(os.path.join(EXP_DIR, f"*{suffix}_*")):
