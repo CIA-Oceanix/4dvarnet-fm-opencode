@@ -37,7 +37,7 @@ CANON_EVAL = HERE / "eval_rlayout_n10-100_k4-16_w200"
 CANON_EVAL_FLOW = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
 TESTSET = REPO / "experiments" / "l96_testset_rlayout_n10-100_k4-16_w200_d1.pt"
 REPORTS = {"p1": "reports/l96/outputs/p1_l96_benchmark.md",
-           "default": "reports/l96/outputs/l96_benchmark_default.md",
+           "default": "reports/l96/outputs/l96_benchmark_default.old.md",
            "extended": "reports/l96/outputs/l96_benchmark_extended.md"}
 
 DET, FLOW, SDA20, SDA25, HYB = "ens1_no1", "ens30_no20", "ens30_gw20", "ens30_gw25", "tau0.1_gw2"

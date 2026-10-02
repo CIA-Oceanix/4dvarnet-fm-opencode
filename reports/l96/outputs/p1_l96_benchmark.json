@@ -400,6 +400,23 @@
           "mae": 0.9879187040547088
         }
       }
+    },
+    {
+      "label": "ETKS, 100 members",
+      "params": "\u03bb 1.05 / 2.5",
+      "flag": "sensitivity, not the benchmark: 100 members (the benchmark and the learned ensembles use 30), inflation re-selected on the validation windows at N=100",
+      "metrics": {
+        "s0": {
+          "rmse": 0.3927108934314771,
+          "spread": 0.18158418491320943,
+          "crps": 0.17936613094139223
+        },
+        "s1": {
+          "rmse": 1.338392781574065,
+          "spread": 0.4753275299344139,
+          "crps": 0.7690048316928246
+        }
+      }
     }
   ],
   "tau0": [
@@ -447,6 +464,8 @@
     }
   ],
   "da_source": [
+    "etks100_2026-10-02/etks100_test_regular_s0_lam1.05_per_window.npz",
+    "etks100_2026-10-02/etks100_test_regular_s1_lam2.5_per_window.npz",
     "l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz",
     "l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz",
     "l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz"

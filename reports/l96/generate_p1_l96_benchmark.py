@@ -64,6 +64,12 @@ DA_SOURCES = {
                      "Strong_4DVar", "—"),
 }
 DA_METHODS = list(DA_SOURCES)
+# 100-member ETKS (ensemble-size sensitivity, extended report finding 9): per-window scores from
+# scripts/etks_ensemble_check.py on the same regular test windows; flagged, so out of the bests.
+ETKS100 = HERE / "etks100_2026-10-02"
+ETKS100_FILES = {"s0": "etks100_test_regular_s0_lam1.05_per_window.npz", "s1": "etks100_test_regular_s1_lam2.5_per_window.npz"}
+ETKS100_FLAG = ("sensitivity, not the benchmark: 100 members (the benchmark and the learned ensembles use 30), "
+                "inflation re-selected on the validation windows at N=100")
 CASES = ("s0", "s1")
 
 
@@ -183,6 +189,14 @@ def da_rows(truth, group):
             if ckey in z.files:
                 m[case]["crps"] = _groups_from_per_window(sel(z[ckey].astype(np.float64)))[group]
         rows.append(dict(label=method, params=params, flag="", m=m))
+    if all((ETKS100 / f).exists() for f in ETKS100_FILES.values()):
+        m = {}
+        for case in CASES:
+            z = np.load(ETKS100 / ETKS100_FILES[case])
+            m[case] = {k: _groups_from_per_window(z[f"{case}_ETKS_{k}"].astype(np.float64))[group]
+                       for k in ("rmse", "spread", "crps")}
+        rows.append(dict(label="ETKS, 100 members", params="λ 1.05 / 2.5", flag=ETKS100_FLAG, m=m))
+        files |= {f"{ETKS100.name}/{f}" for f in ETKS100_FILES.values()}
     return rows, sorted(files)
 
 
@@ -350,7 +364,8 @@ def main():
       "(updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, "
       "the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: "
       "ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA "
-      "rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model).\n")
+      "rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model). A flagged `ETKS, 100 members` "
+      "row (2026-10-02) shows what a larger DA ensemble buys; it is a sensitivity row, outside the bests.\n")
     A("## Protocol\n")
     A("| family | protocol | columns |\n|---|---|---|")
     A("| DA baselines | per-window assimilation (dws=500, DA fast weights); ETKS = the ETKF plus a "
@@ -411,7 +426,7 @@ def main():
 
     if da:
         emit("1. DA baselines", da, "da")
-        A("\nSources (report bundle `da_current_2026-09-29/`): " + ", ".join(f"`{f}`" for f in da_file)
+        A("\nSources (report bundle `da_current_2026-09-29/`, the 100-member row `etks100_2026-10-02/`): " + ", ".join(f"`{f}`" for f in da_file)
           + ". S0 trajectories are stored in the full 40D state and indexed to the 24D observed "
           "subspace; S1 is already reduced. Rows and protocol: `l96_benchmark_extended.md`.\n")
     emit("2. Deterministic point estimators", out["det"], "det")
@@ -436,7 +451,7 @@ def main():
           + f" — flow matching is {100 * (bests['det'] - bests['fm']) / bests['det']:.0f}% better "
           f"than the deterministic baseline and {100 * (bests['sda'] - bests['fm']) / bests['sda']:.0f}% "
           "better than SDA, at matched tier, parameter count, schedule and data.\n")
-    da_ratios = [_ratio(r["m"], "rmse") for r in out.get("da", []) if r["m"]]
+    da_ratios = [_ratio(r["m"], "rmse") for r in out.get("da", []) if r["m"] and not r["flag"]]
     da_span = f"{min(da_ratios):.1f}-{max(da_ratios):.1f}x" if da_ratios else "~2x"
     A("- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially "
       "flat under model error (ratio ~1.00) because it never uses a forward model; the DA "
