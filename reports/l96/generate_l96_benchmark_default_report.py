@@ -1,4 +1,8 @@
-"""L96 benchmark under the benchmark default (config/l96_benchmark_default.yaml):
+"""FROZEN (2026-10-02): renders ``l96_benchmark_default.old.md``, the 400-epoch, pre-#291
+snapshot of the L96 benchmark. The current benchmark, with this report's protocol and
+every row at the current settings, is ``l96_benchmark_extended.md``.
+
+L96 benchmark under the benchmark default (config/l96_benchmark_default.yaml):
 DA baselines, deterministic, flow-matching and SDA, each scored on BOTH the
 regular 30-obs test set and the canonical random-observing-system test set.
 
@@ -32,7 +36,6 @@ sys.path.insert(0, str(ROOT / "reports" / "l96"))
 from generate_p1_l96_benchmark import deterministic, generative  # noqa: E402
 from scripts.check_l96_testset_consistency import check_da, check_learned  # noqa: E402
 import _inputs  # noqa: E402
-import per_window_summary  # noqa: E402
 
 REPORT = "benchmark_default"
 SHARED = _inputs.shared()
@@ -222,6 +225,10 @@ def main() -> None:
     manifest = json.load(open(str(CANON) + ".manifest.json"))
     A = []
     A.append("# L96 benchmark under the benchmark default -- regular and random observing systems\n")
+    A.append("> **FROZEN (2026-10-02) -- superseded by `l96_benchmark_extended.md`.** This is the 400-epoch "
+             "snapshot of the benchmark: DA at the pre-#295 inflation (S0 1.5 / S1 2.0) and from before the ETKF "
+             "square-root fix (#291), no ETKS, SDA at guidance weight 20 and the inert pre-fix SDA3. The extended "
+             "report carries this protocol and every row here at the current settings; read numbers from it.\n")
     A.append("Two-scale L96, 24D observed space (8 slow + 16 fast), 200 shared test windows, S0 (true "
              "parameters) and S1 (biased DA parameters / corrupted forcing). Every cell is the mean "
              "over the 200 windows of the per-window RMSE (physical units); `±` is the sd across "
@@ -289,8 +296,6 @@ def main() -> None:
     for r in learned:
         if r["kind"] == "det":
             A.append(f"| {r['group']} | {r['label']} | {np.mean(r['regular_vr']['s0']):.3f} | {np.mean(r['canonical_vr']['s0']):.3f} |")
-    A.append("")
-    A += per_window_summary.section()
     A.append("\n## Caveats\n")
     A.append("- P1 and SDA rows are single runs; benchmark-default rows are 3 seeds.")
     A.append("- The SDA guidance weight (20) was tuned on the regular grid, not re-tuned for the random set.")
@@ -304,8 +309,8 @@ def main() -> None:
     A.append("- DA rows reuse existing runs on the identical inputs: regular S0 ETKF/EnKF at inflation "
              "1.5, regular S1 and Strong-4DVar from the corrected inflation-2.0 run; random-set rows "
              "from the random-layout DA runs (#243).")
-    (OUT / "l96_benchmark_default.md").write_text("\n".join(A) + "\n")
-    print(f"wrote {OUT / 'l96_benchmark_default.md'}")
+    (OUT / "l96_benchmark_default.old.md").write_text("\n".join(A) + "\n")
+    print(f"wrote {OUT / 'l96_benchmark_default.old.md'}")
 
 
 if __name__ == "__main__":

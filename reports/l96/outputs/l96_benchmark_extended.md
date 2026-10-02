@@ -1,16 +1,27 @@
 # L96 benchmark -- extended results (training budget, observing-system dependence, SDA, hybrid)
 
-Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on the regular 30-obs set and on the canonical random observing system (the exact obs the DA baselines assimilated). S0 = true parameters, S1 = biased DA model / corrupted forcing. Every learned result passed the test-set consistency check (dataset + truth window for window); DA runs matched the canonical layouts.
+The current L96 benchmark (it supersedes the frozen 400-epoch snapshot `l96_benchmark_default.old.md`, whose protocol and rows it carries at the current settings): the 200 P1 test windows on the regular 30-obs set and on the canonical random observing system (the exact obs the DA baselines assimilated). S0 = true parameters, S1 = biased DA model / corrupted forcing. Every learned result passed the test-set consistency check (dataset + truth window for window); DA runs matched the canonical layouts.
 
 **DA inflation (2026-09-28)**: every ETKF / EnKF row uses the per-method defaults retuned on the validation windows after the ETKF square-root fix (#291, #295): ETKF S0 1.15 / S1 2.5, EnKF S0 1.2 / S1 3.0 (`docs/results/l96_da_inflation_post291.md`); the old rows (S0 1.5 / S1 2.0, ETKF before #291) remain only in the marginal-value comparison (section 7). Strong-4DVar has no inflation and is unchanged.
 
-**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms (the benchmark default since 2026-09-26; the 400-epoch rows are the earlier recipe, kept for the training-budget comparison).
+**Protocol changes since the benchmark-default report** (`l96_benchmark_default.old.md`): DA CRPS on the *analysis* ensemble (the old `_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on validation windows; 1200-epoch arms (the benchmark default since 2026-09-26; the 400-epoch rows are the earlier recipe, kept for the training-budget comparison).
 
 **Flow sampler**: every VanillaCFM / PredictStateCFM row, curve and probe is scored with the benchmark protocol of #257 -- 30 members x 20 early-fine Euler steps (`tau_k = 1 - (1 - k/20)^0.5`, `ens30_no20`); the report refuses to render a flow result recorded with any other sampling. Only the calibration study (section 6) varies the sampler, on the uniform grid, by design. SDA and the hybrid use the SDA sampler (10 guided steps). The `PredictStateCFM-M x3` row averages the velocities of three trained networks (`models/cfm_blend.py`), so it costs 3x a single-model row.
 
 **SDA conditioning at S1**: the params-conditioned priors (SDA2, SDA3-fix, alone and as hybrid priors) are conditioned on the *biased DA-model* params (`*_da`, +10%) and the corrupted forcing -- the same model the DA baselines assimilate with. Results before 2026-09-25 fed them the TRUE params at S1 (the eval collate read the plain keys, which hold the truth in S1 windows); every affected run was re-evaluated.
 
 **SDA training budget (2026-09-30)**: SDA1/SDA2/SDA3-fix-M are now trained at both budgets. The `SDA, 1200 ep` and `Hybrid, 1200-ep SDA prior` rows are budget-matched with the 1200-epoch DirectUNet/CFM rows (configs `*_ep1200_l96`, identical to the 400-epoch ones apart from the epoch count); the validation re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The SDA1-M columns of the observation-count / fast-channel / probe tables are the 1200-epoch prior as well. The `SDA, 400 ep`, `SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows and the section-6 sweeps use the 400-epoch priors.
+
+## Protocol
+
+- **Training (benchmark default, `config/l96_benchmark_default.yaml`)**: monai backbone, `normalize`, cosine annealing, lr 1e-3, clip 10, batch 16, 1200 epochs (since 2026-09-26; the `400 ep` rows are the earlier budget), 3 seeds; a random observing system redrawn every batch with fresh noise -- 10-300 stratified obs times (step 0 always observed), 4-16 observed fast channels per window (subset per obs time), slow channels always. Validation windows re-observed once with a fixed seed from the same distribution (checkpoint = `stage1_best` by that val loss).
+- **P1 fixed obs (reference)**: the P1 checkpoints -- regular 30-obs grid, noise frozen per window across epochs.
+- **SDA**: the prior and its validation loss never see observations, so the observing-system protocol does not apply to training. Guided sampling: 30 members, 10 steps, r_var 0.5, the NaN-channel guidance fix (#244), guidance weight 25 (validation-tuned) unless the group says otherwise.
+- **DA**: ETKF / EnKF / ETKS (30 members), Strong-4DVar; per-window `fast_weights` in the forward model; DA window 500; inflation as stated above and per row.
+- **Regular test set**: the P1 cache, 30 regular obs times, all 24 channels.
+- **Random test set** (canonical, `l96_testset_rlayout_n10-100_k4-16_w200_d1.pt`, sha256 `48688eebf8f4...`): the same 200 windows re-observed with the exact layouts the DA baselines assimilated (`eval_da_random_layout_l96.py`): n_obs uniform in 10-100 at stratified times with step 0 observed and at least one obs per DA window, 4-16 observed fast channels per window. Truth, forcings and parameters are bitwise the P1 cache's.
+- **Consistency**: before rendering, every learned result is checked to name its test set and to carry that set's truth window for window, and every DA run to match the canonical layouts (`scripts/check_l96_testset_consistency.py`); the report refuses to render on any mismatch.
+- **Metrics**: flows and SDA are scored on the 30-member ensemble mean (RMSE) plus ensemble CRPS and spread/RMSE; DA on the analysis mean plus analysis-ensemble CRPS and spread; DirectUNet is a single pass (no CRPS; its smoothing is the variance ratio of section 1).
 
 ## Findings
 
@@ -100,6 +111,17 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2) | DirectUNet-M(1200 ep) -> SDA3-fix-M | 0.137 (0.136) | 0.175 (0.173) | 0.46 (0.47) | 0.40 (0.40) |
 | P1 fixed obs (reference) | PredictStateCFM-M | 0.166 (0.165) | 0.550 (0.534) | 0.49 (0.49) | 0.30 (0.30) |
 | P1 fixed obs (reference) | VanillaCFM-M | 0.153 (0.151) | 0.578 (0.570) | 0.61 (0.62) | 0.31 (0.31) |
+
+### Deterministic variance ratio (S0, predicted / true temporal variance, mean over seeds)
+
+1.0 = the estimate keeps the truth's variability; below 1 it is smoothed towards the posterior mean.
+
+| group | scheme | regular | random |
+|---|---|---|---|
+| Benchmark recipe, 400 ep | DirectUNet-M | 0.950 | 0.879 |
+| Benchmark default (1200 ep) | DirectUNet-M | 0.969 | 0.900 |
+| Benchmark recipe, 400 ep, 3000 windows | DirectUNet-M | 0.972 | 0.899 |
+| P1 fixed obs (reference) | DirectUNet-M | 0.978 | 0.820 |
 
 ## 2. Training budget (DirectUNet-M, seed 1)
 
@@ -357,7 +379,7 @@ The P1 paper's headline (6.2x for Strong-4D-Var vs 1.9x for filters) came from a
 
 ## Per-window RMSE / EV / CRPS summary (current benchmark)
 
-Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.
+Common to `l96_benchmark_extended.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.
 
 Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; **EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is averaged over channels. Seeds are averaged per window; cells are mean ± sd over the 200 windows. Per column, the best value is in **bold** and the second best in *italics*. Deterministic schemes have no CRPS. The random-layout Strong-4DVar trajectories were not kept, so that cell has no EV.
 

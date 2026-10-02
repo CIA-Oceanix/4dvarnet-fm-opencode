@@ -1,5 +1,6 @@
-"""Extended L96 benchmark: everything measured after the benchmark-default
-report (``l96_benchmark_default.md``) on the same inputs.
+"""The current L96 benchmark. It began as the follow-up to the benchmark-default
+report, now frozen as ``l96_benchmark_default.old.md`` (the 400-epoch, pre-#291
+snapshot), and carries its protocol and every one of its rows at the current settings.
 
 - Main table on the regular 30-obs test set and the canonical random test set,
   S0/S1: DA with analysis-ensemble CRPS, benchmark-default learned models at
@@ -244,6 +245,7 @@ def learned_main(cache: dict) -> tuple[list[dict], list[str]]:
             ok = [d for d in dirs if done(d)]
             for d in ok:
                 errors += check_learned(str(d), str(path), truths[tag]) + sampling_errors(d)
+            rec.setdefault("dirs", {})[tag] = ok
             if ok:
                 per = [score_dir(d, cache) for d in ok]
                 rec[tag] = {c: {"rmse": np.mean([p[c]["rmse"] for p in per], axis=0),
@@ -295,6 +297,62 @@ def main_tables(da: list[dict], learned: list[dict]) -> list[str]:
         A.append(f"| {r['group']} | {r['label']} | {fmt(r['reg']['s0']['crps'])} ({fmt(r['reg']['s1']['crps'])}) | {fmt(r['can']['s0']['crps'])} ({fmt(r['can']['s1']['crps'])}) | "
                  f"{fmt(r['reg']['s0']['sp'], 2)} ({fmt(r['reg']['s1']['sp'], 2)}) | {fmt(r['can']['s0']['sp'], 2)} ({fmt(r['can']['s1']['sp'], 2)}) |")
     return A
+
+
+def var_ratio(d: Path, cache: dict) -> float:
+    """S0 predicted / true temporal variance of a deterministic estimate (1.0 = no smoothing)."""
+    f = d / "estimates_s0.npz"
+    key = f"vr|{d.resolve()}|{os.path.getmtime(f)}"
+    if key not in cache:
+        z = np.load(f)
+        tr, t = z["trajectories"].astype(np.float64), z["truth"].astype(np.float64)
+        cache[key] = float(tr.var(axis=1).mean() / t.var(axis=1).mean())
+        CACHE.write_text(json.dumps(cache))
+    return cache[key]
+
+
+def var_ratio_section(learned: list[dict], cache: dict) -> list[str]:
+    A = ["\n### Deterministic variance ratio (S0, predicted / true temporal variance, mean over seeds)\n",
+         "1.0 = the estimate keeps the truth's variability; below 1 it is smoothed towards the posterior mean.\n",
+         "| group | scheme | regular | random |", "|---|---|---|---|"]
+    for r in learned:
+        if r["reg"] is None or r["can"] is None or r["reg"]["s0"]["crps"] is not None:
+            continue
+        dirs = r["dirs"]
+        if not all((d / "estimates_s0.npz").exists() for t in ("reg", "can") for d in dirs[t]):
+            continue
+        vr = {t: np.mean([var_ratio(d, cache) for d in dirs[t]]) for t in ("reg", "can")}
+        A.append(f"| {r['group']} | {r['label']} | {vr['reg']:.3f} | {vr['can']:.3f} |")
+    return A
+
+
+def protocol_section(manifest: dict) -> list[str]:
+    return ["## Protocol\n",
+            "- **Training (benchmark default, `config/l96_benchmark_default.yaml`)**: monai backbone, `normalize`, "
+            "cosine annealing, lr 1e-3, clip 10, batch 16, 1200 epochs (since 2026-09-26; the `400 ep` rows are the "
+            "earlier budget), 3 seeds; a random observing system redrawn every batch with fresh noise -- 10-300 "
+            "stratified obs times (step 0 always observed), 4-16 observed fast channels per window (subset per obs "
+            "time), slow channels always. Validation windows re-observed once with a fixed seed from the same "
+            "distribution (checkpoint = `stage1_best` by that val loss).",
+            "- **P1 fixed obs (reference)**: the P1 checkpoints -- regular 30-obs grid, noise frozen per window across epochs.",
+            "- **SDA**: the prior and its validation loss never see observations, so the observing-system protocol does "
+            "not apply to training. Guided sampling: 30 members, 10 steps, r_var 0.5, the NaN-channel guidance fix "
+            "(#244), guidance weight 25 (validation-tuned) unless the group says otherwise.",
+            "- **DA**: ETKF / EnKF / ETKS (30 members), Strong-4DVar; per-window `fast_weights` in the forward model; "
+            "DA window 500; inflation as stated above and per row.",
+            "- **Regular test set**: the P1 cache, 30 regular obs times, all 24 channels.",
+            f"- **Random test set** (canonical, `{CAN_TEST.name}`, sha256 `{manifest['sha256'][:12]}...`): the same 200 "
+            "windows re-observed with the exact layouts the DA baselines assimilated (`eval_da_random_layout_l96.py`): "
+            f"n_obs uniform in {manifest['n_obs_range'][0]}-{manifest['n_obs_range'][1]} at stratified times with "
+            f"step 0 observed and at least one obs per DA window, {manifest['fast_range'][0]}-"
+            f"{manifest['fast_range'][1]} observed fast channels per window. Truth, forcings and parameters are "
+            "bitwise the P1 cache's.",
+            "- **Consistency**: before rendering, every learned result is checked to name its test set and to carry "
+            "that set's truth window for window, and every DA run to match the canonical layouts "
+            "(`scripts/check_l96_testset_consistency.py`); the report refuses to render on any mismatch.",
+            "- **Metrics**: flows and SDA are scored on the 30-member ensemble mean (RMSE) plus ensemble CRPS and "
+            "spread/RMSE; DA on the analysis mean plus analysis-ensemble CRPS and spread; DirectUNet is a single pass "
+            "(no CRPS; its smoothing is the variance ratio of section 1).\n"]
 
 
 def budget_section(cache: dict) -> list[str]:
@@ -680,7 +738,8 @@ def main() -> None:
         sys.exit("consistency check failed; report not written")
     OUT.mkdir(parents=True, exist_ok=True)
     A = ["# L96 benchmark -- extended results (training budget, observing-system dependence, SDA, hybrid)\n",
-         "Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on the regular 30-obs set and "
+         "The current L96 benchmark (it supersedes the frozen 400-epoch snapshot `l96_benchmark_default.old.md`, "
+         "whose protocol and rows it carries at the current settings): the 200 P1 test windows on the regular 30-obs set and "
          "on the canonical random observing system (the exact obs the DA baselines assimilated). S0 = true parameters, "
          "S1 = biased DA model / corrupted forcing. Every learned result passed the test-set consistency check "
          "(dataset + truth window for window); DA runs matched the canonical layouts.\n",
@@ -688,7 +747,7 @@ def main() -> None:
          "windows after the ETKF square-root fix (#291, #295): ETKF S0 1.15 / S1 2.5, EnKF S0 1.2 / S1 3.0 "
          "(`docs/results/l96_da_inflation_post291.md`); the old rows (S0 1.5 / S1 2.0, ETKF before #291) remain only in "
          "the marginal-value comparison (section 7). Strong-4DVar has no inflation and is unchanged.\n",
-         "**Protocol changes since the benchmark-default report**: DA CRPS on the *analysis* ensemble (the old "
+         "**Protocol changes since the benchmark-default report** (`l96_benchmark_default.old.md`): DA CRPS on the *analysis* ensemble (the old "
          "`_ESAccumulator` scored the forecast ensemble); SDA guidance weight 25 (validation-tuned; P1 used 20); SDA3 "
          "retrained with its bias conditioning actually active (SDA3-fix); a DirectUNet -> SDA hybrid tuned on "
          "validation windows; 1200-epoch arms (the benchmark default since 2026-09-26; the 400-epoch rows are the "
@@ -709,8 +768,10 @@ def main() -> None:
          "re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The SDA1-M columns of the "
          "observation-count / fast-channel / probe tables are the 1200-epoch prior as well. The `SDA, 400 ep`, "
          "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows and the section-6 sweeps use the 400-epoch priors.\n"]
+    A += protocol_section(manifest)
     A += findings(da, learned)
     A += main_tables(da, learned)
+    A += var_ratio_section(learned, cache)
     A.append("")
     A += budget_section(cache)
     A += density_sections(cache)
