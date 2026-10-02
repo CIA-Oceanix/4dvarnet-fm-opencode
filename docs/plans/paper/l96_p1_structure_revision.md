@@ -1,6 +1,6 @@
 # P1 — revised paper structure
 
-**Status:** SCOPING — draft revision of the P1 paper structure (2026-09-28 positioning discussion). Supersedes the outline of `docs/papers/p1_structural_hypotheses/` where they conflict; the LaTeX has not been touched yet.
+**Status:** SCOPING — draft revision of the P1 paper structure (2026-09-28 positioning discussion). Supersedes the outline of `docs/papers/p1_structural_hypotheses/` where they conflict; the LaTeX has not been touched yet. **Its outline (§4) is superseded by `docs/plans/paper/l96_p1_structure_v2.md` (2026-10-02, from the presentation).**
 
 ## 1. What changes, in one paragraph
 
