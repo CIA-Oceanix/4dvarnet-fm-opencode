@@ -157,7 +157,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                                w["true_params"], cfg, device)
             m.update({"index": int(w["init_seed_key"]), "crps": s["crps_list"][k],
                       "level": w["specwind"]["factors"]["level"],
-                      **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()}})
+                      **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()},
+                      "n_fallback": s["fallback_list"][k]})
             per_window.append(m)
     finally:
         if save_traj is None:

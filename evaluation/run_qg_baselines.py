@@ -849,6 +849,7 @@ class QG4DVar:
         self.x0_bg = None
         self.r_var = 1.0
         self.b_sqrt = None
+        self.n_fallback = 0
 
     def _forward_strong(self, x0, win, force, clip):
         traj = [x0]
@@ -969,6 +970,9 @@ class QG4DVar:
             clip=_QG_STATE_CLIP).detach()
 
     def assimilate(self, observations, obs_mask, forcing, true_state=None):
+        """Cycle 4D-Var over the window. A sub-window whose analysis trajectory is
+        not finite (the optimizer stepped into a blow-up) falls back to the
+        background forecast for that sub-window; ``n_fallback`` counts them."""
         obs = observations.to(self.device)
         mask = obs_mask.to(self.device)
         force = forcing.to(self.device)
@@ -993,17 +997,15 @@ class QG4DVar:
             win_obs = obs[start:end]
             win_mask = mask[start:end]
             win_force = force[start:end]
-            if wlen != win:
-                # last partial window: run at its actual length by temporarily
-                # shrinking the cycle window.
-                saved = self.da_window_steps
-                self.da_window_steps = wlen
-                traj = self._solve_window(
-                    current_bg, win_obs, win_mask, start, win_force)
-                self.da_window_steps = saved
-            else:
-                traj = self._solve_window(
-                    current_bg, win_obs, win_mask, start, win_force)
+            saved = self.da_window_steps
+            self.da_window_steps = wlen
+            traj = self._solve_window(
+                current_bg, win_obs, win_mask, start, win_force)
+            if not torch.isfinite(traj).all():
+                self.n_fallback += 1
+                traj = self._forward_strong(
+                    current_bg, wlen, win_force, clip=_QG_STATE_CLIP).detach()
+            self.da_window_steps = saved
             analysis[start:end] = traj
             current_bg = traj[-1].detach()
 
@@ -1041,6 +1043,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         d = ds[scen]
         spread_t0_list = []
         spread_ratio_list = []
+        fallback_list = []
         mean_init_lag_list = []
         free_ra = []
         method = None
@@ -1218,6 +1221,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                    forcing=forcing, init_ensemble=init_ensemble,
                                    mask=eval_mask)
             mean_init_lag_list.append(init_lag_val)
+            fallback_list.append(int(getattr(method, "n_fallback", 0)))
             ref = w["true_state"].numpy()
             traj_da = res.trajectory
             if is_psi_state:
@@ -1356,6 +1360,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "mean_init_lag_days": float(np.mean(mean_init_lag_list)) if mean_init_lag_list else None,
             "spread_t0_mean": float(np.mean(spread_t0_list)) if spread_t0_list else None,
             "spread_ratio_list": spread_ratio_list,
+            "fallback_list": fallback_list,
         }
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
