@@ -23,6 +23,7 @@ Follow-up to `l96_benchmark_default.md`, same inputs: the 200 P1 test windows on
 6. **Params conditioning matters once it is tested.** P1's SDA3 was inert by construction (training DA params equalled the true ones), and every S1 evaluation before 2026-09-25 fed the conditioned priors the TRUE params. With the biased DA params at S1, SDA2-M degrades (0.453 -> 0.465 regular) while SDA3-fix-M, trained on noisy DA params, does not (0.455 -> 0.455). Alone the gap is within seed noise; as the hybrid prior it decides robustness to model error (finding 1).
 7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights fix (6.4-7.0x); the filters keep most of the value of observations: 1.1x at the original setting, 1.6-1.7x at the old benchmark inflation, 1.8-1.9x at the current one (ETKF 1.15 / 2.5, EnKF 1.2 / 3.0).
 8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, one shared trajectory) gives regular / random S0 0.327 / 0.429 vs 0.341 / 0.443 for a single network, with unchanged calibration -- at 3x the parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).
+9. **DA ensemble size (sensitivity)**: the 30-member DA rows are sampling-limited at S0. With 100 members (inflation re-selected on the validation windows, S0 1.05 / S1 2.5) the ETKS reaches regular / random S0 0.393 / 0.463 vs 0.497 / 0.572 at 30 members, but S1 barely moves (1.338 / 1.335 vs 1.338 / 1.347): more members fix the sampling error, not the model error. The benchmark keeps 30 members (the learned ensembles' size); these rows bound what a larger ensemble buys.
 
 ## 1. Main table
 
@@ -38,6 +39,8 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKS, inflation S0 1.5 / S1 2.0 | — | 0.582 ± 0.123 | 1.400 ± 0.230 | 0.770 ± 0.253 | 1.282 ± 0.295 | 1.32 | — |
 | DA | ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row) | — | 0.625 ± 0.173 | 1.410 ± 0.230 | 0.662 ± 0.257 | 1.406 ± 0.307 | 1.06 | — |
 | DA | ETKS, inflation S0 1.1 / S1 2.5 (ETKS validation selection) | — | 0.514 ± 0.186 | 1.338 ± 0.223 | 0.566 ± 0.277 | 1.349 ± 0.299 | 1.10 | — |
+| DA | ETKF, 100 members, inflation S0 1.05 / S1 2.5 (filter pass of the next row) | — | 0.534 ± 0.119 | 1.410 ± 0.228 | 0.595 ± 0.243 | 1.428 ± 0.331 | 1.11 | — |
+| DA | ETKS, 100 members, inflation S0 1.05 / S1 2.5 (ensemble-size sensitivity) | — | 0.393 ± 0.106 | 1.338 ± 0.221 | 0.463 ± 0.237 | 1.335 ± 0.297 | 1.18 | — |
 | Benchmark recipe, 400 ep | DirectUNet-M | 3/3 | 0.380 ± 0.064 | 0.379 ± 0.064 | 0.493 ± 0.314 | 0.490 ± 0.271 | 1.30 | 0.004 |
 | Benchmark recipe, 400 ep | PredictStateCFM-M | 3/3 | 0.403 ± 0.079 | 0.400 ± 0.079 | 0.509 ± 0.270 | 0.513 ± 0.243 | 1.26 | 0.005 |
 | Benchmark recipe, 400 ep | VanillaCFM-M | 3/3 | 0.430 ± 0.072 | 0.427 ± 0.070 | 0.535 ± 0.282 | 0.544 ± 0.256 | 1.24 | 0.006 |
@@ -75,6 +78,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKS, inflation S0 1.5 / S1 2.0 | 0.293 (0.851) | 0.385 (0.724) | 0.71 (0.24) | 0.81 (0.41) |
 | DA | ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row) | 0.283 (0.759) | 0.293 (0.786) | 0.51 (0.61) | 0.62 (0.93) |
 | DA | ETKS, inflation S0 1.1 / S1 2.5 (ETKS validation selection) | 0.252 (0.771) | 0.264 (0.745) | 0.33 (0.34) | 0.44 (0.53) |
+| DA | ETKS, 100 members, inflation S0 1.05 / S1 2.5 (ensemble-size sensitivity) | 0.179 (0.769) | 0.206 (0.733) | 0.46 (0.36) | 0.51 (0.58) |
 | Benchmark recipe, 400 ep | PredictStateCFM-M | 0.183 (0.182) | 0.228 (0.230) | 0.70 (0.70) | 0.68 (0.65) |
 | Benchmark recipe, 400 ep | VanillaCFM-M | 0.196 (0.196) | 0.239 (0.244) | 0.79 (0.80) | 0.75 (0.73) |
 | Benchmark default (1200 ep) | PredictStateCFM-M | 0.150 (0.148) | 0.194 (0.196) | 0.63 (0.63) | 0.64 (0.61) |

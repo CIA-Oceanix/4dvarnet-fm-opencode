@@ -72,6 +72,12 @@ ETKS_ROWS = (("ETKS", "s0-1.15_s1-2.5", "s0-1.2_s1-3.0", "ETKS"),
              ("ETKS, inflation S0 1.5 / S1 2.0", "s0-1.5_s1-2.0", "s0-1.5_s1-2.0", "ETKS"),
              ("ETKF, inflation S0 1.1 / S1 2.5 (same run as the next row)", "s0-1.1_s1-2.5", "s0-1.5_s1-2.0", "ETKF"),
              ("ETKS, inflation S0 1.1 / S1 2.5 (ETKS validation selection)", "s0-1.1_s1-2.5", "s0-1.5_s1-2.0", "ETKS"))
+# 100-member ETKS (sensitivity; scripts/etks_ensemble_check.py): inflation re-selected on the validation
+# windows at N=100, the ETKF row is the ETKS's own filter pass (same ensemble); no ETKF CRPS stored.
+ETKS100 = HERE / "etks100_2026-10-02"
+ETKS100_INF = {"s0": "1.05", "s1": "2.5"}
+ETKS100_ROWS = (("ETKF, 100 members, inflation S0 1.05 / S1 2.5 (filter pass of the next row)", "ETKF"),
+                ("ETKS, 100 members, inflation S0 1.05 / S1 2.5 (ensemble-size sensitivity)", "ETKS"))
 OUT = ROOT / "reports/l96/outputs"
 CACHE = ROOT / "experiments" / "l96_benchmark_extended_metrics.json"
 CASES = ("s0", "s1")
@@ -202,7 +208,28 @@ def da_main() -> list[dict]:
             rec["can"][c] = {"rmse": rr, "crps": float(p[f"{c}_{m}_crps_all_obs"].mean()),
                              "sp": float(p[f"{c}_{m}_spread_all_obs"].mean() / rr.mean())}
         out.append(rec)
+    for label, m in ETKS100_ROWS:
+        rec = {"label": label, "reg": {}, "can": {}, "sensitivity": True}
+        for tag, c in ((t, c) for t in ("reg", "can") for c in CASES):
+            z = np.load(ETKS100 / f"etks100_test_{'regular' if tag == 'reg' else 'rlayout'}_{c}_lam{ETKS100_INF[c]}_per_window.npz")
+            r = G(z[f"{c}_{m}_rmse"])["all_obs"]
+            rec[tag][c] = {"rmse": r, "crps": float(G(z[f"{c}_{m}_crps"])["all_obs"].mean()) if m == "ETKS" else None,
+                           "sp": float(G(z[f"{c}_{m}_spread"])["all_obs"].mean() / r.mean())}
+        out.append(rec)
     return out
+
+
+def check_etks100() -> list[str]:
+    """The 100-member runs read the test sets directly (``etks_ensemble_check.py``'s ``test_*`` sets are
+    REG_TEST / CAN_TEST), so their windows are the report's; check each run's set, size and inflation."""
+    errors = []
+    for vs in ("test_regular", "test_rlayout"):
+        for c in CASES:
+            path = ETKS100 / f"etks100_test_{vs.split('_')[1]}_{c}_lam{ETKS100_INF[c]}.json"
+            d = json.loads(path.read_text())
+            if (d["valset"], d["N"], d["n_windows"], d["inflation"][c]) != (vs, 100, 200, float(ETKS100_INF[c])):
+                errors.append(f"{path}: not the 100-member {vs} {c} run at inflation {ETKS100_INF[c]}")
+    return errors
 
 
 def learned_main(cache: dict) -> tuple[list[dict], list[str]]:
@@ -564,7 +591,7 @@ def marginal_section() -> list[str]:
 def findings(da, learned) -> list[str]:
     row = {(r["group"], r["label"]): r for r in learned}
     m = lambda g, lab, t, c="s0": None if row[(g, lab)][t] is None else float(row[(g, lab)][t][c]["rmse"].mean())  # noqa: E731
-    best_da = min(da, key=lambda r: r["reg"]["s0"]["rmse"].mean())
+    best_da = min((r for r in da if not r.get("sensitivity")), key=lambda r: r["reg"]["s0"]["rmse"].mean())
     hg = "Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2)"
     h2, h3 = (hg, "DirectUNet-M(1200 ep) -> SDA2-M"), (hg, "DirectUNet-M(1200 ep) -> SDA3-fix-M")
     A = ["## Findings\n"]
@@ -611,7 +638,17 @@ def findings(da, learned) -> list[str]:
              f"one shared trajectory) gives regular / random S0 {fmt(m(*e3, 'reg'))} / {fmt(m(*e3, 'can'))} vs "
              f"{fmt(m(*p1, 'reg'))} / {fmt(m(*p1, 'can'))} for a single network, with unchanged calibration -- at 3x the "
              "parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random "
-             "schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).\n")
+             "schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).")
+    dr = {r["label"]: r for r in da}
+    e30, e100 = dr["ETKS"], dr[ETKS100_ROWS[1][0]]
+    dm = lambda r, t, c: float(r[t][c]["rmse"].mean())  # noqa: E731
+    A.append(f"9. **DA ensemble size (sensitivity)**: the 30-member DA rows are sampling-limited at S0. With 100 members "
+             f"(inflation re-selected on the validation windows, S0 1.05 / S1 2.5) the ETKS reaches regular / random S0 "
+             f"{dm(e100, 'reg', 's0'):.3f} / {dm(e100, 'can', 's0'):.3f} vs {dm(e30, 'reg', 's0'):.3f} / {dm(e30, 'can', 's0'):.3f} "
+             f"at 30 members, but S1 barely moves ({dm(e100, 'reg', 's1'):.3f} / {dm(e100, 'can', 's1'):.3f} vs "
+             f"{dm(e30, 'reg', 's1'):.3f} / {dm(e30, 'can', 's1'):.3f}): more members fix the sampling error, not the model "
+             "error. The benchmark keeps 30 members (the learned ensembles' size); these rows bound what a larger "
+             "ensemble buys.\n")
     return A
 
 
@@ -626,6 +663,7 @@ def main() -> None:
     errors += check_da(str(DANEW_PW), manifest)
     for inf in sorted({inf for _, inf, _, _ in ETKS_ROWS}):
         errors += check_da(str(DAHERE / ETKS_CAN.format(inf=inf)), manifest)
+    errors += check_etks100()
     for sub, root in (("l96_testsets_factorial", FACT), ("l96_testsets_ood", OOD)):
         for ts in sorted((SHARED / sub).glob("l96_testset_*.pt")):
             cell = ts.stem.replace("l96_testset_", "")
