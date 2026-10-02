@@ -127,12 +127,15 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--output", default="reports/l96/outputs/m4_mean_component.md")
     p.add_argument("--json-output", default="reports/l96/outputs/m4_mean_component.json")
+    p.add_argument("--run", nargs=2, action="append", metavar=("LABEL", "CKPT"),
+                   help="score these checkpoints instead of DEFAULT_RUNS (repeatable; config from the run)")
     args = p.parse_args()
 
     device = torch.device(args.device)
-    exp_dirs = {label: str(pathlib_parent(ckpt)) for label, ckpt, _ in DEFAULT_RUNS}
+    runs = [(label, ckpt, None) for label, ckpt in args.run] if args.run else DEFAULT_RUNS
+    exp_dirs = {label: str(pathlib_parent(ckpt)) for label, ckpt, _ in runs}
     rows = []
-    for label, ckpt, cfg_name in DEFAULT_RUNS:
+    for label, ckpt, cfg_name in runs:
         if not (ROOT / ckpt).exists():
             print(f"MISSING (skipped): {ckpt}")
             continue
@@ -146,7 +149,7 @@ def main():
         mae = per_window_deterministic_crps(pred, truth)
         g = args.group
         full = full_model_rmse(exp_dirs[label], args.case) if label in exp_dirs else None
-        rows.append(dict(label=label, model=cls, n_windows=int(pred.shape[0]),
+        rows.append(dict(label=label, checkpoint=str(ckpt), model=cls, n_windows=int(pred.shape[0]),
                          draw_dispersion=disp,
                          mse=mse[g], rmse=rmse[g], rmse_pooled=float(pooled[g]),
                          crps_mae=mae[g],
@@ -189,7 +192,8 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(header + body)
     Path(args.json_output).write_text(json.dumps(
-        dict(case=args.case, group=args.group, m_draws=args.m_draws, rows=rows), indent=2))
+        dict(case=args.case, group=args.group, m_draws=args.m_draws, dataset=str(Path(args.dataset).resolve()),
+             rows=rows), indent=2))
     print(f"wrote {out} and {args.json_output}")
 
 
