@@ -144,7 +144,7 @@ def components(acc: Dict[str, float], tau: float, x1_sq: float,
     """Per-element RMS of each component, plus the four normalizations.
 
     ``Psi_G`` uses the constrained form ``A = 1 - tau*K`` (verified to hold to
-    <0.015 -- see ``docs/results/cfm_affine_velocity_decomposition.md``), so
+    <0.015 -- see ``docs/results/l96_cfm_affine_velocity_decomposition.md``), so
     ``Psi_G = K*(x_tau - tau*m)`` and ``||Psi_G||^2 = K^2 * ||x_tau - tau*m||^2``.
 
     ``ng_over_x1`` and ``psi_NG`` are the tau-independent normalizations -- the
