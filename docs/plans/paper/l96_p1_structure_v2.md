@@ -1,6 +1,6 @@
 # P1 — revised paper structure, v2 (from the 2026-10-02 presentation)
 
-**Status:** SCOPING — second revision of the P1 structure, drawn from the presentation `docs/papers/Restriction or Misspecification DA under Model Error.pdf` (30 slides) and the current benchmark (`reports/l96/outputs/p1_l96_benchmark.md`, `l96_benchmark_extended.md`, after #311/#312). It supersedes the **outline** (§4) of `l96_p1_structure_revision.md`; that doc's formal core, claims K1–K8 and runs table stay the reference where this one does not restate them. The LaTeX has not been touched.
+**Status:** SCOPING — second revision of the P1 structure, drawn from the presentation `docs/papers/Restriction or Misspecification DA under Model Error.pdf` (30 slides) and the current benchmark (`reports/l96/outputs/p1_l96_benchmark.md`, `l96_benchmark_extended.md`, after #311/#312). It supersedes the **outline** (§4) of `l96_p1_structure_revision.md`; that doc's formal core, claims K1–K8 and runs table stay the reference where this one does not restate them. The LaTeX has not been touched. **Its outline (§3) is superseded by `docs/plans/paper/l96_p1_structure_v3.md` (flow matching as the representation and the metric); §1 and §5 here still apply.**
 
 ## 1. What the presentation changes
 
