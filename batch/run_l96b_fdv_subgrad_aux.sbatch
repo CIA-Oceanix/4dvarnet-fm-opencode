@@ -13,7 +13,7 @@
 # Same recipe and evals as batch/run_l96b_fdv_seeds.sbatch (1200 epochs, then the
 # deterministic eval on both benchmark test sets at the solver's own N_outer). Resumes from
 # checkpoints/stage1_last.ckpt if resubmitted. FDV_CFG selects the config (default the aux01
-# run; L96B_fdvsubgrad_monaiM_aux01_noprior = the same with the x - Phi(x) input zeroed);
+# run; see docs/results/l96_fdv_m_input_ablation.md for the variants);
 # FDV_SEED the training seed (default 1).
 set -euo pipefail
 cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-etks
