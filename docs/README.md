@@ -133,5 +133,6 @@ thread has a synthesis note, cite it rather than the notes it summarises:
 | L96 flow blends and velocity ensembles (VanillaCFM / PredictStateCFM) | `docs/results/l96_cfm_velocity_ensembles.md` |
 | L96 PredictStateCFM skip connection (parameterization vs loss weight) | `docs/results/l96_psc_skip_connection.md` |
 | L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_default_inflation.md` (canonical row, benchmark inflation 1.15 / 2.5); `docs/results/l96_etks_benchmark.md` (other inflations, validation sweep); prototype: `docs/results/l96_etks_prototype.md` |
+| L96 weak-constraint 4D-Var (model-error scale per case, S0/S1) | `docs/results/l96_weak4dvar.md` (validation sweeps, LBFGS budget, benchmark rows: S0 0.695, S1 1.064 vs Strong 0.703 / 1.436) |
  The
 L96/QG/L63 number tables are under `reports/*/outputs/`.

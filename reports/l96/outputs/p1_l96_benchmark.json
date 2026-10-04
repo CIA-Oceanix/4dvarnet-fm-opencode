@@ -390,6 +390,19 @@
         }
       },
       {
+        "label": "Weak-4DVar",
+        "params": "q 0.03 / 0.3, 40 it",
+        "flag": "",
+        "seeds": "\u2014",
+        "rmse": {
+          "reg": {
+            "s0": 0.6946737170219421,
+            "s1": 1.0641740560531616
+          },
+          "can": null
+        }
+      },
+      {
         "label": "ETKS, 100 members",
         "params": "\u03bb 1.05 / 2.5",
         "flag": "ensemble size: 100 members (the benchmark and the learned ensembles use 30), inflation re-selected on the validation windows at N=100",
