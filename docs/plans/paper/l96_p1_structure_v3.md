@@ -1,6 +1,6 @@
 # P1 — paper structure v3: the error chain, read through flow matching
 
-**Status:** SCOPING — third revision of the P1 structure (2026-10-03). It combines the **error decomposition** of the 2026-10-02 presentation (irreducible / restriction / misspecification / approximation; read in `l96_p1_structure_v2.md`) with **flow matching as a generic representation of any DA scheme**, including the definition of the FM metric FMS_τ (`docs/results/l96_p1_fm_score.md`). It supersedes the outlines of v1 (`l96_p1_structure_revision.md` §4) and v2 (§3); v2 §5 (slide numbers to update) still applies. The LaTeX has not been touched.
+**Status:** SCOPING — third revision of the P1 structure (2026-10-03). It combines the **error decomposition** of the 2026-10-02 presentation (irreducible / restriction / misspecification / approximation; read in `l96_p1_structure_v2.md`) with **flow matching as a generic representation of any DA scheme**, including the definition of the FM metric FMS_τ (`docs/results/l96_p1_fm_score.md`). It supersedes the outlines of v1 (`l96_p1_structure_revision.md` §4) and v2 (§3); v2 §5 (slide numbers to update) still applies. The LaTeX has not been touched. **Superseded by `docs/plans/paper/l96_p1_structure_v4.md` (detailed draft: v2 narrative + this doc's metric, flow matching kept bounded); §3 here remains the derivation reference.**
 
 ## 1. The idea in one paragraph
 
