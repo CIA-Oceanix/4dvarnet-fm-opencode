@@ -24,8 +24,9 @@ A single draw from a generative model is a strictly worse estimator than its ens
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | ETKF | λ 1.15 / 2.5 | — | 0.610 ± 0.148 | 1.409 ± 0.230 | 0.679 ± 0.243 | 1.407 ± 0.308 | 2.31 | 0.270 (0.758) | 0.306 (0.786) | 0.61 / 0.72 |  |
 | EnKF | λ 1.2 / 3.0 | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 | 2.21 | 0.287 (0.763) | 0.320 (0.837) | 0.65 / 0.76 |  |
-| ETKS | λ 1.15 / 2.5 | — | **0.497 ± 0.164** | **1.338 ± 0.224** | **0.572 ± 0.258** | **1.347 ± 0.298** | 2.69 | 0.238 (0.771) | 0.269 (0.744) | 0.41 / 0.54 |  |
+| ETKS | λ 1.15 / 2.5 | — | **0.497 ± 0.164** | 1.338 ± 0.224 | **0.572 ± 0.258** | **1.347 ± 0.298** | 2.69 | 0.238 (0.771) | 0.269 (0.744) | 0.41 / 0.54 |  |
 | Strong-4DVar | — | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 2.04 | — (—) | — (—) | — / — |  |
+| Weak-4DVar | q 0.03 / 0.3, 40 it | — | 0.695 ± 0.191 | **1.064 ± 0.182** | — | — | 1.53 | — (—) | — | — / — |  |
 | *ETKS, 100 members* | λ 1.05 / 2.5 | — | 0.393 ± 0.106 | 1.338 ± 0.221 | 0.463 ± 0.237 | 1.335 ± 0.297 | 3.41 | 0.179 (0.769) | 0.206 (0.733) | 0.46 / 0.51 | ensemble size: 100 members (the benchmark and the learned ensembles use 30), inflation re-selected on the validation windows at N=100 |
 
 ## 2. Deterministic point estimators
@@ -76,7 +77,7 @@ Best regular / random S0 of each family: deterministic DirectUNet-M 0.340 / 0.45
 
 - **Deterministic and flow matching are level under the benchmark recipe**: the best flow is 0.2% behind DirectUNet on the regular set (0.341 vs 0.340), within the seed sd (0.002). What the flows add is an ensemble (CRPS 0.150), under-dispersed (spread/RMSE 0.63), not a better mean. Under the P1 protocol (annex A: fixed observing system, frozen per-window noise, 400 epochs) the best flow led DirectUNet by 27% (0.341 vs 0.470): DirectUNet overfit the frozen noise, so that gap is a training-protocol artefact, not a property of flow matching.
 - **SDA trails by 33%** at S0 regular as a stand-alone scheme, but its guided sampler is the best refinement of a DirectUNet estimate: the hybrid reaches 0.293 / 0.367 (regular / random S0), the best of every row.
-- **The S1/S0 ratio separates the two worlds.** Learned schemes stay flat under model error (0.99-1.03) because they never use a forward model; the DA baselines degrade 2.0-2.7x, since their forward operator carries the bias. At S0 the best DA (ETKS 0.497) is 46% behind the best learned scheme with 30 members, 16% with 100 members (flagged row); at S1 its RMSE is 4.0x the best learned scheme's at either size.
+- **The S1/S0 ratio separates the two worlds.** Learned schemes stay flat under model error (0.99-1.03) because they never use a forward model; the DA baselines degrade 1.5-2.7x, since their forward operator carries the bias. At S0 the best DA (ETKS 0.497) is 46% behind the best learned scheme with 30 members, 16% with 100 members (flagged row); at S1 its RMSE is 4.0x the best learned scheme's at either size.
 - **The flows' tau=0 mean as a point estimator**: the best (PredictStateCFM-M (tau=0)) scores 0.430 at regular S0, against 0.341 for the same flow's full sampler and 0.340 for DirectUNet (+26%), at 30 model calls against 1. Under the benchmark recipe the accuracy is carried by the sampler, not by the tau=0 head (the P1-protocol flows of annex A.1 had the opposite ordering against DirectUNet).
 - Tier (S+ / M / L), CFM parameterization and SDA conditioning comparisons exist only under the P1 protocol: annex A.
 

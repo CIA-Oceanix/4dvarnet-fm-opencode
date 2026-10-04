@@ -71,7 +71,8 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/fm_score/fm_score_p1_400ep.json` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/scale/` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/l96_benchmark_default.old.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
-| `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md`, `docs/results/l96_etks_default_inflation.md` |
+| `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md`, `docs/results/l96_etks_default_inflation.md`, `docs/results/l96_weak4dvar.md` |
+| `reports/l96/outputs/p1_l96_benchmark.md` | `docs/results/l96_weak4dvar.md` |
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
 | `reports/l96/outputs/da_inflation_sweep/` | `docs/results/l96_da_inflation_post291.md` |

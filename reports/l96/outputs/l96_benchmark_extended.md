@@ -35,6 +35,7 @@ The current L96 benchmark (it supersedes the frozen 400-epoch snapshot `l96_benc
 7. **Marginal value of observations**: the Strong-4D-Var collapse under model error survives the fast_weights fix (6.4-7.0x); the filters keep most of the value of observations: 1.1x at the original setting, 1.6-1.7x at the old benchmark inflation, 1.8-1.9x at the current one (ETKF 1.15 / 2.5, EnKF 1.2 / 3.0).
 8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, one shared trajectory) gives regular / random S0 0.327 / 0.429 vs 0.341 / 0.443 for a single network, with unchanged calibration -- at 3x the parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).
 9. **DA ensemble size (sensitivity)**: the 30-member DA rows are sampling-limited at S0. With 100 members (inflation re-selected on the validation windows, S0 1.05 / S1 2.5) the ETKS reaches regular / random S0 0.393 / 0.463 vs 0.497 / 0.572 at 30 members, but S1 barely moves (1.338 / 1.335 vs 1.338 / 1.347): more members fix the sampling error, not the model error. The benchmark keeps 30 members (the learned ensembles' size); these rows bound what a larger ensemble buys.
+10. **Weak-constraint 4D-Var**: a model-error control per time step (whitened, scale q tuned per case on the validation windows, LBFGS 40 iterations) leaves S0 level with Strong-4D-Var (0.695 vs 0.703, q 0.03) and cuts S1 by 26% (1.064 vs 1.436, q 0.3): representing model error converts part of the hard constraint's misspecification. At S1 it is the best DA row, ahead of the ETKS (1.338), and still 3.2x the best learned scheme's RMSE. Regular grid only (`docs/results/l96_weak4dvar.md`).
 
 ## 1. Main table
 
@@ -45,6 +46,7 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | DA | ETKF | — | 0.610 ± 0.148 | 1.409 ± 0.230 | 0.679 ± 0.243 | 1.407 ± 0.308 | 1.11 | — |
 | DA | EnKF | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 | 1.10 | — |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 1.06 | — |
+| DA | Weak-4DVar (model-error scale q S0 0.03 / S1 0.3) | — | 0.695 ± 0.191 | 1.064 ± 0.182 | — | — | — | — |
 | DA | ETKS | — | 0.497 ± 0.164 | 1.338 ± 0.224 | 0.572 ± 0.258 | 1.347 ± 0.298 | 1.15 | — |
 | DA | ETKF, pre-#295 inflation S0 1.5 / S1 2.0 (same run as the next row) | — | 0.707 ± 0.134 | 1.479 ± 0.240 | 0.863 ± 0.221 | 1.376 ± 0.289 | 1.22 | — |
 | DA | ETKS, inflation S0 1.5 / S1 2.0 | — | 0.582 ± 0.123 | 1.400 ± 0.230 | 0.770 ± 0.253 | 1.282 ± 0.295 | 1.32 | — |

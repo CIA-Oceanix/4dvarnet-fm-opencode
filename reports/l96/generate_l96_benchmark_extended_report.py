@@ -79,6 +79,13 @@ ETKS100 = HERE / "etks100_2026-10-02"
 ETKS100_INF = {"s0": "1.05", "s1": "2.5"}
 ETKS100_ROWS = (("ETKF, 100 members, inflation S0 1.05 / S1 2.5 (filter pass of the next row)", "ETKF"),
                 ("ETKS, 100 members, inflation S0 1.05 / S1 2.5 (ensemble-size sensitivity)", "ETKS"))
+# Weak-4DVar (L96Weak4DVar, whitened controls, LBFGS 40 iterations per 500-step sub-window): model-error scale
+# q selected per case on the validation windows (docs/results/l96_weak4dvar.md); regular grid only -- its
+# observation cost does not mask missing channels yet, so it has no random-layout row.
+WEAK4DVAR = HERE / "weak4dvar_2026-10-04" / ("l96_baselines_trajectories_dws500_s0c_test_weak4dvar-qs0-0.03_s1-0.3-it40"
+                                             "_obsj2_int100_fw_dafw.npz")
+WEAK4DVAR_Q = {"s0": "0.03", "s1": "0.3"}
+WEAK4DVAR_LABEL = "Weak-4DVar (model-error scale q S0 0.03 / S1 0.3)"
 OUT = ROOT / "reports/l96/outputs"
 CACHE = ROOT / "experiments" / "l96_benchmark_extended_metrics.json"
 CASES = ("s0", "s1")
@@ -196,6 +203,10 @@ def da_main() -> list[dict]:
             rec["can"][c] = {"rmse": rr, "crps": float(p[f"{c}_{k}_crps_all_obs"].mean()) if m != "Strong-4DVar" else None,
                              "sp": float(p[f"{c}_{k}_spread_all_obs"].mean() / rr.mean()) if m != "Strong-4DVar" else None}
         out.append(rec)
+    z = np.load(WEAK4DVAR)
+    out.append({"label": WEAK4DVAR_LABEL, "can": None,
+                "reg": {c: {"rmse": G(np.sqrt(((sel(z[f"{c}_Weak_4DVar_trajectories"]) - tr[c]) ** 2).mean(1)))["all_obs"],
+                            "crps": None, "sp": None} for c in CASES}})
     for label, inf, enkf, m in ETKS_ROWS:
         z = np.load(HERE / ETKS_REG.format(inf=inf, enkf=enkf))
         p = np.load(DAHERE / ETKS_CAN.format(inf=inf))
@@ -218,6 +229,17 @@ def da_main() -> list[dict]:
                            "sp": float(G(z[f"{c}_{m}_spread"])["all_obs"].mean() / r.mean())}
         out.append(rec)
     return out
+
+
+def check_weak4dvar() -> list[str]:
+    """The assembled Weak-4DVar rows (scripts/assemble_weak4dvar_bench.py) name the regular test set and the q per case."""
+    d = json.loads(WEAK4DVAR.with_suffix(".json").read_text())
+    errors = []
+    if os.path.realpath(d["test_set"]) != os.path.realpath(REG_TEST):
+        errors.append(f"{WEAK4DVAR}: built on {d['test_set']}, not {REG_TEST}")
+    if d["q_var_scale"] != WEAK4DVAR_Q or d["max_iter"] != 40:
+        errors.append(f"{WEAK4DVAR}: q {d['q_var_scale']} / {d['max_iter']} iterations, expected {WEAK4DVAR_Q} / 40")
+    return errors
 
 
 def check_etks100() -> list[str]:
@@ -273,6 +295,9 @@ def main_tables(da: list[dict], learned: list[dict]) -> list[str]:
          "| group | scheme | seeds | regular S0 | regular S1 | random S0 | random S1 | random/regular S0 | seed sd (reg S0) |",
          "|---|---|---|---|---|---|---|---|---|"]
     for r in da:
+        if r["can"] is None:
+            A.append(f"| DA | {r['label']} | — | {ms(r['reg']['s0']['rmse'])} | {ms(r['reg']['s1']['rmse'])} | — | — | — | — |")
+            continue
         A.append(f"| DA | {r['label']} | — | {ms(r['reg']['s0']['rmse'])} | {ms(r['reg']['s1']['rmse'])} | {ms(r['can']['s0']['rmse'])} | "
                  f"{ms(r['can']['s1']['rmse'])} | {r['can']['s0']['rmse'].mean() / r['reg']['s0']['rmse'].mean():.2f} | — |")
     for r in learned:
@@ -706,7 +731,18 @@ def findings(da, learned) -> list[str]:
              f"at 30 members, but S1 barely moves ({dm(e100, 'reg', 's1'):.3f} / {dm(e100, 'can', 's1'):.3f} vs "
              f"{dm(e30, 'reg', 's1'):.3f} / {dm(e30, 'can', 's1'):.3f}): more members fix the sampling error, not the model "
              "error. The benchmark keeps 30 members (the learned ensembles' size); these rows bound what a larger "
-             "ensemble buys.\n")
+             "ensemble buys.")
+    w, st = dr[WEAK4DVAR_LABEL], dr["Strong-4DVar"]
+    best = min((r for r in learned if r["reg"] is not None and r["group"].startswith("Benchmark default")),
+               key=lambda r: float(r["reg"]["s1"]["rmse"].mean()))
+    A.append(f"10. **Weak-constraint 4D-Var**: a model-error control per time step (whitened, scale q tuned per case on the "
+             f"validation windows, LBFGS 40 iterations) leaves S0 level with Strong-4D-Var ({dm(w, 'reg', 's0'):.3f} vs "
+             f"{dm(st, 'reg', 's0'):.3f}, q 0.03) and cuts S1 by {100 * (1 - dm(w, 'reg', 's1') / dm(st, 'reg', 's1')):.0f}% "
+             f"({dm(w, 'reg', 's1'):.3f} vs {dm(st, 'reg', 's1'):.3f}, q 0.3): representing model error converts part of the "
+             "hard constraint's misspecification. At S1 it is "
+             + ("the best DA row, ahead of the ETKS" if dm(w, 'reg', 's1') < dm(dr['ETKS'], 'reg', 's1') else "behind the ETKS")
+             + f" ({dm(dr['ETKS'], 'reg', 's1'):.3f}), and still {dm(w, 'reg', 's1') / dm(best, 'reg', 's1'):.1f}x the best "
+             "learned scheme's RMSE. Regular grid only (`docs/results/l96_weak4dvar.md`).\n")
     return A
 
 
@@ -722,6 +758,7 @@ def main() -> None:
     for inf in sorted({inf for _, inf, _, _ in ETKS_ROWS}):
         errors += check_da(str(DAHERE / ETKS_CAN.format(inf=inf)), manifest)
     errors += check_etks100()
+    errors += check_weak4dvar()
     for sub, root in (("l96_testsets_factorial", FACT), ("l96_testsets_ood", OOD)):
         for ts in sorted((SHARED / sub).glob("l96_testset_*.pt")):
             cell = ts.stem.replace("l96_testset_", "")
