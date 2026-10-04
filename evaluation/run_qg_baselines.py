@@ -759,6 +759,48 @@ def per_layer_for(cfg):
     return cfg.ny * cfg.nx
 
 
+def spectral_b_sqrt(lead: torch.Tensor, nlayers: int, ny: int, nx: int, device) -> callable:
+    """Square root of a spectral climatological background covariance for the QG q-state.
+
+    Anomalies of the lead buffer ``lead`` (T, nlayers * ny * nx), taken about
+    their time mean, are Fourier-transformed per layer. For each isotropic
+    wavenumber shell an (nlayers x nlayers) covariance between the layers'
+    coefficients is averaged over frames and wavevectors, and its Cholesky
+    factor L(k) is kept. The returned map sends a white control w (..., state)
+    to the increment irfft2(L(k) rfft2(w)) / sqrt(ny nx), whose spectral
+    covariance is the climatological one: smooth, homogeneous and correlated
+    between layers. The mean (k = 0) mode is not controlled.
+    """
+    a = lead.double().to(device)
+    a = (a - a.mean(0, keepdim=True)).reshape(-1, nlayers, ny, nx)
+    z = torch.fft.rfft2(a, dim=(-2, -1))
+    ky = torch.fft.fftfreq(ny, device=device) * ny
+    kx = torch.fft.rfftfreq(nx, device=device) * nx
+    shell = torch.sqrt(ky[:, None] ** 2 + kx[None, :] ** 2).round().long()
+    n_shell = int(shell.max()) + 1
+    cov = torch.zeros(n_shell, nlayers, nlayers, dtype=torch.complex128, device=device)
+    zz = torch.einsum("tiyx,tjyx->yxij", z, z.conj()) / z.shape[0]
+    cov.index_add_(0, shell.flatten(), zz.reshape(-1, nlayers, nlayers))
+    count = torch.bincount(shell.flatten(), minlength=n_shell).clamp_min(1).to(torch.float64)
+    cov = (cov / count[:, None, None]).real
+    eye = torch.eye(nlayers, dtype=torch.float64, device=device)
+    jitter = 1e-10 * cov.diagonal(dim1=-2, dim2=-1).sum(-1).clamp_min(1e-300)[:, None, None]
+    chol = torch.linalg.cholesky(cov + jitter * eye)
+    chol[0] = 0.0
+    lk = chol[shell].to(torch.complex64)
+    norm = float(ny * nx) ** 0.5
+
+    def b_sqrt(w: torch.Tensor) -> torch.Tensor:
+        lead_shape = w.shape[:-1]
+        g = w.reshape(-1, nlayers, ny, nx)
+        wk = torch.fft.rfft2(g, dim=(-2, -1))
+        xk = torch.einsum("yxij,bjyx->biyx", lk, wk.to(torch.complex64))
+        x = torch.fft.irfft2(xk, s=(ny, nx), dim=(-2, -1)) / norm
+        return x.reshape(*lead_shape, nlayers * ny * nx).to(w.dtype)
+
+    return b_sqrt
+
+
 class _QG4DVarResult:
     __slots__ = ("trajectory",)
 
@@ -806,6 +848,8 @@ class QG4DVar:
         self.state_dim = dyn.state_dim
         self.x0_bg = None
         self.r_var = 1.0
+        self.b_sqrt = None
+        self.n_fallback = 0
 
     def _forward_strong(self, x0, win, force, clip):
         traj = [x0]
@@ -818,9 +862,10 @@ class QG4DVar:
 
     def _forward_weak(self, x0, u, win, force, Lq, clip):
         traj = [x0]
+        du = Lq * (self.b_sqrt(u) if self.b_sqrt is not None else u)
         for t in range(1, win):
             s = self.dyn.step(traj[-1], force[t - 1])
-            s = s + Lq * u[t]
+            s = s + du[t]
             if clip is not None:
                 s = torch.clamp(s, -clip, clip)
             traj.append(s)
@@ -880,31 +925,45 @@ class QG4DVar:
         sigma = float(xb.std().clamp_min(1e-12))
         L = self.b_var_scale * sigma
         bg = xb
+        if self.b_sqrt is not None:
+            L = self.b_var_scale
+            b_sqrt = self.b_sqrt
+        else:
+            def b_sqrt(w):
+                return w
 
         if self.mode == "strong":
             w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
             params = [w_ctrl]
 
             def loss_fn():
-                x0 = bg + L * w_ctrl
+                x0 = bg + L * b_sqrt(w_ctrl)
                 traj = self._forward_strong(
                     x0, win, win_force, clip=_QG_STATE_CLIP)
                 Jb = 0.5 * torch.sum(w_ctrl ** 2)
                 Jo = self._obs_cost(traj, win_obs, win_mask, start)
                 return 0.5 * Jo / self.r_var + Jb, traj
 
+            with torch.no_grad():
+                j_bg = float(loss_fn()[0])
             self._optimize(loss_fn, params, bg)
-            x_ctrl = bg + L * w_ctrl.detach()
+            with torch.no_grad():
+                j_opt = float(loss_fn()[0])
+            if not (math.isfinite(j_opt) and j_opt <= j_bg):
+                self.n_fallback += 1
+                with torch.no_grad():
+                    w_ctrl.zero_()
+            x_ctrl = bg + L * b_sqrt(w_ctrl.detach())
             return self._forward_strong(
                 x_ctrl, win, win_force, clip=_QG_STATE_CLIP).detach()
 
-        Lq = self.q_var_scale * sigma
+        Lq = self.q_var_scale * (1.0 if self.b_sqrt is not None else sigma)
         w_ctrl = torch.zeros(sd, device=self.device, requires_grad=True)
         u = torch.zeros((win, sd), device=self.device, requires_grad=True)
         params = [w_ctrl, u]
 
         def loss_fn():
-            x0 = bg + L * w_ctrl
+            x0 = bg + L * b_sqrt(w_ctrl)
             traj = self._forward_weak(
                 x0, u, win, win_force, Lq, clip=_QG_STATE_CLIP)
             Jb = 0.5 * torch.sum(w_ctrl ** 2)
@@ -912,13 +971,26 @@ class QG4DVar:
             Jo = self._obs_cost(traj, win_obs, win_mask, start)
             return 0.5 * Jo / self.r_var + Jb + Jq, traj
 
+        with torch.no_grad():
+            j_bg = float(loss_fn()[0])
         self._optimize(loss_fn, params, bg)
-        x0 = bg + L * w_ctrl.detach()
+        with torch.no_grad():
+            j_opt = float(loss_fn()[0])
+        if not (math.isfinite(j_opt) and j_opt <= j_bg):
+            self.n_fallback += 1
+            with torch.no_grad():
+                w_ctrl.zero_()
+                u.zero_()
+        x0 = bg + L * b_sqrt(w_ctrl.detach())
         return self._forward_weak(
             x0, u.detach(), win, win_force, Lq,
             clip=_QG_STATE_CLIP).detach()
 
     def assimilate(self, observations, obs_mask, forcing, true_state=None):
+        """Cycle 4D-Var over the window. A sub-window whose optimized cost is not
+        finite or exceeds the cost at the background (control = 0), or whose
+        analysis trajectory is not finite, falls back to the background forecast
+        for that sub-window; ``n_fallback`` counts them."""
         obs = observations.to(self.device)
         mask = obs_mask.to(self.device)
         force = forcing.to(self.device)
@@ -943,17 +1015,15 @@ class QG4DVar:
             win_obs = obs[start:end]
             win_mask = mask[start:end]
             win_force = force[start:end]
-            if wlen != win:
-                # last partial window: run at its actual length by temporarily
-                # shrinking the cycle window.
-                saved = self.da_window_steps
-                self.da_window_steps = wlen
-                traj = self._solve_window(
-                    current_bg, win_obs, win_mask, start, win_force)
-                self.da_window_steps = saved
-            else:
-                traj = self._solve_window(
-                    current_bg, win_obs, win_mask, start, win_force)
+            saved = self.da_window_steps
+            self.da_window_steps = wlen
+            traj = self._solve_window(
+                current_bg, win_obs, win_mask, start, win_force)
+            if not torch.isfinite(traj).all():
+                self.n_fallback += 1
+                traj = self._forward_strong(
+                    current_bg, wlen, win_force, clip=_QG_STATE_CLIP).detach()
+            self.da_window_steps = saved
             analysis[start:end] = traj
             current_bg = traj[-1].detach()
 
@@ -968,7 +1038,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         save_traj=None, obs_var_r_scale=1.0,
         da_window_steps=12, optimizer="adam", fourdvar_max_iter=40,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
-        q_var_scale=1.0, fourdvar_grad_clip=100.0, loc_cross_layer=0.0,
+        q_var_scale=1.0, fourdvar_grad_clip=100.0, fourdvar_b="diag", loc_cross_layer=0.0,
         init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root", enks_lag=None,
         enks_taper_steps=None):
     device = device or torch.device(
@@ -991,6 +1061,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         d = ds[scen]
         spread_t0_list = []
         spread_ratio_list = []
+        fallback_list = []
         mean_init_lag_list = []
         free_ra = []
         method = None
@@ -1100,6 +1171,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                         device=device)
                     method.r_var = float(r_var)
                     method.x0_bg = shared_init if init == "lagged" else None
+                    if fourdvar_b == "spectral":
+                        if init != "lagged" or is_qg1l or is_psi_state:
+                            raise NotImplementedError("spectral B needs the lagged two-layer q-state")
+                        method.b_sqrt = spectral_b_sqrt(lead, nlayers, dyn.inner.ny, dyn.inner.nx, device)
+                    elif fourdvar_b != "diag":
+                        raise ValueError(f"unknown fourdvar_b: {fourdvar_b}")
                 else:
                     raise ValueError(f"unknown method_name: {method_name}")
             else:  # obs_var in ("psi", "psi_state")
@@ -1148,6 +1225,12 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                         device=device)
                     method.r_var = float(r_var)
                     method.x0_bg = shared_init if init == "lagged" else None
+                    if fourdvar_b == "spectral":
+                        if init != "lagged" or is_qg1l or is_psi_state:
+                            raise NotImplementedError("spectral B needs the lagged two-layer q-state")
+                        method.b_sqrt = spectral_b_sqrt(lead, nlayers, dyn.inner.ny, dyn.inner.nx, device)
+                    elif fourdvar_b != "diag":
+                        raise ValueError(f"unknown fourdvar_b: {fourdvar_b}")
                 else:
                     raise ValueError(f"unknown method_name: {method_name}")
             eval_mask = (_combined_obs_mask(w, cfg) if "obs2_mask" in w
@@ -1156,6 +1239,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
                                    forcing=forcing, init_ensemble=init_ensemble,
                                    mask=eval_mask)
             mean_init_lag_list.append(init_lag_val)
+            fallback_list.append(int(getattr(method, "n_fallback", 0)))
             ref = w["true_state"].numpy()
             traj_da = res.trajectory
             if is_psi_state:
@@ -1294,6 +1378,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "mean_init_lag_days": float(np.mean(mean_init_lag_list)) if mean_init_lag_list else None,
             "spread_t0_mean": float(np.mean(spread_t0_list)) if spread_t0_list else None,
             "spread_ratio_list": spread_ratio_list,
+            "fallback_list": fallback_list,
         }
         print(f"{scen}: rmse={da_r:.3e} forecast_rmse={fc_r:.3e} "
               f"improv={summary[scen]['forecast_improvement']:.2f}x "
