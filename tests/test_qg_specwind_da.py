@@ -213,3 +213,22 @@ def test_spectral_b_4dvar_runs_end_to_end(built):
                       b_var_scale=1.0, q_var_scale=0.1, fourdvar_b="spectral")
         s = payload["scenarios"]["test_s0"]
         assert s["expvar_full"] == s["expvar_full"]
+
+
+def test_4dvar_rejects_an_optimization_that_increases_the_cost(built, monkeypatch):
+    from evaluation.run_qg_baselines import QG4DVar
+
+    def bad_optimize(self, loss_fn, params, bg):
+        with torch.no_grad():
+            for p in params:
+                p.fill_(50.0)
+
+    monkeypatch.setattr(QG4DVar, "_optimize", bad_optimize)
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0], cfg)
+    payload = run("strong4dvar", cfg, device=torch.device("cpu"), N_ensemble=4, inflation=1.0,
+                  scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+                  init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, da_window_steps=6,
+                  b_var_scale=1.0, fourdvar_b="spectral")
+    s = payload["scenarios"]["test_s0"]
+    assert s["fallback_list"][0] >= 1 and s["expvar_full"] == s["expvar_full"]

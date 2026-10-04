@@ -944,7 +944,15 @@ class QG4DVar:
                 Jo = self._obs_cost(traj, win_obs, win_mask, start)
                 return 0.5 * Jo / self.r_var + Jb, traj
 
+            with torch.no_grad():
+                j_bg = float(loss_fn()[0])
             self._optimize(loss_fn, params, bg)
+            with torch.no_grad():
+                j_opt = float(loss_fn()[0])
+            if not (math.isfinite(j_opt) and j_opt <= j_bg):
+                self.n_fallback += 1
+                with torch.no_grad():
+                    w_ctrl.zero_()
             x_ctrl = bg + L * b_sqrt(w_ctrl.detach())
             return self._forward_strong(
                 x_ctrl, win, win_force, clip=_QG_STATE_CLIP).detach()
@@ -963,16 +971,26 @@ class QG4DVar:
             Jo = self._obs_cost(traj, win_obs, win_mask, start)
             return 0.5 * Jo / self.r_var + Jb + Jq, traj
 
+        with torch.no_grad():
+            j_bg = float(loss_fn()[0])
         self._optimize(loss_fn, params, bg)
+        with torch.no_grad():
+            j_opt = float(loss_fn()[0])
+        if not (math.isfinite(j_opt) and j_opt <= j_bg):
+            self.n_fallback += 1
+            with torch.no_grad():
+                w_ctrl.zero_()
+                u.zero_()
         x0 = bg + L * b_sqrt(w_ctrl.detach())
         return self._forward_weak(
             x0, u.detach(), win, win_force, Lq,
             clip=_QG_STATE_CLIP).detach()
 
     def assimilate(self, observations, obs_mask, forcing, true_state=None):
-        """Cycle 4D-Var over the window. A sub-window whose analysis trajectory is
-        not finite (the optimizer stepped into a blow-up) falls back to the
-        background forecast for that sub-window; ``n_fallback`` counts them."""
+        """Cycle 4D-Var over the window. A sub-window whose optimized cost is not
+        finite or exceeds the cost at the background (control = 0), or whose
+        analysis trajectory is not finite, falls back to the background forecast
+        for that sub-window; ``n_fallback`` counts them."""
         obs = observations.to(self.device)
         mask = obs_mask.to(self.device)
         force = forcing.to(self.device)
