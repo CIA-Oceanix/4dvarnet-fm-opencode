@@ -138,7 +138,8 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # SEPARATE ("gradsplit+state" -- same two-channel input shape as
 # "subgrad+state", but each channel is a true gradient via its own
 # torch.autograd.grad call instead of a cheap proxy).
-_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "obs-only", "grad-only", "grad+state",
+_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "resid+mask+state",
+                              "residnorm+mask+state", "obs-only", "grad-only", "grad+state",
                               "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
                               "subgrad+state+trueprior", "subgrad+trueprior")
 
@@ -155,6 +156,8 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "obs-only": 1,
     "obs+state": 2,
     "resid+state": 2,
+    "resid+mask+state": 3,
+    "residnorm+mask+state": 4,
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
@@ -641,6 +644,21 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         # at unobserved times and NaN channels instead of y = 0. Same channel
         # count, no prior, so it isolates the obs representation against FDV1.
         return torch.cat([x, (x - obs_clean) * obs_mask], dim=-1)
+    if update_input == "resid+mask+state":
+        # "resid+state" plus the observation mask as an explicit channel block, so
+        # an observed entry with a near-zero residual stays distinguishable from
+        # an unobserved one.
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        return torch.cat([x, (x - obs_clean) * mask, mask], dim=-1)
+    if update_input == "residnorm+mask+state":
+        # "resid+mask+state" with the residual rescaled per sample by its RMS
+        # over the observed entries (detached, recomputed every iteration), and
+        # that RMS fed back as a constant log-RMS channel block.
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        resid = (x - obs_clean) * mask
+        n_obs = mask.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
+        rms = ((resid ** 2).sum(dim=(1, 2), keepdim=True) / n_obs).sqrt().clamp_min(1e-4).detach()
+        return torch.cat([x, resid / rms, mask, torch.log(rms).expand_as(x)], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
         # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
