@@ -142,7 +142,8 @@ def test_eval_only_reloads_the_stats_saved_by_training(built, tmp_path, monkeypa
     out = train_qg_neural._build_specwind_data(
         _eval_args(built), CFG, exp, "cpu", "true", False, None, 1.5, None, None, None, True,
         os.path.join(exp, "specwind_psi_norm_stats.pt"))
-    test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm = out
+    test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm, q_var = out
+    assert q_var is None
     assert train_ds is None and callback is None and len(test_windows) == TINY.n_test
     torch.testing.assert_close(norm["std"], psi["std"])
     torch.testing.assert_close(forcing_norm["mean"], torch.tensor([0.5]))

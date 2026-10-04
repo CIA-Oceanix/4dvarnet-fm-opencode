@@ -6,16 +6,20 @@
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
 #SBATCH --job-name=qg-specwind-neural
-#SBATCH --output=sbatch_logs/qg_specwind_neural_%j.out
-#SBATCH --error=sbatch_logs/qg_specwind_neural_%j.err
+#SBATCH --output=sbatch_logs/qg_specwind_neural_%A_%a.out
+#SBATCH --error=sbatch_logs/qg_specwind_neural_%A_%a.err
 # Round-1 neural schemes on the spectral-wind gyrostat QG benchmark
 # (docs/plans/analysis/qg_specwind_neural.md): trains one config/experiment/G*_specwind.yaml
 # on G5-regenerated windows. rtx8000 because the val split is re-materialized at full
 # resolution and load_full_res_windows refuses another GPU type. Examples:
 #   EXP_ID=G1_direct_unet_tchannels_specwind EPOCHS=2 TAG=e0 sbatch batch/run_qg_specwind_neural_train.sbatch
 #   EXP_ID=G1_direct_unet_tchannels_specwind EPOCHS=50 QSCALE=0.3 TAG=lq0.3 sbatch ...
-# MODEL_TYPE defaults to the YAML's model_type; QSCALE overrides training.q_loss_weight_scale;
-# EXTRA is passed through to train_qg_neural.py.
+#   E1 lambda_q sweep, one array task per scale (throttled to 3 GPUs):
+#   EXP_ID=G1_direct_unet_tchannels_specwind EPOCHS=50 QSCALES="0 0.1 0.3 1 3 10" \
+#     sbatch --array=0-5%3 batch/run_qg_specwind_neural_train.sbatch
+# MODEL_TYPE defaults to the YAML's model_type; QSCALE overrides training.q_loss_weight_scale
+# (QSCALES + an array task picks one per task, tagged e<EPOCHS>_lq<scale>); EXTRA is passed
+# through to train_qg_neural.py.
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -25,7 +29,12 @@ export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NOD
 : "${EXP_ID:?set EXP_ID}"
 SPEC="${SPEC:-qg_specwind_gyrostat_v1}"
 ROOT="${ROOT:-/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/qg_datasets}"
-SEED="${SEED:-0}"; TAG="${TAG:-s${SEED}}"
+SEED="${SEED:-0}"
+if [ -n "${QSCALES:-}" ] && [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+  read -r -a _scales <<< "$QSCALES"; QSCALE="${_scales[$SLURM_ARRAY_TASK_ID]}"
+  TAG="${TAG:-e${EPOCHS:-full}_lq${QSCALE}_s${SEED}}"
+fi
+TAG="${TAG:-s${SEED}}"
 MODEL_TYPE="${MODEL_TYPE:-$("$PY" -c "from omegaconf import OmegaConf; print(OmegaConf.load('config/experiment/${EXP_ID}.yaml').model_type)")}"
 OUT="experiments/qg_specwind_neural/${EXP_ID}_${TAG}"
 ARGS=(--model-type "$MODEL_TYPE" --exp-id "$EXP_ID" --exp-dir "$OUT"

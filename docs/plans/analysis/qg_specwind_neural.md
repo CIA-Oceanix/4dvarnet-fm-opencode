@@ -1,6 +1,6 @@
 # Neural schemes on the spectral-wind (gyrostat) QG benchmark — DirectUNet, CFM, SDA — experiment design
 
-**Status:** v3 (2026-10-04). **Training code and configs implemented** (§5,
+**Status:** PLAN v3 (2026-10-04). **Training code and configs implemented** (§5,
 "done" column): the train-time observing system (§4.3), the obs-mask input, the
 empirical λ_q, the fixed val draw, the G2 / G3 models and their training
 branch, and the S / M / L DirectUNet tiers. E0 (smoke + timing) submitted
@@ -332,7 +332,7 @@ random-τ CFM loss with the q term on x̂₁, the `hidden_channels` /
 | **P4** QG Vanilla CFM | the T-channels flow; lift the `train_tau_0_only=True` guard in `train_qg_neural.py`; q-loss on x̂₁; `ens30_no20` sampler returning members to P1 | medium |
 | **P6** QG SDA | `UnconditionalPriorCFM` on the 2D backbone; `evaluation/sda_sampler.py` ported to the QG state layout; gw/R sweep script | medium |
 | **P3** G1 tiers | plumb `model.hidden_channels` (and `num_res_blocks`) from the experiment YAML into `build_model` for `direct_unet_tchannels`; today it is a dead field and every model is built at `DEFAULT_HIDDEN_CHANNELS`. `resolved_config.yaml` must record the built value, and `model_factory` must rebuild from it at eval. Configs for G1-S and G1-L. Test: a YAML tier builds the stated param count and round-trips through `resolved_config.yaml` | small |
-| **P7** report | neural rows in `qg_specwind_da_report.md` (overview + per-field tables, bold / italic ranking); results note `docs/results/qg_specwind_neural.md` | small |
+| **P7** report | neural rows in `qg_specwind_da_report.md` (overview + per-field tables, bold / italic ranking); results note `qg_specwind_neural.md` in `docs/results/` | small |
 
 **Tests:**
 - P1's obs equal the DA driver's on 3 windows;
@@ -358,7 +358,7 @@ Every PR is based on master.
 | step | runs | notes |
 |---|---|---|
 | E-DA | P2: `base_noobs` val re-tuning, then the test re-runs | in parallel with E0–E2 |
-| E0 smoke + timing | G1 and G2 for 2 epochs: s/epoch, regeneration time per round, peak memory, Var(q_daily) | sets the batch size and confirms the budget |
+| E0 smoke + timing (**done**, §7) | G1, G2 and G3 for 2 epochs: s/epoch, regeneration time per round, peak memory, Var(q_daily) | sets the batch size and confirms the budget |
 | E1 λ_q sweep | G1, 6 values × 50 epochs, val score at 2 h | §4.2 |
 | E2 G1 | 200 epochs, then test (S0 = S1), forced and coupled | + linear-interpolation and daily-mean diagnostics |
 | E2b G1 tiers | G1-S and G1-L, 200 epochs at G1's λ_q, then test like E2 (§3.1) | in parallel with E2 |
@@ -367,16 +367,33 @@ Every PR is based on master.
 | E5 seeds | 3 seeds for G1 / G1-S / G1-L / G2 / G3 | report rows; tier rows in a capacity table next to the overview |
 | E6 ablation + density | G1 trained at fixed C = 3; G1 / G2 at 3, 4, 6, 12, 30 cols/day next to the DA curve (report §5; 1–2 only as extrapolation) | after E5 |
 
-## 7. Compute (to be firmed up by E0)
+## 7. Compute
+
+**E0 measured (2026-10-04, jobs 58491 / 58492, RTX 8000, batch 2, 2 epochs):**
+
+| quantity | G1 (M) | G2 (M) |
+|---|---|---|
+| train epoch (500 steps) + val pass (500 windows) | 70 s | 74 s |
+| regeneration round (1000 windows) | 394 s | 394 s |
+| peak host memory | 40 GB | 40 GB |
+| Var(q_daily), first draw | 4.86e-10, so λ₀ = 2.06e9 | same |
+
+- **Per 200-epoch row:** 200 × ~72 s + 40 rounds × 394 s ≈ 4 h + 4.4 h ≈
+  **8–9 GPU-hours**. Regeneration is about half of it (R5). `--regen-every 10`
+  would save about 2 h per row but halves the fresh windows the network sees,
+  so it stays at 5.
+- **Batch size** stays at 2: the step time is set by kernel launches, so a
+  larger batch mostly changes the optimization, and every family uses the same
+  value.
+- λ₀ = 1/Var(q_daily) = 2.06e9 is within 20% of the legacy storm-forced 2.54e9.
 
 - **Training.**
-  - About 1–2 GPU-days per 200-epoch row.
+  - About 8–9 GPU-hours per 200-epoch row (E0, above).
   - Round 1 needs 3 families × 3 seeds, the two extra G1 tiers × 3 seeds,
-    the λ_q sweep (6 short runs ≈ 1.5 rows) and the ablation: **about 18–35
-    GPU-days**.
+    the λ_q sweep (6 short runs ≈ 1.5 rows) and the ablation: about 17
+    row-equivalents, **about 6–7 GPU-days**.
   - The tiers add 6 rows. Their per-step cost is close to M's (§3.1), so they
     add about as much as 6 M-tier rows, not more.
-  - These are placeholders until E0 measures the epoch time.
   - Jobs keep to at most about half the Odyssey_GPU nodes, with throttled
     arrays.
 - **Inference** is negligible next to DA (30 members × 20 steps, or 10 guided
