@@ -167,3 +167,68 @@ def test_localized_enks_runs_end_to_end_and_smooths_the_filter(built, tmp_path):
     assert smooth["expvar_full"] == smooth["expvar_full"]
     assert smooth["rmse_list"] != filt["rmse_list"]
     assert len(smooth["spread_ratio_list"]) == 2
+
+
+@pytest.mark.parametrize("method", ["strong4dvar", "weak4dvar"])
+def test_4dvar_runs_end_to_end_on_spectral_wind_windows(built, method):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    payload = run(method, cfg, device=torch.device("cpu"), N_ensemble=4, inflation=1.0,
+                  scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+                  init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, da_window_steps=6,
+                  optimizer="lbfgs", fourdvar_max_iter=5, fourdvar_lr=1.0, fourdvar_grad_clip=1000.0,
+                  b_var_scale=1.0, q_var_scale=0.1)
+    s = payload["scenarios"]["test_s0"]
+    assert s["expvar_full"] == s["expvar_full"] and s["crps_is_deterministic"]
+
+
+def test_spectral_b_sqrt_reproduces_the_climatological_covariance():
+    from evaluation.run_qg_baselines import spectral_b_sqrt
+    g = torch.Generator().manual_seed(0)
+    ny = nx = 16
+    base = torch.randn(400, ny, nx, generator=g, dtype=torch.float64)
+    kk = torch.sqrt((torch.fft.fftfreq(ny) * ny)[:, None] ** 2 + (torch.fft.rfftfreq(nx) * nx)[None, :] ** 2)
+    smooth = torch.fft.irfft2(torch.fft.rfft2(base) * torch.exp(-kk / 3.0), s=(ny, nx))
+    lead = torch.stack([smooth, 0.6 * smooth + 0.3 * torch.randn(400, ny, nx, generator=g,
+                                                                  dtype=torch.float64)], 1)
+    lead = lead.reshape(400, -1)
+    b = spectral_b_sqrt(lead, 2, ny, nx, "cpu")
+    x = b(torch.randn(4000, 2 * ny * nx, generator=g, dtype=torch.float64)).reshape(4000, 2, ny, nx)
+    clim = (lead - lead.mean(0)).reshape(400, 2, ny, nx)
+    for li in range(2):
+        assert float(x[:, li].var()) == pytest.approx(float(clim[:, li].var()), rel=0.1)
+    corr = lambda f: float(torch.corrcoef(torch.stack([f[:, 0].flatten(), f[:, 1].flatten()]))[0, 1])  # noqa: E731
+    assert corr(x) == pytest.approx(corr(clim), abs=0.05)
+    assert abs(float(x.mean((-2, -1)).abs().max())) < 1e-6
+
+
+def test_spectral_b_4dvar_runs_end_to_end(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    for method in ("strong4dvar", "weak4dvar"):
+        payload = run(method, cfg, device=torch.device("cpu"), N_ensemble=4, inflation=1.0,
+                      scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+                      init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, da_window_steps=6,
+                      optimizer="lbfgs", fourdvar_max_iter=5, fourdvar_lr=1.0, fourdvar_grad_clip=1000.0,
+                      b_var_scale=1.0, q_var_scale=0.1, fourdvar_b="spectral")
+        s = payload["scenarios"]["test_s0"]
+        assert s["expvar_full"] == s["expvar_full"]
+
+
+def test_4dvar_rejects_an_optimization_that_increases_the_cost(built, monkeypatch):
+    from evaluation.run_qg_baselines import QG4DVar
+
+    def bad_optimize(self, loss_fn, params, bg):
+        with torch.no_grad():
+            for p in params:
+                p.fill_(50.0)
+
+    monkeypatch.setattr(QG4DVar, "_optimize", bad_optimize)
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0], cfg)
+    payload = run("strong4dvar", cfg, device=torch.device("cpu"), N_ensemble=4, inflation=1.0,
+                  scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+                  init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, da_window_steps=6,
+                  b_var_scale=1.0, fourdvar_b="spectral")
+    s = payload["scenarios"]["test_s0"]
+    assert s["fallback_list"][0] >= 1 and s["expvar_full"] == s["expvar_full"]
