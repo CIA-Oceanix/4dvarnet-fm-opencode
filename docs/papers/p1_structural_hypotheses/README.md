@@ -1,11 +1,16 @@
-# P1 draft — "The structural hypotheses that bound data assimilation"
+# P1 draft — "Restriction or misspecification? Dissecting the errors of classical and neural data assimilation"
 
-First draft of the DA-venue diagnosis paper. Target: **JAMES**.
+Draft of the DA-venue diagnosis paper (structure v4, 2026-10-04). Target: **QJRMS or JAMES**.
 
-**Source of truth is `docs/plans/paper/multi_p1_structural_hypotheses.md` (SCOPING
-v2), not this directory.** The draft renders that document's argument; it does
-not supersede it. If a number changes in the scoping doc or the underlying
-report, change it here too.
+**Source of truth is `docs/plans/paper/l96_p1_structure_v4.md` (SCOPING, detailed structure), not this
+directory.** `main.tex` renders that structure: error chain (irreducible / restriction / misspecification /
+approximation), extended along τ with the flow-matching score FMS_τ, and three questions (perfect model,
+model error, form of the prior). If a number changes in the scoping doc or the underlying report, change it
+here too.
+
+**Previous draft:** `main.old.tex` (with `sections/*.tex` and `previous_draft.tex`) is the structural-hypotheses
+draft (H1–H3b, partition Ψ_mean + Ψ_G + Ψ_NG), kept as is; it still builds (`latexmk -pdf main.old.tex`) and is
+not maintained. Its scoping doc was `docs/plans/paper/multi_p1_structural_hypotheses.md`.
 
 ## Build
 
@@ -114,7 +119,15 @@ Three markers flag what is not yet settled. Grep for them before circulating:
 resting on an unrun experiment says so in the rendered PDF, in red. Do not
 circulate externally until those are resolved or removed.
 
-## Known gaps in this draft
+## Known gaps in the v4 draft (`main.tex`)
+
+- Sections 1–9 are a skeleton with the current numbers; the prose is partial, and `\needsrun` marks the
+  runs listed in the scoping doc §13 (identity along τ, 100-member FMS, Weak-4DVar random layout, M-trained arms,
+  δ sweep, SDA ± forcing).
+- No figures yet (placeholders Fig. 1–8); Appendix A proofs to write.
+- `refs.bib` is still unverified (see below).
+
+## Known gaps in the previous draft (`main.old.tex`)
 
 - **C1 is blocked on D0** (weak-constraint 4D-Var benchmark). The
   implementation landed in #229 but is wired to no driver and its `optimizer`
