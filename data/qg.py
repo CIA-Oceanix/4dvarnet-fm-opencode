@@ -355,11 +355,70 @@ def _generate_random_column_point_observations(
     return obs_groups, mask, col_groups
 
 
+def _generate_uniform_slot_column_observations(
+    dynamics, state: torch.Tensor, field: str, cfg: QGConfig,
+    cols_per_day: int, seed: int,
+):
+    """Upper-layer (psi1) column obs drawn uniformly over the day's
+    (step, column) slots: `cols_per_day` distinct slots per day, sampled
+    without replacement from the `steps_per_day * nx` (12 x 64 = 768 at the
+    reference dt/nx) possible ones. Several columns may share a step and a
+    column may recur at another step of the same day, but no slot is drawn
+    twice. Unlike `_generate_random_column_observations` (one column per
+    step, distinct columns, capped at steps_per_day) this reaches any density
+    up to `steps_per_day * nx`; unlike `_generate_random_column_point_observations`
+    it never draws the same (step, column) twice. `cfg.cols_sampling ==
+    "uniform_slots"`.
+
+    Returns (obs_groups, mask, col_groups) in the same per-time list storage
+    as `_generate_random_column_point_observations`.
+    """
+    T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
+    K = max(1, int(cols_per_day))
+    steps_per_day = max(1, round(86400.0 / cfg.dt))
+    if K > steps_per_day * nx:
+        raise ValueError(f"cols_per_day={K} exceeds the {steps_per_day * nx} "
+                         "(step, column) slots of a day")
+    f = _upper_field(dynamics, state, field)
+    sigma = cfg.obs_noise_std_frac * float(f.std())
+    rng = torch.Generator().manual_seed(seed)
+    mask = torch.zeros(T, dtype=torch.bool)
+    col_groups: list = [None] * T
+    obs_groups: list = [None] * T
+    for day in range(T // steps_per_day):
+        base = day * steps_per_day
+        slots = torch.randperm(steps_per_day * nx, generator=rng)[:K].sort().values
+        for slot in slots.tolist():
+            t, x = base + slot // nx, slot % nx
+            mask[t] = True
+            if col_groups[t] is None:
+                col_groups[t] = []
+                obs_groups[t] = []
+            col_groups[t].append(x)
+            noise = torch.randn(ny, generator=rng) * sigma
+            obs_groups[t].append(f[t, :, x] + noise)
+    for t in range(T):
+        if obs_groups[t] is not None:
+            obs_groups[t] = torch.cat(obs_groups[t])
+    return obs_groups, mask, col_groups
+
+
+# Samplings that store obs as per-time column lists (several columns per step).
+MULTI_COLUMN_SAMPLINGS = ("random", "uniform_slots")
+
+
 def expand_obs_to_grid(window: dict, cfg: QGConfig) -> torch.Tensor:
     """Expand compact column obs to a (T, ny*nx) NaN-padded grid."""
     T, ny, nx = cfg.num_steps, cfg.ny, cfg.nx
     grid = torch.full((T, ny * nx), float("nan"))
-    if "obs_columns" in window:
+    if "obs_columns" in window and isinstance(window["obs_columns"], list):
+        # MULTI_COLUMN_SAMPLINGS storage: per-time x lists, obs concatenated
+        # column by column.
+        rows = torch.arange(ny, dtype=torch.long) * nx
+        for t, cols in enumerate(window["obs_columns"]):
+            for j, x_col in enumerate(cols or ()):
+                grid[t, rows + x_col] = window["obs"][t][j * ny:(j + 1) * ny]
+    elif "obs_columns" in window:
         obs = window["obs"]
         for t in window["obs_mask"].nonzero(as_tuple=False).flatten().tolist():
             x_col = int(window["obs_columns"][t])
@@ -583,6 +642,11 @@ class QGS01Dataset:
                 # ceiling), vs. the default "sequential" mode's `cols_per_day`
                 # distinct single-column steps (capped at steps_per_day/day).
                 obs, obs_mask, obs_cols = _generate_random_column_point_observations(
+                    dyn, traj, cfg.obs_field, cfg,
+                    cfg.cols_per_day, cfg.seed + 4000 + i * 101,
+                )
+            elif cfg.cols_sampling == "uniform_slots":
+                obs, obs_mask, obs_cols = _generate_uniform_slot_column_observations(
                     dyn, traj, cfg.obs_field, cfg,
                     cfg.cols_per_day, cfg.seed + 4000 + i * 101,
                 )

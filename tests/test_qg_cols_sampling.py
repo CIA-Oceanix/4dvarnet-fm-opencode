@@ -136,3 +136,73 @@ def test_etkf_run_smoke_with_cols_sampling_random_above_ceiling():
     s = summary["scenarios"]["test_s0"]
     assert all(torch.isfinite(torch.tensor(v)) for v in
               (s["rmse_mean"], s["metrics_per_field"]["psi"]["full"]["ev"]))
+
+
+def _day_slots(cfg, w):
+    """Per day, the list of observed (step-in-day, x) slots of a list-storage window."""
+    spd = round(86400.0 / cfg.dt)
+    days = [[] for _ in range(cfg.num_steps // spd)]
+    for t, cols in enumerate(w["obs_columns"]):
+        for x in cols or ():
+            days[t // spd].append((t % spd, x))
+    return days
+
+
+def test_uniform_slots_draws_distinct_slots_per_day():
+    cfg, w = _window(cols_per_day=5, cols_sampling="uniform_slots")
+    assert isinstance(w["obs_columns"], list)
+    for slots in _day_slots(cfg, w):
+        assert len(slots) == 5
+        assert len(set(slots)) == 5, "a (step, column) slot must never be drawn twice"
+        assert all(0 <= x < cfg.nx for _, x in slots)
+
+
+def test_uniform_slots_exceeds_steps_per_day_and_shares_steps():
+    """30 > steps_per_day (12): must work, with several columns at some step."""
+    cfg = _cfg(cols_per_day=30, cols_sampling="uniform_slots", dt=7200.0)
+    w = make_qg_s0_s1_datasets(cfg)["test_s0"][0]
+    for slots in _day_slots(cfg, w):
+        assert len(slots) == 30 and len(set(slots)) == 30
+    assert any(c is not None and len(c) > 1 for c in w["obs_columns"])
+
+
+def test_uniform_slots_covers_the_slot_grid_uniformly():
+    """Pooled over many draws, every step-in-day and every column is hit about equally."""
+    from data.qg import _generate_uniform_slot_column_observations, _make_qg_dynamics
+    cfg = _cfg(cols_per_day=6, window_days=1.0, dt=7200.0)
+    spd = round(86400.0 / cfg.dt)
+    state = torch.randn(cfg.num_steps, 2 * cfg.nx * cfg.nx, dtype=torch.float64) * 1e-5
+    dyn = _make_qg_dynamics(cfg)
+    steps, cols = torch.zeros(spd), torch.zeros(cfg.nx)
+    for seed in range(400):
+        _, _, groups = _generate_uniform_slot_column_observations(
+            dyn, state, cfg.obs_field, cfg, cfg.cols_per_day, seed)
+        for t, g in enumerate(groups):
+            for x in g or ():
+                steps[t] += 1
+                cols[x] += 1
+    for counts in (steps, cols):
+        expected = counts.sum() / len(counts)
+        assert torch.all((counts - expected).abs() < 0.2 * expected)
+
+
+def test_uniform_slots_rejects_more_than_all_slots():
+    cfg = _cfg(cols_per_day=12 * NX + 1, cols_sampling="uniform_slots", dt=7200.0)
+    with pytest.raises(ValueError, match="slots"):
+        make_qg_s0_s1_datasets(cfg)
+
+
+def test_expand_obs_to_grid_handles_list_storage():
+    from data.qg import expand_obs_to_grid
+    cfg, w = _window(cols_per_day=20, cols_sampling="uniform_slots", dt=7200.0)
+    grid = expand_obs_to_grid(w, cfg)
+    for t, cols in enumerate(w["obs_columns"]):
+        observed = set(cols or ())
+        for x in range(cfg.nx):
+            vals = grid[t, torch.arange(cfg.ny) * cfg.nx + x]
+            if x in observed:
+                j = cols.index(x)
+                assert torch.equal(vals, w["obs"][t][j * cfg.ny:(j + 1) * cfg.ny])
+            else:
+                assert torch.isnan(vals).all()
+
