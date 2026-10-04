@@ -29,6 +29,7 @@ DA_ROWS = (("ETKF", "ETKF", "λ 1.15 / 2.5", ""),
            ("EnKF", "EnKF", "λ 1.2 / 3.0", ""),
            ("ETKS", "ETKS", "λ 1.15 / 2.5", ""),
            ("Strong-4DVar", "Strong-4DVar", "—", ""),
+           ("Weak-4DVar (model-error scale q S0 0.03 / S1 0.3)", "Weak-4DVar", "q 0.03 / 0.3, 40 it", ""),
            ("ETKS, 100 members, inflation S0 1.05 / S1 2.5 (ensemble-size sensitivity)", "ETKS, 100 members",
             "λ 1.05 / 2.5", "ensemble size: 100 members (the benchmark and the learned ensembles use 30), "
             "inflation re-selected on the validation windows at N=100"))
@@ -62,6 +63,8 @@ def collect(cache: dict) -> tuple[dict, list[str]]:
     errors += ext.check_etks100()
     by = {(r["group"], r["label"]): r for r in learned}
     out = {"da": []}
+    if "Weak-4DVar (model-error scale q S0 0.03 / S1 0.3)" != ext.WEAK4DVAR_LABEL:
+        errors.append("p1_benchmark_sections.DA_ROWS: Weak-4DVar label differs from the extended report's")
     for key, label, params, flag in DA_ROWS:
         r = da[key]
         out["da"].append({"label": label, "params": params, "flag": flag, "seeds": "—", "reg": r["reg"],
@@ -117,23 +120,26 @@ def table(sec: str, rows: list[dict]) -> list[str]:
          f"| scheme | params | seeds | regular S0 | regular S1 | random S0 | random S1 | S1/S0 (regular) | "
          f"CRPS regular S0 (S1) | CRPS random S0 (S1) | {extra} | note |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    ok = [r for r in rows if not r["flag"] and r["reg"] is not None and r["can"] is not None]
-    best = {(t, c): min((mean(r, t, c) for r in ok), default=None) for t in ("reg", "can") for c in CASES}
+    ok = [r for r in rows if not r["flag"]]
+    best = {(t, c): min((mean(r, t, c) for r in ok if r[t] is not None), default=None) for t in ("reg", "can") for c in CASES}
     for r in rows:
-        if r["reg"] is None or r["can"] is None:
+        if r["reg"] is None or (r["can"] is None and sec != "da"):
             A.append(f"| {r['label']} | {r['params']} | {r['seeds']} | pending | pending | pending | pending | | | | | {r['flag']} |")
             continue
         cell = {}
         for t in ("reg", "can"):
             for c in CASES:
+                if r[t] is None:
+                    cell[(t, c)] = "—"
+                    continue
                 b = "**" if not r["flag"] and best[(t, c)] is not None and abs(mean(r, t, c) - best[(t, c)]) < 1e-12 else ""
                 cell[(t, c)] = f"{b}{_ms(r[t][c]['rmse'])}{b}"
-        crps = {t: f"{_f(r[t]['s0']['crps'])} ({_f(r[t]['s1']['crps'])})" for t in ("reg", "can")}
+        crps = {t: f"{_f(r[t]['s0']['crps'])} ({_f(r[t]['s1']['crps'])})" if r[t] is not None else "—" for t in ("reg", "can")}
         if det:
             ex = f"{r['vr']['reg']:.3f} / {r['vr']['can']:.3f}" if r["vr"] else "—"
             crps = {t: "—" for t in crps}
         else:
-            ex = f"{_f(r['reg']['s0']['sp'], 2)} / {_f(r['can']['s0']['sp'], 2)}"
+            ex = f"{_f(r['reg']['s0']['sp'], 2)} / {_f(r['can']['s0']['sp'], 2) if r['can'] is not None else '—'}"
         lab = f"*{r['label']}*" if r["flag"] else r["label"]
         A.append(f"| {lab} | {r['params']} | {r['seeds']} | {cell[('reg', 's0')]} | {cell[('reg', 's1')]} | "
                  f"{cell[('can', 's0')]} | {cell[('can', 's1')]} | {mean(r, 'reg', 's1') / mean(r, 'reg', 's0'):.2f} | "
