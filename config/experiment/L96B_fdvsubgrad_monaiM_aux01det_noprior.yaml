@@ -1,0 +1,25 @@
+# @package _global_
+# L96B_fdvsubgrad_monaiM_aux01 with the aux prior cost's x_final term DETACHED (aux_detach_x_final):
+# Phi is still trained on the solver's own outputs and on the true states, but the aux term
+# no longer pulls the solver toward Phi's fixed points (the suspected cause of the aux01 run's
+# blow-up at epoch ~320, where the MSE rose 5x while Phi's prior cost stayed unchanged).
+# ABLATION: plus zero_prior_input (x - Phi(x) input zeroed) -- Phi no longer affects the solver.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    aux_detach_x_final: true
+    zero_prior_input: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

@@ -138,7 +138,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # SEPARATE ("gradsplit+state" -- same two-channel input shape as
 # "subgrad+state", but each channel is a true gradient via its own
 # torch.autograd.grad call instead of a cheap proxy).
-_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "obs-only", "grad-only", "grad+state",
+_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "obs-only", "grad-only", "grad+state",
                               "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
                               "subgrad+state+trueprior", "subgrad+trueprior")
 
@@ -154,6 +154,7 @@ _PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
 _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "obs-only": 1,
     "obs+state": 2,
+    "resid+state": 2,
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
@@ -469,7 +470,8 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          grad_norm_cache=None, clip_range=50.0, gradsplit_prior_scale=1.0,
                          prior_residual=False, detach_var_cost_grad=False,
                          x_tau=None, beta_tau=None,
-                         prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
+                         prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
+                         zero_prior_input=False):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -634,9 +636,17 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         return obs_clean
     if update_input == "obs+state":
         return torch.cat([x, obs_clean], dim=-1)
+    if update_input == "resid+state":
+        # "obs+state" with y replaced by the masked residual (x - y) * mask: zero
+        # at unobserved times and NaN channels instead of y = 0. Same channel
+        # count, no prior, so it isolates the obs representation against FDV1.
+        return torch.cat([x, (x - obs_clean) * obs_mask], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
-        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
+        # channel layout); Phi is then trained by the aux prior loss only.
+        g_prior = (torch.zeros_like(x) if zero_prior_input
+                   else x - _prior_ae(prior_unet, x, tau, residual=prior_residual))
         return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "subgrad+state+xtau":
         assert x_tau is not None and beta_tau is not None, (
@@ -682,7 +692,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                        prior_unet, R_var, prior_weight, obs_weight, grad_norm_cache,
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
                        detach_var_cost_grad=False, x_tau=None, beta_tau=None,
-                       prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None):
+                       prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
+                       zero_prior_input=False):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -733,7 +744,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                x_tau=x_tau, beta_tau=beta_tau,
                                prior_ode_forcing=prior_ode_forcing,
                                prior_ode_params=prior_ode_params,
-                               true_dynamics=true_dynamics).transpose(1, 2)
+                               true_dynamics=true_dynamics,
+                               zero_prior_input=zero_prior_input).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -832,6 +844,8 @@ class FourDVarNetSolver(nn.Module):
                  obs_var_indices=None,
                  true_dynamics_dt=None,
                  true_dynamics_NO=8,
+                 zero_prior_input=False,
+                 aux_detach_x_final=False,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
                  true_dynamics_coupling_exponent=1.6,
@@ -990,6 +1004,12 @@ class FourDVarNetSolver(nn.Module):
         # (which would instead collapse the fed signal to subgrad+state's
         # own proxy).
         self.detach_var_cost_grad = detach_var_cost_grad
+        if zero_prior_input and update_input != "subgrad+state":
+            raise ValueError("zero_prior_input is an ablation of update_input='subgrad+state' only")
+        self.zero_prior_input = zero_prior_input
+        # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
+        # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
+        self.aux_detach_x_final = aux_detach_x_final
         # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
         # (see that validation above -- both None for every other mode).
         # obs_var_indices: which of state_dim's channels
@@ -1195,7 +1215,7 @@ class FourDVarNetSolver(nn.Module):
                 grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
                 self.prior_residual, self.detach_var_cost_grad,
                 prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
-                true_dynamics=self.true_dynamics,
+                true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
                 use_reentrant=False,
             )
             x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
@@ -1325,7 +1345,8 @@ class FourDVarNetSolver(nn.Module):
             loss = F.mse_loss(x_final, batch.states)
         if self.prior_unet is not None and self.aux_var_cost_weight > 0:
             numel = x_final.numel()
-            prior_cost_pred = _prior_cost(self.prior_unet, x_final, residual=self.prior_residual) / numel
+            x_aux = x_final.detach() if self.aux_detach_x_final else x_final
+            prior_cost_pred = _prior_cost(self.prior_unet, x_aux, residual=self.prior_residual) / numel
             prior_cost_true = _prior_cost(self.prior_unet, batch.states, residual=self.prior_residual) / numel
             loss = loss + self.aux_var_cost_weight * (prior_cost_pred + prior_cost_true)
         return loss
