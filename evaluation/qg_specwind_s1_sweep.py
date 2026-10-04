@@ -16,7 +16,7 @@ the first `--n-windows` val windows of the forced dataset under S1 errors
 * `--phase realistic_shapley --variant V`: all 32 on/off combinations of the
   five groups at variant V. With `--method enks --r-scale 6` it attributes the
   S1-tuned EnKS's degradation instead (filter fixed at R x 6, taper 8 d, in
-  every combination; written under `<out-dir>/enks_R6`).
+  every combination; written under `<out-dir>/<method>_R6`; the ETKF works the same way).
 
     python -m evaluation.qg_specwind_s1_sweep --phase calib --list
     python -m evaluation.qg_specwind_s1_sweep --phase calib --task 3
@@ -264,7 +264,7 @@ def main() -> None:
         return
     out_dir = args.out_dir if args.method == "etkf" else os.path.join(args.out_dir, args.method)
     if args.r_scale != 1.0:
-        out_dir = f"{out_dir}_R{args.r_scale:g}"
+        out_dir = os.path.join(args.out_dir, f"{args.method}_R{args.r_scale:g}")
     da_extra = {"r_scale": args.r_scale,
                 "enks_taper_days": args.enks_taper_days if args.method == "enks" else None}
     if args.phase.startswith("realistic"):
