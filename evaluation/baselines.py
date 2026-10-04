@@ -1019,6 +1019,24 @@ def _etkf_sqrt_transform(U: torch.Tensor, d: torch.Tensor, N1: int, d_null) -> t
     return Tmat
 
 
+RELAX_MODES = (None, "rtpp", "rtps")
+
+
+def _relax_anomalies(ensemble: torch.Tensor, A_f: torch.Tensor, mode: str | None, alpha: float) -> torch.Tensor:
+    """Relaxation inflation: RTPP blends analysis and forecast anomalies; RTPS rescales the
+    analysis spread of each variable toward the forecast spread (Whitaker & Hamill 2012)."""
+    if mode is None or alpha == 0.0:
+        return ensemble
+    mu = torch.mean(ensemble, dim=0)
+    A_a = ensemble - mu
+    if mode == "rtpp":
+        return mu + (1.0 - alpha) * A_a + alpha * A_f
+    s_a = A_a.std(dim=0)
+    s_f = A_f.std(dim=0)
+    factor = torch.where(s_a > 0, 1.0 + alpha * (s_f - s_a) / s_a.clamp_min(1e-30), torch.ones_like(s_a))
+    return mu + A_a * factor
+
+
 def _ensrf_localized_analysis(mu: torch.Tensor, A: torch.Tensor, HA: torch.Tensor, dy: torch.Tensor,
                               loc_Lx: torch.Tensor, loc_Ly: torch.Tensor, R_obs: torch.Tensor,
                               ridge_frac: float, N1: int, record: list | None = None,
@@ -1118,7 +1136,12 @@ class ETKF:
         loc_Ly_t: list | None = None,
         init_ensemble: torch.Tensor | None = None,
         init_fill=None,
+        relax: str | None = None,
+        relax_alpha: float = 0.0,
     ):
+        if relax not in RELAX_MODES:
+            raise ValueError(f"relax must be one of {RELAX_MODES}, got {relax!r}")
+        self.relax, self.relax_alpha = relax, relax_alpha
         self.N_ensemble = N_ensemble
         self.R_var = R_var
         self.R_var_vec = R_var_vec
@@ -1298,6 +1321,7 @@ class ETKF:
                     mu_fix = torch.mean(ensemble, dim=0)
                     ensemble[nan_mask] = mu_fix
 
+                ensemble = _relax_anomalies(ensemble, A, self.relax, self.relax_alpha)
                 mu = torch.mean(ensemble, dim=0)
                 ensemble = mu + self.inflation * (ensemble - mu)
 
@@ -1457,6 +1481,7 @@ class ETKF:
                         ens_b = mu + w @ A + Tmat @ A
                         if self.etkf_additive > 0.0:
                             ens_b += torch.randn_like(ens_b) * self.etkf_additive
+                    ens_b = _relax_anomalies(ens_b, A, self.relax, self.relax_alpha)
                     mu = torch.mean(ens_b, dim=0)
                     ensemble[b] = mu + self.inflation * (ens_b - mu)
 
@@ -1566,8 +1591,8 @@ class EnKS(ETKF):
         self.taper_steps = taper_steps
         if self.loc_mode != "ensrf" or (self.loc_radius is None and self.loc_Lx_t is None):
             raise NotImplementedError("EnKS needs the localized ETKF with loc_mode='ensrf'")
-        if self.inflation != 1.0 or self.etkf_additive > 0.0:
-            raise NotImplementedError("EnKS needs inflation = 1 and etkf_additive = 0")
+        if self.inflation != 1.0 or self.etkf_additive > 0.0 or self.relax is not None:
+            raise NotImplementedError("EnKS needs inflation = 1, etkf_additive = 0 and no relaxation")
         if lag is not None and lag < 1:
             raise ValueError(f"lag must be >= 1 or None, got {lag}")
         self.lag = lag
@@ -1624,6 +1649,8 @@ class ETKS(ETKF):
             raise NotImplementedError("ETKS needs the unlocalised ETKF (ensemble-space analysis)")
         if self.etkf_additive > 0.0:
             raise NotImplementedError("ETKS needs etkf_additive = 0 (the analysis must be linear in ensemble space)")
+        if self.relax is not None:
+            raise NotImplementedError("ETKS does not support relaxation inflation")
         self.lag = lag
         self.retro_inflation = retro_inflation
         self._record_transforms = True
@@ -1691,7 +1718,12 @@ class EnKF:
         loc_Ly_t: list | None = None,
         init_ensemble: torch.Tensor | None = None,
         init_fill=None,
+        relax: str | None = None,
+        relax_alpha: float = 0.0,
     ):
+        if relax not in RELAX_MODES:
+            raise ValueError(f"relax must be one of {RELAX_MODES}, got {relax!r}")
+        self.relax, self.relax_alpha = relax, relax_alpha
         self.N_ensemble = N_ensemble
         self.R_var = R_var
         self.R_var_vec = R_var_vec
@@ -1814,6 +1846,7 @@ class EnKF:
                     perturbed = y_t + torch.randn(od_t, device=self.device) * r_sqrt
                     ensemble[n] += K @ (perturbed - H(ensemble[n], index=t))
 
+                ensemble = _relax_anomalies(ensemble, A, self.relax, self.relax_alpha)
                 mean_e = torch.mean(ensemble, dim=0)
                 ensemble = mean_e + self.inflation * (ensemble - mean_e)
                 # NaN safety after analysis+inflation
@@ -1842,6 +1875,8 @@ class EnKF:
         c1: float = 1.0,
             **kwargs,
     ) -> list:
+        if self.relax is not None:
+            raise NotImplementedError("EnKF.assimilate_batch does not support relaxation inflation")
         params = dict(sigma=sigma, rho=rho, beta=beta, c1=c1, **kwargs)
 
         B, num_steps, _ = observations.shape
