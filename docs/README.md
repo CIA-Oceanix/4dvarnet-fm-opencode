@@ -90,7 +90,7 @@ sweep at S0*, which **must share one protocol**).
 | `docs/plans/analysis/l96_cfm_tau_consistency_next_steps.md` | **CLOSED** 2026-09-25 (last revision v4). Outcomes, the one identified model failure (PredictStateCFM's late-τ Jacobian) and open items are in **`docs/results/l96_cfm_tau_consistency_synthesis.md`** — cite that, not the seven notes it summarises. |
 | `docs/plans/analysis/multi_phaseD_physics_priors.md` | DESIGN; live work packages (see the ML-paper chain above). |
 | `docs/plans/analysis/l96_p1_fm_score_bootstrap.md` | **PLAN** v1 2026-10-01. FM-operator score (FMS_τ) with 95% window-bootstrap intervals and paired differences, in physical units: overnight rerun of the current rows with per-window storage, then the P1-report section and the paper inserts (drafted in the plan). Results so far: `docs/results/l96_p1_fm_score.md`. |
-| `docs/plans/analysis/l96_p2_fdv_benchmark.md` | **PLAN** v1 2026-09-27. FDV1 and FDV2 `subgrad+state` unrolled solvers, M and S tiers × 3 seeds, under the benchmark-default recipe (random observing system, 1200 epochs), as P2's variational `Ψ_mean`; then the blend with FDV as `v_det`, the sparsity axis and the `N_outer` axis. Phase 0 (per-element obs mask fix, `--n-outer` default, configs) done; nothing trained. |
+| `docs/plans/analysis/l96_p2_fdv_benchmark.md` | **PLAN** v1 2026-09-27. Phase 1 trained (1 seed per tier); M-tier input ablations: `docs/results/l96_fdv_m_input_ablation.md`. FDV1 and FDV2 `subgrad+state` unrolled solvers, M and S tiers × 3 seeds, under the benchmark-default recipe (random observing system, 1200 epochs), as P2's variational `Ψ_mean`; then the blend with FDV as `v_det`, the sparsity axis and the `N_outer` axis. Phase 0 (per-element obs mask fix, `--n-outer` default, configs) done; nothing trained. |
 | `docs/plans/analysis/l96_phaseB_cfm_variants.md` | DESIGN + PARTIAL IMPLEMENTATION (V2/V3 CFM variants). |
 | `docs/plans/analysis/l96_phaseC_joint_da.md` | PLAN, designed for execution — branch `feature/l96-joint-da-benchmark`. |
 | `docs/plans/analysis/l96_phaseC_joint_neural.md` | PLAN, designed for execution. |
@@ -133,5 +133,6 @@ thread has a synthesis note, cite it rather than the notes it summarises:
 | L96 flow blends and velocity ensembles (VanillaCFM / PredictStateCFM) | `docs/results/l96_cfm_velocity_ensembles.md` |
 | L96 PredictStateCFM skip connection (parameterization vs loss weight) | `docs/results/l96_psc_skip_connection.md` |
 | L96 ETKS vs ETKF (filter vs smoother, S0/S1) | `docs/results/l96_etks_default_inflation.md` (canonical row, benchmark inflation 1.15 / 2.5); `docs/results/l96_etks_benchmark.md` (other inflations, validation sweep); prototype: `docs/results/l96_etks_prototype.md` |
+| L96 FDV M-tier update-network inputs (FDV1 vs FDV2 variants) | `docs/results/l96_fdv_m_input_ablation.md` (seed 1; seed-2 runs pending) |
  The
 L96/QG/L63 number tables are under `reports/*/outputs/`.

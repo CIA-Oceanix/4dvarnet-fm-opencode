@@ -1,6 +1,6 @@
 # Unrolled variational solvers (FDV) in the L96 benchmark — for P2
 
-**Status:** PLAN v1 2026-09-27. Phase 0 (code + configs) in the PR that adds this doc; nothing trained yet.
+**Status:** PLAN v1 2026-09-27. Phase 0 (code + configs) in the PR that adds this doc; nothing trained yet. Phase 1 (1 seed per tier) trained by 2026-10-03: FDV1-M 0.245 / 0.291 (regular / random S0) is the best M-tier variant; M-tier input ablations in `docs/results/l96_fdv_m_input_ablation.md`; seed-2 runs pending.
 
 Serves `docs/plans/paper/l96_p2_unrolled_solvers_and_flows.md` (P2). That doc puts the
 unrolled solver in the `Ψ_mean`-only slot of the operator family (§2.2) and needs it for
