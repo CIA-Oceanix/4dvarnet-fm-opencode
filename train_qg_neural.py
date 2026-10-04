@@ -97,16 +97,35 @@ def build_cfg(**overrides) -> QGConfig:
 
 # The capacity every DirectUNet/CFM scheme is built at. Named (rather than
 # repeated as a literal) because `resolved_config.yaml` records it as the
-# architecture the checkpoint was trained with: the experiment YAML's own
-# `model.hidden_channels` is a *dead field* for these model types -- main()
-# never passes it to build_model() -- so recording the YAML value instead
-# would state a capacity the weights may not have.
+# architecture the checkpoint was trained with. For the T-channels types
+# (`TIERED_TYPES`) the experiment YAML's `model.hidden_channels` /
+# `model.num_res_blocks` select the capacity tier (S/M/L, see
+# docs/plans/analysis/qg_specwind_neural.md section 3.1); for every other type
+# they stay dead fields, and main() refuses a YAML that sets them to anything
+# but this default rather than silently building a different model.
 DEFAULT_HIDDEN_CHANNELS = [64, 128, 256]
+DEFAULT_NUM_RES_BLOCKS = 2
+
+
+# Flow model types trained at random tau on the T-channels backbone (the
+# spectral-wind round 1, docs/plans/analysis/qg_specwind_neural.md): the loss is
+# the CFM velocity MSE, and the q term is applied to the endpoint estimate
+# x1_hat = x_tau + (1 - tau) v.
+FLOW_TYPES = ("vanilla_cfm_tchannels", "sda_prior_tchannels")
+DIRECT_TYPES = ("direct_unet", "direct_unet_tchannels")
+TIERED_TYPES = ("direct_unet_tchannels", *FLOW_TYPES)
 
 
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
                 cond_extra_dim: int = 0, ic_dim: int = 0,
-                fdv_kwargs: dict | None = None) -> torch.nn.Module:
+                fdv_kwargs: dict | None = None, use_obs_mask: bool = False,
+                hidden_channels: list[int] | None = None,
+                num_res_blocks: int = DEFAULT_NUM_RES_BLOCKS) -> torch.nn.Module:
+    tier = list(hidden_channels) if hidden_channels is not None else DEFAULT_HIDDEN_CHANNELS
+    if model_type not in TIERED_TYPES and (tier != DEFAULT_HIDDEN_CHANNELS
+                                          or num_res_blocks != DEFAULT_NUM_RES_BLOCKS):
+        raise ValueError(f"model_type={model_type!r} is built at the fixed M tier; "
+                         f"hidden_channels/num_res_blocks apply only to {TIERED_TYPES}")
     if model_type == "direct_unet":
         # MONAI-backed, circular-padded 2D U-Net over the (ny, nx) grid --
         # QG's domain is doubly periodic (models.qg_dynamics.QGDynamics),
@@ -137,9 +156,27 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         # out, up to 300 in for Q10's param_dim=3+cond_extra_dim=1+ic_dim=2).
         from models.monai_unet_qg2d import MonaiDirectUNetQGChannelTime
         return MonaiDirectUNetQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
-                                           hidden_channels=DEFAULT_HIDDEN_CHANNELS, norm_num_groups=4,
+                                           hidden_channels=tier, num_res_blocks=num_res_blocks,
+                                           norm_num_groups=4,
                                            param_dim=param_dim, cond_extra_dim=cond_extra_dim,
-                                           ic_dim=ic_dim)
+                                           ic_dim=ic_dim, use_obs_mask=use_obs_mask)
+    if model_type == "vanilla_cfm_tchannels":
+        # G2: generative obs-conditioned flow, same backbone and capacity as
+        # direct_unet_tchannels (norm_num_groups=4 for the same divisibility
+        # reason); sampled with 20 early-fine Euler steps (the L96 benchmark's
+        # ens30_no20 sampler).
+        from models.monai_unet_qg2d import MonaiVanillaCFMQGChannelTime
+        return MonaiVanillaCFMQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                            hidden_channels=tier, num_res_blocks=num_res_blocks,
+                                            use_obs_mask=use_obs_mask, N_outer=20,
+                                            sigma_prior=0.5, norm_num_groups=4)
+    if model_type == "sda_prior_tchannels":
+        # G3: unconditional prior for SDA (obs enter only through guidance at
+        # sampling time), same backbone and capacity.
+        from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime
+        return MonaiSDAPriorQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                          hidden_channels=tier, num_res_blocks=num_res_blocks,
+                                          sigma_prior=0.5, norm_num_groups=4)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
@@ -235,7 +272,7 @@ def _plain_prior_cost(prior_unet, state: torch.Tensor) -> torch.Tensor:
 
 
 def epochs_for(model_type: str) -> int:
-    return 200 if model_type in ("direct_unet", "direct_unet_tchannels") else 400
+    return 200 if model_type in DIRECT_TYPES + FLOW_TYPES else 400
 
 
 class QGNeuralLightning(pl.LightningModule):
@@ -267,10 +304,23 @@ class QGNeuralLightning(pl.LightningModule):
         return optimizer
 
     def _estimate_and_psi_loss(self, batch):
-        if self.model_type in ("direct_unet", "direct_unet_tchannels"):
+        if self.model_type in DIRECT_TYPES:
             est = self.model(batch)
             loss_psi = F.mse_loss(est, batch.states)
             return est, loss_psi
+        if self.model_type in FLOW_TYPES:
+            # CFM on the linear interpolant: x_tau = (1 - tau) x0 + tau x1,
+            # target v = x1 - x0. The returned estimate is the endpoint
+            # x1_hat = x_tau + (1 - tau) v_pred, on which _q_loss acts: q is
+            # linear in psi, so the q-MSE has the same minimizer
+            # E[x1 | x_tau, y] and only reweights spatial scales.
+            b = batch.states.shape[0]
+            tau = torch.rand(b, device=batch.states.device)
+            x0 = torch.randn_like(batch.states) * self.model.sigma_prior
+            x_tau = self.model.interpolant.mix(x0, batch.states, tau)
+            v = self.model(x_tau, batch, tau)
+            loss_psi = F.mse_loss(v, batch.states - x0)
+            return self.model.interpolant.x1_hat(x_tau, v, tau), loss_psi
         if self.model_type == "vanilla_cfm":
             if not self.model.train_tau_0_only:
                 raise ValueError("QG neural CFM baseline requires train_tau_0_only=True")
@@ -367,7 +417,10 @@ def make_trainer_cfg(model_type: str, exp_dir: str, epochs: int, lr: float,
 
 def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type: str,
                           cfg, fdv_kwargs: dict | None = None,
-                          cols_per_day_range=None, **kw) -> str:
+                          cols_per_day_range=None, train_cols_sampling=None,
+                          q_loss_weight_scale=None, q_daily_var=None, use_obs_mask=False,
+                          hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
+                          **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -397,6 +450,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
         "obs_geometry": cfg.obs_geometry, "cols_per_day": cfg.cols_per_day,
         "cols_per_day_min": cols_per_day_range[0] if cols_per_day_range else None,
         "cols_per_day_max": cols_per_day_range[1] if cols_per_day_range else None,
+        "train_cols_sampling": train_cols_sampling,
         "obs_noise_std_frac": cfg.obs_noise_std_frac,
         "init_lag_days": cfg.init_lag_days,
         "s1_param_bias": cfg.s1_param_bias, "s1_amp_bias": cfg.s1_amp_bias,
@@ -413,9 +467,10 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
     model_block = {
         "model_type": model_type,
         "hidden_channels": list((fdv_kwargs or {}).get("hidden_channels",
-                                                       DEFAULT_HIDDEN_CHANNELS)),
+                                                       hidden_channels or DEFAULT_HIDDEN_CHANNELS)),
+        "num_res_blocks": num_res_blocks,
         "param_dim": kw["param_dim"], "cond_extra_dim": kw["cond_extra_dim"],
-        "ic_dim": kw["ic_dim"],
+        "ic_dim": kw["ic_dim"], "use_obs_mask": use_obs_mask,
         "param_count": sum(p.numel() for p in model.parameters()),
     }
     if fdv_kwargs:
@@ -430,6 +485,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
             "epochs": kw["epochs"], "lr": kw["lr"], "batch_size": kw["batch_size"],
             "gradient_clip_val": kw["gradient_clip_val"],
             "q_loss_weight": kw["q_loss_weight"],
+            "q_loss_weight_scale": q_loss_weight_scale, "q_daily_var": q_daily_var,
             "use_cosine_scheduler": kw["use_cosine_scheduler"],
             "seed": kw["seed"],
         },
@@ -454,8 +510,13 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            if model_type in ("direct_unet", "direct_unet_tchannels"):
+            if model_type in DIRECT_TYPES:
                 pred = model(batch)
+            elif model_type == "vanilla_cfm_tchannels":
+                # Ensemble mean of n_members flow samples (one sample if 1);
+                # the benchmark ensembles (CRPS, spread) are scored by the
+                # evaluation driver, not here.
+                pred = torch.stack([model.sample(batch) for _ in range(max(1, n_members))]).mean(0)
             elif model_type == "fourdvarnet":
                 T = batch.states.shape[1]
                 needs_pad = model.unet_backbone == "monai"
@@ -516,6 +577,7 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
             "regen_windows": args.regen_windows, "regen_every": args.regen_every,
             "test": test_rep}
     train_ds = val_ds = callback = None
+    q_var = None
     forcing_path = os.path.join(exp_dir, "specwind_forcing_norm_stats.pt")
     param_path = os.path.join(exp_dir, "specwind_param_norm_stats.pt")
     if args.eval_only is not None:
@@ -549,6 +611,10 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
         val_windows, val_rep = materialize_split(spec, "val", args.specwind_root, device, with_curl)
         info["val"] = val_rep
         stats = train_norm_stats(train_windows, cfg, with_forcing=with_curl)
+        # Var of the raw daily-mean PV target over the first draw (both layers
+        # pooled), for the empirical q-loss weight (--q-loss-weight-scale).
+        q_var = float(torch.cat([q_daily(w, cfg).reshape(-1) for w in train_windows]).double().var())
+        info["q_daily_var"] = q_var
         if do_normalize and norm is None:
             norm = stats["psi"]
             save_norm_stats(norm_stats_path, norm)
@@ -560,8 +626,12 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
         train_ds = QGNeuralDataset(train_windows, cfg, norm, on_the_fly_obs=True,
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
-                                   include_ic=include_ic, cols_per_day_range=cols_per_day_range)
-        val_ds = QGNeuralDataset(val_windows, cfg, norm, on_the_fly_obs=True,
+                                   include_ic=include_ic, cols_per_day_range=cols_per_day_range,
+                                   cols_sampling=args.train_cols_sampling)
+        # One fixed obs draw per val window at the test setting (cfg), so
+        # val_loss and checkpoint selection compare like with like across epochs.
+        val_ds = QGNeuralDataset(with_fixed_obs(val_windows, cfg), cfg, norm,
+                                 on_the_fly_obs=False,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
                                  include_ic=include_ic)
@@ -569,13 +639,14 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
                                           log_path=os.path.join(exp_dir, "regen_log.jsonl"))
     with open(os.path.join(exp_dir, "specwind.json"), "w") as fh:
         json.dump(info, fh, indent=1)
-    return test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm
+    return test_windows, train_ds, val_ds, callback, norm, forcing_norm, param_norm, q_var
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-type",
-                    choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels"],
+                    choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels",
+                             "vanilla_cfm_tchannels", "sda_prior_tchannels"],
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
@@ -583,6 +654,11 @@ def main():
     ap.add_argument("--q-loss-weight", type=float, default=None,
                     help="Overrides config/experiment/Q{1,2}_..._s0.yaml's "
                          "training.q_loss_weight if given.")
+    ap.add_argument("--q-loss-weight-scale", type=float, default=None,
+                    help="Empirical q-loss weight (--specwind-spec only): q_loss_weight = "
+                         "scale / Var(q_daily), Var measured on the first regeneration "
+                         "draw. Falls back to the YAML's training.q_loss_weight_scale; "
+                         "ignored when --q-loss-weight is given.")
     ap.add_argument("--normalize", action=argparse.BooleanOptionalAction, default=None,
                     help="Overrides the experiment YAML's data.normalize if given.")
     ap.add_argument("--cosine-scheduler", action=argparse.BooleanOptionalAction, default=True,
@@ -669,6 +745,15 @@ def main():
     ap.add_argument("--cols-per-day-max", type=int, default=None,
                     help="See --cols-per-day-min. Both must be given (CLI or YAML) "
                          "to enable augmentation.")
+    ap.add_argument("--train-cols-sampling", default=None,
+                    choices=["sequential", "random", "uniform_slots"],
+                    help="Column sampler for the TRAIN split's on-the-fly obs only "
+                         "(val/test keep the test sampler, cfg.cols_sampling). "
+                         "'uniform_slots': --cols-per-day distinct (step, column) "
+                         "slots per day, uniform over all steps_per_day x nx, so "
+                         "--cols-per-day-max may exceed steps_per_day. Falls back to "
+                         "the experiment YAML's data.train_cols_sampling; default "
+                         "None (cfg.cols_sampling).")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--num-workers", type=int, default=4,
@@ -693,7 +778,9 @@ def main():
     # which also doubles as the shared cfg QGNeuralDataset uses to (re)draw obs for
     # every split, so train/val's on-the-fly obs follow the same protocol.
     ap.add_argument("--obs-geometry", default="random_columns")
-    ap.add_argument("--cols-per-day", type=int, default=4)
+    ap.add_argument("--cols-per-day", type=int, default=None,
+                    help="Test/val observation density. Falls back to the experiment "
+                         "YAML's data.cols_per_day, else 4 (the legacy S0 reference).")
     # default=None (not 0.05/5.0) so the experiment YAML's data.* values (if
     # any) aren't silently overridden -- e.g. Q1/Q1-obsdensity/Q2/Q3/Q4 pin
     # obs_noise_std_frac=0.01/init_lag_days=1.0 explicitly in their own YAML
@@ -744,8 +831,17 @@ def main():
                      else float(exp_cfg.data.get("init_lag_days", 5.0)))
     gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
                         else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
-    q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
-                     else float(exp_cfg.training.q_loss_weight))
+    q_loss_weight_scale = (None if args.q_loss_weight is not None else
+                           args.q_loss_weight_scale if args.q_loss_weight_scale is not None
+                           else exp_cfg.training.get("q_loss_weight_scale", None))
+    if q_loss_weight_scale is not None:
+        if args.specwind_spec is None:
+            raise ValueError("--q-loss-weight-scale needs --specwind-spec (Var(q) is "
+                             "measured on the first regeneration draw)")
+        q_loss_weight = None  # derived once the first train draw exists
+    else:
+        q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
+                         else float(exp_cfg.training.q_loss_weight))
     do_normalize = (args.normalize if args.normalize is not None
                     else bool(exp_cfg.data.get("normalize", True)))
     specwind = args.specwind_spec is not None
@@ -763,6 +859,11 @@ def main():
     # takes plain Python kwargs, not OmegaConf nodes.
     fdv_kwargs = (OmegaConf.to_container(exp_cfg.model.fdv, resolve=True)
                  if model_type == "fourdvarnet" else None)
+    use_obs_mask = bool(exp_cfg.model.get("use_obs_mask", False))
+    hidden_channels = (list(exp_cfg.model.hidden_channels)
+                       if exp_cfg.model.get("hidden_channels") is not None
+                       and model_type != "fourdvarnet" else None)
+    num_res_blocks = int(exp_cfg.model.get("num_res_blocks", DEFAULT_NUM_RES_BLOCKS))
     include_ic = bool(args.include_ic or exp_cfg.data.get("include_ic", False))
     ic_dim = 2 if include_ic else 0
     cond_mode = args.cond_mode or exp_cfg.data.get("cond_mode", "none")
@@ -802,6 +903,10 @@ def main():
                          "(or both omitted) to enable obs-density-augmented training")
     cols_per_day_range = ((int(cols_per_day_min), int(cols_per_day_max))
                          if cols_per_day_min is not None else None)
+    if args.train_cols_sampling is None:
+        args.train_cols_sampling = exp_cfg.data.get("train_cols_sampling", None)
+    if args.cols_per_day is None:
+        args.cols_per_day = int(exp_cfg.data.get("cols_per_day", 4))
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -820,27 +925,40 @@ def main():
 
     model = build_model(model_type, test_cfg, param_dim=param_dim,
                        cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
-                       fdv_kwargs=fdv_kwargs).to(device)
+                       fdv_kwargs=fdv_kwargs, use_obs_mask=use_obs_mask,
+                       hidden_channels=hidden_channels, num_res_blocks=num_res_blocks).to(device)
 
     # Written before the skip-check below, so re-running an already-finished
     # experiment backfills the config its checkpoints belong to instead of
     # returning early and leaving them undocumented. Same ordering, for the same
     # reason, as train.py's own -- which is why the archived L96 runs have
     # configs at all.
-    resolved_path = write_resolved_config(
-        exp_dir, config_name, model, model_type=model_type, cfg=test_cfg,
-        epochs=epochs, lr=args.lr, batch_size=args.batch_size,
-        gradient_clip_val=gradient_clip_val, q_loss_weight=q_loss_weight,
-        use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
-        num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
-        train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,
-        on_the_fly_split_obs=not args.fixed_split_obs, cache_dir=args.cache_dir,
-        normalize=do_normalize, norm_stats_path=norm_stats_path,
-        param_norm_stats_path=param_norm_stats_path,
-        forcing_norm_stats_path=forcing_norm_stats_path,
-        cond_mode=cond_mode, noisy_max=noisy_max, param_dim=param_dim,
-        cond_extra_dim=cond_extra_dim, include_ic=include_ic, ic_dim=ic_dim,
-        cols_per_day_range=cols_per_day_range, fdv_kwargs=fdv_kwargs)
+    if q_loss_weight is None and args.eval_only is not None:
+        prev = os.path.join(exp_dir, "resolved_config.yaml")
+        if os.path.exists(prev):
+            q_loss_weight = OmegaConf.load(prev).training.get("q_loss_weight", None)
+
+    def _write_resolved(q_w, q_var=None):
+        return write_resolved_config(
+            exp_dir, config_name, model, model_type=model_type, cfg=test_cfg,
+            epochs=epochs, lr=args.lr, batch_size=args.batch_size,
+            gradient_clip_val=gradient_clip_val, q_loss_weight=q_w,
+            q_loss_weight_scale=q_loss_weight_scale, q_daily_var=q_var,
+            use_obs_mask=use_obs_mask, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
+            num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
+            train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,
+            on_the_fly_split_obs=not args.fixed_split_obs, cache_dir=args.cache_dir,
+            normalize=do_normalize, norm_stats_path=norm_stats_path,
+            param_norm_stats_path=param_norm_stats_path,
+            forcing_norm_stats_path=forcing_norm_stats_path,
+            cond_mode=cond_mode, noisy_max=noisy_max, param_dim=param_dim,
+            cond_extra_dim=cond_extra_dim, include_ic=include_ic, ic_dim=ic_dim,
+            cols_per_day_range=cols_per_day_range, train_cols_sampling=args.train_cols_sampling,
+            fdv_kwargs=fdv_kwargs)
+
+    resolved_path = _write_resolved(q_loss_weight)
     print(f"wrote {resolved_path}")
 
     if os.path.exists(results_path) and args.eval_only is None:
@@ -864,10 +982,15 @@ def main():
     # either (see PLAN.md's 2026-09-12 note for both).
     regen_callback = None
     if specwind:
-        test_windows, train_ds, val_ds, regen_callback, norm, forcing_norm, param_norm = \
+        test_windows, train_ds, val_ds, regen_callback, norm, forcing_norm, param_norm, q_var = \
             _build_specwind_data(args, test_cfg, exp_dir, device, cond_mode, include_ic,
                                  cols_per_day_range, noisy_max, norm, forcing_norm, param_norm,
                                  do_normalize, norm_stats_path)
+        if q_loss_weight_scale is not None and q_var is not None:
+            q_loss_weight = float(q_loss_weight_scale) / q_var
+            _write_resolved(q_loss_weight, q_var)
+            print(f"q_loss_weight = {q_loss_weight_scale} / Var(q_daily) "
+                  f"({q_var:.4e}) = {q_loss_weight:.4e}")
         if args.eval_only is None:
             train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                                       collate_fn=qg_collate, num_workers=args.num_workers,
@@ -898,7 +1021,8 @@ def main():
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
                                    include_ic=include_ic,
-                                   cols_per_day_range=cols_per_day_range)
+                                   cols_per_day_range=cols_per_day_range,
+                                   cols_sampling=args.train_cols_sampling)
         val_ds = QGNeuralDataset(val_windows, test_cfg, norm, on_the_fly_obs=on_the_fly,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
@@ -911,7 +1035,7 @@ def main():
                                 persistent_workers=args.num_workers > 0)
 
     print(f"Device: {device}  model={model_type}  epochs={epochs}  state_dim={state_dim}"
-          f"  q_loss_weight={q_loss_weight:.4e}")
+          f"  q_loss_weight={q_loss_weight}")
     print(f"Test: {len(test_windows)}  eval_only={bool(args.eval_only)}")
     if norm is not None:
         print(f"psi norm stats ({norm_stats_path}): "
@@ -946,6 +1070,16 @@ def main():
         print(f"Loaded checkpoint {args.eval_only}")
 
     model.eval()
+    if model_type == "sda_prior_tchannels":
+        # An unconditional prior has no obs-only estimate to score here: the SDA
+        # rows come from the guided sampler in the evaluation driver.
+        result = {"model_type": model_type, "train_time_seconds": total_train,
+                  "q_loss_weight": q_loss_weight, "s0": None,
+                  "note": "unconditional prior; scored by the guided SDA evaluation"}
+        with open(results_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"  wrote {results_path} (no in-script test scoring for the SDA prior)")
+        return
     est_psi, est_rd = estimate_windows(model, test_windows, test_cfg, model_type,
                                        device, norm=norm, n_members=args.n_members,
                                        cond_mode=cond_mode, param_norm_stats=param_norm,

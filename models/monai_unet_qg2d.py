@@ -26,6 +26,9 @@ stock `nn.Conv1d`/`nn.Conv3d` unchanged, so this cannot affect L96's
 import torch
 import torch.nn as nn
 
+from models.interpolant import LinearInterpolant
+from models.vanilla_cfm import VanillaCFM
+
 _PATCHED_CIRCULAR_CONV2D = False
 
 
@@ -275,7 +278,7 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
                  hidden_channels: list[int] | None = None,
                  param_dim: int = 0, cond_extra_dim: int = 0, ic_dim: int = 0,
                  num_res_blocks: int = 2, norm_num_groups: int = 8,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, use_obs_mask: bool = False):
         super().__init__()
         self.ny = ny
         self.nx = nx
@@ -285,11 +288,17 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
         self.param_dim = param_dim
         self.cond_extra_dim = cond_extra_dim
         self.ic_dim = ic_dim
-        # Zeroed "state" input placeholder + obs + (optional) forcing/
+        # `use_obs_mask` adds `batch.obs_mask` (per cell, same layout as obs)
+        # as `nlayers` extra channels per day: with a randomized observation
+        # density the zero-filled obs alone cannot tell an unobserved cell
+        # from an observed value at the normalized mean.
+        self.use_obs_mask = use_obs_mask
+        # Zeroed "state" input placeholder + obs (+ mask) + (optional) forcing/
         # params/ic conditioning, matching MonaiDirectUNetQG's own
         # convention -- concatenated along the per-day channel block
         # before T is merged in.
-        in_ch_per_day = 2 * nlayers + cond_extra_dim + param_dim + ic_dim
+        in_ch_per_day = (2 * nlayers + (nlayers if use_obs_mask else 0)
+                         + cond_extra_dim + param_dim + ic_dim)
         self.unet = MonaiUNet2DQGSolver(
             state_dim=in_ch_per_day * ny * nx, T=T, ny=ny, nx=nx,
             hidden_channels=hidden_channels, output_dim=self.state_dim,
@@ -304,6 +313,8 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
         obs_clean = torch.nan_to_num(obs, nan=0.0)
         x = torch.zeros_like(obs_clean)
         cond = [x, obs_clean]
+        if self.use_obs_mask:
+            cond.append(batch.obs_mask.to(obs_clean.dtype))
         if self.cond_extra_dim > 0:
             # `batch.forcing` is (B, T, ny, nx) (cond_extra_dim=1 always in
             # practice -- see MonaiDirectUNetQG.forward's own comment) --
@@ -327,3 +338,81 @@ class MonaiDirectUNetQGChannelTime(nn.Module):
         inp = inp.transpose(1, 2)  # (B, C, T)
         out = self.unet(inp)  # (B, D, T)
         return out.transpose(1, 2)  # (B, T, D)
+
+
+class MonaiVanillaCFMQGChannelTime(VanillaCFM):
+    """Generative obs-conditioned flow (`VanillaCFM`) on the T-merged-into-
+    channels QG backbone (`MonaiUNet2DQGSolver`), trained at random tau --
+    unlike the legacy QG `vanilla_cfm` row (UNet1D, tau = 0 only, a point
+    estimator). The velocity field sees, per day, the interpolated state
+    `x_tau`, the zero-filled obs and (optionally) the obs mask, all with T
+    merged into channels like `MonaiDirectUNetQGChannelTime`; tau goes to
+    the backbone's own time embedding. `compute_cfm_loss`/`sample` are
+    `VanillaCFM`'s (linear interpolant, v = x1 - x0, early-fine Euler grid);
+    `forward(x_tau, batch, tau) -> (B, T, D)`.
+    """
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None, use_obs_mask: bool = True,
+                 N_outer: int = 20, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 4):
+        nn.Module.__init__(self)
+        self.ny, self.nx, self.T, self.nlayers = ny, nx, T, nlayers
+        self.state_dim = nlayers * ny * nx
+        self.use_obs_mask = use_obs_mask
+        self.param_dim = 0
+        self.cond_extra_dim = 0
+        in_ch_per_day = 2 * nlayers + (nlayers if use_obs_mask else 0)
+        self.unet = MonaiUNet2DQGSolver(
+            state_dim=in_ch_per_day * ny * nx, T=T, ny=ny, nx=nx,
+            hidden_channels=hidden_channels, output_dim=self.state_dim,
+            dropout=dropout, norm_num_groups=norm_num_groups,
+            num_res_blocks=num_res_blocks)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = False
+
+    def forward(self, x_t: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        B, T, _ = x_t.shape
+        if T != self.T:
+            raise ValueError(f"expected T={self.T} (days), got {T}")
+        parts = [x_t, torch.nan_to_num(batch.obs, nan=0.0)]
+        if self.use_obs_mask:
+            parts.append(batch.obs_mask.to(x_t.dtype))
+        out = self.unet(torch.cat(parts, dim=-1).transpose(1, 2), tau=tau)
+        return out.transpose(1, 2)
+
+
+class MonaiSDAPriorQGChannelTime(VanillaCFM):
+    """Unconditional flow prior p(psi window) for score-based DA (SDA1) on the
+    T-merged-into-channels QG backbone: the QG counterpart of
+    `models.sda.UnconditionalPriorCFM`. Observations are never an input
+    (`batch.obs` is read only for its shape/device by `VanillaCFM.sample`);
+    they enter at sampling time through the guidance cost
+    (`evaluation/sda_sampler.py`). `forward(x_tau, batch, tau) -> (B, T, D)`.
+    """
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None, N_outer: int = 10,
+                 sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 4):
+        nn.Module.__init__(self)
+        self.ny, self.nx, self.T, self.nlayers = ny, nx, T, nlayers
+        self.state_dim = nlayers * ny * nx
+        self.param_dim = 0
+        self.cond_extra_dim = 0
+        self.unet = MonaiUNet2DQGSolver(
+            state_dim=self.state_dim, T=T, ny=ny, nx=nx,
+            hidden_channels=hidden_channels, output_dim=self.state_dim,
+            dropout=dropout, norm_num_groups=norm_num_groups,
+            num_res_blocks=num_res_blocks)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = False
+
+    def forward(self, x_t: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        if x_t.shape[1] != self.T:
+            raise ValueError(f"expected T={self.T} (days), got {x_t.shape[1]}")
+        return self.unet(x_t.transpose(1, 2), tau=tau).transpose(1, 2)

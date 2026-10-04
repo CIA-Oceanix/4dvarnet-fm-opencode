@@ -129,6 +129,7 @@ from torch.utils.data import Dataset
 
 from data.normalization import denormalize, normalize
 from data.qg import (
+    MULTI_COLUMN_SAMPLINGS,
     QGConfig,
     QGS01Dataset,
     _make_corrupted_wind_state,
@@ -451,13 +452,27 @@ class QGNeuralDataset(Dataset):
     count itself varies draw-to-draw. Leave `None` (default) for the
     original fixed-density behavior; keep `None` for val/test so evaluation
     stays at one stable reference density.
+
+    `cols_sampling` (optional) overrides `cfg.cols_sampling` for this
+    dataset's on-the-fly draws only, e.g. `"uniform_slots"` for the train
+    split (`cols_per_day` distinct (step, column) slots per day, uniform over
+    all `steps_per_day * nx`, so densities above `steps_per_day` work) while
+    val/test keep the test sampler. `None` (default) keeps `cfg.cols_sampling`.
     """
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
                  on_the_fly_obs: bool = False, cond_mode: str = "none",
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5,
                  forcing_norm_stats: dict | None = None, include_ic: bool = False,
-                 cols_per_day_range: tuple[int, int] | None = None):
+                 cols_per_day_range: tuple[int, int] | None = None,
+                 cols_sampling: str | None = None):
+        if cols_sampling is not None:
+            if cols_sampling not in ("sequential", *MULTI_COLUMN_SAMPLINGS):
+                raise ValueError(f"unknown cols_sampling {cols_sampling!r}")
+            if not on_the_fly_obs:
+                raise ValueError("cols_sampling requires on_the_fly_obs=True -- it only "
+                                 "applies to the per-draw obs")
+        sampling = cols_sampling or cfg.cols_sampling
         if cols_per_day_range is not None and not on_the_fly_obs:
             raise ValueError(
                 "cols_per_day_range requires on_the_fly_obs=True -- otherwise "
@@ -470,8 +485,13 @@ class QGNeuralDataset(Dataset):
                 raise ValueError(
                     f"cols_per_day_range must satisfy 1 <= min <= max, got "
                     f"{cols_per_day_range!r}")
+            if sampling == "uniform_slots" and hi > steps_per_day(cfg) * cfg.nx:
+                raise ValueError(
+                    f"cols_per_day_range max ({hi}) exceeds the "
+                    f"{steps_per_day(cfg) * cfg.nx} (step, column) slots of a day")
             max_cols = steps_per_day(cfg)
-            if cfg.obs_geometry == "random_columns" and hi > max_cols:
+            if (cfg.obs_geometry == "random_columns" and sampling not in MULTI_COLUMN_SAMPLINGS
+                    and hi > max_cols):
                 raise ValueError(
                     f"cols_per_day_range max ({hi}) exceeds cfg.dt's "
                     f"steps_per_day ({max_cols}) -- "
@@ -481,7 +501,8 @@ class QGNeuralDataset(Dataset):
                     "can never be satisfied and its collision-avoidance loop "
                     "spins forever (confirmed: hung a real GPU job, see "
                     "PLAN.md's 2026-09-13 Q1-obsdensity note). Lower the "
-                    "range max to at most steps_per_day, or use a smaller dt.")
+                    "range max to at most steps_per_day, or use "
+                    "cols_sampling='uniform_slots'.")
         if cond_mode not in ("none", "true", "noisy", "scenario"):
             hint = (" (YAML `cond_mode: true` parses as the boolean True, not "
                     "this string -- quote it as `cond_mode: \"true\"`)"
@@ -514,6 +535,7 @@ class QGNeuralDataset(Dataset):
         self.forcing_norm_stats = forcing_norm_stats
         self.include_ic = include_ic
         self.cols_per_day_range = cols_per_day_range
+        self.cols_sampling = cols_sampling
 
     def __len__(self) -> int:
         return len(self.windows)
@@ -535,6 +557,8 @@ class QGNeuralDataset(Dataset):
             # the shared `self.cfg` (and any other dataset instance using it,
             # e.g. a fixed-density val/test split) is untouched.
             cfg = _dc_replace(cfg, cols_per_day=random.randint(lo, hi))
+        if self.cols_sampling is not None:
+            cfg = _dc_replace(cfg, cols_sampling=self.cols_sampling)
         ic = QGS01Dataset._generate_obs_ic(cfg, [w], [draw])[0]
         w = dict(w)
         w.update(ic)

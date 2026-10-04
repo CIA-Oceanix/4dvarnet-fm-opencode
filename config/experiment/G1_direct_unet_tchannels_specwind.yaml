@@ -1,0 +1,46 @@
+# G1: DirectUNet on the spectral-wind gyrostat QG benchmark, round 1
+# (docs/plans/analysis/qg_specwind_neural.md). Obs-only (psi1 columns +
+# per-cell mask, no IC, no conditioning), monai T-channels backbone at the
+# M tier, trained on G5-regenerated windows against daily means.
+#
+#   python train_qg_neural.py --model-type direct_unet_tchannels --exp-id G1_direct_unet_tchannels_specwind \
+#     --exp-dir experiments/qg_specwind_neural/G1_direct_unet_tchannels_specwind \
+#     --specwind-spec qg_specwind_gyrostat_v1 --specwind-root ../experiments/qg_datasets \
+#     --regen-windows 1000 --regen-every 5 --seed 0
+
+experiment_id: G1_direct_unet_tchannels_specwind
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  num_res_blocks: 2
+  use_obs_mask: true
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 200
+  lr: 0.001
+  batch_size: 2
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration
+  # draw; 1.0 = lambda_0 until the E1 sweep (plan section 4.2) picks the scale.
+  q_loss_weight_scale: 1.0
+data:
+  normalize: true
+  # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):
+  # 3 psi1 columns per day, sequential sampler, 5% white noise.
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  # Train split only: a fresh draw per sample, 3-30 distinct (step, column)
+  # slots per day, uniform over the 12 x 64 slots of a day (plan section 4.3).
+  cols_per_day_min: 3
+  cols_per_day_max: 30
+  train_cols_sampling: uniform_slots

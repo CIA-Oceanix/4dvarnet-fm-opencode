@@ -188,3 +188,46 @@ class TestResolvedConfigContents:
         arch = qg_runs.architecture("runA")
         assert arch["model_type"] == "direct_unet_tchannels"
         assert arch["source"] == "resolved_config.yaml"
+
+
+class TestCapacityTierRoundTrip:
+    """The S/L DirectUNet tiers (spectral-wind round 1) must be rebuilt at the
+    tier they were trained at, not at the M-tier default."""
+
+    def test_tier_written_and_read_back(self, tmp_path, monkeypatch):
+        import train_qg_neural as t
+
+        class Cfg:
+            nx, ny, state_dim = 64, 64, 8192
+            obs_geometry, cols_per_day = "random_columns", 3
+            obs_noise_std_frac, init_lag_days = 0.05, 5.0
+            s1_param_bias = s1_amp_bias = 0.1
+
+        run = tmp_path / "experiments" / "qg" / "runS"
+        run.mkdir(parents=True)
+        t.write_resolved_config(
+            str(run), "G1S_x", torch.nn.Linear(3, 4), model_type="direct_unet_tchannels",
+            cfg=Cfg(), epochs=200, lr=1e-3, batch_size=2, gradient_clip_val=1.0,
+            q_loss_weight=1.0, use_cosine_scheduler=True, seed=0,
+            num_train=1000, num_val=100, num_test=100, train_seed=42,
+            val_seed=10042, test_seed=20042, on_the_fly_split_obs=True,
+            cache_dir="reports/qg_cache", normalize=True, norm_stats_path=None,
+            param_norm_stats_path=None, forcing_norm_stats_path=None,
+            cond_mode="none", noisy_max=1.5, param_dim=0, cond_extra_dim=0,
+            include_ic=False, ic_dim=0, cols_per_day_range=(3, 30), fdv_kwargs=None,
+            hidden_channels=[32, 64, 128], num_res_blocks=1, use_obs_mask=True)
+        monkeypatch.setattr(archive, "EXPERIMENTS", tmp_path / "experiments")
+        arch = qg_runs.architecture("runS")
+        assert arch["hidden_channels"] == [32, 64, 128]
+        assert arch["num_res_blocks"] == 1
+        assert arch["use_obs_mask"] is True
+
+    def test_runs_without_tier_keys_read_as_m_tier(self, tmp_path, monkeypatch):
+        run = tmp_path / "experiments" / "qg" / "runOld"
+        run.mkdir(parents=True)
+        (run / "resolved_config.yaml").write_text(
+            "model:\n  model_type: direct_unet_tchannels\n  param_dim: 0\n")
+        monkeypatch.setattr(archive, "EXPERIMENTS", tmp_path / "experiments")
+        arch = qg_runs.architecture("runOld")
+        assert (arch["hidden_channels"], arch["num_res_blocks"], arch["use_obs_mask"]) == (
+            [64, 128, 256], 2, False)

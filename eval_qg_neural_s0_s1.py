@@ -95,7 +95,10 @@ SCHEMES = {
 
 def _load_model(arch: dict, ckpt, cfg: QGConfig, device: torch.device) -> torch.nn.Module:
     model = build_model(arch["model_type"], cfg, param_dim=arch["param_dim"],
-                        cond_extra_dim=arch["cond_extra_dim"], ic_dim=arch["ic_dim"])
+                        cond_extra_dim=arch["cond_extra_dim"], ic_dim=arch["ic_dim"],
+                        use_obs_mask=arch.get("use_obs_mask", False),
+                        hidden_channels=arch.get("hidden_channels"),
+                        num_res_blocks=arch.get("num_res_blocks", 2))
     loaded = torch.load(ckpt, map_location="cpu", weights_only=False)
     # Accepts both a bare state_dict (train_qg_neural.py's final stage1_best.pt)
     # and a full Lightning checkpoint (keys prefixed "model." for the

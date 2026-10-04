@@ -1045,3 +1045,87 @@ def test_normalized_forcing_is_order_one_not_raw_scale():
     assert forcing.std() > 1e-3, (
         f"normalized forcing std={forcing.std():.3e} is still tiny -- "
         "normalization did not actually rescale it")
+
+
+def test_cols_sampling_override_uniform_slots_allows_dense_range():
+    """Train-split randomization (docs/plans/analysis/qg_specwind_neural.md §4.3):
+    cols_per_day ~ U{3..30} with uniform (step, column) slots, past the
+    sequential sampler's steps_per_day cap; the shared cfg is untouched."""
+    cfg = _cfg()  # dt=7200 -> 12 steps/day, nx=8 -> 96 slots/day
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, cols_per_day_range=(3, 30),
+                         cols_sampling="uniform_slots")
+    n_days = num_days(cfg)
+    counts = []
+    for _ in range(20):
+        w = ds._resolved_window(0)
+        n_slots = sum(len(c) for c in w["obs_columns"] if c is not None)
+        assert n_slots % n_days == 0
+        counts.append(n_slots // n_days)
+    assert all(3 <= c <= 30 for c in counts)
+    assert max(counts) > steps_per_day(cfg)
+    assert cfg.cols_sampling == "sequential"
+    _psi, obs_pad, obs_mask, *_ = ds[0]
+    assert obs_mask.any() and torch.isfinite(obs_pad).all()
+
+
+def test_cols_sampling_override_requires_on_the_fly_obs():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError, match="on_the_fly_obs"):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=False, cols_sampling="uniform_slots")
+    with pytest.raises(ValueError, match="unknown cols_sampling"):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=True, cols_sampling="bogus")
+
+
+SPECWIND_TIERS = {
+    "G1S_direct_unet_tchannels_specwind.yaml": ([32, 64, 128], 3_676_476),
+    "G1_direct_unet_tchannels_specwind.yaml": ([64, 128, 256], 14_541_372),
+    "G1L_direct_unet_tchannels_specwind.yaml": ([128, 256, 512], 57_836_604),
+}
+
+
+@pytest.mark.parametrize("filename", sorted(SPECWIND_TIERS))
+def test_specwind_g1_tier_yaml_builds_its_tier(filename):
+    """The YAML's hidden_channels selects the built capacity for the
+    T-channels types (it used to be a dead field), and the observing system
+    matches the gyrostat DA rows (3 cols/day, 5% white)."""
+    import os
+
+    from omegaconf import OmegaConf
+
+    from train_qg_neural import build_model
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    hidden, n_params = SPECWIND_TIERS[filename]
+    assert cfg.model_type == "direct_unet_tchannels"
+    assert list(cfg.model.hidden_channels) == hidden
+    assert int(cfg.data.cols_per_day) == 3
+    assert float(cfg.data.obs_noise_std_frac) == 0.05
+    assert cfg.data.train_cols_sampling == "uniform_slots"
+    assert (int(cfg.data.cols_per_day_min), int(cfg.data.cols_per_day_max)) == (3, 30)
+    model = build_model("direct_unet_tchannels", QGConfig(nx=64), use_obs_mask=bool(cfg.model.use_obs_mask),
+                        hidden_channels=list(cfg.model.hidden_channels),
+                        num_res_blocks=int(cfg.model.num_res_blocks))
+    assert sum(p.numel() for p in model.parameters()) == n_params
+
+
+@pytest.mark.parametrize("filename,model_type", [
+    ("G2_vanilla_cfm_tchannels_specwind.yaml", "vanilla_cfm_tchannels"),
+    ("G3_sda_prior_tchannels_specwind.yaml", "sda_prior_tchannels"),
+])
+def test_specwind_flow_yaml_configs(filename, model_type):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    assert cfg.model_type == model_type
+    assert list(cfg.model.hidden_channels) == [64, 128, 256]
+    assert int(cfg.data.cols_per_day) == 3
+
+
+def test_build_model_refuses_a_tier_for_untiered_types():
+    from train_qg_neural import build_model
+    with pytest.raises(ValueError, match="fixed M tier"):
+        build_model("direct_unet", QGConfig(nx=64), hidden_channels=[32, 64, 128])
