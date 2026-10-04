@@ -123,7 +123,7 @@ def test_callback_swaps_windows_every_k_epochs(tmp_path):
 
 def _eval_args(root, spec_name="tiny_g5"):
     return SimpleNamespace(specwind_spec=spec_name, specwind_root=root, regen_windows=2,
-                           regen_every=1, regen_batch_size=2, eval_only="stage1_best.pt")
+                           regen_every=1, regen_batch_size=2, eval_only="stage1_best.pt", num_test=100)
 
 
 def test_eval_only_reloads_the_stats_saved_by_training(built, tmp_path, monkeypatch):

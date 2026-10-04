@@ -23,6 +23,7 @@ corruption of the Option B plan's PR-2.
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 import time
@@ -234,6 +235,10 @@ class RegenerateTrainWindows(pl.Callback):
             return
         round_ = epoch // self.every
         t0 = time.time()
+        # Drop the previous round before drawing the next: holding both (~12 GB each at
+        # 1000 windows) pushed a 64 GB job over its limit at the first regeneration.
+        self.dataset.windows = []
+        gc.collect()
         self.dataset.windows = self.source.draw(round_)
         entry = {"epoch": epoch, "round": round_, "n": len(self.dataset.windows),
                  "seconds": round(time.time() - t0, 1),

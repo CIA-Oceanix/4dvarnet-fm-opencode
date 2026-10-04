@@ -572,7 +572,10 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
     check_compatible(spec, cfg)
     with_curl = cond_mode == "true"
     test_raw, test_rep = materialize_split(spec, "test", args.specwind_root, device, with_curl)
-    test_windows = with_fixed_obs(test_raw, cfg)
+    # Only the first --num-test windows feed the in-script check (the benchmark scoring is
+    # evaluation/run_qg_specwind_neural.py); keeping all 500 resident costs ~5 GB.
+    test_windows = with_fixed_obs(test_raw[:args.num_test], cfg)
+    del test_raw
     info = {"spec": spec.name, "root": args.specwind_root, "cond_mode": cond_mode,
             "regen_windows": args.regen_windows, "regen_every": args.regen_every,
             "test": test_rep}
