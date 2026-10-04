@@ -161,7 +161,7 @@ scores (forced / coupled) are:
 - **S0:** strong 4D-Var reaches 0.840 / 0.847, the best of all methods.
   - Over the EnKS: +0.028.
   - It matches the EnKS's N = 320 reference.
-- **S1, strong 4D-Var:** 0.516 / COUPLED_STRONG, below every ensemble
+- **S1, strong 4D-Var:** 0.516 / 0.527, below every ensemble
   method.
 - **S1, weak 4D-Var** (model-error scale 0.1, R × 1): 0.612 / 0.619.
   - Over strong 4D-Var: +0.096.

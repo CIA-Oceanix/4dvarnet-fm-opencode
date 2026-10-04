@@ -9,7 +9,7 @@ benchmark (forced and coupled; S0 and realistic S1).
   The weak constraint uses model-error scale 0.1 at R × 1.
 - **Test, forced / coupled:**
   - S0 strong: 0.840 / 0.847, best of all methods (+0.028 over the EnKS).
-  - S1 strong: 0.516 / COUPLED_STRONG.
+  - S1 strong: 0.516 / 0.527.
   - S1 weak: 0.612 / 0.619. That is +0.096 over strong, but −0.021 against
     the S1-tuned ETKF and −0.053 against the S1-tuned EnKS. The gap is in
     the unobserved lower-layer PV.

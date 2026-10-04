@@ -6,12 +6,12 @@ strong-constraint 4D-Var in S0 and S1, and weak-constraint 4D-Var in S1. Both
 use the observations, initial background and DA model of the ensemble
 methods.
 
-**Numbers:**
+**Numbers:** test rows in `reports/qg/outputs/qg_specwind_da_report.md`.
+- Test: 100 windows, from
+  `experiments/qg_specwind_da/<spec>/test/*4dvar*` (SLURM 58317–58349).
 - Val: 10 windows of the forced dataset, under
   `experiments/qg_specwind_da/qg_specwind_gyrostat_v1/val/*4dvar*`
   (SLURM 57998–58310, rtx8000).
-- Test: 100 windows, `reports/qg/outputs/qg_specwind_da_report.md`, from
-  `experiments/qg_specwind_da/<spec>/test/*4dvar*` (SLURM 58317–58349).
 
 ## Method (`QG4DVar`, `evaluation/run_qg_baselines.py`)
 
@@ -118,7 +118,7 @@ Field EVs are for the forced dataset. 4D-Var had 3 / 2 fallbacks.
 
 | | ψ₁ | ψ₂ | q₁ | q₂ | score |
 |---|---|---|---|---|---|
-| strong 4D-Var | 0.852 | 0.706 | 0.368 | 0.139 | 0.516 / COUPLED_STRONG |
+| strong 4D-Var | 0.852 | 0.706 | 0.368 | 0.139 | 0.516 / 0.527 |
 | weak 4D-Var (scale 0.1) | **0.897** | 0.797 | 0.480 | 0.273 | 0.612 / 0.619 |
 | ETKF, R × 6 | 0.865 | 0.791 | 0.473 | 0.402 | 0.633 / 0.642 |
 | EnKS, R × 6 | 0.894 | 0.783 | **0.547** | **0.437** | **0.665 / 0.673** |
