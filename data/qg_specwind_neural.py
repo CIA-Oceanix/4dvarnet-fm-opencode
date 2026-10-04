@@ -23,6 +23,7 @@ corruption of the Option B plan's PR-2.
 """
 from __future__ import annotations
 
+import ctypes
 import gc
 import json
 import os
@@ -113,10 +114,25 @@ class SpecWindTrainSource:
                               design_key=(DESIGN_KEY, 1 + int(round_)))
 
     def draw(self, round_: int) -> list[dict]:
-        res = generate_windows(self.spec, "train", self.indices(round_), device=self.device,
-                               batch_size=self.batch_size, factors=self.factors(round_),
-                               keep_every=1)
-        return legacy_windows(res, self.spec, self.with_wind_curl)
+        """The round's windows, generated one `batch_size` chunk at a time.
+
+        Each chunk is converted to legacy windows and its raw rollout freed before the
+        next one, so the transient memory is one chunk rather than the whole round
+        concatenated and then cloned (about 30 GB at 1000 windows, which killed 64 GB
+        training jobs at the second regeneration). Windows are seeded per index and
+        simulated per batch, so the result is the same as one call over all indices.
+        """
+        indices, fac = self.indices(round_), self.factors(round_)
+        out: list[dict] = []
+        for start in range(0, len(indices), self.batch_size):
+            rows = slice(start, start + self.batch_size)
+            res = generate_windows(self.spec, "train", indices[rows], device=self.device,
+                                   batch_size=self.batch_size,
+                                   factors={k: np.asarray(v)[rows] for k, v in fac.items()},
+                                   keep_every=1)
+            out.extend(legacy_windows(res, self.spec, self.with_wind_curl))
+            del res
+        return out
 
 
 def materialize_split(spec: QGDatasetSpec, split: str, root: str,
@@ -220,6 +236,15 @@ def train_norm_stats(windows: list[dict], cfg: QGConfig, with_forcing: bool = Fa
     return out
 
 
+def release_freed_memory() -> None:
+    """Hand freed heap pages back to the OS (glibc only), so successive rounds do not
+    accumulate fragmented arenas against the job's memory limit."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        pass
+
+
 class RegenerateTrainWindows(pl.Callback):
     def __init__(self, dataset, source: SpecWindTrainSource, every: int, log_path: str | None = None):
         if every < 1:
@@ -239,6 +264,7 @@ class RegenerateTrainWindows(pl.Callback):
         # 1000 windows) pushed a 64 GB job over its limit at the first regeneration.
         self.dataset.windows = []
         gc.collect()
+        release_freed_memory()
         self.dataset.windows = self.source.draw(round_)
         entry = {"epoch": epoch, "round": round_, "n": len(self.dataset.windows),
                  "seconds": round(time.time() - t0, 1),
