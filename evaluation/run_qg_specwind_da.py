@@ -225,6 +225,9 @@ def main() -> None:
     for comp_arg in ("amp-bias", "noise-frac", "shift-frac", "param-bias"):
         p.add_argument(f"--s1-{comp_arg}", type=float, default=None,
                        help="override the reference level of this component (before --s1-kappa)")
+    p.add_argument("--relax", choices=("none", "rtpp", "rtps"), default="none",
+                   help="relaxation inflation of the ETKF/EnKF analysis anomalies")
+    p.add_argument("--relax-alpha", type=float, default=0.0)
     p.add_argument("--out", required=True, help="summary JSON path (run() output)")
     p.add_argument("--save-traj", default=None,
                    help="directory for run()'s trajectory npz (analysis mean, free forecast, truth)")
@@ -258,6 +261,7 @@ def main() -> None:
         out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
         enks_lag=args.enks_lag or None, r_scale=args.r_scale,
         enks_taper_days=args.enks_taper_days if args.enks_taper_days and args.enks_taper_days > 0 else None,
+        **({"relax": args.relax, "relax_alpha": args.relax_alpha} if args.relax != "none" else {}),
         **({k: getattr(args, k) for k in ("da_window_steps", "b_var_scale", "q_var_scale")}
            | {"optimizer": args.fourdvar_optimizer, "fourdvar_max_iter": args.fourdvar_max_iter,
               "fourdvar_opt_steps": args.fourdvar_opt_steps, "fourdvar_lr": args.fourdvar_lr,
@@ -269,6 +273,7 @@ def main() -> None:
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
             "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
             "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode, "enks_lag": args.enks_lag, "r_scale": args.r_scale, "enks_taper_days": args.enks_taper_days,
+            "relax": None if args.relax == "none" else args.relax, "relax_alpha": args.relax_alpha,
             "fourdvar": ({"da_window_steps": args.da_window_steps, "optimizer": args.fourdvar_optimizer,
                           "max_iter": args.fourdvar_max_iter, "lr": args.fourdvar_lr,
                           "b_var_scale": args.b_var_scale, "q_var_scale": args.q_var_scale,

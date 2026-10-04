@@ -169,6 +169,24 @@ def test_localized_enks_runs_end_to_end_and_smooths_the_filter(built, tmp_path):
     assert len(smooth["spread_ratio_list"]) == 2
 
 
+@pytest.mark.parametrize("method,relax", [("etkf", "rtps"), ("etkf", "rtpp"), ("enkf", "rtps")])
+def test_relaxation_inflation_runs_end_to_end_and_widens_the_spread(built, method, relax):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    kw = dict(device=torch.device("cpu"), N_ensemble=6, inflation=1.0, loc_radius=2.0,
+              scenarios=("test_s0",), init="lagged", geometry="random_columns", obs_var="psi",
+              init_lag_days=0.2, band_half=0.05, ds={"test_s0": ws}, etkf_ridge=0.1,
+              loc_cross_layer=1.0, init_ensemble_kind="bred", breed_days=2 / 12,
+              etkf_loc_mode="ensrf")
+    torch.manual_seed(0)
+    base = run(method, cfg, **kw)["scenarios"]["test_s0"]
+    torch.manual_seed(0)
+    relaxed = run(method, cfg, relax=relax, relax_alpha=0.9, **kw)["scenarios"]["test_s0"]
+    assert relaxed["expvar_full"] == relaxed["expvar_full"]
+    spread = [sum(w["q1"] for w in r["spread_ratio_list"]) for r in (base, relaxed)]
+    assert spread[1] > spread[0]
+
+
 @pytest.mark.parametrize("method", ["strong4dvar", "weak4dvar"])
 def test_4dvar_runs_end_to_end_on_spectral_wind_windows(built, method):
     cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.2)
