@@ -76,7 +76,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
 | `reports/l96/outputs/da_inflation_sweep/` | `docs/results/l96_da_inflation_post291.md` |
-| `reports/qg/outputs/qg_specwind_da_report.md` | `docs/results/qg_specwind_da_s0_s1_test.md`, `docs/results/qg_specwind_enks.md`, `docs/results/qg_specwind_s1_tuning.md`, `docs/results/qg_specwind_ensemble_size.md` |
+| `reports/qg/outputs/qg_specwind_da_report.md` | `docs/results/qg_specwind_da_s0_s1_test.md`, `docs/results/qg_specwind_enks.md`, `docs/results/qg_specwind_s1_tuning.md`, `docs/results/qg_specwind_ensemble_size.md`, `docs/results/qg_specwind_4dvar.md` |
 | `reports/qg/outputs/qg_spectral_wind_report.md` | `docs/results/qg_spectral_wind_calibration.md` |
 
 ## Status vocabulary

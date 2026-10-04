@@ -135,7 +135,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
              disp_frac: float = 1.0, init_lag_days: float = 5.0, out_path: str | None = None,
              save_traj: str | None = None, etkf_loc_mode: str = "ensrf",
              enks_lag: int | None = None, r_scale: float = 1.0,
-             enks_taper_days: float | None = None) -> tuple[dict, list[dict]]:
+             enks_taper_days: float | None = None, **var_kwargs) -> tuple[dict, list[dict]]:
     """Run S0/S1 DA on prepared windows; return run()'s payload and per-window metrics."""
     traj_dir = save_traj or tempfile.mkdtemp(prefix="qgda_", dir=os.environ.get("TMPDIR", "/tmp"))
     try:
@@ -147,7 +147,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       init_ensemble_kind=init_ensemble, breed_days=breed_days, disp_frac=disp_frac,
                       etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag, obs_var_r_scale=r_scale,
                       enks_taper_steps=(enks_taper_days * 86400.0 / cfg.dt
-                                        if enks_taper_days is not None else None))
+                                        if enks_taper_days is not None else None),
+                      **var_kwargs)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
         per_window = []
@@ -156,7 +157,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                                w["true_params"], cfg, device)
             m.update({"index": int(w["init_seed_key"]), "crps": s["crps_list"][k],
                       "level": w["specwind"]["factors"]["level"],
-                      **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()}})
+                      **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()},
+                      "n_fallback": s["fallback_list"][k]})
             per_window.append(m)
     finally:
         if save_traj is None:
@@ -173,7 +175,8 @@ def main() -> None:
     p.add_argument("--n-windows", type=int, default=100)
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--n-shards", type=int, default=1)
-    p.add_argument("--method", default="etkf", choices=("etkf", "enkf", "enks"),
+    p.add_argument("--method", default="etkf",
+                   choices=("etkf", "enkf", "enks", "strong4dvar", "weak4dvar"),
                    help="enks = localized EnKS smoother on the EnSRF ETKF")
     p.add_argument("--cols-per-day", type=int, default=3)
     p.add_argument("--obs-noise-frac", type=float, default=0.05)
@@ -190,6 +193,18 @@ def main() -> None:
     p.add_argument("--enks-taper-days", type=float, default=8.0,
                    help="EnKS time taper width in days (Gaspari-Cohn, zero beyond twice it; val-tuned 8; "
                         "<= 0 disables it)")
+    p.add_argument("--da-window-steps", type=int, default=60,
+                   help="4D-Var sub-window length in model steps (60 = 5 days)")
+    p.add_argument("--fourdvar-optimizer", default="lbfgs", choices=("lbfgs", "adam"))
+    p.add_argument("--fourdvar-max-iter", type=int, default=60)
+    p.add_argument("--fourdvar-opt-steps", type=int, default=150)
+    p.add_argument("--fourdvar-lr", type=float, default=1.0)
+    p.add_argument("--fourdvar-grad-clip", type=float, default=1000.0)
+    p.add_argument("--b-var-scale", type=float, default=1.0)
+    p.add_argument("--fourdvar-b", default="diag", choices=("diag", "spectral"),
+                   help="4D-Var background covariance: diagonal (legacy) or spectral climatological "
+                        "(from the lead buffer, correlated between layers)")
+    p.add_argument("--q-var-scale", type=float, default=0.1)
     p.add_argument("--r-scale", type=float, default=1.0,
                    help="multiply the filter's observation-error variance (absorbs model error)")
     p.add_argument("--enks-lag", type=int, default=0,
@@ -242,13 +257,23 @@ def main() -> None:
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
         out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
         enks_lag=args.enks_lag or None, r_scale=args.r_scale,
-        enks_taper_days=args.enks_taper_days if args.enks_taper_days and args.enks_taper_days > 0 else None)
+        enks_taper_days=args.enks_taper_days if args.enks_taper_days and args.enks_taper_days > 0 else None,
+        **({k: getattr(args, k) for k in ("da_window_steps", "b_var_scale", "q_var_scale")}
+           | {"optimizer": args.fourdvar_optimizer, "fourdvar_max_iter": args.fourdvar_max_iter,
+              "fourdvar_opt_steps": args.fourdvar_opt_steps, "fourdvar_lr": args.fourdvar_lr,
+              "fourdvar_grad_clip": args.fourdvar_grad_clip, "fourdvar_b": args.fourdvar_b}
+           if "4dvar" in args.method else {}))
     meta = {"spec": spec.name, "split": args.split, "indices": idx, "method": args.method,
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "init_lag_days": args.init_lag_days, "N": args.N, "inflation": args.inflation,
             "loc_radius": args.loc_radius, "etkf_ridge": args.etkf_ridge,
             "loc_cross_layer": args.loc_cross_layer, "init_ensemble": args.init_ensemble,
             "breed_days": args.breed_days, "disp_frac": args.disp_frac, "etkf_loc_mode": args.etkf_loc_mode, "enks_lag": args.enks_lag, "r_scale": args.r_scale, "enks_taper_days": args.enks_taper_days,
+            "fourdvar": ({"da_window_steps": args.da_window_steps, "optimizer": args.fourdvar_optimizer,
+                          "max_iter": args.fourdvar_max_iter, "lr": args.fourdvar_lr,
+                          "b_var_scale": args.b_var_scale, "q_var_scale": args.q_var_scale,
+                          "b": args.fourdvar_b}
+                         if "4dvar" in args.method else None),
             "load": report, "load_seconds": round(load_s, 1),
             "da_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": args.s1_kappa, "s1_preset": args.s1_preset if args.s1_kappa else None,
