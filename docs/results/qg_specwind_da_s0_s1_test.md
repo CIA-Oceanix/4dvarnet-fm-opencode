@@ -154,11 +154,28 @@ test scores rise to:
 
 Rankings are unchanged. Details: `docs/results/qg_specwind_ensemble_size.md`.
 
+## 3e. 4D-Var (strong and weak)
+
+With a spectral climatological B, 10-day sub-windows and L-BFGS, test
+scores (forced / coupled) are:
+- **S0:** strong 4D-Var reaches 0.840 / 0.847, the best of all methods.
+  - Over the EnKS: +0.028.
+  - It matches the EnKS's N = 320 reference.
+- **S1, strong 4D-Var:** 0.516 / COUPLED_STRONG, below every ensemble
+  method.
+- **S1, weak 4D-Var** (model-error scale 0.1, R × 1): 0.612 / 0.619.
+  - Over strong 4D-Var: +0.096.
+  - Under the S1-tuned ETKF: −0.021.
+  - Under the S1-tuned EnKS: −0.053.
+  - The gap is in the lower-layer PV: q₂ 0.27 against 0.44 for the EnKS.
+
+Details: `docs/results/qg_specwind_4dvar.md`.
+
 ## 4. Caveats
 
 - **100 test windows per cell.** D3 strata have 21–79 windows each.
-- **S1 uses the S0-tuned filters.** The ETKF–EnKF ranking under S1 may
-  change with S1-specific tuning.
+- **S1 tuning is limited.** It is a single global R scale for the
+  ensembles (§3c) and a single model-error scale for weak 4D-Var (§3e).
 - **The initial state is the lagged truth in both scenarios**, which is
   optimistic against an analysis-cycled first guess.
 - **Only S0 has the density curve.** S1 was run at 3 columns per day only.

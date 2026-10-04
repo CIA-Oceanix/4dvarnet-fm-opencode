@@ -28,8 +28,12 @@ import numpy as np
 FIELDS = ("psi1", "psi2", "q1", "q2")
 LABEL = {"psi1": "ψ₁", "psi2": "ψ₂", "q1": "q₁", "q2": "q₂", "score": "score"}
 SPECS = {"qg_specwind_gyrostat_v1": "forced", "qg_coupled_gyrostat_v1": "coupled"}
-METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF", "enks": "EnKS (ETKF smoother)"}
+METHOD_NAME = {"etkf": "ETKF", "enkf": "EnKF", "enks": "EnKS (ETKF smoother)",
+               "strong4dvar": "strong 4D-Var", "weak4dvar": "weak 4D-Var"}
 METHODS = ("etkf", "enkf", "enks")
+VAR_METHODS = ("strong4dvar", "weak4dvar")
+VAR_SETTINGS = {"b": "spectral", "b_var_scale": 1.0, "da_window_steps": 120, "max_iter": 60}
+WEAK_Q = 0.1
 S0 = "S0"
 ETKF_MODE = "ensrf"
 S1_TUNED_R = 6.0
@@ -57,6 +61,7 @@ def load_runs(root: str) -> list[dict]:
                      "mode": m0.get("etkf_loc_mode", "square_root") if m0["method"] == "etkf" else "-",
                      "lag": m0.get("enks_lag"), "r_scale": float(m0.get("r_scale", 1.0) or 1.0),
                      "taper": m0.get("enks_taper_days"), "N": int(m0.get("N", 80)),
+                     "fourdvar": m0.get("fourdvar"),
                      "complete": len(metas) == n_shards, "n_shards": n_shards,
                      "shards": len(metas), "per_window": pw,
                      "da_seconds": sum(m["da_seconds"] for m in metas)})
@@ -85,8 +90,18 @@ def _values(run: dict, tag: str, key: str) -> np.ndarray:
     return np.array([w[f"ev_{tag}_{key}"] for w in run["per_window"]])
 
 
+def _var_ok(r: dict) -> bool:
+    fv = r.get("fourdvar") or {}
+    return (all(fv.get(k) == v for k, v in VAR_SETTINGS.items())
+            and (r["method"] != "weak4dvar" or abs(fv.get("q_var_scale", 0.0) - WEAK_Q) < 1e-9))
+
+
 def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0,
           r_scale: float = 1.0) -> dict | None:
+    if method in VAR_METHODS:
+        hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
+                and r["s1"] == s1 and r["complete"] and abs(r["r_scale"] - r_scale) < 1e-9 and _var_ok(r)]
+        return hits[0] if hits else None
     hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
             and r["s1"] == s1 and r["complete"] and (method != "etkf" or r["mode"] == ETKF_MODE)
             and abs(r["r_scale"] - r_scale) < 1e-9 and r["N"] == 80
@@ -118,7 +133,17 @@ def _table(header: list[str], rows: list[tuple]) -> list[str]:
     return lines
 
 
-def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: float = 1.0) -> list[str]:
+def _var_desc(r: dict) -> str:
+    fv = r["fourdvar"]
+    desc = f"spectral B, {fv['da_window_steps'] / 12:g}-day sub-windows"
+    if r["method"] == "weak4dvar":
+        desc += f", model-error scale {fv['q_var_scale']:g}"
+    n_fb = sum(w.get("n_fallback", 0) for w in r["per_window"])
+    return desc + (f"; {n_fb} sub-window fallbacks" if n_fb else "")
+
+
+def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: float = 1.0,
+                   var_methods: tuple[tuple[str, float], ...] = ()) -> list[str]:
     rows, base = [], None
     for method in METHODS:
         r = _find(runs, spec, method, cols, s1, r_scale)
@@ -143,10 +168,42 @@ def scenario_table(runs: list[dict], spec: str, cols: int, s1: str, r_scale: flo
         v = round(extras[1], 3)
         mk = "**" if v == ranked[0] else ("*" if len(ranked) > 1 and v == ranked[1] else "")
         rows[i] = (name, vals, [extras[0], f"{mk}{extras[1]:.3f}{mk}", extras[2]], rk)
+    for method, var_r in var_methods:
+        r = _find(runs, spec, method, cols, s1, var_r)
+        if r is None:
+            continue
+        vals = [float(_values(r, "da", k).mean()) for k in FIELDS + ("score",)]
+        ci = _boot_mean(_values(r, "da", "score"))
+        mae = float(np.mean([w["crps"] for w in r["per_window"]])) * 1e6
+        rows.append((f"{METHOD_NAME[method]} ({_var_desc(r)})", vals,
+                     [f"[{ci[0]:.3f}, {ci[1]:.3f}]", f"({mae:.3f}, MAE)", "—"], True))
     vals = [float(_values(base, "free", k).mean()) for k in FIELDS + ("score",)]
     rows.insert(0, ("_free forecast_", vals, ["", "", ""], False))
     return _table(["method"] + [LABEL[k] for k in FIELDS]
                   + ["score", "score 95% CI", "CRPS q (×10⁻⁶, lower is better)", "spread/RMSE q₁"], rows)
+
+
+OVERVIEW = (("S0", S0, (("etkf", 1.0), ("enkf", 1.0), ("enks", 1.0), ("strong4dvar", 1.0))),
+            ("S1, S0-tuned", None, (("etkf", 1.0), ("enkf", 1.0), ("enks", 1.0), ("strong4dvar", 1.0))),
+            ("S1-tuned", None, (("etkf", S1_TUNED_R), ("enkf", S1_TUNED_R), ("enks", S1_TUNED_R),
+                                ("weak4dvar", 1.0))))
+
+
+def overview_table(runs: list[dict], s1: str) -> list[str]:
+    """Score per method and scenario, forced / coupled; best bold, second italic per scenario column."""
+    cols = [(lab, scen or s1, cells) for lab, scen, cells in OVERVIEW]
+    names = {"etkf": "ETKF", "enkf": "EnKF", "enks": "EnKS", "strong4dvar": "4D-Var (strong / weak)",
+             "weak4dvar": "4D-Var (strong / weak)"}
+    order = ["ETKF", "EnKF", "EnKS", "4D-Var (strong / weak)"]
+    table = {n: {} for n in order}
+    for j, (_, scen, cells) in enumerate(cols):
+        for method, r_scale in cells:
+            for spec in SPECS:
+                r = _find(runs, spec, method, 3, scen, r_scale)
+                table[names[method]][(j, spec)] = None if r is None else float(_values(r, "da", "score").mean())
+    header = ["method"] + [f"{lab} {SPECS[spec]}" for lab, _, _ in cols for spec in SPECS]
+    rows = [(n, [table[n].get((j, spec)) for j in range(len(cols)) for spec in SPECS], [], True) for n in order]
+    return _table(header, rows)
 
 
 LARGE_N = 320
@@ -331,6 +388,13 @@ def main() -> None:
           "`docs/results/qg_specwind_etkf_loc_update.md` — earlier renders used a localized update with "
           "unnormalized covariances and a full-gain anomaly update, radius 8 / ridge 1); EnKF radius 6; both "
           "with cross-layer localization weight 1 and N = 80, inflation 1.0.", "",
+          "**4D-Var:** deterministic, from the lagged-truth background; climatological B from a "
+          "per-wavenumber-shell 2×2 inter-layer spectral covariance (`spectral_b_sqrt`), whitened control, "
+          "L-BFGS (60 iterations), cycled over 10-day sub-windows; a sub-window whose optimization is "
+          "non-finite or raises the cost falls back to the background forecast. Strong constraint in S0; "
+          "in S1 also the weak constraint (additive model-error control, scale 0.1 of B), tuned on val "
+          "(`docs/results/qg_specwind_4dvar.md`). Its CRPS column is the MAE of q (a deterministic "
+          "CRPS) and is not ranked against the ensembles.", "",
           f"**S1 ({s1}, model error):** wind amplitude +15%, random wind error 25% of each mode's RMS, "
           "wind position error 50 km; rd −10%; bottom drag −50%; altimetry error 15% white + 15% "
           "correlated per pass (the filter's R = total variance, white); DA model on a 32×32 grid "
@@ -341,6 +405,11 @@ def main() -> None:
           "`reports/qg/generate_qg_specwind_da_figs.py`).", ""]
     if incomplete:
         md += ["**Incomplete runs (excluded):** " + ", ".join(incomplete), ""]
+    md += ["## Benchmark overview (score, 3 columns per day, N = 80)", "",
+           "Mean of the four EVs over 100 test windows; best per column **bolded**, second-best "
+           "*italicized*. S1-tuned = ensembles with R × 6, 4D-Var with the weak constraint (strong in the "
+           "other two columns). Per-field tables and intervals in sections 2–3.", ""]
+    md += overview_table(runs, s1) + [""]
     md += ["## 1. Case study", ""] + _fig(fig_dir, "qg_specwind_gyrostat_animation.gif",
                                             "QG ocean forced by the gyrostat wind") + [
         "The gyrostat drives domain-scale wind-stress-curl patterns with regime changes; the ocean "
@@ -351,7 +420,8 @@ def main() -> None:
                                     (s1, f"S1 ({s1})")), start=2):
         md += [f"## {i}. DA baselines — {title}, 3 columns per day", ""]
         for spec, lab in SPECS.items():
-            md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(runs, spec, 3, s) + [""]
+            md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(
+                runs, spec, 3, s, var_methods=(("strong4dvar", 1.0),)) + [""]
         md += ["(Best per column **bolded**, second-best *italicized*, among the DA methods; the free "
                "forecast is a reference row; CRPS is ranked lowest-best; spread/RMSE q₁ (median over windows) is "
                "not ranked: 1 is calibrated. The EnKS is the localized ensemble Kalman smoother on the "
@@ -362,9 +432,11 @@ def main() -> None:
         md += [f"### S1-tuned filters (observation-error variance × {S1_TUNED_R:g}), 3 columns per day", "",
                "Same S1, with the filters' R scaled on val to absorb the model error "
                "(`docs/results/qg_specwind_s1_tuning.md`); inflation > 1 diverges here. The rows above use "
-               "the S0-tuned filters.", ""]
+               "the S0-tuned filters. The 4D-Var row is the weak constraint at R × 1 (inflating R hurts "
+               "4D-Var; `docs/results/qg_specwind_4dvar.md`).", ""]
         for spec, lab in SPECS.items():
-            md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(runs, spec, 3, s1, S1_TUNED_R) + [""]
+            md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(
+                runs, spec, 3, s1, S1_TUNED_R, var_methods=(("weak4dvar", 1.0),)) + [""]
     md += _fig(fig_dir, "qg_specwind_da_s0_s1.png", "S0 vs S1 per field")
     md += ["## 4. Configuration synthesis and S1 error budget", "",
            "Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): vertical "
@@ -408,8 +480,9 @@ def main() -> None:
                 md += [f"**{label.capitalize()} window**", ""] + block
     md += ["## 9. Caveats", "",
            "- 100 test windows per cell; strata have 21–79 windows.",
-           "- S1 uses the S0-tuned filters; the ETKF–EnKF ranking under S1 may change with S1-specific "
-           "tuning (inflation, R, radius).",
+           "- S1 tuning is a single global R scale for the ensembles and a single model-error scale for "
+           "weak 4D-Var; RTPS/RTPP inflation and scale-dependent model error were not tried.",
+           "- 4D-Var is deterministic (no spread); its background error is climatological, not cycled.",
            "- The initial state is the lagged truth in both scenarios (optimistic against an "
            "analysis-cycled first guess).",
            "- Only S0 has the density curve; S1 was run at 3 columns per day.", ""]
