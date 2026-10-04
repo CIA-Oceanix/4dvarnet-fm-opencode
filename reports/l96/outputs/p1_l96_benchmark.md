@@ -1,97 +1,88 @@
 # P1 L96 benchmark — DA baselines, deterministic, flow-matching and SDA
 
-Two-scale L96, `obs_interval=100`, `obs_j=2` (24D observed space), 200 shared cached test windows. Group `all_obs`; every cell is **mean ± std across windows**, in **physical units**. **S0** = true parameters; **S1** = ±20% parameter perturbation with ±10% bias (the DA forward model uses the biased `*_da` values), so `S1/S0` is a robustness-to-model-error ratio: 1.0 means untouched.
+Two-scale L96, `obs_j=2` (24D observed space: 8 slow + 16 fast), the 200 shared P1 test windows. **S0** = true parameters; **S1** = ±20% parameter perturbation with ±10% bias (the DA forward model uses the biased `*_da` values), so `S1/S0` is a robustness-to-model-error ratio: 1.0 means untouched. Every RMSE cell is the **per-window RMSE on the 24 observed channels, mean ± sd across the 200 windows**, in **physical units** (seeds pooled per window).
 
-**One recipe for every learned row**: monai backbone, `data.normalize: true`, cosine annealing, 400 epochs, `batch_size: 16`, lr 1e-3, grad clip 10.0, **no obs-density augmentation**. Deviations are called out per row. Unrolled/4DVarNet schemes are out of P1 scope.
-
-**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, so the families are budget-matched *within this report*. The benchmark default has since moved DirectUNet and the CFMs to 1200 epochs, and the SDA priors have since been retrained at 1200 epochs too: section 4 adds those rows (seed 1, the validation-tuned guidance weight 25), flagged because they sit outside this report's 400-epoch budget match; they do not enter the cross-family bests. The 400-epoch SDA rows use guidance weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows (updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model).
+**Evaluation framework (2026-10-02).** Sections 1-4, the cross-family reading, the per-window summary, FMS_τ and the reconstruction examples all use the **benchmark-default** framework of `l96_benchmark_extended.md` and are scored by that report's code: learned models trained on a random observing system with fresh noise every batch (`config/l96_benchmark_default.yaml`), 1200 epochs, 3 seeds, M tier; DA at the per-method inflation of #295 plus the ETKS of #299; every scheme on **both** the regular 30-obs test set and the canonical random observing system. Flagged rows (italic, with a note) are sensitivity rows and stay out of the bests. **Annex A** keeps the earlier P1 protocol (fixed regular observing system, frozen per-window noise, 400 epochs, one seed) for the analyses only it covers: S+ / M / L tiers, the CFM parameterization and SDA conditioning.
 
 ## Protocol
 
 | family | protocol | columns |
 |---|---|---|
-| DA baselines | per-window assimilation (dws=500, DA fast weights); ETKS = the ETKF plus a full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; MAE (the CRPS of a point forecast) for Strong-4DVar |
-| Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance (1.0 calibrated, ~0.35 collapsed) |
-| Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper ensemble CRPS; `spread/RMSE` (1.0 calibrated) |
-| SDA | guided `ens30`, `gw=20`, `r_var=0.5` | as above. **Must** use `eval_sda_l96.py`: SDA1 is an unconditional prior and the unguided sampler returns climatological spread |
-| tau=0 mean | `mu(x0, 0, y)` over 30 draws | the flow's implied posterior mean as a point estimator; MAE (= CRPS of a point forecast), NOT comparable to ensemble CRPS |
+| DA baselines | per-window assimilation (dws=500, DA fast weights), 30 members; ETKS = the ETKF plus a full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; none for Strong-4DVar |
+| Deterministic | DirectUNet, single forward pass | RMSE; `var ratio` = predicted / true temporal variance (1.0 = no smoothing) |
+| Flow matching | `ens30_no20` (30 members, 20 early-fine Euler steps) | ensemble-mean RMSE; proper ensemble CRPS; `spread/RMSE` (1.0 calibrated) |
+| SDA | guided `ens30`, 10 steps, `gw=25` (validation-tuned), `r_var=0.5`; the params-conditioned priors (SDA2, SDA3-fix) get the biased DA params at S1 | as above |
+| tau=0 mean | `mu(x0, 0, y)` over 30 draws of each flow | the flow's implied posterior mean as a point estimator |
+| Test sets | regular: the P1 cache, 30 regular obs times, all 24 channels; random: `l96_testset_rlayout_n10-100_k4-16_w200_d1.pt`, 10-100 obs at stratified times, 4-16 observed fast channels per window, the exact obs the DA baselines assimilated | every learned result is checked against its test set window for window before rendering |
 
 A single draw from a generative model is a strictly worse estimator than its ensemble mean, so the two never share a column.
 
 
 ## 1. DA baselines
 
-| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS (MAE for 4D-Var) | S1 CRPS (MAE for 4D-Var) | sp/RMSE (S0) | note |
-|---|---|---|---|---|---|---|---|---|
-| ETKF | λ 1.15 / 2.5 | 0.6102 ± 0.1480 | 1.4093 ± 0.2300 | 2.310 | 0.2704 | 0.7580 | 0.607 |  |
-| EnKF | λ 1.2 / 3.0 | 0.6414 ± 0.1434 | 1.4159 ± 0.2287 | 2.207 | 0.2866 | 0.7634 | 0.647 |  |
-| **ETKS** | λ 1.15 / 2.5 | **0.4969 ± 0.1644** | 1.3380 ± 0.2237 | 2.692 | 0.2382 | 0.7706 | 0.412 |  |
-| Strong-4DVar | — | 0.7028 ± 0.1991 | 1.4362 ± 0.2325 | 2.044 | 0.4464 | 0.9879 | — |  |
-
-Sources (report bundle `da_current_2026-09-29/`): `l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz`, `l96_baselines_trajectories_dws500_s0c_inf2.0_etkf_inf2.0_obsj2_int100_fw_dafw.npz`, `l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz`. S0 trajectories are stored in the full 40D state and indexed to the 24D observed subspace; S1 is already reduced. Rows and protocol: `l96_benchmark_extended.md`.
-
+| scheme | params | seeds | regular S0 | regular S1 | random S0 | random S1 | S1/S0 (regular) | CRPS regular S0 (S1) | CRPS random S0 (S1) | spread/RMSE regular / random (S0) | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ETKF | λ 1.15 / 2.5 | — | 0.610 ± 0.148 | 1.409 ± 0.230 | 0.679 ± 0.243 | 1.407 ± 0.308 | 2.31 | 0.270 (0.758) | 0.306 (0.786) | 0.61 / 0.72 |  |
+| EnKF | λ 1.2 / 3.0 | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 | 2.21 | 0.287 (0.763) | 0.320 (0.837) | 0.65 / 0.76 |  |
+| ETKS | λ 1.15 / 2.5 | — | **0.497 ± 0.164** | **1.338 ± 0.224** | **0.572 ± 0.258** | **1.347 ± 0.298** | 2.69 | 0.238 (0.771) | 0.269 (0.744) | 0.41 / 0.54 |  |
+| Strong-4DVar | — | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 | 2.04 | — (—) | — (—) | — / — |  |
+| *ETKS, 100 members* | λ 1.05 / 2.5 | — | 0.393 ± 0.106 | 1.338 ± 0.221 | 0.463 ± 0.237 | 1.335 ± 0.297 | 3.41 | 0.179 (0.769) | 0.206 (0.733) | 0.46 / 0.51 | ensemble size: 100 members (the benchmark and the learned ensembles use 30), inflation re-selected on the validation windows at N=100 |
 
 ## 2. Deterministic point estimators
 
-| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 MAE | S1 MAE | var ratio | note |
-|---|---|---|---|---|---|---|---|---|
-| DirectUNet-S+ | 1.48 M | 0.4899 ± 0.0773 | 0.4894 ± 0.0751 | 0.999 | 0.3130 | 0.3138 | 1.000 |  |
-| **DirectUNet-M** | 5.89 M | **0.4699 ± 0.0731** | 0.4706 ± 0.0716 | 1.002 | 0.2947 | 0.2948 | 0.978 |  |
-| DirectUNet-L | 23.5 M | 0.8579 ± 0.1277 | 0.8590 ± 0.1296 | 1.001 | 0.5777 | 0.5792 | 0.724 | single unreliable run — an identical config gave 0.4705 on another seed |
+| scheme | params | seeds | regular S0 | regular S1 | random S0 | random S1 | S1/S0 (regular) | CRPS regular S0 (S1) | CRPS random S0 (S1) | var ratio regular / random (S0) | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| DirectUNet-M | 5.89 M, 1200 ep | 3/3 | **0.340 ± 0.062** | **0.339 ± 0.063** | **0.450 ± 0.315** | **0.444 ± 0.269** | 1.00 | — | — | 0.969 / 0.900 |  |
+| *DirectUNet-M, 400 ep* | 5.89 M, 400 ep | 3/3 | 0.380 ± 0.064 | 0.379 ± 0.064 | 0.493 ± 0.314 | 0.490 ± 0.271 | 1.00 | — | — | 0.950 / 0.879 | training budget: 400 epochs |
+| *DirectUNet-M, 400 ep, 3000 windows* | 5.89 M, 400 ep | 1/1 | 0.334 ± 0.061 | 0.334 ± 0.061 | 0.447 ± 0.316 | 0.440 ± 0.270 | 1.00 | — | — | 0.972 / 0.899 | training data: 3000 windows (benchmark: 1000), same gradient steps as 1200 ep |
 
-### The flows' tau=0 mean components, as deterministic estimators (S0)
+### The flows' tau=0 mean components, as deterministic estimators
 
-| scheme | RMSE | MAE | draw dispersion |
-|---|---|---|---|
-| PredictStateCFM-L (tau=0) | 0.4072 ± 0.0658 | 0.2555 | 0.0497 |
-| PredictStateCFM-M (tau=0) | 0.4081 ± 0.0669 | 0.2582 | 0.0546 |
-| VanillaCFM-M (tau=0) | 0.4101 ± 0.0689 | 0.2637 | 0.0919 |
-| VanillaCFM-L (tau=0) | 0.4183 ± 0.0672 | 0.2654 | 0.0739 |
-| PredictStateCFM-S+ (tau=0) | 0.4481 ± 0.0740 | 0.2922 | 0.0732 |
-| VanillaCFM-S+ (tau=0) | 0.4726 ± 0.0849 | 0.3244 | 0.1227 |
+`mu(x0, tau=0, y)` averaged over 30 draws of the 1200-epoch flows, seeds 1-3 (each cell: mean over seeds of the window-mean RMSE ± seed sd). At tau=0, `x_tau = x0` is independent of `x1`, so this is the flow's own posterior mean `E[x1|y]` used as a point estimator; it costs 30 model calls against DirectUNet's 1. `full` = the flow's ensemble-mean RMSE (section 3), regular S0.
 
-`draw dispersion` is the across-draw scatter of `m` itself; 0 would mean fully deterministic in `y`. These rows cost 30 model calls against DirectUNet's 1.
+| scheme | regular S0 | regular S1 | random S0 | random S1 | MAE regular S0 | draw dispersion | full (regular S0) |
+|---|---|---|---|---|---|---|---|
+| PredictStateCFM-M (tau=0) | 0.430 ± 0.003 | 0.430 ± 0.005 | 0.554 ± 0.004 | 0.552 ± 0.002 | 0.270 | 0.060 | 0.341 |
+| VanillaCFM-M (tau=0) | 0.457 ± 0.003 | 0.457 ± 0.004 | 0.580 ± 0.002 | 0.578 ± 0.002 | 0.290 | 0.084 | 0.351 |
+
+`draw dispersion` is the across-draw scatter of `m` itself (regular S0); 0 would mean fully deterministic in `y`.
 
 
 ## 3. Flow matching
 
-| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |
-|---|---|---|---|---|---|---|---|---|
-| VanillaCFM-S+ | 1.48 M | 0.4096 ± 0.0917 | 0.4070 ± 0.0870 | 0.994 | 0.2020 ± 0.0495 | 0.2023 ± 0.0469 | 0.639 |  |
-| **VanillaCFM-M** | 5.89 M | **0.3412 ± 0.0734** | 0.3358 ± 0.0727 | 0.984 | 0.1527 ± 0.0320 | 0.1509 ± 0.0318 | 0.614 |  |
-| VanillaCFM-L | 23.5 M | 0.3522 ± 0.0678 | 0.3488 ± 0.0649 | 0.990 | 0.1578 ± 0.0294 | 0.1565 ± 0.0281 | 0.595 |  |
-| PredictStateCFM-S+ | 1.48 M | 0.4079 ± 0.0793 | 0.4073 ± 0.0808 | 0.998 | 0.1986 ± 0.0361 | 0.1994 ± 0.0382 | 0.485 |  |
-| PredictStateCFM-M | 5.89 M | 0.3536 ± 0.0716 | 0.3504 ± 0.0734 | 0.991 | 0.1656 ± 0.0320 | 0.1650 ± 0.0334 | 0.487 |  |
-| PredictStateCFM-L(lr3e-4) | 23.5 M | 0.3459 ± 0.0702 | 0.3412 ± 0.0708 | 0.987 | 0.1605 ± 0.0312 | 0.1589 ± 0.0320 | 0.470 | lr 3e-4 — the standard 1e-3 diverged at this tier |
-| PredictStateCFM-L(lr5e-4) | 23.5 M | 0.3641 ± 0.0685 | 0.3594 ± 0.0662 | 0.987 | 0.1664 ± 0.0299 | 0.1650 ± 0.0298 | 0.488 | lr 5e-4 — the standard 1e-3 diverged at this tier |
+| scheme | params | seeds | regular S0 | regular S1 | random S0 | random S1 | S1/S0 (regular) | CRPS regular S0 (S1) | CRPS random S0 (S1) | spread/RMSE regular / random (S0) | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PredictStateCFM-M | 5.89 M, 1200 ep | 3/3 | **0.341 ± 0.078** | **0.338 ± 0.079** | **0.443 ± 0.260** | **0.447 ± 0.233** | 0.99 | 0.150 (0.148) | 0.194 (0.196) | 0.63 / 0.64 |  |
+| VanillaCFM-M | 5.89 M, 1200 ep | 3/3 | 0.351 ± 0.079 | 0.349 ± 0.080 | 0.462 ± 0.277 | 0.468 ± 0.250 | 0.99 | 0.152 (0.151) | 0.202 (0.205) | 0.71 / 0.68 |  |
+| *PredictStateCFM-M, 400 ep* | 5.89 M, 400 ep | 3/3 | 0.403 ± 0.079 | 0.400 ± 0.079 | 0.509 ± 0.270 | 0.513 ± 0.243 | 0.99 | 0.183 (0.182) | 0.228 (0.230) | 0.70 / 0.68 | training budget: 400 epochs |
+| *VanillaCFM-M, 400 ep* | 5.89 M, 400 ep | 3/3 | 0.430 ± 0.072 | 0.427 ± 0.070 | 0.535 ± 0.282 | 0.544 ± 0.256 | 0.99 | 0.196 (0.196) | 0.239 (0.244) | 0.79 / 0.75 | training budget: 400 epochs |
+| *PredictStateCFM-M x3* | 3 x 5.89 M | 1/1 | 0.327 ± 0.077 | 0.323 ± 0.078 | 0.429 ± 0.259 | 0.432 ± 0.232 | 0.99 | 0.142 (0.141) | 0.186 (0.189) | 0.63 / 0.63 | velocity average of the three seeds: 3x the parameters and sampling cost |
 
 ## 4. SDA (score-based prior + guidance)
 
-| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |
-|---|---|---|---|---|---|---|---|---|
-| SDA1-S+ | 1.48 M | 0.6260 ± 0.1132 | 0.6253 ± 0.1118 | 0.999 | 0.3178 ± 0.0525 | 0.3174 ± 0.0518 | 0.520 |  |
-| **SDA1-M** | 5.89 M | **0.5063 ± 0.0912** | 0.5049 ± 0.0906 | 0.997 | 0.2579 ± 0.0415 | 0.2577 ± 0.0407 | 0.416 |  |
-| SDA1-L | 23.5 M | 0.5342 ± 0.0951 | 0.5332 ± 0.0948 | 0.998 | 0.2732 ± 0.0454 | 0.2727 ± 0.0446 | 0.399 |  |
-| SDA2-M | 5.89 M | 0.5125 ± 0.0966 | 0.5226 ± 0.1005 | 1.020 | 0.2423 ± 0.0349 | 0.2431 ± 0.0362 | 0.549 |  |
-| SDA3-M | 5.89 M | 0.5228 ± 0.1002 | 0.5295 ± 0.1035 | 1.013 | 0.2504 ± 0.0372 | 0.2474 ± 0.0373 | 0.533 | bias never active in training (DA params = truth): identical to SDA2 by construction |
-| SDA3-fix-M | 5.89 M | 0.4984 ± 0.0930 | 0.5065 ± 0.0964 | 1.016 | 0.2469 ± 0.0397 | 0.2503 ± 0.0412 | 0.454 | SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26) |
-| SDA1-M, 1200 ep | 5.89 M | 0.4577 ± 0.0816 | 0.4564 ± 0.0812 | 0.997 | 0.2321 ± 0.0365 | 0.2309 ± 0.0353 | 0.408 | 1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match |
-| SDA2-M, 1200 ep | 5.89 M | 0.4506 ± 0.0820 | 0.4612 ± 0.0844 | 1.023 | 0.2139 ± 0.0302 | 0.2171 ± 0.0300 | 0.532 | 1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match |
-| SDA3-fix-M, 1200 ep | 5.89 M | 0.4564 ± 0.0861 | 0.4586 ± 0.0856 | 1.005 | 0.2207 ± 0.0362 | 0.2216 ± 0.0350 | 0.480 | 1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match |
+| scheme | params | seeds | regular S0 | regular S1 | random S0 | random S1 | S1/S0 (regular) | CRPS regular S0 (S1) | CRPS random S0 (S1) | spread/RMSE regular / random (S0) | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SDA1-M | 5.89 M, gw 25 | 3/3 | 0.464 ± 0.083 | 0.462 ± 0.081 | 0.572 ± 0.230 | 0.585 ± 0.228 | 1.00 | 0.235 (0.234) | 0.294 (0.302) | 0.41 / 0.37 |  |
+| SDA2-M | 5.89 M, gw 25 | 3/3 | **0.453 ± 0.085** | 0.465 ± 0.088 | **0.550 ± 0.220** | 0.575 ± 0.218 | 1.03 | 0.213 (0.218) | 0.258 (0.266) | 0.55 / 0.52 |  |
+| SDA3-fix-M | 5.89 M, gw 25 | 3/3 | 0.455 ± 0.081 | **0.455 ± 0.079** | 0.562 ± 0.228 | **0.573 ± 0.221** | 1.00 | 0.223 (0.223) | 0.278 (0.282) | 0.46 / 0.42 |  |
+| *Hybrid DirectUNet-M -> SDA3-fix-M* | 2 x 5.89 M, tau0 0.1, gw 2 | 3/3 | 0.293 ± 0.060 | 0.289 ± 0.060 | 0.367 ± 0.221 | 0.367 ± 0.201 | 0.99 | 0.137 (0.136) | 0.175 (0.173) | 0.46 / 0.40 | two families: SDA3-fix-M guided sampling started from the DirectUNet-M estimate (reference) |
+
+Rows and their sources: `l96_benchmark_extended.md` (section 1 and its input bundle).
+
 
 ## Cross-family reading
 
-Best S0 of each family: **flow matching 0.3412**, deterministic 0.4699, SDA 0.5063, DA baselines 0.4969 — flow matching is 27% better than the deterministic baseline and 33% better than SDA, at matched tier, parameter count, schedule and data.
+Best regular / random S0 of each family: deterministic DirectUNet-M 0.340 / 0.450, flow matching PredictStateCFM-M 0.341 / 0.443, SDA SDA2-M 0.453 / 0.550, DA ETKS 0.497 / 0.572.
 
-- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially flat under model error (ratio ~1.00) because it never uses a forward model; the DA baselines degrade by 2.0-2.7x, since their forward operator carries the bias. That makes the S1 column the strongest argument for the learned schemes, and it is a structural difference rather than a tuning one.
-- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
-- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
-- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row still loses 1.6%, and on the random observing system it degrades about as much as the unconditional SDA1 (1.5% vs 2.0% at gw 25). At 1200 epochs (flagged rows) every SDA prior gains 7-9% at S0 and the pattern holds: SDA2 still loses at S1, SDA3-fix does not.
-- **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is not only about sampling.
+- **Deterministic and flow matching are level under the benchmark recipe**: the best flow is 0.2% behind DirectUNet on the regular set (0.341 vs 0.340), within the seed sd (0.002). What the flows add is an ensemble (CRPS 0.150), under-dispersed (spread/RMSE 0.63), not a better mean. Under the P1 protocol (annex A: fixed observing system, frozen per-window noise, 400 epochs) the best flow led DirectUNet by 27% (0.341 vs 0.470): DirectUNet overfit the frozen noise, so that gap is a training-protocol artefact, not a property of flow matching.
+- **SDA trails by 33%** at S0 regular as a stand-alone scheme, but its guided sampler is the best refinement of a DirectUNet estimate: the hybrid reaches 0.293 / 0.367 (regular / random S0), the best of every row.
+- **The S1/S0 ratio separates the two worlds.** Learned schemes stay flat under model error (0.99-1.03) because they never use a forward model; the DA baselines degrade 2.0-2.7x, since their forward operator carries the bias. At S0 the best DA (ETKS 0.497) is 46% behind the best learned scheme with 30 members, 16% with 100 members (flagged row); at S1 its RMSE is 4.0x the best learned scheme's at either size.
+- **The flows' tau=0 mean as a point estimator**: the best (PredictStateCFM-M (tau=0)) scores 0.430 at regular S0, against 0.341 for the same flow's full sampler and 0.340 for DirectUNet (+26%), at 30 model calls against 1. Under the benchmark recipe the accuracy is carried by the sampler, not by the tau=0 head (the P1-protocol flows of annex A.1 had the opposite ordering against DirectUNet).
+- Tier (S+ / M / L), CFM parameterization and SDA conditioning comparisons exist only under the P1 protocol: annex A.
 
 ## Per-window RMSE / EV / CRPS summary (current benchmark)
 
-Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.
+Common to `l96_benchmark_extended.md` and `p1_l96_benchmark.md`, and generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.
 
 Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; **EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is averaged over channels. Seeds are averaged per window; cells are mean ± sd over the 200 windows. Per column, the best value is in **bold** and the second best in *italics*. Deterministic schemes have no CRPS. The random-layout Strong-4DVar trajectories were not kept, so that cell has no EV.
 
@@ -304,25 +295,23 @@ FMS_τ(q) = E‖E_q[x₁ | x_τ] − x₁*‖² on the path x_τ = τ x₁ + (1�
 ## Caveats
 
 - DA baselines receive the same per-window parameters as truth generation (S0) or their biased `*_da` counterparts (S1); the learned schemes see observations only. This is what makes the comparison apples-to-apples, and also why their S1 behaviour differs so much.
-- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable to the generative families' ensemble CRPS; Strong-4DVar's column is its MAE.
-- SDA is the only learned family with a tuned inference hyper-parameter (`gw`).
-- SDA budget: the unflagged SDA rows are 400-epoch priors, like every other row here; the flagged `1200 ep` rows are the benchmark-budget priors (seed 1; 3-seed rows in `l96_benchmark_extended.md`) and are not budget-matched with this report's other families.
-- The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).
-- L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: 0.4705 vs 0.8579 on two seeds of one config). Treat any single L cell as indicative.
-- Checkpoint-selection noise on this family was measured at 15-21%; smaller differences need the paired within-window tests, not these point estimates.
+- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable to the generative families' ensemble CRPS.
+- SDA is the only learned family with a tuned inference hyper-parameter (`gw`); the hybrid also tunes its start time and guidance (tau0 0.1, gw 2), on the validation windows.
+- The benchmark framework has M-tier models only; tier, parameterization and conditioning comparisons are in annex A, under the P1 protocol.
+
 
 ## Reconstruction examples
 
-Best / median / worst windows, ranked by Strong-4DVar per-window RMSE (the same convention as the consolidated benchmark, so window choices are comparable across reports). Rows are Truth / Obs / one best scheme per subcategory; columns are the state and |error| maps for the slow X (8D) and fast Y (16D) blocks. Generative rows are plotted as their **ensemble mean** — the estimator their RMSE column scores.
+Best / median / worst windows, ranked by Strong-4DVar per-window RMSE (the same convention as the consolidated benchmark, so window choices are comparable across reports). Rows are Truth / Obs / one scheme per family under the benchmark framework (seed 1 of each 1200-epoch model; the hybrid as reference); columns are the state and |error| maps for the slow X (8D) and fast Y (16D) blocks. Generative rows are plotted as their **ensemble mean** — the estimator their RMSE column scores.
 
-| case | rank | window | 4DVar win-RMSE | ETKS | Strong-4DVar | DirectUNet-M | VanillaCFM-M | SDA1-M |
-|---|---|---|---|---|---|---|---|---|
-| S0 | best | 146 | 0.352 | 0.437 | 0.352 | 0.391 | 0.277 | 0.405 |
-| S0 | median | 2 | 0.773 | 1.137 | 0.773 | 0.632 | 0.517 | 0.727 |
-| S0 | worst | 56 | 1.497 | 0.724 | 1.497 | 0.651 | 0.580 | 0.629 |
-| S1 | best | 35 | 0.975 | 0.882 | 0.975 | 0.408 | 0.249 | 0.363 |
-| S1 | median | 10 | 1.474 | 1.341 | 1.474 | 0.525 | 0.332 | 0.496 |
-| S1 | worst | 75 | 1.990 | 1.778 | 1.990 | 0.645 | 0.497 | 0.774 |
+| case | rank | window | 4DVar win-RMSE | ETKS | Strong-4DVar | DirectUNet-M | PredictStateCFM-M | SDA1-M | Hybrid |
+|---|---|---|---|---|---|---|---|---|---|
+| S0 | best | 146 | 0.352 | 0.437 | 0.352 | 0.272 | 0.220 | 0.378 | 0.246 |
+| S0 | median | 2 | 0.773 | 1.137 | 0.773 | 0.470 | 0.535 | 0.671 | 0.401 |
+| S0 | worst | 56 | 1.497 | 0.724 | 1.497 | 0.560 | 0.578 | 0.568 | 0.529 |
+| S1 | best | 35 | 0.975 | 0.882 | 0.975 | 0.279 | 0.209 | 0.334 | 0.244 |
+| S1 | median | 10 | 1.474 | 1.341 | 1.474 | 0.382 | 0.327 | 0.430 | 0.293 |
+| S1 | worst | 75 | 1.990 | 1.778 | 1.990 | 0.510 | 0.609 | 0.704 | 0.441 |
 
 **Observing system.** `obs_mask` is a single 1-D mask over time shared by every dimension, so slow and fast are observed at exactly the same instants: **30 observed timesteps per window** (`obs_interval=100` over T=3000). What differs between them is spatial, not temporal — all 8 slow X are observed, but only 16 of the 32 fast Y (`obs_j=2` of `J=4`), which is why the fast block is 16 rows.
 
@@ -335,3 +324,63 @@ Each observation is drawn as a 11-column band rather than a single 1/3000 column
 ![S1 median](figures/p1_l96_hovm_s1_median.png)
 ![S1 worst](figures/p1_l96_hovm_s1_worst.png)
 
+
+## Annex A. P1 protocol: tier, parameterization and conditioning sensitivity
+
+**Not the benchmark framework.** Every row of this annex is a P1-protocol checkpoint: fixed regular 30-obs observing system with the observation noise frozen per window across epochs, 400 epochs, one seed, scored on the regular test set only (the same 200 windows as sections 1-4). It is kept for the comparisons the benchmark framework does not have: S+ / M / L tiers, VanillaCFM vs PredictStateCFM, and SDA conditioning (SDA1 / SDA2 / SDA3). Absolute numbers are **not** comparable with sections 1-4: under this protocol DirectUNet overfits the frozen noise (DirectUNet-M 0.470 here vs 0.340 in section 2), while the flows barely move. The SDA rows use guidance weight 20 (the benchmark: 25).
+
+
+### A.1 Deterministic point estimators (P1 protocol)
+
+| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 MAE | S1 MAE | var ratio | note |
+|---|---|---|---|---|---|---|---|---|
+| DirectUNet-S+ | 1.48 M | 0.4899 ± 0.0773 | 0.4894 ± 0.0751 | 0.999 | 0.3130 | 0.3138 | 1.000 |  |
+| **DirectUNet-M** | 5.89 M | **0.4699 ± 0.0731** | 0.4706 ± 0.0716 | 1.002 | 0.2947 | 0.2948 | 0.978 |  |
+| DirectUNet-L | 23.5 M | 0.8579 ± 0.1277 | 0.8590 ± 0.1296 | 1.001 | 0.5777 | 0.5792 | 0.724 | single unreliable run — an identical config gave 0.4705 on another seed |
+
+#### The P1 flows' tau=0 mean components (S0)
+
+| scheme | RMSE | MAE | draw dispersion |
+|---|---|---|---|
+| PredictStateCFM-L (tau=0) | 0.4072 ± 0.0658 | 0.2555 | 0.0497 |
+| PredictStateCFM-M (tau=0) | 0.4081 ± 0.0669 | 0.2582 | 0.0546 |
+| VanillaCFM-M (tau=0) | 0.4101 ± 0.0689 | 0.2637 | 0.0919 |
+| VanillaCFM-L (tau=0) | 0.4183 ± 0.0672 | 0.2654 | 0.0739 |
+| PredictStateCFM-S+ (tau=0) | 0.4481 ± 0.0740 | 0.2922 | 0.0732 |
+| VanillaCFM-S+ (tau=0) | 0.4726 ± 0.0849 | 0.3244 | 0.1227 |
+
+
+### A.2 Flow matching (P1 protocol)
+
+| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |
+|---|---|---|---|---|---|---|---|---|
+| VanillaCFM-S+ | 1.48 M | 0.4096 ± 0.0917 | 0.4070 ± 0.0870 | 0.994 | 0.2020 ± 0.0495 | 0.2023 ± 0.0469 | 0.639 |  |
+| **VanillaCFM-M** | 5.89 M | **0.3412 ± 0.0734** | 0.3358 ± 0.0727 | 0.984 | 0.1527 ± 0.0320 | 0.1509 ± 0.0318 | 0.614 |  |
+| VanillaCFM-L | 23.5 M | 0.3522 ± 0.0678 | 0.3488 ± 0.0649 | 0.990 | 0.1578 ± 0.0294 | 0.1565 ± 0.0281 | 0.595 |  |
+| PredictStateCFM-S+ | 1.48 M | 0.4079 ± 0.0793 | 0.4073 ± 0.0808 | 0.998 | 0.1986 ± 0.0361 | 0.1994 ± 0.0382 | 0.485 |  |
+| PredictStateCFM-M | 5.89 M | 0.3536 ± 0.0716 | 0.3504 ± 0.0734 | 0.991 | 0.1656 ± 0.0320 | 0.1650 ± 0.0334 | 0.487 |  |
+| PredictStateCFM-L(lr3e-4) | 23.5 M | 0.3459 ± 0.0702 | 0.3412 ± 0.0708 | 0.987 | 0.1605 ± 0.0312 | 0.1589 ± 0.0320 | 0.470 | lr 3e-4 — the standard 1e-3 diverged at this tier |
+| PredictStateCFM-L(lr5e-4) | 23.5 M | 0.3641 ± 0.0685 | 0.3594 ± 0.0662 | 0.987 | 0.1664 ± 0.0299 | 0.1650 ± 0.0298 | 0.488 | lr 5e-4 — the standard 1e-3 diverged at this tier |
+
+### A.3 SDA (P1 protocol, gw 20)
+
+| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |
+|---|---|---|---|---|---|---|---|---|
+| SDA1-S+ | 1.48 M | 0.6260 ± 0.1132 | 0.6253 ± 0.1118 | 0.999 | 0.3178 ± 0.0525 | 0.3174 ± 0.0518 | 0.520 |  |
+| **SDA1-M** | 5.89 M | **0.5063 ± 0.0912** | 0.5049 ± 0.0906 | 0.997 | 0.2579 ± 0.0415 | 0.2577 ± 0.0407 | 0.416 |  |
+| SDA1-L | 23.5 M | 0.5342 ± 0.0951 | 0.5332 ± 0.0948 | 0.998 | 0.2732 ± 0.0454 | 0.2727 ± 0.0446 | 0.399 |  |
+| SDA2-M | 5.89 M | 0.5125 ± 0.0966 | 0.5226 ± 0.1005 | 1.020 | 0.2423 ± 0.0349 | 0.2431 ± 0.0362 | 0.549 |  |
+| SDA3-M | 5.89 M | 0.5228 ± 0.1002 | 0.5295 ± 0.1035 | 1.013 | 0.2504 ± 0.0372 | 0.2474 ± 0.0373 | 0.533 | bias never active in training (DA params = truth): identical to SDA2 by construction |
+| SDA3-fix-M | 5.89 M | 0.4984 ± 0.0930 | 0.5065 ± 0.0964 | 1.016 | 0.2469 ± 0.0397 | 0.2503 ± 0.0412 | 0.454 | SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26) |
+
+### A.4 Reading under the P1 protocol
+
+- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).
+- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) despite a 3x gap in training val_loss — val_loss is not comparable across objectives.
+- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose 1-2%, since both were trained with DA params equal to the true ones. The guidance weight is worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row still loses 1.6%, and on the random observing system it degrades about as much as the unconditional SDA1 (1.5% vs 2.0% at gw 25). At 1200 epochs (section 4) every SDA prior gains 7-9% at S0 and the pattern holds: SDA2 still loses at S1, SDA3-fix does not.
+- **Every flow's tau=0 mean beats DirectUNet as a point estimator** under this protocol only (with the benchmark recipe the tau=0 means trail DirectUNet, section 2), so here the advantage is not only about sampling.
+
+- **Caveats of this annex.** The P1-protocol gap between the flows and DirectUNet (A.1 vs A.2) is a training-protocol artefact (section 2 vs 3 under the benchmark framework); read the annex for the within-family comparisons only.
+- The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).
+- L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: 0.4705 vs 0.8579 on two seeds of one config). Treat any single L cell as indicative.
+- Checkpoint-selection noise on this family was measured at 15-21%; smaller differences need the paired within-window tests, not these point estimates.

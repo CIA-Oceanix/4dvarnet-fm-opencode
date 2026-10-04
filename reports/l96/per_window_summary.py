@@ -1,10 +1,9 @@
 """Per-window RMSE / EV / CRPS summary of the current L96 benchmark rows.
 
-One section, shared by ``l96_benchmark_extended.md``, ``l96_benchmark_default.md``
-and ``p1_l96_benchmark.md``. It reads the ``benchmark_extended`` input bundle (the
+One section, shared by ``l96_benchmark_extended.md`` and ``p1_l96_benchmark.md``. It reads the ``benchmark_extended`` input bundle (the
 current benchmark: DA at the #295 inflation, the ETKS of #299, 1200-epoch
 DirectUNet / CFM / SDA (gw 25), the best hybrid) whatever report embeds it, so the
-three copies are identical.
+two copies are identical.
 
 Per window, on the 24 observed channels of the 200 P1 test windows:
 - RMSE: per-channel RMSE over time, averaged over channels (the report convention);
@@ -140,7 +139,7 @@ def section(heading: str = "##") -> list[str]:
     """Markdown lines of the per-window RMSE / EV / CRPS section."""
     R = rows()
     A = [f"{heading} Per-window RMSE / EV / CRPS summary (current benchmark)\n",
-         "Common to `l96_benchmark_extended.md`, `l96_benchmark_default.md` and `p1_l96_benchmark.md`, and generated from "
+         "Common to `l96_benchmark_extended.md` and `p1_l96_benchmark.md`, and generated from "
          "the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation "
          "(#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; "
          "the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.\n",

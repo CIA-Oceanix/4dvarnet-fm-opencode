@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""P1 L96 benchmark: deterministic, flow-matching and SDA schemes at one config.
+"""P1 L96 benchmark: DA, deterministic, flow-matching and SDA schemes.
 
-Every row is trained under a single declared recipe -- monai backbone,
-`data.normalize: true`, cosine annealing, 400 epochs, batch 16, NO obs-density
-augmentation -- so that architecture and capacity are the only axes that move.
+Sections 1-4 and the cross-family reading use the benchmark-default evaluation
+framework (``p1_benchmark_sections.py``): models trained on a random observing
+system with fresh noise every batch, 1200 epochs, 3 seeds, scored on the regular
+and the canonical random test sets with the extended report's own code.
+
+Annex A keeps the P1 protocol for the sensitivity analyses the benchmark framework
+does not cover (S+ / M / L tiers, CFM parameterization, SDA conditioning): every
+annex row is trained under a single declared recipe -- monai backbone,
+`data.normalize: true`, cosine annealing, 400 epochs, batch 16, fixed regular
+observing system, NO obs-density augmentation -- so that architecture and
+capacity are the only axes that move.
 Unrolled/4DVarNet schemes are deliberately OUT of scope for P1; the two FDV1CFM
 rows that appear are diagnostics, marked as such, and excluded from the
 cross-family verdict.
@@ -49,6 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _inputs  # noqa: E402
 import per_window_summary  # noqa: E402
 import fm_score_summary  # noqa: E402
+import p1_benchmark_sections as p1s  # noqa: E402
 
 HERE = _inputs.root("p1_benchmark", "here")
 DA_BASES = (HERE, _inputs.shared())
@@ -92,7 +101,6 @@ FM = [
     ("PredictStateCFM-L(lr3e-4)", "A2_predictstatecfm_monaiL_lr3e4_l96", "ens30_no20", "23.5 M", "lr 3e-4"),
     ("PredictStateCFM-L(lr5e-4)", "A2_predictstatecfm_monaiL_lr5e4_l96", "ens30_no20", "23.5 M", "lr 5e-4"),
 ]
-SDA1200_FLAG = "1200-epoch prior, gw 25 (validation-tuned) -- outside this report's 400-epoch budget match"
 SDA = [
     ("SDA1-S+", "B4_sda1_monaiSplus_l96", "ens30_gw20", "1.48 M", ""),
     ("SDA1-M", "B4_sda1_monaiM_l96", "ens30_gw20", "5.89 M", ""),
@@ -100,9 +108,6 @@ SDA = [
     ("SDA2-M", "A3_sda2_monaiM_l96", "ens30_gw20", "5.89 M", ""),
     ("SDA3-M", "A3_sda3_monaiM_l96", "ens30_gw20", "5.89 M", "bias never active in training (DA params = truth): identical to SDA2 by construction"),
     ("SDA3-fix-M", "A3_sda3fix_monaiM_l96_seed1", "ens30_gw20", "5.89 M", "SDA3 with the noisy-DA-bias conditioning active (added 2026-09-26)"),
-    ("SDA1-M, 1200 ep", "B4_sda1_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
-    ("SDA2-M, 1200 ep", "A3_sda2_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
-    ("SDA3-fix-M, 1200 ep", "A3_sda3fix_monaiM_ep1200_l96_seed1", "ens30_gw25", "5.89 M", SDA1200_FLAG),
 ]
 # tau=0 mean components, read from eval_mean_component.py's JSON.
 TAU0_LABELS = {
@@ -149,43 +154,6 @@ def deterministic(path: Path, group: str = "all_obs"):
     return dict(rmse=rmse, mae=mae, var_ratio=var_ratio)
 
 
-def da_rows(truth, group):
-    """DA baselines from the current benchmark runs (``DA_SOURCES``), or None if absent.
-
-    The ensemble schemes store their per-time ensemble variance and the
-    per-window analysis-ensemble CRPS, so they get spread and CRPS; Strong-4DVar
-    is deterministic and gets its MAE (the CRPS of a point forecast) and an
-    em-dash for spread.
-    """
-    files = {fn for fn, _, _ in DA_SOURCES.values()}
-    if not all((DA_CURRENT / fn).exists() for fn in files):
-        return None, None
-    idx = make_obs_j_indices()
-    sel = lambda a: a[..., idx] if a.shape[-1] > len(idx) else a  # noqa: E731
-    loaded = {fn: np.load(DA_CURRENT / fn) for fn in files}
-    rows = []
-    for method, (fn, key, params) in DA_SOURCES.items():
-        z = loaded[fn]
-        m = {}
-        for case in CASES:
-            traj = sel(z[f"{case}_{key}_trajectories"].astype(np.float64))
-            t = truth[case]
-            m[case] = dict(
-                rmse=_groups_from_per_window(np.sqrt(((traj - t) ** 2).mean(axis=1)))[group],
-                mae=_groups_from_per_window(np.abs(traj - t).mean(axis=1))[group],
-            )
-            vkey = f"{case}_{key}_ensemble_variance"
-            if vkey in z.files:
-                v = sel(z[vkey].astype(np.float64))
-                m[case]["spread"] = _groups_from_per_window(
-                    np.sqrt(np.clip(v, 0, None)).mean(axis=1))[group]
-            ckey = f"{case}_{key}_crps"
-            if ckey in z.files:
-                m[case]["crps"] = _groups_from_per_window(sel(z[ckey].astype(np.float64)))[group]
-        rows.append(dict(label=method, params=params, flag="", m=m))
-    return rows, sorted(files)
-
-
 def ms(a: np.ndarray) -> str:
     return f"{a.mean():.4f} ± {a.std(ddof=1):.4f}"
 
@@ -202,12 +170,14 @@ def best_idx(rows, key):
 # the consolidated report's `short_name`, which is a dict lookup with a
 # "split on the first underscore" fallback -- so underscore-free display names
 # pass through unchanged, while raw experiment dir names would render as "A1".
+EXT_HERE = _inputs.root("benchmark_extended", "here")
 FIGURE_SCHEMES = [
     ("ETKS", ("da", "ETKS")),
     ("Strong-4DVar", ("da", "Strong-4DVar")),
-    ("DirectUNet-M", ("det", "P1_directunet_monaiM_noaug_l96", "ens1_no1")),
-    ("VanillaCFM-M", ("gen", "A1_vanillacfm_monaiM_l96", "ens30_no20")),
-    ("SDA1-M", ("gen", "B4_sda1_monaiM_l96", "ens30_gw20")),
+    ("DirectUNet-M", ("est", EXT_HERE / "L96B_directunet_monaiM_ep1200_seed1" / "ens1_no1")),
+    ("PredictStateCFM-M", ("est", EXT_HERE / "L96B_predictstatecfm_monaiM_ep1200_seed1" / "ens30_no20")),
+    ("SDA1-M", ("est", EXT_HERE / "eval_regular" / "B4_sda1_monaiM_ep1200_l96_seed1" / "ens30_gw25")),
+    ("Hybrid", ("est", EXT_HERE / "eval_regular" / "hybrid_DU1200s1_A3_sda3fix_monaiM_ep1200_l96" / "tau0.1_gw2")),
 ]
 
 
@@ -264,6 +234,11 @@ def figure_trajectories(case, truth_shape):
                 continue
             traj = z[key].astype(np.float64)
             est[label] = traj[..., idx] if traj.shape[-1] > len(idx) else traj
+        elif spec[0] == "est":
+            path = spec[1] / f"estimates_{case}.npz"
+            if not path.exists():
+                continue
+            est[label] = np.load(path)["trajectories"].astype(np.float64)
         else:
             kind, exp, sub = spec
             fn = "members" if kind == "gen" else "estimates"
@@ -313,10 +288,6 @@ def main():
                              m=m if ok and len(m) == len(CASES) else None, exp=exp))
         out[name] = rows
 
-    da, da_file = da_rows(truth, args.group) if len(truth) == len(CASES) else (None, None)
-    if da:
-        out["da"] = da
-
     tau0 = []
     mj = ROOT / args.mean_json
     if mj.exists():
@@ -326,138 +297,66 @@ def main():
                                  rmse_std=r["rmse"]["std"], mae=r["crps_mae"]["mean"],
                                  draws=r["draw_dispersion"]))
     else:
-        missing.append(f"tau=0 mean components: {mj}")
+        missing.append(f"tau=0 mean components (annex): {mj}")
+
+    import generate_l96_benchmark_extended_report as ext
+    cache = json.loads(ext.CACHE.read_text()) if ext.CACHE.exists() else {}
+    bench, errors = p1s.collect(cache)
+    if errors:
+        for e in errors:
+            print("FAIL", e)
+        sys.exit("consistency check failed; report not written")
+    tau0_bench = p1s.tau0_rows()
+    if tau0_bench is None:
+        missing.append(f"tau=0 mean components of the 1200-epoch flows: {p1s.TAU0}")
+    annex_best = {k: min(r["m"]["s0"]["rmse"].mean() for r in out[k] if r["m"] and not r["flag"]) for k in ("det", "fm")}
 
     L = []
     A = L.append
     A("# P1 L96 benchmark — DA baselines, deterministic, flow-matching and SDA\n")
-    A("Two-scale L96, `obs_interval=100`, `obs_j=2` (24D observed space), 200 shared cached "
-      f"test windows. Group `{args.group}`; every cell is **mean ± std across windows**, in "
-      "**physical units**. **S0** = true parameters; **S1** = ±20% parameter perturbation "
-      "with ±10% bias (the DA forward model uses the biased `*_da` values), so `S1/S0` is a "
-      "robustness-to-model-error ratio: 1.0 means untouched.\n")
-    A("**One recipe for every learned row**: monai backbone, `data.normalize: true`, cosine "
-      "annealing, 400 epochs, `batch_size: 16`, lr 1e-3, grad clip 10.0, **no obs-density "
-      "augmentation**. Deviations are called out per row. Unrolled/4DVarNet schemes are out "
-      "of P1 scope.\n")
-    A("**Status (2026-09-27): superseded as the L96 benchmark by `l96_benchmark_extended.md`; kept "
-      "as the P1-protocol record.** Every learned row here, SDA included, is trained for 400 epochs, "
-      "so the families are budget-matched *within this report*. The benchmark default has since "
-      "moved DirectUNet and the CFMs to 1200 epochs, and the SDA priors have since been retrained at "
-      "1200 epochs too: section 4 adds those rows (seed 1, the validation-tuned guidance weight 25), "
-      "flagged because they sit outside this report's 400-epoch budget match; they do not enter the "
-      "cross-family bests. The 400-epoch SDA rows use guidance weight 20 (validation-tuned: 25). **The DA baselines (section 1) are the current benchmark rows "
-      "(updated 2026-09-29)**, on the same 200 regular-grid windows as every learned row: DA fast weights, "
-      "the fixed ETKF square root (#291), the per-method inflation retuned on validation windows (#295: "
-      "ETKF 1.15 / 2.5, EnKF 1.2 / 3.0), and the ETKS smoother (#299). They replace the P1-protocol DA "
-      "rows (inflation 2.0, no DA fast weights, so S0 was not a perfect model).\n")
+    A("Two-scale L96, `obs_j=2` (24D observed space: 8 slow + 16 fast), the 200 shared P1 test windows. "
+      "**S0** = true parameters; **S1** = ±20% parameter perturbation with ±10% bias (the DA forward model "
+      "uses the biased `*_da` values), so `S1/S0` is a robustness-to-model-error ratio: 1.0 means untouched. "
+      "Every RMSE cell is the **per-window RMSE on the 24 observed channels, mean ± sd across the 200 windows**, "
+      "in **physical units** (seeds pooled per window).\n")
+    A("**Evaluation framework (2026-10-02).** Sections 1-4, the cross-family reading, the per-window summary, "
+      "FMS_τ and the reconstruction examples all use the **benchmark-default** framework of "
+      "`l96_benchmark_extended.md` and are scored by that report's code: learned models trained on a random "
+      "observing system with fresh noise every batch (`config/l96_benchmark_default.yaml`), 1200 epochs, 3 seeds, "
+      "M tier; DA at the per-method inflation of #295 plus the ETKS of #299; every scheme on **both** the regular "
+      "30-obs test set and the canonical random observing system. Flagged rows (italic, with a note) are "
+      "sensitivity rows and stay out of the bests. **Annex A** keeps the earlier P1 protocol (fixed regular "
+      "observing system, frozen per-window noise, 400 epochs, one seed) for the analyses only it covers: "
+      "S+ / M / L tiers, the CFM parameterization and SDA conditioning.\n")
     A("## Protocol\n")
     A("| family | protocol | columns |\n|---|---|---|")
-    A("| DA baselines | per-window assimilation (dws=500, DA fast weights); ETKS = the ETKF plus a "
-      "full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; MAE (the CRPS "
-      "of a point forecast) for Strong-4DVar |")
-    A("| Deterministic | single forward pass | RMSE/MAE; `var ratio` = predicted/true variance "
-      "(1.0 calibrated, ~0.35 collapsed) |")
-    A("| Flow matching | `ens30_no20` (30 members, 20 early-fine steps; `ens30_no10` before 2026-09-24) | ensemble-mean RMSE; proper "
+    A("| DA baselines | per-window assimilation (dws=500, DA fast weights), 30 members; ETKS = the ETKF plus a "
+      "full-window smoother | RMSE; analysis-ensemble CRPS and spread for ETKF/EnKF/ETKS; none for Strong-4DVar |")
+    A("| Deterministic | DirectUNet, single forward pass | RMSE; `var ratio` = predicted / true temporal variance "
+      "(1.0 = no smoothing) |")
+    A("| Flow matching | `ens30_no20` (30 members, 20 early-fine Euler steps) | ensemble-mean RMSE; proper "
       "ensemble CRPS; `spread/RMSE` (1.0 calibrated) |")
-    A("| SDA | guided `ens30`, `gw=20`, `r_var=0.5` | as above. **Must** use `eval_sda_l96.py`: "
-      "SDA1 is an unconditional prior and the unguided sampler returns climatological spread |")
-    A("| tau=0 mean | `mu(x0, 0, y)` over 30 draws | the flow's implied posterior mean as a point "
-      "estimator; MAE (= CRPS of a point forecast), NOT comparable to ensemble CRPS |\n")
+    A("| SDA | guided `ens30`, 10 steps, `gw=25` (validation-tuned), `r_var=0.5`; the params-conditioned priors "
+      "(SDA2, SDA3-fix) get the biased DA params at S1 | as above |")
+    A("| tau=0 mean | `mu(x0, 0, y)` over 30 draws of each flow | the flow's implied posterior mean as a point "
+      "estimator |")
+    A(f"| Test sets | regular: the P1 cache, 30 regular obs times, all 24 channels; random: "
+      f"`{ext.CAN_TEST.name}`, 10-100 obs at stratified times, 4-16 observed fast channels per window, the exact "
+      "obs the DA baselines assimilated | every learned result is checked against its test set window for "
+      "window before rendering |\n")
     A("A single draw from a generative model is a strictly worse estimator than its ensemble "
       "mean, so the two never share a column.\n")
-
-    def emit(title, rows, mode):
-        A(f"\n## {title}\n")
-        if mode == "gen":
-            A("| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |")
-            A("|---|---|---|---|---|---|---|---|---|")
-        else:
-            extra = "var ratio" if mode == "det" else "sp/RMSE (S0)"
-            err = "CRPS (MAE for 4D-Var)" if mode == "da" else "MAE"
-            A(f"| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 {err} | S1 {err} | {extra} | note |")
-            A("|---|---|---|---|---|---|---|---|---|")
-        avail = [r for r in rows if r["m"] and not r["flag"]]
-        best = min((r["m"]["s0"]["rmse"].mean() for r in avail), default=None)
-        for r in rows:
-            if not r["m"]:
-                A(f"| {r['label']} | {r['params']} | _missing_ | | | | | | |")
-                continue
-            b = "**" if best is not None and abs(r["m"]["s0"]["rmse"].mean() - best) < 1e-12 else ""
-            note = ""
-            if r["flag"] == "unstable":
-                note = "single unreliable run — an identical config gave 0.4705 on another seed"
-            elif r["flag"].startswith("lr "):
-                note = f"{r['flag']} — the standard 1e-3 diverged at this tier"
-            elif r["flag"]:
-                note = r["flag"]
-            if mode == "gen":
-                c0, c1 = ms(r["m"]["s0"]["crps"]), ms(r["m"]["s1"]["crps"])
-                sp = f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
-            elif mode == "da" and "crps" in r["m"]["s0"]:
-                c0, c1 = f"{r['m']['s0']['crps'].mean():.4f}", f"{r['m']['s1']['crps'].mean():.4f}"
-                sp = (f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
-                      if "spread" in r["m"]["s0"] else "—")
-            else:
-                c0 = f"{r['m']['s0']['mae'].mean():.4f}"
-                c1 = f"{r['m']['s1']['mae'].mean():.4f}"
-                if mode == "det":
-                    sp = f"{r['m']['s0']['var_ratio']:.3f}"
-                else:
-                    sp = (f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
-                          if "spread" in r["m"]["s0"] else "—")
-            A(f"| {b}{r['label']}{b} | {r['params']} | {b}{ms(r['m']['s0']['rmse'])}{b} | "
-              f"{ms(r['m']['s1']['rmse'])} | {_ratio(r['m'], 'rmse'):.3f} | {c0} | {c1} | {sp} | {note} |")
-
-    if da:
-        emit("1. DA baselines", da, "da")
-        A("\nSources (report bundle `da_current_2026-09-29/`): " + ", ".join(f"`{f}`" for f in da_file)
-          + ". S0 trajectories are stored in the full 40D state and indexed to the 24D observed "
-          "subspace; S1 is already reduced. Rows and protocol: `l96_benchmark_extended.md`.\n")
-    emit("2. Deterministic point estimators", out["det"], "det")
-    if tau0:
-        A("\n### The flows' tau=0 mean components, as deterministic estimators (S0)\n")
-        A("| scheme | RMSE | MAE | draw dispersion |\n|---|---|---|---|")
-        for t in sorted(tau0, key=lambda x: x["rmse"]):
-            A(f"| {t['label']} | {t['rmse']:.4f} ± {t['rmse_std']:.4f} | {t['mae']:.4f} | "
-              f"{t['draws']:.4f} |")
-        A("\n`draw dispersion` is the across-draw scatter of `m` itself; 0 would mean fully "
-          "deterministic in `y`. These rows cost 30 model calls against DirectUNet's 1.\n")
-    emit("3. Flow matching", out["fm"], "gen")
-    emit("4. SDA (score-based prior + guidance)", out["sda"], "gen")
-
-    A("\n## Cross-family reading\n")
-    bests = {k: min((r["m"]["s0"]["rmse"].mean() for r in v if r["m"] and not r["flag"]),
-                    default=None) for k, v in out.items()}
-    if bests.get("fm") and bests.get("det") and bests.get("sda"):
-        A(f"Best S0 of each family: **flow matching {bests['fm']:.4f}**, deterministic "
-          f"{bests['det']:.4f}, SDA {bests['sda']:.4f}"
-          + (f", DA baselines {bests['da']:.4f}" if bests.get("da") else "")
-          + f" — flow matching is {100 * (bests['det'] - bests['fm']) / bests['det']:.0f}% better "
-          f"than the deterministic baseline and {100 * (bests['sda'] - bests['fm']) / bests['sda']:.0f}% "
-          "better than SDA, at matched tier, parameter count, schedule and data.\n")
-    da_ratios = [_ratio(r["m"], "rmse") for r in out.get("da", []) if r["m"]]
-    da_span = f"{min(da_ratios):.1f}-{max(da_ratios):.1f}x" if da_ratios else "~2x"
-    A("- **The S1/S0 ratio separates the two worlds.** Every learned scheme is essentially "
-      "flat under model error (ratio ~1.00) because it never uses a forward model; the DA "
-      f"baselines degrade by {da_span}, since their forward operator carries the bias. That makes "
-      "the S1 column the strongest argument for the learned schemes, and it is a structural "
-      "difference rather than a tuning one.")
-    A("- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; "
-      "M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).")
-    A("- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and "
-      "PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) "
-      "despite a 3x gap in training val_loss — val_loss is not comparable across objectives.")
-    A("- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the "
-      "biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose "
-      "1-2%, since both were trained with DA params equal to the true ones. The guidance weight is "
-      "worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 "
-      "at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row "
-      "still loses 1.6%, and on the random observing system it degrades about as much as the "
-      "unconditional SDA1 (1.5% vs 2.0% at gw 25). At 1200 epochs (flagged rows) every SDA prior gains "
-      "7-9% at S0 and the pattern holds: SDA2 still loses at S1, SDA3-fix does not.")
-    A("- **Every flow's tau=0 mean beats DirectUNet as a point estimator**, so the advantage is "
-      "not only about sampling.\n")
+    for sec in ("da", "det"):
+        for line in p1s.table(sec, bench[sec]):
+            A(line)
+    for line in p1s.tau0_table(tau0_bench, bench["fm"]):
+        A(line)
+    for sec in ("fm", "sda"):
+        for line in p1s.table(sec, bench[sec]):
+            A(line)
+    A("\nRows and their sources: `l96_benchmark_extended.md` (section 1 and its input bundle).\n")
+    for line in p1s.reading(bench, tau0_bench, annex_best):
+        A(line)
     for line in per_window_summary.section():
         A(line)
     for line in fm_score_summary.section():
@@ -467,17 +366,11 @@ def main():
       "biased `*_da` counterparts (S1); the learned schemes see observations only. This is what "
       "makes the comparison apples-to-apples, and also why their S1 behaviour differs so much.")
     A("- DA CRPS is the per-window analysis-ensemble CRPS stored by the runs (30 members), comparable "
-      "to the generative families' ensemble CRPS; Strong-4DVar's column is its MAE.")
-    A("- SDA is the only learned family with a tuned inference hyper-parameter (`gw`).")
-    A("- SDA budget: the unflagged SDA rows are 400-epoch priors, like every other row here; the "
-      "flagged `1200 ep` rows are the benchmark-budget priors (seed 1; 3-seed rows in "
-      "`l96_benchmark_extended.md`) and are not budget-matched with this report's other families.")
-    A("- The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure "
-      "at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).")
-    A("- L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: "
-      "0.4705 vs 0.8579 on two seeds of one config). Treat any single L cell as indicative.")
-    A("- Checkpoint-selection noise on this family was measured at 15-21%; smaller differences "
-      "need the paired within-window tests, not these point estimates.")
+      "to the generative families' ensemble CRPS.")
+    A("- SDA is the only learned family with a tuned inference hyper-parameter (`gw`); the hybrid also tunes "
+      "its start time and guidance (tau0 0.1, gw 2), on the validation windows.")
+    A("- The benchmark framework has M-tier models only; tier, parameterization and conditioning comparisons are "
+      "in annex A, under the P1 protocol.\n")
     # --- reconstruction figures -------------------------------------------
     fig_rows = []
     try:
@@ -523,7 +416,8 @@ def main():
         A("\n## Reconstruction examples\n")
         A("Best / median / worst windows, ranked by Strong-4DVar per-window RMSE (the same "
           "convention as the consolidated benchmark, so window choices are comparable across "
-          "reports). Rows are Truth / Obs / one best scheme per subcategory; columns are the "
+          "reports). Rows are Truth / Obs / one scheme per family under the benchmark framework (seed 1 of each "
+          "1200-epoch model; the hybrid as reference); columns are the "
           "state and |error| maps for the slow X (8D) and fast Y (16D) blocks. Generative rows "
           "are plotted as their **ensemble mean** — the estimator their RMSE column scores.\n")
         A("| case | rank | window | 4DVar win-RMSE | " + " | ".join(names) + " |")
@@ -547,6 +441,93 @@ def main():
             A(f"![{case.upper()} {rank}]({fp})")
         A("")
 
+    A("\n## Annex A. P1 protocol: tier, parameterization and conditioning sensitivity\n")
+    A("**Not the benchmark framework.** Every row of this annex is a P1-protocol checkpoint: fixed regular "
+      "30-obs observing system with the observation noise frozen per window across epochs, 400 epochs, one "
+      "seed, scored on the regular test set only (the same 200 windows as sections 1-4). It is kept for the "
+      "comparisons the benchmark framework does not have: S+ / M / L tiers, VanillaCFM vs PredictStateCFM, "
+      "and SDA conditioning (SDA1 / SDA2 / SDA3). Absolute numbers are **not** comparable with sections 1-4: "
+      "under this protocol DirectUNet overfits the frozen noise (DirectUNet-M 0.470 here vs 0.340 in section 2), "
+      "while the flows barely move. The SDA rows use guidance weight 20 (the benchmark: 25).\n")
+    def emit(title, rows, mode):
+        A(f"\n### {title}\n")
+        if mode == "gen":
+            A("| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 CRPS | S1 CRPS | sp/RMSE (S0) | note |")
+            A("|---|---|---|---|---|---|---|---|---|")
+        else:
+            extra = "var ratio" if mode == "det" else "sp/RMSE (S0)"
+            err = "CRPS (MAE for 4D-Var)" if mode == "da" else "MAE"
+            A(f"| scheme | params | S0 RMSE | S1 RMSE | S1/S0 | S0 {err} | S1 {err} | {extra} | note |")
+            A("|---|---|---|---|---|---|---|---|---|")
+        avail = [r for r in rows if r["m"] and not r["flag"]]
+        best = min((r["m"]["s0"]["rmse"].mean() for r in avail), default=None)
+        for r in rows:
+            if not r["m"]:
+                A(f"| {r['label']} | {r['params']} | _missing_ | | | | | | |")
+                continue
+            b = "**" if best is not None and abs(r["m"]["s0"]["rmse"].mean() - best) < 1e-12 else ""
+            note = ""
+            if r["flag"] == "unstable":
+                note = "single unreliable run — an identical config gave 0.4705 on another seed"
+            elif r["flag"].startswith("lr "):
+                note = f"{r['flag']} — the standard 1e-3 diverged at this tier"
+            elif r["flag"]:
+                note = r["flag"]
+            if mode == "gen":
+                c0, c1 = ms(r["m"]["s0"]["crps"]), ms(r["m"]["s1"]["crps"])
+                sp = f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
+            elif mode == "da" and "crps" in r["m"]["s0"]:
+                c0, c1 = f"{r['m']['s0']['crps'].mean():.4f}", f"{r['m']['s1']['crps'].mean():.4f}"
+                sp = (f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
+                      if "spread" in r["m"]["s0"] else "—")
+            else:
+                c0 = f"{r['m']['s0']['mae'].mean():.4f}"
+                c1 = f"{r['m']['s1']['mae'].mean():.4f}"
+                if mode == "det":
+                    sp = f"{r['m']['s0']['var_ratio']:.3f}"
+                else:
+                    sp = (f"{r['m']['s0']['spread'].mean() / r['m']['s0']['rmse'].mean():.3f}"
+                          if "spread" in r["m"]["s0"] else "—")
+            A(f"| {b}{r['label']}{b} | {r['params']} | {b}{ms(r['m']['s0']['rmse'])}{b} | "
+              f"{ms(r['m']['s1']['rmse'])} | {_ratio(r['m'], 'rmse'):.3f} | {c0} | {c1} | {sp} | {note} |")
+
+    emit("A.1 Deterministic point estimators (P1 protocol)", out["det"], "det")
+    if tau0:
+        A("\n#### The P1 flows' tau=0 mean components (S0)\n")
+        A("| scheme | RMSE | MAE | draw dispersion |\n|---|---|---|---|")
+        for t in sorted(tau0, key=lambda x: x["rmse"]):
+            A(f"| {t['label']} | {t['rmse']:.4f} ± {t['rmse_std']:.4f} | {t['mae']:.4f} | "
+              f"{t['draws']:.4f} |")
+        A("")
+    emit("A.2 Flow matching (P1 protocol)", out["fm"], "gen")
+    emit("A.3 SDA (P1 protocol, gw 20)", out["sda"], "gen")
+    A("\n### A.4 Reading under the P1 protocol\n")
+    A("- **M is the right tier for every learned family.** S+ -> M is a large gain everywhere; "
+      "M -> L gains nothing and is actively unreliable (2 of 5 L-tier runs failed to train).")
+    A("- **The CFM parameterization is irrelevant.** VanillaCFM (velocity target) and "
+      "PredictStateCFM (endpoint target) are statistically identical at S+ (paired t = 0.7, p = 0.48) "
+      "despite a 3x gap in training val_loss — val_loss is not comparable across objectives.")
+    A("- **SDA's params conditioning buys nothing here**: SDA2/SDA3 never beat SDA1-M, and with the "
+      "biased DA params at S1 (fixed 2026-09-25; S1 previously fed them the true params) both lose "
+      "1-2%, since both were trained with DA params equal to the true ones. The guidance weight is "
+      "worth far more (8% from tuning alone); an SDA3 trained on noisy DA params is robust at S1 "
+      "at the tuned gw 25 (`l96_benchmark_extended.md`) -- at this report's gw 20 its SDA3-fix-M row "
+      "still loses 1.6%, and on the random observing system it degrades about as much as the "
+      "unconditional SDA1 (1.5% vs 2.0% at gw 25). At 1200 epochs (section 4) every SDA prior gains "
+      "7-9% at S0 and the pattern holds: SDA2 still loses at S1, SDA3-fix does not.")
+    A("- **Every flow's tau=0 mean beats DirectUNet as a point estimator** under this protocol only (with the "
+      "benchmark recipe the tau=0 means trail DirectUNet, section 2), so here the advantage is "
+      "not only about sampling.\n")
+    A("- **Caveats of this annex.** The P1-protocol gap between the flows and DirectUNet (A.1 vs A.2) is a "
+      "training-protocol artefact (section 2 vs 3 under the benchmark framework); read the annex for the "
+      "within-family comparisons only.")
+    A("- The two PredictStateCFM-L rows use a non-standard lr, forced by an optimization failure "
+      "at 1e-3 (val_loss jumped 6x at epoch 10 and never recovered).")
+    A("- L-tier numbers are single runs with large measured seed sensitivity (DirectUNet-L: "
+      "0.4705 vs 0.8579 on two seeds of one config). Treat any single L cell as indicative.")
+    A("- Checkpoint-selection noise on this family was measured at 15-21%; smaller differences "
+      "need the paired within-window tests, not these point estimates.")
+
     if missing:
         A("\n## Missing artifacts\n")
         for m in missing:
@@ -563,8 +544,11 @@ def main():
                                        if not hasattr(v, "mean")}
                                    for c in CASES} if r["m"] else None)}
                      for r in rows] for fam, rows in out.items()}
-    payload["tau0"] = tau0
-    payload["da_source"] = da_file
+    payload = {"annex_p1_protocol": payload, "annex_tau0": tau0,
+               "benchmark": {sec: [{"label": r["label"], "params": r["params"], "flag": r["flag"], "seeds": r["seeds"],
+                                    "rmse": {t: ({c: p1s.mean(r, t, c) for c in CASES} if r[t] is not None else None)
+                                             for t in ("reg", "can")}}
+                                   for r in rows] for sec, rows in bench.items()}}
     (ROOT / args.json_output).write_text(json.dumps(payload, indent=2))
     print(text)
     print(f"wrote {outp} and {ROOT / args.json_output}")

@@ -70,7 +70,7 @@ fails if a note cites an output that is not listed here against it.
 | `reports/l96/outputs/fm_score/fm_score_current.md` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/fm_score_p1_400ep.json` | `docs/results/l96_p1_fm_score.md` |
 | `reports/l96/outputs/fm_score/scale/` | `docs/results/l96_p1_fm_score.md` |
-| `reports/l96/outputs/l96_benchmark_default.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
+| `reports/l96/outputs/l96_benchmark_default.old.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/l96_benchmark_extended.md` | `docs/results/l96_benchmark_default_paper_audit.md`, `docs/results/l96_cfm_velocity_ensembles.md`, `docs/results/l96_etks_benchmark.md`, `docs/results/l96_etks_default_inflation.md` |
 | `reports/l96/outputs/l96_da_obs_count_dafw.md` | `docs/results/l96_benchmark_default_paper_audit.md` |
 | `reports/l96/outputs/rank_histograms/` | `docs/results/l96_rank_histograms_c4.md` |
@@ -93,7 +93,7 @@ A note after the status says which cells it qualifies.
 
 | case | cite for current numbers |
 |---|---|
-| L96 | `reports/l96/outputs/l96_benchmark_default.md`, with `l96_benchmark_extended.md` as its follow-up. `p1_l96_benchmark.md` is the P1 paper's fixed-observing-system table. |
+| L96 | `reports/l96/outputs/l96_benchmark_extended.md` (the benchmark-default report it followed up is frozen as `l96_benchmark_default.old.md`). `p1_l96_benchmark.md` is the P1 paper's table, on the same benchmark framework, with the P1-protocol tier study as its annex. |
 | QG | `reports/qg/outputs/qg_neural_report.md` (DA and neural rows); `qg_da_report.md` for the DA configuration. |
 | QG gyrostat (spectral wind) | `reports/qg/outputs/qg_specwind_da_report.md`: DA baselines S0 + realistic S1 on the forced and coupled test sets, with the S1 error budget and reconstruction examples. |
 | L63 | none — see the L63 section. |
@@ -106,16 +106,16 @@ early-fine Euler steps (`ens30_no20`), SDA with the guided `ens30_gw20` protocol
 1.5 (S0) / 2.0 (S1) and CRPS on the analysis ensemble. The consolidated report
 uses the older protocol (`ens30_no10` uniform steps, DA inflation 2.0).
 
-The three current reports (`l96_benchmark_default.md`, `l96_benchmark_extended.md`, `p1_l96_benchmark.md`) end with the same section, a per-window RMSE / EV / CRPS summary of the current benchmark rows (`reports/l96/per_window_summary.py`, `benchmark_extended` inputs). The consolidated report is not updated: it uses the old protocol, and the scoping docs quote its digits.
+The two current benchmark reports (`l96_benchmark_extended.md`, `p1_l96_benchmark.md`) end with the same section, a per-window RMSE / EV / CRPS summary of the current benchmark rows (`reports/l96/per_window_summary.py`, `benchmark_extended` inputs). The consolidated report is not updated: it uses the old protocol, and the scoping docs quote its digits.
 
 | report | question | status | protocol | generator |
 |---|---|---|---|---|
-| `l96_benchmark_default.md` | DA vs learned schemes under the benchmark-default training recipe, on the regular and the random observing system | **CURRENT** — SDA2/SDA3 S1 rows re-evaluated on the biased DA parameters in #265 | current | `reports/l96/generate_l96_benchmark_default_report.py` |
-| `l96_benchmark_extended.md` | Follow-up to the above: training budget, observing-system dependence, SDA and hybrids, DA CRPS, marginal value of observations | **CURRENT** — SDA S1 rows re-evaluated in #265 | current (SDA gw 25) | `reports/l96/generate_l96_benchmark_extended_report.py` |
-| `p1_l96_benchmark.md` | P1 paper table: DA vs deterministic, flow-matching and SDA under one training recipe, fixed observing system | **CURRENT** — SDA S1 rows re-evaluated in #265 | current | `reports/l96/generate_p1_l96_benchmark.py` |
+| `l96_benchmark_default.old.md` | DA vs learned schemes under the benchmark-default training recipe (400 epochs), on the regular and the random observing system | **FROZEN** (2026-10-02) — superseded by `l96_benchmark_extended.md`, which carries its protocol and every row at the current settings (DA before #291/#295, no ETKS, SDA gw 20) | 400-epoch, pre-#291 DA | `reports/l96/generate_l96_benchmark_default_report.py` |
+| `l96_benchmark_extended.md` | The L96 benchmark: DA vs learned schemes on the regular and the random observing system, plus training budget, observing-system dependence, SDA and hybrids, DA CRPS and ensemble size, marginal value of observations | **CURRENT** — SDA S1 rows re-evaluated in #265 | current (SDA gw 25) | `reports/l96/generate_l96_benchmark_extended_report.py` |
+| `p1_l96_benchmark.md` | P1 paper table: DA vs deterministic, flow-matching and SDA under the benchmark-default framework (regular + random test sets, 1200 epochs, 3 seeds); annex A = the P1 protocol (fixed observing system, 400 epochs) for the S+/M/L tier, CFM-parameterization and SDA-conditioning comparisons | **CURRENT** — sections 1-4 moved to the benchmark framework 2026-10-02 | current | `reports/l96/generate_p1_l96_benchmark.py` |
 | `l96_da_random_layout.md` | ETKF/EnKF/4D-Var under the random observing system | **CURRENT** | current DA | `reports/l96/generate_l96_da_random_layout_report.py` |
 | `l96_da_obs_count_dafw.md` | ETKF/EnKF RMSE vs number of observation times per window | **CURRENT** | current DA | `reports/l96/generate_l96_da_obs_count_report.py` |
-| `l96_consolidated_benchmark.md` | Earlier full benchmark: DA baselines vs every neural family, reproducibility-audited | **SUPERSEDED** as the headline by `l96_benchmark_default.md`; still the report the paper-scoping docs quote by digit | old (`ens30_no10`, inflation 2.0) | `reports/l96/generate_l96_consolidated_report.py` |
+| `l96_consolidated_benchmark.md` | Earlier full benchmark: DA baselines vs every neural family, reproducibility-audited | **SUPERSEDED** as the headline by `l96_benchmark_extended.md`; still the report the paper-scoping docs quote by digit | old (`ens30_no10`, inflation 2.0) | `reports/l96/generate_l96_consolidated_report.py` |
 | `l96_consolidated_benchmark.old.md` | The consolidated benchmark before the 2026-09-18 reproducibility refactor | **SUPERSEDED** by `l96_consolidated_benchmark.md` (frozen, not regenerated) | pre-2026-09-18 | none (frozen snapshot) |
 | `p1_mean_component.md` | `Ψ_mean` alone vs the full CFM | **FROZEN**; its `full RMSE` column is `ens30_no10`, from before #257 | old flow sampler | `reports/l96/eval_mean_component.py` (`--output`) |
 | `l96_fm_sampler_benchmark.md` | Conditional sampling from a flow-matching prior (Cold / Warm / Blend / Decoupled) | **FROZEN** (measurements 2026-09-17) | own protocol, stated in the report | `reports/l96/generate_l96_fm_sampler_report.py` (data: `reports/l96/run_sda_sampler_experiments.py`) |
