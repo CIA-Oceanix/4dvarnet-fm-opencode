@@ -77,9 +77,10 @@ R scale.
    ETKF, +0.157 EnKS), then q₁ (+0.04–0.05), ψ₂ (+0.03–0.04) and ψ₁
    (+0.02).
 2. **Multiplicative inflation is not usable in this configuration.** It
-   compounds over about 90 analyses per window. Additive or relaxation-type
-   inflation (RTPS / RTPP) would be the standard alternatives. They were not
-   tried.
+   compounds over about 90 analyses per window. Relaxation inflation
+   (RTPS / RTPP) was tried later (`docs/results/qg_specwind_relax_inflation.md`).
+   It is stable, but it trails R × 6 by about 0.03 and adds at most +0.004 on
+   top of it.
 3. **The ETKF–EnKF gap closes.** S0-tuned, the EnKF led the ETKF by 0.012
    (test: 0.017). S1-tuned, the ETKF leads by 0.005 on val, and the two tie
    exactly on test. The earlier gap was spread/trust calibration, which the

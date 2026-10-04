@@ -433,7 +433,10 @@ def main() -> None:
                "Same S1, with the filters' R scaled on val to absorb the model error "
                "(`docs/results/qg_specwind_s1_tuning.md`); inflation > 1 diverges here. The rows above use "
                "the S0-tuned filters. The 4D-Var row is the weak constraint at R × 1 (inflating R hurts "
-               "4D-Var; `docs/results/qg_specwind_4dvar.md`).", ""]
+               "4D-Var; `docs/results/qg_specwind_4dvar.md`). Relaxation inflation (RTPS/RTPP) was "
+               "tested on val as an alternative: it is stable and calibrates the spread, but trails "
+               "R × 6 by about 0.03 and adds at most +0.004 on top of it, so the S1-tuned rows keep "
+               "R × 6 without relaxation (`docs/results/qg_specwind_relax_inflation.md`).", ""]
         for spec, lab in SPECS.items():
             md += [f"**{lab.capitalize()} dataset**", ""] + scenario_table(
                 runs, spec, 3, s1, S1_TUNED_R, var_methods=(("weak4dvar", 1.0),)) + [""]
@@ -481,7 +484,8 @@ def main() -> None:
     md += ["## 9. Caveats", "",
            "- 100 test windows per cell; strata have 21–79 windows.",
            "- S1 tuning is a single global R scale for the ensembles and a single model-error scale for "
-           "weak 4D-Var; RTPS/RTPP inflation and scale-dependent model error were not tried.",
+           "weak 4D-Var; relaxation inflation does not beat R × 6, and scale-dependent model error was "
+           "not tried.",
            "- 4D-Var is deterministic (no spread); its background error is climatological, not cycled.",
            "- The initial state is the lagged truth in both scenarios (optimistic against an "
            "analysis-cycled first guess).",
