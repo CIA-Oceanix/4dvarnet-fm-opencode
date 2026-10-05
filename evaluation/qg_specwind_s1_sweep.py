@@ -1,4 +1,4 @@
-"""S1 calibration and attribution on val for the spectral-wind QG DA (ETKF/EnKF, no 4D-Var).
+"""S1 calibration and attribution on val for the spectral-wind QG DA (ETKF/EnKF/EnKS, no 4D-Var).
 
 Tasks run the val-tuned DA (`docs/results/qg_specwind_da2_val_tuning.md`) on
 the first `--n-windows` val windows of the forced dataset under S1 errors
@@ -14,7 +14,9 @@ the first `--n-windows` val windows of the forced dataset under S1 errors
   groups forcing / rd / drag / obs / res) at the variants in `VARIANTS`
   (realistic ranges: lower edge, base, upper edge, DA grid 64/48/32).
 * `--phase realistic_shapley --variant V`: all 32 on/off combinations of the
-  five groups at variant V.
+  five groups at variant V. With `--method enks --r-scale 6` it attributes the
+  S1-tuned EnKS's degradation instead (filter fixed at R x 6, taper 8 d, in
+  every combination; written under `<out-dir>/<method>_R6`; the ETKF works the same way).
 
     python -m evaluation.qg_specwind_s1_sweep --phase calib --list
     python -m evaluation.qg_specwind_s1_sweep --phase calib --task 3
@@ -96,16 +98,16 @@ def task_name(kappa: float, comps: tuple[str, ...], disp_frac: float) -> str:
 
 
 def run_task(kappa: float, comps: tuple[str, ...], out_dir: str, root: str, n_windows: int,
-             device: torch.device, disp_frac: float, method: str, loc_radius: float) -> str:
+             device: torch.device, disp_frac: float, method: str, loc_radius: float, **da_extra) -> str:
     name = task_name(kappa, comps, disp_frac)
     levels = s1_levels_from(kappa, comps)
     return run_levels(name, levels if comps and kappa else None, kappa, list(comps), out_dir,
-                      root, n_windows, device, disp_frac, method, loc_radius)
+                      root, n_windows, device, disp_frac, method, loc_radius, **da_extra)
 
 
 def run_levels(name: str, levels: S1Levels | None, kappa: float, comps: list[str], out_dir: str,
                root: str, n_windows: int, device: torch.device, disp_frac: float, method: str,
-               loc_radius: float) -> str:
+               loc_radius: float, r_scale: float = 1.0, enks_taper_days: float | None = None) -> str:
     path = os.path.join(out_dir, f"{name}.json")
     if os.path.exists(path):
         return path
@@ -117,13 +119,15 @@ def run_levels(name: str, levels: S1Levels | None, kappa: float, comps: list[str
     if levels is not None:
         windows = apply_s1(windows, spec, levels)
     load_s = time.time() - t0
-    da = {**DA, "method": method, "loc_radius": loc_radius}
+    da = {**DA, "method": method, "loc_radius": loc_radius, "r_scale": r_scale,
+          "enks_taper_days": enks_taper_days}
     t0 = time.time()
     _, per_window = evaluate(windows, da_cfg(cfg, levels), da["method"], device,
                              loc_radius=da["loc_radius"],
                              etkf_ridge=da["etkf_ridge"], loc_cross_layer=da["loc_cross_layer"],
                              init_ensemble=da["init_ensemble"], disp_frac=disp_frac,
-                             etkf_loc_mode=da["etkf_loc_mode"])
+                             etkf_loc_mode=da["etkf_loc_mode"], r_scale=r_scale,
+                             enks_taper_days=enks_taper_days)
     rec = {"name": name, "kappa": kappa, "components": list(comps),
            "levels": levels.as_dict() if levels is not None else None,
            "da": {**da, "disp_frac": disp_frac}, "indices": idx, "load": report,
@@ -185,13 +189,14 @@ def shapley_over(recs: dict, components, name_of) -> dict | None:
                     wgt = math.factorial(r) * math.factorial(n - r - 1) / math.factorial(n)
                     phi += wgt * (v[s] - v[with_i])
             alone = v[()] - v[(ci,)]
-            comp[ci] = {"shapley": float(phi.mean()), "shapley_ci": _boot(phi),
+            comp[ci] = {"shapley": float(phi.mean()), "shapley_ci": _boot(phi), "phi": phi.tolist(),
                         "alone": float(alone.mean()), "alone_ci": _boot(alone),
                         "share": float(phi.mean() / loss_full.mean()) if loss_full.mean() else None}
         interaction = loss_full - sum(v[()] - v[(c,)] for c in COMPONENTS)
         out[key] = {"s0": float(v[()].mean()), "s1": float(v[tuple(COMPONENTS)].mean()),
                     "loss": float(loss_full.mean()), "loss_ci": _boot(loss_full),
-                    "interaction": float(interaction.mean()), "components": comp}
+                    "interaction": float(interaction.mean()), "interaction_ci": _boot(interaction),
+                    "components": comp}
     return out
 
 
@@ -237,7 +242,10 @@ def main() -> None:
     p.add_argument("--root", default="experiments/qg_datasets")
     p.add_argument("--n-windows", type=int, default=20)
     p.add_argument("--disp-frac", type=float, default=1.0)
-    p.add_argument("--method", default=DA["method"], choices=("etkf", "enkf"))
+    p.add_argument("--method", default=DA["method"], choices=("etkf", "enkf", "enks"))
+    p.add_argument("--r-scale", type=float, default=1.0,
+                   help="filter observation-error variance multiplier (S1-tuned: 6)")
+    p.add_argument("--enks-taper-days", type=float, default=8.0, help="EnKS time taper (benchmark: 8 d)")
     p.add_argument("--loc-radius", type=float, default=DA["loc_radius"])
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
@@ -256,6 +264,10 @@ def main() -> None:
                       f"{parts}  interaction {d['interaction']:+.3f}")
         return
     out_dir = args.out_dir if args.method == "etkf" else os.path.join(args.out_dir, args.method)
+    if args.r_scale != 1.0:
+        out_dir = os.path.join(args.out_dir, f"{args.method}_R{args.r_scale:g}")
+    da_extra = {"r_scale": args.r_scale,
+                "enks_taper_days": args.enks_taper_days if args.method == "enks" else None}
     if args.phase.startswith("realistic"):
         todo_r = realistic_tasks(args.phase, args.variant)
         if args.list:
@@ -265,7 +277,7 @@ def main() -> None:
         t = todo_r[args.task]
         print(run_levels(t["name"], t["levels"] if t["components"] else None, 1.0, t["components"],
                          out_dir, args.root, args.n_windows, torch.device(args.device),
-                         args.disp_frac, args.method, args.loc_radius))
+                         args.disp_frac, args.method, args.loc_radius, **da_extra))
         return
     todo = tasks(args.phase, args.kappa)
     if args.list:
@@ -274,7 +286,7 @@ def main() -> None:
         return
     kap, comps = todo[args.task]
     print(run_task(kap, comps, out_dir, args.root, args.n_windows, torch.device(args.device),
-                   args.disp_frac, args.method, args.loc_radius))
+                   args.disp_frac, args.method, args.loc_radius, **da_extra))
 
 
 if __name__ == "__main__":

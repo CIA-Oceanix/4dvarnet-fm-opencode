@@ -356,6 +356,54 @@ def budget_table(s1_root: str, variant: str) -> list[str]:
     return lines
 
 
+BUDGETS = (("ETKF, S0-tuned (R × 1)", ""), ("ETKF, S1-tuned (R × 6)", "etkf_R6"),
+           ("EnKS, S1-tuned (R × 6, taper 8 d)", "enks_R6"))
+
+
+def budget_compare_table(s1_root: str, variant: str) -> list[str]:
+    """Absolute Shapley score loss per error group for each budget, with paired contrasts."""
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    from evaluation.qg_specwind_s1 import REALISTIC_GROUPS
+    from evaluation.qg_specwind_s1_sweep import _load, realistic_name, shapley_over
+    shs = {}
+    for label, sub in BUDGETS:
+        d = os.path.join(s1_root, sub) if sub else s1_root
+        if os.path.isdir(d):
+            sh = shapley_over(_load(d), REALISTIC_GROUPS, lambda c: realistic_name(variant, c))
+            if sh is not None:
+                shs[label] = sh
+    if len(shs) < 2:
+        return ["_Needs at least two complete attribution sweeps._"]
+    lines = ["| filter (score S0 corner → S1) | " + " | ".join(REALISTIC_GROUPS) + " | interaction | total loss |",
+             "|---|" + "---|" * (len(REALISTIC_GROUPS) + 2)]
+    for label, sh in shs.items():
+        d = sh["score"]
+        top = max(REALISTIC_GROUPS, key=lambda g: d["components"][g]["shapley"])
+        cells = []
+        for g in REALISTIC_GROUPS:
+            c = d["components"][g]
+            v = f"{c['shapley']:.3f} [{c['shapley_ci'][0]:.3f}, {c['shapley_ci'][1]:.3f}]"
+            cells.append(f"**{v}**" if g == top else v)
+        lines.append(f"| {label} ({d['s0']:.3f} → {d['s1']:.3f}) | " + " | ".join(cells)
+                     + f" | {d['interaction']:+.3f} | {d['loss']:.3f} |")
+    rng = np.random.default_rng(3)
+    labels = list(shs)
+    contrasts = [(labels[1], labels[0], "S1 tuning (ETKF, R × 6 − R × 1)")] if len(labels) > 1 else []
+    if len(labels) > 2:
+        contrasts.append((labels[2], labels[1], "smoothing (EnKS − ETKF, both R × 6)"))
+    lines += ["", "| paired contrast (score loss, 95% CI) | " + " | ".join(REALISTIC_GROUPS) + " |",
+              "|---|" + "---|" * len(REALISTIC_GROUPS)]
+    for a, b, name in contrasts:
+        cells = []
+        for g in REALISTIC_GROUPS:
+            x = (np.array(shs[a]["score"]["components"][g]["phi"])
+                 - np.array(shs[b]["score"]["components"][g]["phi"]))
+            m = x[rng.integers(0, len(x), (10000, len(x)))].mean(1)
+            cells.append(f"{x.mean():+.3f} [{np.percentile(m, 2.5):+.3f}, {np.percentile(m, 97.5):+.3f}]")
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def _fig(fig_dir: str, name: str, alt: str) -> list[str]:
     return [f"![{alt}](figs/{name})", ""] if os.path.exists(os.path.join(fig_dir, name)) else []
 
@@ -450,6 +498,14 @@ def main() -> None:
            "windows, all 32 on/off combinations; largest share in bold):", ""]
     md += budget_table(args.s1_root, args.s1_variant) + [""]
     md += _fig(fig_dir, "qg_specwind_da_s1_budget.png", "S1 error budget")
+    md += ["**S1-tuned error budgets** — the same attribution with each filter fixed at its S1-tuned setting "
+           "(R × 6) in all 32 combinations (the S0 corner then runs R × 6 on perfect-model data: it costs "
+           "nothing, ETKF 0.768 vs 0.764, EnKS 0.809 vs 0.806). Absolute Shapley score loss per group "
+           "(bootstrap 95% over the 20 windows; largest in bold) and paired contrasts "
+           "(`docs/results/qg_specwind_da_s1_calibration.md` §3.1d):", ""]
+    md += budget_compare_table(args.s1_root, args.s1_variant) + [""]
+    md += ["Share of the EV loss per field, S1-tuned EnKS:", ""]
+    md += budget_table(os.path.join(args.s1_root, "enks_R6"), args.s1_variant) + [""]
     md += ["### Large-ensemble reference (N = 320)", "",
            "The benchmark uses N = 80. At N = 320, S0 is still not converged (val: +0.022 for the EnKS "
            "from 80 to 320), while S1 saturates by N = 160. In S0 the N = 320 rows use settings re-tuned "
