@@ -57,7 +57,31 @@ def test_residnorm_unit_rms_on_observed_entries(monkeypatch):
         assert (r[missing] == 0).all()
 
 
-@pytest.mark.parametrize("mode,mult", [("resid+mask+state", 3), ("residnorm+mask+state", 4)])
+@pytest.mark.parametrize("mode,mult", [("resid+mask+state", 3), ("residnorm+mask+state", 4),
+                                       ("subgrad+mask+state", 4)])
 def test_input_width(mode, mult):
     assert F._UPDATE_INPUT_CHANNEL_MULTIPLIER[mode] == mult
     _solver(mode)
+
+
+def test_subgrad_mask_state_is_subgrad_plus_mask(monkeypatch):
+    seen, missing = _inputs(monkeypatch, "subgrad+mask+state")
+    for inp, x, oc, mask in seen:
+        mask = mask.expand_as(x).to(x.dtype)
+        assert inp.shape[-1] == 4 * D
+        torch.testing.assert_close(inp[..., :D], (oc - x) * mask)
+        torch.testing.assert_close(inp[..., 2 * D:3 * D], x)
+        torch.testing.assert_close(inp[..., 3 * D:], mask)
+        assert (inp[..., 3 * D:][missing] == 0).all() and (inp[..., 3 * D:][~missing] == 1).all()
+
+
+def test_subgrad_mask_state_prior_channel_matches_subgrad():
+    a, b = _solver("subgrad+state"), _solver("subgrad+mask+state")
+    assert a.prior_unet is not None and b.prior_unet is not None
+    b.prior_unet.load_state_dict(a.prior_unet.state_dict())
+    x = torch.randn(2, 32, D)
+    oc = torch.randn(2, 32, D)
+    m = (torch.rand(2, 32, D) > 0.5).float()
+    ia = F._build_update_input("subgrad+state", x, oc, m, None, prior_unet=a.prior_unet)
+    ib = F._build_update_input("subgrad+mask+state", x, oc, m, None, prior_unet=b.prior_unet)
+    torch.testing.assert_close(ib[..., :3 * D], ia)

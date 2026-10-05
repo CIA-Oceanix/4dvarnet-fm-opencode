@@ -142,7 +142,7 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # torch.autograd.grad call instead of a cheap proxy).
 _IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "resid+mask+state",
                               "residnorm+mask+state", "obs-only", "grad-only", "grad+state",
-                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
+                              "subgrad+state", "subgrad+mask+state", "gradsplit+state", "subgrad+state+xtau",
                               "subgrad+state+trueprior", "subgrad+trueprior")
 
 # Modes needing a real torch.autograd.grad call each iteration.
@@ -150,7 +150,7 @@ _AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
 # Modes needing the trainable prior operator (prior_unet). "subgrad+state+trueprior"
 # deliberately excluded -- its "prior" is the KNOWN true ODE (zero trainable
 # parameters), not a learned network; see _true_ode_prior_residual.
-_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
+_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "subgrad+mask+state", "gradsplit+state",
                 "subgrad+state+xtau")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
 # per mode -- drives in_state_dim at construction time.
@@ -163,6 +163,7 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
+    "subgrad+mask+state": 4,
     "gradsplit+state": 3,
     "subgrad+state+xtau": 4,
     "subgrad+state+trueprior": 3,
@@ -661,6 +662,12 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         n_obs = mask.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
         rms = ((resid ** 2).sum(dim=(1, 2), keepdim=True) / n_obs).sqrt().clamp_min(1e-4).detach()
         return torch.cat([x, resid / rms, mask, torch.log(rms).expand_as(x)], dim=-1)
+    if update_input == "subgrad+mask+state":
+        # "subgrad+state" plus the observation mask as an explicit channel block
+        # (same change as "resid+state" -> "resid+mask+state").
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        return torch.cat([(obs_clean - x) * mask, g_prior, x, mask], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
         # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
