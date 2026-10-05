@@ -24,12 +24,15 @@ model:
   cond_extra_dim: 0
 training:
   epochs: 200
-  lr: 0.001
+  # Peak LR with a 5-epoch linear warm-up, then cosine to 0 (2026-10-05): at 1e-3 with
+  # no warm-up the decoder's residual stream blew up (G1-L, G2, G3 collapsed by epoch 25).
+  lr: 0.0003
+  warmup_epochs: 5
   batch_size: 2
   gradient_clip_val: 1.0
-  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration
-  # draw; 1.0 = lambda_0 until the E1 sweep (plan section 4.2) picks the scale.
-  q_loss_weight_scale: 1.0
+  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration draw;
+  # scale 3 selected by the E1 sweep on val (0.699 vs 0.688 at 1, 0.694 at 10).
+  q_loss_weight_scale: 3.0
 data:
   normalize: true
   # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):

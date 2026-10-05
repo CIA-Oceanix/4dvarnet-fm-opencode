@@ -58,6 +58,7 @@ obs-density-augmented training; see `data/qg_neural.py`'s
 """
 import argparse
 import json
+import math
 import os
 import time
 from types import SimpleNamespace
@@ -275,13 +276,37 @@ def epochs_for(model_type: str) -> int:
     return 200 if model_type in DIRECT_TYPES + FLOW_TYPES else 400
 
 
+def warmup_cosine_factor(warmup_steps: int, total_steps: int, start: float = 0.01,
+                         cosine: bool = True):
+    """LR multiplier per optimizer step: linear from `start` to 1 over `warmup_steps`, then a
+    cosine decay to 0 over the remaining steps (or a constant 1 when `cosine` is False)."""
+    def factor(step: int) -> float:
+        if step < warmup_steps:
+            return start + (1.0 - start) * step / warmup_steps
+        if not cosine:
+            return 1.0
+        frac = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * min(1.0, frac)))
+    return factor
+
+
+def decoder_output_module(model: torch.nn.Module) -> torch.nn.Module | None:
+    """The last decoder block of a T-channels MONAI backbone, whose activation scale is the
+    early sign of the residual-stream blow-up seen in the first G1-L / G2 / G3 runs."""
+    try:
+        return model.unet.backbone2d.backbone.up_blocks[-1]
+    except AttributeError:
+        return None
+
+
 class QGNeuralLightning(pl.LightningModule):
     """Combined psi (primary) + auxiliary PV-q loss trainer for QG neural models."""
 
     def __init__(self, model, model_type: str, norm: dict | None, qg_cfg: QGConfig,
                  q_loss_weight: float = 0.1, lr: float = 1e-3,
                  gradient_clip_val: float = 10.0,
-                 use_cosine_scheduler: bool = True, max_epochs: int | None = None):
+                 use_cosine_scheduler: bool = True, max_epochs: int | None = None,
+                 warmup_epochs: int = 0):
         super().__init__()
         self.model = model
         self.model_type = model_type
@@ -292,9 +317,19 @@ class QGNeuralLightning(pl.LightningModule):
         self.gradient_clip_val = gradient_clip_val
         self.use_cosine_scheduler = use_cosine_scheduler
         self.max_epochs = max_epochs
+        self.warmup_epochs = int(warmup_epochs)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        if self.warmup_epochs > 0:
+            if not self.max_epochs:
+                raise ValueError("warmup_epochs requires max_epochs to be set")
+            total = int(self.trainer.estimated_stepping_batches)
+            warm = max(1, round(total * self.warmup_epochs / self.max_epochs))
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer, warmup_cosine_factor(warm, total, cosine=self.use_cosine_scheduler))
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
         if self.use_cosine_scheduler:
             if not self.max_epochs:
                 raise ValueError("use_cosine_scheduler=True requires max_epochs to be set")
@@ -392,7 +427,15 @@ class QGNeuralLightning(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        decoder = decoder_output_module(self.model) if batch_idx == 0 else None
+        acts = []
+        handle = (decoder.register_forward_hook(lambda m, i, o: acts.append(o.detach().float().std()))
+                  if decoder is not None else None)
         loss, loss_psi, _loss_q = self._total_loss(batch)
+        if handle is not None:
+            handle.remove()
+            if acts:
+                self.log("act_std_decoder", acts[0], prog_bar=True, on_epoch=True, batch_size=1)
         self.log("val_loss", loss, prog_bar=True, on_epoch=True,
                  batch_size=batch.batch_size)
         self.log("val_loss_psi", loss_psi, batch_size=batch.batch_size)
@@ -420,7 +463,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
                           cols_per_day_range=None, train_cols_sampling=None,
                           q_loss_weight_scale=None, q_daily_var=None, use_obs_mask=False,
                           hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
-                          **kw) -> str:
+                          warmup_epochs=0, **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -487,6 +530,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
             "q_loss_weight": kw["q_loss_weight"],
             "q_loss_weight_scale": q_loss_weight_scale, "q_daily_var": q_daily_var,
             "use_cosine_scheduler": kw["use_cosine_scheduler"],
+            "warmup_epochs": warmup_epochs,
             "seed": kw["seed"],
         },
     })
@@ -653,7 +697,14 @@ def main():
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
-    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--lr", type=float, default=None,
+                    help="Peak learning rate. Falls back to the experiment YAML's training.lr, "
+                         "else 1e-3.")
+    ap.add_argument("--warmup-epochs", type=int, default=None,
+                    help="Linear LR warm-up (from 1%% of the peak, per optimizer step) over this "
+                         "many epochs, then a per-step cosine decay over the rest. Falls back to "
+                         "the experiment YAML's training.warmup_epochs, else 0 (the per-epoch "
+                         "cosine schedule, unchanged).")
     ap.add_argument("--q-loss-weight", type=float, default=None,
                     help="Overrides config/experiment/Q{1,2}_..._s0.yaml's "
                          "training.q_loss_weight if given.")
@@ -832,6 +883,10 @@ def main():
                           else float(exp_cfg.data.get("obs_noise_std_frac", 0.05)))
     init_lag_days = (args.init_lag_days if args.init_lag_days is not None
                      else float(exp_cfg.data.get("init_lag_days", 5.0)))
+    if args.lr is None:
+        args.lr = float(exp_cfg.training.get("lr", 1e-3))
+    warmup_epochs = (args.warmup_epochs if args.warmup_epochs is not None
+                     else int(exp_cfg.training.get("warmup_epochs", 0)))
     gradient_clip_val = (args.gradient_clip_val if args.gradient_clip_val is not None
                         else float(exp_cfg.training.get("gradient_clip_val", 10.0)))
     q_loss_weight_scale = (None if args.q_loss_weight is not None else
@@ -948,7 +1003,7 @@ def main():
             gradient_clip_val=gradient_clip_val, q_loss_weight=q_w,
             q_loss_weight_scale=q_loss_weight_scale, q_daily_var=q_var,
             use_obs_mask=use_obs_mask, hidden_channels=hidden_channels,
-            num_res_blocks=num_res_blocks,
+            num_res_blocks=num_res_blocks, warmup_epochs=warmup_epochs,
             use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
             num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
             train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,
@@ -1055,7 +1110,7 @@ def main():
                                 q_loss_weight=q_loss_weight, lr=args.lr,
                                 gradient_clip_val=gradient_clip_val,
                                 use_cosine_scheduler=args.cosine_scheduler,
-                                max_epochs=epochs)
+                                max_epochs=epochs, warmup_epochs=warmup_epochs)
         trainer = create_trainer(tcfg, 1)
         if regen_callback is not None:
             trainer.callbacks.append(regen_callback)

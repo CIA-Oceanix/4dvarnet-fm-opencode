@@ -1129,3 +1129,66 @@ def test_build_model_refuses_a_tier_for_untiered_types():
     from train_qg_neural import build_model
     with pytest.raises(ValueError, match="fixed M tier"):
         build_model("direct_unet", QGConfig(nx=64), hidden_channels=[32, 64, 128])
+
+
+def test_warmup_cosine_factor_shape():
+    from train_qg_neural import warmup_cosine_factor
+    f = warmup_cosine_factor(100, 1000)
+    assert f(0) == pytest.approx(0.01)
+    assert f(50) == pytest.approx(0.01 + 0.99 * 0.5)
+    assert f(100) == pytest.approx(1.0)
+    assert f(550) == pytest.approx(0.5)
+    assert f(1000) == pytest.approx(0.0, abs=1e-12)
+    values = [f(s) for s in range(100, 1001, 50)]
+    assert all(a >= b for a, b in zip(values, values[1:]))
+    assert warmup_cosine_factor(100, 1000, cosine=False)(900) == 1.0
+
+
+def test_configure_optimizers_without_warmup_keeps_the_epoch_cosine():
+    from train_qg_neural import QGNeuralLightning
+    lit = QGNeuralLightning(torch.nn.Linear(2, 2), "direct_unet_tchannels", None, QGConfig(nx=16),
+                            max_epochs=200)
+    out = lit.configure_optimizers()
+    assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+    assert out["lr_scheduler"].T_max == 200
+
+
+def test_decoder_output_module_found_on_the_tchannels_backbone():
+    from train_qg_neural import build_model, decoder_output_module
+    cfg = QGConfig(nx=16)
+    assert decoder_output_module(build_model("direct_unet_tchannels", cfg)) is not None
+    assert decoder_output_module(torch.nn.Linear(2, 2)) is None
+
+
+@pytest.mark.parametrize("filename", [
+    "G1S_direct_unet_tchannels_specwind.yaml", "G1_direct_unet_tchannels_specwind.yaml",
+    "G1L_direct_unet_tchannels_specwind.yaml", "G2_vanilla_cfm_tchannels_specwind.yaml",
+    "G3_sda_prior_tchannels_specwind.yaml"])
+def test_specwind_configs_share_the_stabilized_protocol(filename):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    assert float(cfg.training.lr) == 3e-4
+    assert int(cfg.training.warmup_epochs) == 5
+    assert float(cfg.training.q_loss_weight_scale) == 3.0
+    assert float(cfg.training.gradient_clip_val) == 1.0
+
+
+def test_configure_optimizers_with_warmup_steps_per_batch():
+    from types import SimpleNamespace
+
+    from train_qg_neural import QGNeuralLightning
+    lit = QGNeuralLightning(torch.nn.Linear(2, 2), "direct_unet_tchannels", None, QGConfig(nx=16),
+                            lr=3e-4, max_epochs=200, warmup_epochs=5)
+    lit._trainer = SimpleNamespace(estimated_stepping_batches=200 * 500)
+    out = lit.configure_optimizers()
+    sched = out["lr_scheduler"]
+    assert sched["interval"] == "step"
+    opt = out["optimizer"]
+    assert opt.param_groups[0]["lr"] == pytest.approx(3e-6)
+    for _ in range(2500):
+        opt.step()
+        sched["scheduler"].step()
+    assert opt.param_groups[0]["lr"] == pytest.approx(3e-4)
