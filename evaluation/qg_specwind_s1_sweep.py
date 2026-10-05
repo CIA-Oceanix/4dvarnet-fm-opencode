@@ -189,13 +189,14 @@ def shapley_over(recs: dict, components, name_of) -> dict | None:
                     wgt = math.factorial(r) * math.factorial(n - r - 1) / math.factorial(n)
                     phi += wgt * (v[s] - v[with_i])
             alone = v[()] - v[(ci,)]
-            comp[ci] = {"shapley": float(phi.mean()), "shapley_ci": _boot(phi),
+            comp[ci] = {"shapley": float(phi.mean()), "shapley_ci": _boot(phi), "phi": phi.tolist(),
                         "alone": float(alone.mean()), "alone_ci": _boot(alone),
                         "share": float(phi.mean() / loss_full.mean()) if loss_full.mean() else None}
         interaction = loss_full - sum(v[()] - v[(c,)] for c in COMPONENTS)
         out[key] = {"s0": float(v[()].mean()), "s1": float(v[tuple(COMPONENTS)].mean()),
                     "loss": float(loss_full.mean()), "loss_ci": _boot(loss_full),
-                    "interaction": float(interaction.mean()), "components": comp}
+                    "interaction": float(interaction.mean()), "interaction_ci": _boot(interaction),
+                    "components": comp}
     return out
 
 
