@@ -46,6 +46,11 @@ def _from_resolved_config(path: Path) -> dict:
         "param_dim": int(model.get("param_dim", 0)),
         "cond_extra_dim": int(model.get("cond_extra_dim", 0)),
         "ic_dim": int(model.get("ic_dim", 0)),
+        # Capacity tier and obs-mask input (spectral-wind round 1); runs written
+        # before these keys existed were all built at the defaults.
+        "hidden_channels": list(model.get("hidden_channels", [64, 128, 256])),
+        "num_res_blocks": int(model.get("num_res_blocks", 2)),
+        "use_obs_mask": bool(model.get("use_obs_mask", False)),
         "source": "resolved_config.yaml",
     }
 
