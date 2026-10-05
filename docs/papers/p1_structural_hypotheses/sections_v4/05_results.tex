@@ -1,12 +1,9 @@
 \section{Results}\label{sec:results}
 
-The results answer the three questions of Sect.~\ref{sec:intro} in turn:
-\begin{itemize}[leftmargin=*,nosep]
-  \item \textbf{Q1, perfect model:} Sects.~\ref{sec:q1}--\ref{sec:q1-density};
-  \item \textbf{Q2, model error:} Sects.~\ref{sec:q2}--\ref{sec:q2-represent};
-  \item \textbf{Q3, form of the prior:} Sects.~\ref{sec:q3} and~\ref{sec:composition}.
-\end{itemize}
-The transfer to the QG ocean and the value of true-system data close the section. Unless stated, numbers are Lorenz-96 RMSE on the regular observing system.
+Sections~\ref{sec:q1} and~\ref{sec:q2} give the error budget of the mean with a perfect model (Q1) and under model
+error (Q2). Sections~\ref{sec:q1-uncertainty} and~\ref{sec:q1-density} cross both cases with the uncertainty the
+schemes report and with the observing system. Section~\ref{sec:q3} addresses the structure of the prior (Q3).
+Unless stated, numbers are Lorenz-96 RMSE on the regular observing system.
 
 \subsection{Overview}\label{sec:overview}
 Table~\ref{tab:overview} gives the RMSE of every scheme in both cases and on both
@@ -101,7 +98,74 @@ made of a restriction (filtering) and an approximation (30 members, a short
 optimisation), and it shrinks with smoothing, with members and with iterations.
 None of it requires a better model.
 
-\subsection{Reported uncertainty with a perfect model}\label{sec:q1-uncertainty}
+\paragraph{QG ocean.}\label{sec:q1-qg}
+On the QG case study (score = mean explained variance of the two
+streamfunction and two potential-vorticity layers, higher is better; 100 test
+windows of 30 days, forced dataset) the perfect-model ordering of the DA schemes
+is the same as on Lorenz-96. Smoothing gains over filtering (EnKS 0.812 against
+ETKF 0.774 and EnKF 0.761), and the variational scheme, which uses the whole
+window, is best (strong-constraint 4D-Var 0.840). With a perfect model the
+restriction of filtering is again the main reducible term among the DA schemes.
+\needsrun{QG learned schemes (round 1) for the cross-class comparison.}
+
+\subsection{Error budget under model error}\label{sec:q2}
+Under model error the DA errors grow $2.0$--$2.7\times$ in RMSE: ETKF 1.409, EnKF
+1.416, ETKS 1.338, Strong-4DVar 1.436. For the ETKS the mean-squared error is about seven
+times its \Sz{} value. The contrasts that explained the \Sz{} deficit no longer
+help.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Ensemble size.} 100 members change nothing (1.338 $\to$ 1.338).
+  \item \textbf{Smoothing.} It gains only 5\,\%.
+  \item \textbf{The filter/smoother identity fails.} The MSE gap is 0.237, against
+    a variance gap of 0.534 and a mean shift of 0.913.
+\end{itemize}
+The excess is misspecification. The learned rows are flat (DirectUNet 0.339,
+hybrid 0.289), but they are an oracle bound: they never saw the biased model
+(Sect.~\ref{sec:design}).
+
+\paragraph{Representing model uncertainty.}\label{sec:q2-represent}
+If misspecification is the problem, representing the uncertainty of the model
+should convert part of it back into a restriction.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Weak-4DVar.} We tune its model-error scale per case on the
+    validation windows. At \Sz{} it gains nothing over the hard constraint
+    (0.695 vs 0.703), as it should with a perfect model. At \So{} it removes
+    26\,\% of the error (1.064 vs 1.436) and becomes the best DA scheme, ahead of
+    the ETKS (1.338). It still remains three times the learned bound: an
+    additive per-step error with a scalar scale cannot absorb a parametric bias.
+  \item \textbf{Learned priors.} SDA2, trained with clean parameters, leaks the
+    \So{} bias into its prior, and the hybrid built on it degrades
+    (0.310 $\to$ 0.333 with 400-epoch priors). SDA3-fix, trained with noisy
+    parameters, stays flat (0.312 $\to$ 0.307).
+  \item \needsrun{A perturbed-parameter ETKF, and the $\delta$ sweep: the
+    conversion should succeed while the bias stays within the stated
+    uncertainty ($\delta \le \sigma$) and fail beyond.}
+\end{itemize}
+
+\figplaceholder{Fig.~7}{RMSE and calibration loss vs bias $\delta$, per model-uncertainty arm.}
+
+\paragraph{QG ocean.}
+Under its realistic model error the QG case study repeats the Lorenz-96 pattern (score as in Sect.~\ref{sec:q1}).
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Hard constraint.} Strong-constraint 4D-Var, best at \Sz{}
+    (0.840), becomes the worst scheme at \So{} with its \Sz{} settings (0.516).
+  \item \textbf{Ensembles.} The ensemble schemes keep more (ETKF 0.579, EnKF
+    0.596, EnKS 0.612).
+  \item \textbf{Representing model uncertainty.} Re-tuning for \So{} --- a weak
+    constraint for 4D-Var, an inflated observation error for the ensembles ---
+    recovers part of the loss: 4D-Var 0.612, ETKF 0.633, EnKF 0.634, EnKS 0.665.
+\end{itemize}
+The smoother is the most robust scheme under model error on both systems, and
+the hard constraint the least. Misspecification turns the best perfect-model
+scheme into the worst.
+
+\paragraph{Value of true-system data.}\label{sec:q2-oracle}
+\needsrun{Learned schemes trained on simulations of the biased model, with
+$\sigma = 0$ and 20\,\%; their gap to the learned-on-truth rows measures what
+training on reanalyses or true-system data implicitly spends.}
+
+\subsection{Reported uncertainty}\label{sec:q1-uncertainty}\label{sec:q2-uncertainty}
+\paragraph{Perfect model.}
 Table~\ref{tab:fms-s0} gives $\FMS_\tau$ for the main schemes at \Sz{} on the regular grid.
 \begin{itemize}[leftmargin=*]
   \item \textbf{The smoother buys its mean with an over-confident ensemble.} It
@@ -136,40 +200,7 @@ hybrid & \textbf{0.039} & \textbf{0.034} & 0.0200 & 16\,\% \\
 
 \figplaceholder{Fig.~3}{$\FMS_\tau$ curves per scheme, \Sz, regular and random observing systems, with window-bootstrap intervals.}
 
-\subsection{Dependence on the observing system}\label{sec:q1-density}
-Figure~4 shows how the schemes depend on the number of observations.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Crossover.} DA is best when a window has at most about ten
-    observation times; the learned schemes win from about twenty.
-  \item \textbf{Transfer between observing systems.} The ratio of random to
-    regular RMSE is 1.06 for Strong-4DVar, 1.15 for the ETKS, 1.21--1.24 for
-    SDA and 1.30--1.32 for the CFMs and DirectUNet. Keeping $\Hop$ and $\mathbf{R}$
-    explicit buys robustness to the observing system.
-  \item \textbf{Beyond the training range} (from 300 to 1000 observations),
-    DirectUNet degrades from 0.17 to 0.34, while SDA, whose likelihood is
-    explicit, keeps improving from 0.30 to 0.25.
-\end{itemize}
-In the language of the chain, an amortised map is misspecified once the
-observing system leaves its training distribution; a factorised scheme is not.
-
-\figplaceholder{Fig.~4}{RMSE vs number of observation times and of observed fast channels, \Sz, all schemes.}
-
-\subsection{Error budget under model error}\label{sec:q2}
-Under model error the DA errors grow $2.0$--$2.7\times$ in RMSE: ETKF 1.409, EnKF
-1.416, ETKS 1.338, Strong-4DVar 1.436. For the ETKS the mean-squared error is about seven
-times its \Sz{} value. The contrasts that explained the \Sz{} deficit no longer
-help.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Ensemble size.} 100 members change nothing (1.338 $\to$ 1.338).
-  \item \textbf{Smoothing.} It gains only 5\,\%.
-  \item \textbf{The filter/smoother identity fails.} The MSE gap is 0.237, against
-    a variance gap of 0.534 and a mean shift of 0.913.
-\end{itemize}
-The excess is misspecification. The learned rows are flat (DirectUNet 0.339,
-hybrid 0.289), but they are an oracle bound: they never saw the biased model
-(Sect.~\ref{sec:design}).
-
-\subsection{Reported uncertainty under model error}\label{sec:q2-uncertainty}
+\paragraph{Model error.}
 The large-$\tau$ score shows misspecification even where the RMSE does not
 single it out (Fig.~5).
 \begin{itemize}[leftmargin=*]
@@ -191,7 +222,26 @@ single it out (Fig.~5).
 
 \figplaceholder{Fig.~5}{$\FMS_\tau$ at \Sz{} and \So{} per scheme; calibration loss vs $\tau$.}
 
-\subsection{Marginal value of observations}\label{sec:q2-mvo}
+\subsection{Observing system and marginal value of observations}\label{sec:q1-density}\label{sec:q2-mvo}
+\paragraph{Dependence on the observing system.}
+Figure~4 shows how the schemes depend on the number of observations.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Crossover.} DA is best when a window has at most about ten
+    observation times; the learned schemes win from about twenty.
+  \item \textbf{Transfer between observing systems.} The ratio of random to
+    regular RMSE is 1.06 for Strong-4DVar, 1.15 for the ETKS, 1.21--1.24 for
+    SDA and 1.30--1.32 for the CFMs and DirectUNet. Keeping $\Hop$ and $\mathbf{R}$
+    explicit buys robustness to the observing system.
+  \item \textbf{Beyond the training range} (from 300 to 1000 observations),
+    DirectUNet degrades from 0.17 to 0.34, while SDA, whose likelihood is
+    explicit, keeps improving from 0.30 to 0.25.
+\end{itemize}
+In the language of the chain, an amortised map is misspecified once the
+observing system leaves its training distribution; a factorised scheme is not.
+
+\figplaceholder{Fig.~4}{RMSE vs number of observation times and of observed fast channels, \Sz, all schemes.}
+
+\paragraph{Marginal value of observations.}
 The clearest symptom is what additional observations buy (Fig.~6).
 \begin{itemize}[leftmargin=*]
   \item \textbf{Strong-4DVar.} Going from 15 to 30 observations per window, its
@@ -207,28 +257,7 @@ data repairs.
 
 \figplaceholder{Fig.~6}{RMSE vs number of observation times, \Sz{} and \So, per scheme.}
 
-\subsection{Representing model uncertainty}\label{sec:q2-represent}
-If misspecification is the problem, representing the uncertainty of the model
-should convert part of it back into a restriction.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Weak-4DVar.} We tune its model-error scale per case on the
-    validation windows. At \Sz{} it gains nothing over the hard constraint
-    (0.695 vs 0.703), as it should with a perfect model. At \So{} it removes
-    26\,\% of the error (1.064 vs 1.436) and becomes the best DA scheme, ahead of
-    the ETKS (1.338). It still remains three times the learned bound: an
-    additive per-step error with a scalar scale cannot absorb a parametric bias.
-  \item \textbf{Learned priors.} SDA2, trained with clean parameters, leaks the
-    \So{} bias into its prior, and the hybrid built on it degrades
-    (0.310 $\to$ 0.333 with 400-epoch priors). SDA3-fix, trained with noisy
-    parameters, stays flat (0.312 $\to$ 0.307).
-  \item \needsrun{A perturbed-parameter ETKF, and the $\delta$ sweep: the
-    conversion should succeed while the bias stays within the stated
-    uncertainty ($\delta \le \sigma$) and fail beyond.}
-\end{itemize}
-
-\figplaceholder{Fig.~7}{RMSE and calibration loss vs bias $\delta$, per model-uncertainty arm.}
-
-\subsection{Model-derived and learned priors}\label{sec:q3}
+\subsection{Sensitivity to the structure of the prior}\label{sec:q3}\label{sec:composition}
 The posterior~\eqref{eq:posterior} is a likelihood times a prior. Model-based DA
 derives the prior from the equations; SDA learns it from data and keeps the same
 explicit likelihood. Comparing them isolates the form of the prior.
@@ -265,7 +294,7 @@ misspecification channel for SDA2, which was trained with clean parameters and
 degrades by 3\,\%, but not for SDA3-fix, trained with noisy ones.
 \needsrun{Conditioning on the forcing $\zv$.}
 
-\subsection{Composing a mean and an uncertainty}\label{sec:composition}
+\paragraph{Composing a mean and an uncertainty.}
 In the operator language of Sect.~\ref{sec:fms}, the hybrid composes DirectUNet's
 mean with the anomaly of SDA3-fix's guided sampler. It has the best mean
 everywhere (0.293 regular, 0.367 random, flat at \So) but not the best
@@ -274,34 +303,3 @@ regular grid, 0.025 vs 0.029 on the random one, standardised units). The score
 separates the two components the hybrid composes: an amortised mean, accurate in
 distribution, and an explicit-likelihood sampler whose tempered guidance makes it
 over-confident.
-
-\subsection{Transfer to the QG ocean}\label{sec:q1-qg}
-\paragraph{Perfect model.}
-On the QG case study (score = mean explained variance of the two
-streamfunction and two potential-vorticity layers, higher is better; 100 test
-windows of 30 days, forced dataset) the perfect-model ordering of the DA schemes
-is the same as on Lorenz-96. Smoothing gains over filtering (EnKS 0.812 against
-ETKF 0.774 and EnKF 0.761), and the variational scheme, which uses the whole
-window, is best (strong-constraint 4D-Var 0.840). With a perfect model the
-restriction of filtering is again the main reducible term among the DA schemes.
-\needsrun{QG learned schemes (round 1) for the cross-class comparison.}
-
-\paragraph{Model error.}
-Under its realistic model error the QG case study repeats the Lorenz-96 pattern.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Hard constraint.} Strong-constraint 4D-Var, best at \Sz{}
-    (0.840), becomes the worst scheme at \So{} with its \Sz{} settings (0.516).
-  \item \textbf{Ensembles.} The ensemble schemes keep more (ETKF 0.579, EnKF
-    0.596, EnKS 0.612).
-  \item \textbf{Representing model uncertainty.} Re-tuning for \So{} --- a weak
-    constraint for 4D-Var, an inflated observation error for the ensembles ---
-    recovers part of the loss: 4D-Var 0.612, ETKF 0.633, EnKF 0.634, EnKS 0.665.
-\end{itemize}
-The smoother is the most robust scheme under model error on both systems, and
-the hard constraint the least. Misspecification turns the best perfect-model
-scheme into the worst.
-
-\subsection{Value of true-system data}\label{sec:q2-oracle}
-\needsrun{Learned schemes trained on simulations of the biased model, with
-$\sigma = 0$ and 20\,\%; their gap to the learned-on-truth rows measures what
-training on reanalyses or true-system data implicitly spends.}
