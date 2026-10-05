@@ -463,7 +463,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
                           cols_per_day_range=None, train_cols_sampling=None,
                           q_loss_weight_scale=None, q_daily_var=None, use_obs_mask=False,
                           hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
-                          warmup_epochs=0, obs_error_aug=None, **kw) -> str:
+                          warmup_epochs=0, obs_error_aug=None, regen=None, **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -497,6 +497,8 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
         # Train split only: total white fraction ~ U[lo, hi] and per-pass correlated
         # fraction ~ U[0, corr_hi] per draw (the S1 altimetry error model).
         "obs_error_aug": list(obs_error_aug) if obs_error_aug is not None else None,
+        # Spectral-wind train-time regeneration: windows per round and rounds' spacing.
+        "regen": dict(regen) if regen else None,
         "obs_noise_std_frac": cfg.obs_noise_std_frac,
         "init_lag_days": cfg.init_lag_days,
         "s1_param_bias": cfg.s1_param_bias, "s1_amp_bias": cfg.s1_amp_bias,
@@ -813,9 +815,11 @@ def main():
                          "the experiment YAML's data.train_cols_sampling; default "
                          "None (cfg.cols_sampling).")
     ap.add_argument("--cache-dir", default="reports/qg_cache")
-    ap.add_argument("--batch-size", type=int, default=2)
-    ap.add_argument("--num-workers", type=int, default=4,
-                    help="DataLoader worker processes for train/val (default 4). "
+    ap.add_argument("--batch-size", type=int, default=None,
+                    help="Falls back to the experiment YAML's training.batch_size, else 2.")
+    ap.add_argument("--num-workers", type=int, default=None,
+                    help="DataLoader worker processes for train/val (YAML training.num_workers, "
+                         "else 4). "
                          "num_workers=1 serializes each __getitem__'s CPU work "
                          "(obs/forcing prep) with GPU training -- a measured ~2x "
                          "epoch-time bottleneck for Q4's noisy-forcing conditioning "
@@ -854,8 +858,9 @@ def main():
     ap.add_argument("--specwind-root", default="experiments/qg_datasets")
     ap.add_argument("--regen-windows", type=int, default=1000,
                     help="Train windows per regeneration round (--specwind-spec only).")
-    ap.add_argument("--regen-every", type=int, default=5,
-                    help="Regenerate the train windows every this many epochs.")
+    ap.add_argument("--regen-every", type=int, default=None,
+                    help="Regenerate the train windows every this many epochs (YAML "
+                         "data.regen_every, else 5).")
     ap.add_argument("--regen-batch-size", type=int, default=256)
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
@@ -865,7 +870,6 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_type = args.model_type
-    epochs = args.epochs if args.epochs is not None else epochs_for(model_type)
     config_name = args.exp_id or f"Q{1 if model_type == 'direct_unet' else 2}_{model_type}_s0"
     exp_dir = args.exp_dir or os.path.join(EXP_DIR, config_name)
     os.makedirs(exp_dir, exist_ok=True)
@@ -875,6 +879,17 @@ def main():
     # `model.param_dim`/`model.cond_extra_dim`/`data.cond_mode` -- CLI flags
     # below only override it when explicitly given.
     exp_cfg = OmegaConf.load(os.path.join(BASE, "config", "experiment", f"{config_name}.yaml"))
+    # Budget and loader settings: CLI > experiment YAML > code default. Every pre-existing
+    # YAML already states the code defaults (epochs 200/400 by model type, batch 2), so
+    # reading them changes no earlier run.
+    epochs = (args.epochs if args.epochs is not None
+              else int(exp_cfg.training.get("epochs", epochs_for(model_type))))
+    if args.batch_size is None:
+        args.batch_size = int(exp_cfg.training.get("batch_size", 2))
+    if args.num_workers is None:
+        args.num_workers = int(exp_cfg.training.get("num_workers", 4))
+    if args.regen_every is None:
+        args.regen_every = int(exp_cfg.data.get("regen_every", 5))
     # Fallback default (2026-09-14): the DA-baseline reference case's own
     # eval config (0.05/5.0, see eval_qg_neural_s0_s1.py and PLAN.md) --
     # deliberately changed from the earlier 0.01/1.0 so a NEW config that
@@ -1011,6 +1026,8 @@ def main():
             use_obs_mask=use_obs_mask, hidden_channels=hidden_channels,
             num_res_blocks=num_res_blocks, warmup_epochs=warmup_epochs,
             obs_error_aug=args.obs_error_aug,
+            regen=({"windows": args.regen_windows, "every_epochs": args.regen_every}
+                   if args.specwind_spec else None),
             use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
             num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
             train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,
