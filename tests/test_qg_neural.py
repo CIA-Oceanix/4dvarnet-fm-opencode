@@ -1275,3 +1275,40 @@ def test_specwind_obs_error_aug_covers_s0_to_s1(filename, aug):
     lo, hi, corr = (float(v) for v in cfg.data.obs_error_aug)
     s1 = REALISTIC_VARIANTS[REALISTIC_SELECTED]
     assert lo == S0_OBS_WHITE and hi == s1.obs_white_frac and corr == s1.obs_corr_frac
+
+
+@pytest.mark.parametrize("batch", [16, 64])
+def test_g1l_large_batch_configs_differ_only_by_the_budget(batch):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    ref = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind.yaml"))
+    cfg = OmegaConf.load(os.path.join(base, f"G1L_direct_unet_tchannels_specwind_b{batch}.yaml"))
+    assert cfg.experiment_id == f"G1L_direct_unet_tchannels_specwind_b{batch}"
+    assert cfg.model == ref.model
+    t = cfg.training
+    assert (int(t.batch_size), int(t.epochs), float(t.lr), int(t.warmup_epochs), int(t.num_workers)) == (
+        batch, 1200, 5e-4, 40, 10)
+    assert int(cfg.data.regen_every) == 30
+    for k in ("q_loss_weight_scale", "gradient_clip_val"):
+        assert t[k] == ref.training[k]
+    assert {k: v for k, v in cfg.data.items() if k != "regen_every"} == dict(ref.data)
+
+
+def test_train_cli_budget_flags_default_to_the_yaml():
+    """--epochs / --batch-size / --num-workers / --regen-every must default to None so the
+    experiment YAML's values apply (the sbatch passes them only when set)."""
+    import ast
+    import os
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tree = ast.parse(open(os.path.join(base, "train_qg_neural.py")).read())
+    defaults = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)):
+            for kw in node.keywords:
+                if kw.arg == "default" and isinstance(kw.value, ast.Constant):
+                    defaults[node.args[0].value] = kw.value.value
+    for flag in ("--epochs", "--batch-size", "--num-workers", "--regen-every"):
+        assert defaults.get(flag, "missing") is None, flag
