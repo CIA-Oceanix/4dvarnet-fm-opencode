@@ -430,6 +430,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             detach_var_cost_grad=fdv.get("detach_var_cost_grad", False),
             zero_prior_input=fdv.get("zero_prior_input", False),
             aux_detach_x_final=fdv.get("aux_detach_x_final", False),
+            update_head=fdv.get("update_head", "direct"),
+            gain_init=fdv.get("gain_init", 0.5),
             obs_var_indices=model_obs_var_indices,
             true_dynamics_dt=true_dynamics_dt,
             loss_type=fdv.get("loss_type", "mse"),

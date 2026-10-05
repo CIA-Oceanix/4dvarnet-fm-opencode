@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -864,6 +866,8 @@ class FourDVarNetSolver(nn.Module):
                  true_dynamics_NO=8,
                  zero_prior_input=False,
                  aux_detach_x_final=False,
+                 update_head="direct",
+                 gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
                  true_dynamics_coupling_exponent=1.6,
@@ -1028,6 +1032,16 @@ class FourDVarNetSolver(nn.Module):
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
+        # update_head="gain": the UNet outputs (a, c) and the step is
+        # x <- x - m * sigmoid(a + logit(gain_init)) * (x - y) - c / N, i.e. a nudging
+        # term with a learned per-element gain in (0, 1) applied outside the
+        # network on observed entries only, plus a free correction c.
+        if update_head not in ("direct", "gain"):
+            raise ValueError(f"unknown update_head {update_head!r}")
+        if not 0.0 < gain_init < 1.0:
+            raise ValueError("gain_init must be in (0, 1)")
+        self.update_head = update_head
+        self.gain_logit_offset = math.log(gain_init / (1.0 - gain_init))
         # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
         # (see that validation above -- both None for every other mode).
         # obs_var_indices: which of state_dim's channels
@@ -1070,7 +1084,7 @@ class FourDVarNetSolver(nn.Module):
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
             dropout=dropout,
-            output_dim=state_dim,
+            output_dim=2 * state_dim if update_head == "gain" else state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
             monai_num_res_blocks=monai_num_res_blocks,
             qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
@@ -1236,7 +1250,11 @@ class FourDVarNetSolver(nn.Module):
                 true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
                 use_reentrant=False,
             )
-            x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
+            if self.update_head == "gain":
+                x = x - self._gain_step(gmod, x, obs_clean, obs_mask, N)
+            else:
+                x = x - (1.0 / N) * gmod
+            x = torch.clamp(x, -self.clip_range, self.clip_range)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
             if (k + 1) % block_size == 0:
@@ -1251,6 +1269,12 @@ class FourDVarNetSolver(nn.Module):
             # sole "final" state is just the untouched x_0.
             block_states.append(x)
         return block_states
+
+    def _gain_step(self, gmod, x, obs_clean, obs_mask, N):
+        D = x.shape[-1]
+        gain = torch.sigmoid(gmod[..., :D] + self.gain_logit_offset)
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        return mask * gain * (x - obs_clean) + (1.0 / N) * gmod[..., D:]
 
     def forward(self, batch, N_outer=None):
         return self._unrolled_blocks(batch, N_outer=N_outer)[-1]
