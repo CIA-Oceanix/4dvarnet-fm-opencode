@@ -45,3 +45,7 @@ data:
   cols_per_day_min: 3
   cols_per_day_max: 30
   train_cols_sampling: uniform_slots
+  # Train split only (2026-10-05, S1 keeps its altimetry error): each draw gets a total white
+  # error ~ U[5%, 15%] and a per-pass correlated error (offset + tilt) ~ U[0, 15%] of the
+  # window's psi1 std -- from the S0 obs model to the S1 one (evaluation/qg_specwind_s1.py).
+  obs_error_aug: [0.05, 0.15, 0.15]

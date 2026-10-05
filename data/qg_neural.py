@@ -120,6 +120,7 @@ module before Q5 -- Q1/Q3/Q4 have zero equivalent of the background/IC
 skill DA baselines get from rolling forward a sampled init state.
 """
 
+import math
 import random
 from dataclasses import dataclass, replace as _dc_replace
 
@@ -321,6 +322,42 @@ def psi_daily(window: dict, cfg: QGConfig) -> torch.Tensor:
     return psi
 
 
+def psi_upper(window: dict, cfg: QGConfig) -> torch.Tensor:
+    """Upper-layer psi (T, ny*nx) of the window's 2-hourly truth; its std is the signal scale
+    the observation errors are expressed against (as in `_generate_obs_ic`)."""
+    inv = _reconstruct_inverter(cfg, float(window["true_params"]["rd"]))
+    psi = inv.inner.streamfunctions(window["true_state"])
+    return psi.reshape(psi.shape[0], 2, -1)[:, 0]
+
+
+def add_pass_correlated_error(obs, rms: float, ny: int, rng: np.random.Generator):
+    """Add a per-pass correlated error (an offset plus a linear tilt along the column, total
+    RMS `rms`) to every observed column: the correlated part of the S1 altimetry error
+    (`evaluation.qg_specwind_s1.corrupt_obs`), for both obs layouts -- a (T, ny) NaN-padded
+    array (one column per step) or per-step lists of concatenated columns (several per step).
+    """
+    tilt = torch.linspace(-1.0, 1.0, ny, dtype=torch.float64)
+
+    def pass_error() -> torch.Tensor:
+        a, b = rng.standard_normal(2)
+        return rms * (math.sqrt(0.5) * a + math.sqrt(1.5) * b * tilt)
+
+    if isinstance(obs, list):
+        out = []
+        for col in obs:
+            if col is None:
+                out.append(None)
+                continue
+            k = col.numel() // ny
+            err = torch.cat([pass_error() for _ in range(k)])
+            out.append((col.double() + err).to(col.dtype))
+        return out
+    out = obs.double().clone()
+    for t in (~torch.isnan(obs)).any(dim=1).nonzero().flatten().tolist():
+        out[t] = out[t] + pass_error()
+    return out.to(obs.dtype)
+
+
 def psi_to_q(state: torch.Tensor, rd: float, cfg: QGConfig,
              device: torch.device | None = None) -> torch.Tensor:
     """Map a flattened (..., 2*ny*nx) physical psi state to its PV, layered."""
@@ -465,7 +502,15 @@ class QGNeuralDataset(Dataset):
                  param_norm_stats: dict | None = None, noisy_max: float = 1.5,
                  forcing_norm_stats: dict | None = None, include_ic: bool = False,
                  cols_per_day_range: tuple[int, int] | None = None,
-                 cols_sampling: str | None = None):
+                 cols_sampling: str | None = None,
+                 obs_error_aug: tuple[float, float, float] | None = None):
+        if obs_error_aug is not None:
+            if not on_the_fly_obs:
+                raise ValueError("obs_error_aug requires on_the_fly_obs=True")
+            white_lo, white_hi, corr_hi = obs_error_aug
+            if not (0.0 < white_lo <= white_hi and corr_hi >= 0.0):
+                raise ValueError(f"obs_error_aug must be (white_lo, white_hi, corr_hi) with "
+                                 f"0 < white_lo <= white_hi and corr_hi >= 0, got {obs_error_aug!r}")
         if cols_sampling is not None:
             if cols_sampling not in ("sequential", *MULTI_COLUMN_SAMPLINGS):
                 raise ValueError(f"unknown cols_sampling {cols_sampling!r}")
@@ -536,9 +581,14 @@ class QGNeuralDataset(Dataset):
         self.include_ic = include_ic
         self.cols_per_day_range = cols_per_day_range
         self.cols_sampling = cols_sampling
+        self.obs_error_aug = tuple(obs_error_aug) if obs_error_aug is not None else None
 
     def __len__(self) -> int:
         return len(self.windows)
+
+    def _draw_obs_error(self) -> tuple[float, float]:
+        white_lo, white_hi, corr_hi = self.obs_error_aug
+        return random.uniform(white_lo, white_hi), random.uniform(0.0, corr_hi)
 
     def _resolved_window(self, idx: int) -> dict:
         w = self.windows[idx]
@@ -559,7 +609,15 @@ class QGNeuralDataset(Dataset):
             cfg = _dc_replace(cfg, cols_per_day=random.randint(lo, hi))
         if self.cols_sampling is not None:
             cfg = _dc_replace(cfg, cols_sampling=self.cols_sampling)
+        corr_frac = 0.0
+        if self.obs_error_aug is not None:
+            white_frac, corr_frac = self._draw_obs_error()
+            cfg = _dc_replace(cfg, obs_noise_std_frac=white_frac)
         ic = QGS01Dataset._generate_obs_ic(cfg, [w], [draw])[0]
+        if corr_frac > 0.0:
+            sigma = float(psi_upper(w, cfg).std())
+            ic["obs"] = add_pass_correlated_error(ic["obs"], corr_frac * sigma, cfg.ny,
+                                                  np.random.default_rng(draw))
         w = dict(w)
         w.update(ic)
         return w
