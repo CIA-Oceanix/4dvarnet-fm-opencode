@@ -67,3 +67,43 @@ def test_ensemble_scores_carry_crps_and_spread():
     assert m["crps"] > 0.0
     assert m["spread_ratio_q1"] > 0.0 and m["spread_ratio_q2"] > 0.0
     assert m["score"] < 1.0
+
+
+def _sda_prior_and_batch(nx: int = 16, days: int = 4, b: int = 2):
+    from types import SimpleNamespace
+
+    from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime
+    torch.manual_seed(0)
+    model = MonaiSDAPriorQGChannelTime(ny=nx, nx=nx, T=days, hidden_channels=[8, 16, 32],
+                                       norm_num_groups=4).eval()
+    d = 2 * nx * nx
+    mask = torch.zeros(b, days, d, dtype=torch.bool)
+    mask[:, :, : nx * nx : 7] = True
+    obs = torch.where(mask, torch.full((b, days, d), 2.0), torch.zeros(b, days, d))
+    return model, SimpleNamespace(obs=obs, obs_mask=mask)
+
+
+def test_sda_members_without_guidance_reproduce_the_prior_sample():
+    from evaluation.run_qg_specwind_neural import sda_members
+    model, batch = _sda_prior_and_batch()
+    torch.manual_seed(1)
+    guided = sda_members(model, batch, n_members=1, guidance_weight=0.0, n_steps=5)
+    torch.manual_seed(1)
+    x = torch.randn(batch.obs.shape) * model.sigma_prior
+    with torch.no_grad():
+        for k in range(5):
+            x = x + 0.2 * model(x, batch, torch.full((2,), k / 5))
+    assert guided.shape == (1, *batch.obs.shape)
+    assert torch.allclose(guided[0], x, atol=1e-6)
+
+
+def test_sda_guidance_pulls_observed_cells_towards_the_obs():
+    from evaluation.run_qg_specwind_neural import sda_members
+    model, batch = _sda_prior_and_batch()
+    misfit = {}
+    for w in (0.0, 5.0):
+        torch.manual_seed(2)
+        x = sda_members(model, batch, n_members=3, guidance_weight=w, n_steps=5)
+        assert x.shape == (3, *batch.obs.shape)
+        misfit[w] = float(((x - batch.obs) ** 2)[:, batch.obs_mask].mean())
+    assert misfit[5.0] < misfit[0.0]

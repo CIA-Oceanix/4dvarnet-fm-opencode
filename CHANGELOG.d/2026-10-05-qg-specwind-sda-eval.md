@@ -1,0 +1,6 @@
+## 2026-10-05: QG gyrostat neural round 1 — SDA guided sampling in the evaluation driver (P6)
+
+**Summary:** `evaluation/run_qg_specwind_neural.py` now scores the G3 SDA prior: members are drawn with `evaluation.sda_sampler.sda_guided_sample` (DPS-style, normalized guidance step) on the unconditional prior, the QG per-cell observation mask passed as `obs_channel_mask` with an all-true temporal mask. New `--guidance-weight` / `--sda-steps` (and `GW` / `SDA_STEPS` in the eval sbatch).
+**Files modified:** `evaluation/run_qg_specwind_neural.py`; `batch/run_qg_specwind_neural_eval.sbatch`; `tests/test_qg_specwind_neural_eval.py`.
+**Rationale:** P6 of `docs/plans/analysis/qg_specwind_neural.md`. The guidance step is normalized by the gradient norm, so the scalar R cancels and only the guidance weight is tuned (the plan's gw × R grid reduces to gw). The weight is an L2 step over a window's whole normalized state (30 × 8192 values vs ~4.8k in L96), so the val sweep uses gw ∈ {25, 50, 100, 200, 400} rather than the L96 range.
+**Verification:** `pytest tests/test_qg_specwind_neural_eval.py tests/test_sda_sampler.py` (32 passed): zero guidance reproduces the prior's own Euler sample exactly, guidance reduces the misfit on observed cells, member shapes. CPU smoke on the 2-epoch G3 checkpoint (2 windows, 2 members) runs end to end.

@@ -77,8 +77,8 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     rc = OmegaConf.load(os.path.join(run_dir, "resolved_config.yaml"))
     m = rc.model
     model_type = str(m.model_type)
-    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels"):
-        raise ValueError(f"{model_type!r} is not scored by this driver (SDA rows: P6)")
+    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", "sda_prior_tchannels"):
+        raise ValueError(f"{model_type!r} is not scored by this driver")
     model = build_model(model_type, cfg, param_dim=int(m.get("param_dim", 0)),
                         cond_extra_dim=int(m.get("cond_extra_dim", 0)), ic_dim=int(m.get("ic_dim", 0)),
                         use_obs_mask=bool(m.get("use_obs_mask", False)),
@@ -99,11 +99,37 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     return model.to(device).eval(), model_type, norm
 
 
+def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: float,
+                n_steps: int = 10) -> torch.Tensor:
+    """(n_members, B, days, D) SDA1 samples: the unconditional prior's Euler ODE nudged by the
+    normalized gradient of the observation misfit at x_hat_1 (`evaluation.sda_sampler`).
+
+    The QG observations are per cell (`batch.obs_mask` has the state's own (B, days, D)
+    shape), so they go in as the per-cell `obs_channel_mask` with an all-true temporal mask;
+    NaN never occurs in the zero-filled QG obs, the mask alone selects the observed cells.
+    The guidance step is normalized by the gradient norm, so the scalar R cancels and only
+    `guidance_weight` (an L2 step over one window's whole normalized state) matters.
+    """
+    from types import SimpleNamespace
+
+    from evaluation.sda_sampler import sda_guided_sample
+    b, t, _ = batch.obs.shape
+    shim = SimpleNamespace(obs=batch.obs,
+                           obs_mask=torch.ones(b, t, dtype=torch.bool, device=batch.obs.device))
+    out, _ = sda_guided_sample(model, shim, R_var=1.0, N_outer=n_steps,
+                               guidance_weight=guidance_weight, n_members=n_members,
+                               obs_channel_mask=batch.obs_mask)
+    return out[None] if n_members == 1 else out.permute(3, 0, 1, 2)
+
+
 @torch.no_grad()
-def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int) -> torch.Tensor:
+def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int,
+                     guidance_weight: float = 100.0, sda_steps: int = 10) -> torch.Tensor:
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
         return model(batch)[None]
+    if model_type == "sda_prior_tchannels":
+        return sda_members(model, batch, n_members, guidance_weight, sda_steps)
     return torch.stack([model.sample(batch) for _ in range(n_members)])
 
 
@@ -143,13 +169,15 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
 
 def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg: QGConfig,
              device: torch.device, n_members: int = 1, interp: str = "cubic",
-             batch_size: int = 4) -> list[dict]:
+             batch_size: int = 4, guidance_weight: float = 100.0,
+             sda_steps: int = 10) -> list[dict]:
     ds = QGNeuralDataset(windows, cfg, norm, on_the_fly_obs=False)
     per_window = []
     for start in range(0, len(windows), batch_size):
         idx = list(range(start, min(start + batch_size, len(windows))))
         batch = qg_collate([ds[i] for i in idx]).to(device)
-        members = estimate_members(model, model_type, batch, n_members).cpu()
+        members = estimate_members(model, model_type, batch, n_members, guidance_weight,
+                                   sda_steps).cpu()
         for b, i in enumerate(idx):
             w = windows[i]
             phys = denorm_psi(members[:, b], cfg, norm).numpy()
@@ -173,6 +201,9 @@ def main() -> None:
     p.add_argument("--cols-per-day", type=int, default=3)
     p.add_argument("--obs-noise-frac", type=float, default=0.05)
     p.add_argument("--n-members", type=int, default=30, help="flow samples per window (ens30)")
+    p.add_argument("--guidance-weight", type=float, default=100.0,
+                   help="SDA: L2 guidance step per Euler step over one window's normalized state")
+    p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
     p.add_argument("--interp", default="cubic", choices=INTERP_KINDS)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--out", required=True, help="output path; per-window scores go to <out>_meta.json")
@@ -189,11 +220,13 @@ def main() -> None:
     model, model_type, norm = load_run(args.run_dir, cfg, device)
     t0 = time.time()
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
-                          args.interp, args.batch_size)
+                          args.interp, args.batch_size, args.guidance_weight, args.sda_steps)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "N": per_window[0]["n_members"] if per_window else None, "interp": args.interp,
+            "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps}
+                    if model_type == "sda_prior_tchannels" else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": 0.0, "s1_note": "obs-only network: S1 = S0 by construction",
