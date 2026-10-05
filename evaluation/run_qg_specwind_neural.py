@@ -42,7 +42,15 @@ from data.qg import QGConfig
 from data.qg_datasets import SPECS, shard_indices
 from data.qg_neural import QGNeuralDataset, denorm_psi, psi_to_q, qg_collate, steps_per_day
 from evaluation.metrics import crps as ensemble_crps
-from evaluation.run_qg_specwind_da import FIELDS, OBS_SEED, build_cfg, s0_windows, window_metrics
+from evaluation.qg_specwind_s1 import REALISTIC_SELECTED, REALISTIC_VARIANTS
+from evaluation.run_qg_specwind_da import (
+    FIELDS,
+    OBS_SEED,
+    apply_s1,
+    build_cfg,
+    s0_windows,
+    window_metrics,
+)
 from train_qg_neural import DIRECT_TYPES, build_model
 
 INTERP_KINDS = ("cubic", "linear")
@@ -201,6 +209,11 @@ def main() -> None:
     p.add_argument("--cols-per-day", type=int, default=3)
     p.add_argument("--obs-noise-frac", type=float, default=0.05)
     p.add_argument("--n-members", type=int, default=30, help="flow samples per window (ens30)")
+    p.add_argument("--s1", action="store_true",
+                   help="score on the S1 observations: the DA driver's realistic S1 corruption "
+                        "(--s1-variant), so the obs carry the DA S1 rows' exact altimetry-error "
+                        "draws; the obs-only networks use nothing else of S1")
+    p.add_argument("--s1-variant", default=REALISTIC_SELECTED, choices=sorted(REALISTIC_VARIANTS))
     p.add_argument("--guidance-weight", type=float, default=100.0,
                    help="SDA: L2 guidance step per Euler step over one window's normalized state")
     p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
@@ -216,6 +229,9 @@ def main() -> None:
     cfg = build_cfg(spec, args.cols_per_day, args.obs_noise_frac, init_lag_days=5.0)
     t0 = time.time()
     windows, report = s0_windows(spec, args.split, args.root, idx, cfg, device)
+    levels = REALISTIC_VARIANTS[args.s1_variant] if args.s1 else None
+    if levels is not None:
+        windows = apply_s1(windows, spec, levels)
     load_s = time.time() - t0
     model, model_type, norm = load_run(args.run_dir, cfg, device)
     t0 = time.time()
@@ -229,7 +245,11 @@ def main() -> None:
                     if model_type == "sda_prior_tchannels" else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
-            "s1_kappa": 0.0, "s1_note": "obs-only network: S1 = S0 by construction",
+            "s1_kappa": 1.0 if args.s1 else 0.0,
+            "s1_preset": "realistic" if args.s1 else None,
+            "s1_variant": args.s1_variant if args.s1 else None,
+            "s1_levels": levels.as_dict() if levels is not None else None,
+            "s1_note": "obs-only network: of S1 it sees only the corrupted observations",
             "per_window": per_window}
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     with open(os.path.splitext(args.out)[0] + "_meta.json", "w") as fh:
