@@ -1,0 +1,139 @@
+\section{Experimental design}\label{sec:design}
+
+\subsection{System, cases and observing systems}
+We use the two-scale Lorenz-96 system \todo{cite Lorenz 1996} with 8 slow and 32
+fast variables, integrated with $\Delta = 0.001$ over windows of 3000 steps.
+Every window draws its own parameters $\thv$ (forcing and coupling coefficients,
+$\pm$20\,\% around their nominal values) and a stochastic forcing $\zv$. The
+observed space has 24 channels: the 8 slow variables and 16 of the 32 fast ones,
+with observation-error variance $\mathbf{R} = 0.5\,I$. All schemes are scored on
+the same 200 test windows.
+
+\paragraph{Two cases.}
+In \Sz{} (perfect model) every model-based scheme assimilates with the window's
+true parameters and forcing. In \So{} (model error) it is told biased parameters
+$\thv_{\mathrm{da}}$ (+10\,\%) and a corrupted forcing, while the truth is
+unchanged. \So{} therefore prices model error only for schemes that consume
+model information. \needsrun{A sweep of the bias $\delta \in \{0, 5, 10, 20,
+40\,\%\}$ crossed with a stated uncertainty $\sigma \in \{0, 20\,\%\}$, plus one
+structural error (a modified coupling).}
+
+\paragraph{Two observing systems.}
+The \emph{regular} system observes all 24 channels at 30 equally spaced times per
+window. The \emph{random} system re-observes the same 200 windows with 10 to 100
+observation times at stratified random positions (the first step always
+observed, at least one observation per DA sub-window) and 4 to 16 observed fast
+channels per window. Every scheme, classical or learned, assimilates exactly the
+same observations. For the density analysis (Sect.~\ref{sec:q1-density}) we add
+a factorial of observation counts $\times$ observed fast channels and a few
+out-of-range probes, on 20 windows $\times$ 3 layout draws each.
+
+\subsection{Schemes}
+Table~\ref{tab:schemes} lists the schemes. The classical ones are an ensemble
+transform Kalman filter (ETKF), a stochastic EnKF, an ensemble transform Kalman
+smoother (ETKS) built on the same ETKF, and strong- and weak-constraint 4D-Var.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Ensembles.} The ETKF, EnKF and ETKS use 30 members and no
+    localisation, with one multiplicative inflation per case. The ETKS smooths
+    over the full window with retrospective inflation. We also run a 100-member
+    ETKS as a sensitivity row.
+  \item \textbf{4D-Var.} It is cycled over six sub-windows of 500 steps and
+    minimised with L-BFGS. The weak-constraint version adds a whitened
+    model-error control at every step, of scale $q$ times the climatological
+    spread~\cite{tremolet2006weak}.
+\end{itemize}
+The learned schemes are:
+\begin{itemize}[leftmargin=*]
+  \item a deterministic network mapping the observations to the state
+    (DirectUNet);
+  \item two conditional flow-matching models (CFM), VanillaCFM and
+    PredictStateCFM, which differ in their training target (velocity vs
+    endpoint);
+  \item score-based DA (SDA)~\cite{rozet2023sda}: a learned prior on the window,
+    unconditional (SDA1) or conditioned on $\thv$ with clean (SDA2) or noisy
+    (SDA3-fix) training parameters, combined with the likelihood by guided
+    sampling;
+  \item a hybrid that starts the SDA3-fix guided sampler from the DirectUNet
+    estimate.
+\end{itemize}
+All learned schemes share one backbone and size (a 1-D U-Net, 5.9\,M parameters)
+and one training recipe:
+\begin{itemize}[leftmargin=*,nosep]
+  \item 1000 training windows;
+  \item a random observing system redrawn with fresh noise at every batch (10--300
+    observation times, 4--16 fast channels);
+  \item 1200 epochs, cosine-annealed learning rate;
+  \item 3 seeds.
+\end{itemize}
+The flows are scored with 30 members and 20 Euler steps, SDA with 30 members and
+10 guided steps.
+
+\begin{table}[t]
+\centering\small
+\caption{Schemes, their design labels (Appendix~\ref{app:matrix}) and the hyper-parameters tuned on the validation windows.}
+\label{tab:schemes}
+\begin{tabular}{L{3.4cm}L{1.2cm}L{2.2cm}L{1.3cm}L{2.0cm}L{3.6cm}}
+\toprule
+scheme & H, R explicit & dynamics & sequential & model uncertainty & tuned (\Sz{} / \So) \\
+\midrule
+ETKF / EnKF & yes & one-step $\Mop$ & yes & inflation & $\lambda$ 1.15 / 2.5;\ 1.2 / 3.0 \\
+ETKS & yes & one-step $\Mop$ & smoother & inflation & $\lambda$ 1.15 / 2.5 \\
+Strong-4DVar & yes & $\Mop$ (hard) & cycled & none & --- \\
+Weak-4DVar & yes & $\Mop$ + $\mathbf{Q}$ & cycled & $\mathbf{Q}$ & $q$ 0.03 / 0.3; 40 L-BFGS iterations \\
+DirectUNet & no & none & window & training spread & --- \\
+VanillaCFM, PredictStateCFM & no & none & window & training spread & --- \\
+SDA1 / SDA2 / SDA3-fix & yes & learned window & window & spread / $\thv$ / noisy $\thv$ & guidance weight 25 \\
+hybrid & yes & learned window & window & noisy $\thv$ & $\tau_0$ 0.1, guidance 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Matched information and tuning parity}
+\paragraph{Matched information.}
+Every main arm sees the same observations. The model-based arms receive the \Sz{}
+or \So{} model. The learned arms are trained on simulations of the true system,
+so at \So{} they are a \emph{reference bound}, not a matched competitor: they
+were never given the biased model. We call this the oracle confound and report
+the learned \So{} rows with that label. \needsrun{Learned arms trained on the
+biased model, with stated parameter uncertainty $\sigma = 0$ and 20\,\%,
+measure the value of true-system data (Sect.~\ref{sec:q2-oracle}).}
+
+\paragraph{Tuning parity.}
+Every inference hyper-parameter is tuned on 50 validation windows disjoint from
+the test windows, with one value per case (Appendix~\ref{app:tuning}):
+\begin{itemize}[leftmargin=*,nosep]
+  \item ETKF / EnKF / ETKS inflation (re-selected for the 100-member rows);
+  \item the Weak-4DVar model-error scale and L-BFGS budget;
+  \item the SDA guidance weight;
+  \item the hybrid's start time and guidance.
+\end{itemize}
+
+\subsection{Estimating the terms of the chain}
+There is no true posterior, so each term is measured by a contrast that moves
+one link of the chain at a time (Table~\ref{tab:estimators}).
+
+\begin{table}[t]
+\centering\small
+\caption{How each term of~\eqref{eq:chain0} and~\eqref{eq:chaintau} is estimated.}
+\label{tab:estimators}
+\begin{tabular}{L{3.4cm}L{10.4cm}}
+\toprule
+term & estimator \\
+\midrule
+irreducible & upper-bounded by the best scheme at each $\tau$; no lower bound \\
+restriction (filtering) & filter vs smoother on one ensemble realisation, with the identity of Sect.~\ref{sec:fms} \\
+restriction (context) & SDA1 vs SDA2 / SDA3-fix ($\thv$); \needsrun{SDA $\pm$ forcing; DirectUNet $\pm (\thv, \zv)$} \\
+approximation & ensemble size (30 vs 100); L-BFGS iterations (10 vs 40); training budget (400 vs 1200 epochs) and data (1000 vs 3000 windows) \\
+misspecification & \Sz{} vs \So{} at a fixed scheme; \needsrun{$\delta$ sweep}; model-uncertainty arms (Weak-4DVar $\mathbf{Q}$, SDA3-fix, \needsrun{perturbed-parameter ETKF}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Scores}
+We report the per-window RMSE on the 24 observed channels (the channel-averaged
+RMSE over time, averaged over windows) and the pooled spread/skill. We also report
+$\FMS_\tau$ at $\tau \in \{0, 0.25, 0.5, 0.75\}$ and its uniform-$d\tau$
+integral, in the Gaussian form for every scheme and a kernel-density form for the
+sample-based ones. $\FMS$ is averaged over four draws of $\xv_0$ with common
+random numbers across schemes. Uncertainties are 95\,\% window-bootstrap intervals
+and paired tests; seed-to-seed spreads are given separately.

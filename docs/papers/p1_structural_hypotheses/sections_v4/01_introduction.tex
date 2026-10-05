@@ -1,0 +1,79 @@
+\section{Introduction}\label{sec:intro}
+
+\paragraph{A puzzle from practice.}
+Data assimilation (DA) combines a dynamical model with observations to estimate
+the state of a system~\cite{carrassi2018da}. Its premise is that the model
+carries information the observations lack, so that a model-based estimate should
+beat any estimate that ignores the model. Practice keeps contradicting this
+premise. Gridded sea-surface height from observation-only optimal
+interpolation resolves finer scales than an eddy-permitting ocean reanalysis
+over the Gulf Stream (an effective resolution of about 151 against 239\,km)
+\todo{cite DUACS, GLORYS; effective-resolution reference}. In a
+controlled setting, a variational scheme with a learned prior reached a lower
+error than the same scheme run with the true equations of
+motion~\cite{fablet4dvarnet}. Learned and hybrid schemes are now routinely
+reported to beat classical DA on the same data
+\cite{brajard2020combining,bocquet2020bayesian,rozet2023sda}.
+
+Three explanations are usually offered: the dynamical model is wrong; the DA
+algorithm loses information (filtering instead of smoothing, Gaussian updates,
+finite ensembles, local optimisation); or the scheme does not use all the
+information available to it. They are rarely separated, because each scheme
+mixes all three, and a comparison of RMSEs cannot tell them apart.
+
+\figplaceholder{Fig.~1 -- the puzzle}{(a) Sea-surface height over the Gulf Stream: observation-only product vs model-based reanalysis. (b) A learned prior vs the true model in a variational scheme \cite{fablet4dvarnet}.}
+
+\paragraph{The idea.}
+We treat every DA scheme, classical or learned, as an estimator of the
+conditional distribution $p(\xv \mid C)$ of the state given its context, and of
+its mean $\E[\xv \mid C]$. The error of a scheme then splits along a chain of
+idealisations (Sect.~\ref{sec:chain}): an irreducible term; a
+\emph{restriction}, because the scheme uses less information than $C$; a
+\emph{misspecification}, because it believes a model other than the true one;
+and an \emph{approximation}, because it computes its own target only
+approximately. Two schemes with the same RMSE can have very different budgets,
+and only the budget says what to fix.
+
+The same chain applies to the uncertainty a scheme reports. We score it with a
+flow-matching score, $\FMS_\tau$, which equals the mean-squared error at $\tau =
+0$ and is strictly proper for $\tau \in (0,1)$ (Sect.~\ref{sec:fms}). The split
+into an irreducible part, a restriction part and a remainder is exact at every
+$\tau$. A restriction raises the score curve; a misspecification bends it upward
+at large $\tau$, where calibration dominates. This gives the paper's thesis an
+operational form: \emph{a restriction costs variance honestly and preserves
+calibration; a misspecification costs bias silently and destroys it}.
+
+\paragraph{Questions.}
+We ask three questions on a two-scale Lorenz-96 system, with a perfect model and
+with a biased one, and with five classical and five learned schemes under the
+same observations and the same tuning protocol.
+\begin{enumerate}[label=\textbf{Q\arabic*},leftmargin=*]
+  \item With a perfect model, how close does each scheme get to $\E[\xv\mid C]$,
+    and where does the rest of its error go? (Sect.~\ref{sec:q1})
+  \item What does model error do to the budget, and to the uncertainty each
+    scheme reports? (Sect.~\ref{sec:q2})
+  \item Does the form of the prior --- derived from the model equations or
+    learned from data --- drive performance? (Sect.~\ref{sec:q3})
+\end{enumerate}
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=*]
+  \item The error chain of the conditional expectation, applied to classical and
+    learned DA under matched information, with each of its terms estimated by a
+    controlled contrast: smoothing, ensemble size, optimisation budget,
+    training budget, conditioning and model error.
+  \item Its extension along $\tau$ with $\FMS_\tau$, a proper score computable
+    for point estimates, Gaussians and samples alike, with an exact split at
+    every $\tau$.
+  \item A controlled study on a two-scale Lorenz-96 system: a perfect model and
+    model error, a regular and a random observing system, and every inference
+    hyper-parameter tuned on validation windows.
+\end{itemize}
+
+\paragraph{What this paper is not.}
+It proposes no new DA method; the learned schemes are instruments that relax one
+commitment at a time. The target is the state only, not the parameters. Unrolled
+variational solvers are left to a companion study \todo{P2}, and so is the general
+representation of DA algorithms as flows \todo{ML paper}. One idealised system
+is the price of matched information; we discuss transfer in
+Sect.~\ref{sec:discussion}.

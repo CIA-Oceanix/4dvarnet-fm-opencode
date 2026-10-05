@@ -1,0 +1,57 @@
+\appendix
+
+\section{Operators and proofs}\label{app:proofs}
+
+\paragraph{Gaussian operator.}
+For $q = \mathcal{N}(m, v)$ (per element, standardised units) and $\xv_\tau = \tau
+\xv_1 + (1-\tau)\xv_0$, the pair $(\xv_1, \xv_\tau)$ is jointly Gaussian with
+$\Cov(\xv_1, \xv_\tau) = \tau v$ and $\mathrm{Var}(\xv_\tau) = \tau^2 v +
+(1-\tau)^2$, so
+\begin{equation}
+  \Psi_q = m + \frac{\tau v}{\tau^2 v + (1-\tau)^2}\,(\xv_\tau - \tau m)
+         = m + \frac{\snr\, v}{1 + \snr\, v}\,\Big(\frac{\xv_\tau}{\tau} - m\Big).
+\end{equation}
+Substituting $\xv_\tau^\star = \tau\xv_1^\star + (1-\tau)\xv_0$ and taking the expectation over $\xv_0$ gives property (iii).
+
+\paragraph{The chain at every $\tau$.}
+\todo{Write out: (a) $\Psi_p(\xv_\tau, C) = \E[\xv_1^\star \mid \xv_\tau, C]$ and
+$\Psi_{p_S} = \E[\xv_1^\star \mid \xv_\tau, S] = \E[\Psi_p \mid \xv_\tau, S]$; (b)
+the two orthogonality relations; (c) the condition on the scheme's randomness;
+(d) strict propriety from injectivity of Gaussian smoothing; (e) the
+$\tau \to 1$ expansion and the $d\snr$ integral (Verdú 2010).}
+
+\paragraph{Mixture operator.}
+\todo{The posterior-weighted average for an empirical or kernel-density output;
+nearest-member snapping of the atomic form at large $\tau$.}
+
+\section{The design matrix}\label{app:matrix}
+\todo{Five choices, each a column of Table~\ref{tab:schemes}:
+F1 prior--likelihood split (factorised with explicit $\Hop$, $\mathbf{R}$ vs amortised);
+F2 dynamics structure (one-step transition, joint window prior, none; equations vs samples);
+F3 sequential inference (sequential vs whole window; exact only if F2 holds in $\xv$ and observation errors are white);
+U-state (none; explicit $\mathbf{B}$, $\mathbf{P}$ or ensemble; implicit, learned);
+U-model (none; state-space $\mathbf{Q}$ or inflation; parameter spread; structure).
+Every scheme's row.}
+
+\section{Tuning}\label{app:tuning}
+\todo{Inflation sweeps of the ETKF, EnKF and ETKS (30 and 100 members) on the
+validation windows, with the selection rule; Weak-4DVar model-error scale
+$\times$ L-BFGS budget (Table from \texttt{docs/results/l96\_weak4dvar.md}); SDA
+guidance weight; hybrid start time and guidance.}
+
+\section{Sensitivities}
+\todo{Ensemble size; L-BFGS iterations; training budget and data; flow sampler
+steps; the 400-epoch rows.}
+
+\section{The fixed-observing-system protocol and network size}
+\todo{From \texttt{p1\_l96\_benchmark.md} annex A: S+ / M / L tiers, VanillaCFM vs
+PredictStateCFM, $\tau = 0$ heads, SDA conditioning, under the earlier
+fixed-observing-system protocol; not comparable with the main tables.}
+
+\section{Estimating \texorpdfstring{$\FMS_\tau$}{FMS}}
+\todo{Monte Carlo over $\xv_0$ with common random numbers; kernel bandwidth;
+24-channel snapshot blocks and their effective-sample-size degeneration at
+$\tau = 0.75$; window bootstrap.}
+
+\section{Rank histograms}
+\todo{From \texttt{docs/results/l96\_rank\_histograms\_c4.md}.}

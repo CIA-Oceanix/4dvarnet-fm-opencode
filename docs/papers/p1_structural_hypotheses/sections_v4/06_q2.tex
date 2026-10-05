@@ -1,0 +1,80 @@
+\section{Q2 --- what model error does to the budget}\label{sec:q2}
+
+\subsection{The budget at \texorpdfstring{$\tau = 0$}{tau = 0}}
+Under model error the DA errors grow $2.0$--$2.7\times$ in RMSE: ETKF 1.409, EnKF
+1.416, ETKS 1.338, Strong-4DVar 1.436. For the ETKS the mean-squared error is about seven
+times its \Sz{} value. The contrasts that explained the \Sz{} deficit no longer
+help.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Ensemble size.} 100 members change nothing (1.338 $\to$ 1.338).
+  \item \textbf{Smoothing.} It gains only 5\,\%.
+  \item \textbf{The filter/smoother identity fails.} The MSE gap is 0.237, against
+    a variance gap of 0.534 and a mean shift of 0.913.
+\end{itemize}
+The excess is misspecification. The learned rows are flat (DirectUNet 0.339,
+hybrid 0.289), but they are an oracle bound: they never saw the biased model
+(Sect.~\ref{sec:design}).
+
+\subsection{The misspecification signature along \texorpdfstring{$\tau$}{tau}}
+The large-$\tau$ score shows misspecification even where the RMSE does not
+single it out (Fig.~5).
+\begin{itemize}[leftmargin=*]
+  \item \textbf{DA calibration loss grows from \Sz{} to \So.} At $\tau = 0.75$
+    it goes from 34 to 63\,\% for the ETKS, with an optimal variance rescaling
+    $c^\star \ge 8$. For the ETKF it goes from 14 to 23\,\% on the regular grid
+    and from 3 to 14\,\% on the random one.
+  \item \textbf{The DA ensembles become short-tailed.} A kernel density of the
+    members scores 17 to 30\,\% worse than a Gaussian of the same variance:
+    the truth falls outside the ensemble more often than its spread allows.
+  \item \textbf{The learned rows are invariant}, with one exception: SDA2,
+    trained with clean parameters and conditioned on the biased ones, loses less
+    at \So{} (7 $\to$ 3\,\%) because the bias accidentally widens its samples.
+  \item \textbf{Aggregate calibration is not calibration.} On the random system
+    at \So, the ETKF's pooled spread/skill is 0.99 --- nominally calibrated ---
+    yet it loses 12\,\% at $\tau = 0.75$. A scalar inflation can match the total
+    error, but not where the error occurs.
+\end{itemize}
+
+\figplaceholder{Fig.~5}{$\FMS_\tau$ at \Sz{} and \So{} per scheme; calibration loss vs $\tau$.}
+
+\subsection{The marginal value of observations}
+The clearest symptom is what additional observations buy (Fig.~6).
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Strong-4DVar.} Going from 15 to 30 observations per window, its
+    RMSE gain collapses $7.0\times$ under model error. It then stays on a floor
+    set by the model: 1.43 at 30 observations, 1.38 at 1000.
+  \item \textbf{Filters.} They keep most of the value of observations: under
+    model error their gain from the same doubling shrinks only $1.8$--$1.9\times$,
+    against $7.0\times$ for Strong-4DVar.
+  \item \needsrun{Weak-4DVar and the learned schemes on the same curve.}
+\end{itemize}
+A hard constraint turns model error into a misspecification that no amount of
+data repairs.
+
+\figplaceholder{Fig.~6}{RMSE vs number of observation times, \Sz{} and \So, per scheme.}
+
+\subsection{Representing model uncertainty}
+If misspecification is the problem, representing the uncertainty of the model
+should convert part of it back into a restriction.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Weak-4DVar.} We tune its model-error scale per case on the
+    validation windows. At \Sz{} it gains nothing over the hard constraint
+    (0.695 vs 0.703), as it should with a perfect model. At \So{} it removes
+    26\,\% of the error (1.064 vs 1.436) and becomes the best DA scheme, ahead of
+    the ETKS (1.338). It still remains three times the learned bound: an
+    additive per-step error with a scalar scale cannot absorb a parametric bias.
+  \item \textbf{Learned priors.} SDA2, trained with clean parameters, leaks the
+    \So{} bias into its prior, and the hybrid built on it degrades
+    (0.310 $\to$ 0.333 with 400-epoch priors). SDA3-fix, trained with noisy
+    parameters, stays flat (0.312 $\to$ 0.307).
+  \item \needsrun{A perturbed-parameter ETKF, and the $\delta$ sweep: the
+    conversion should succeed while the bias stays within the stated
+    uncertainty ($\delta \le \sigma$) and fail beyond.}
+\end{itemize}
+
+\figplaceholder{Fig.~7}{RMSE and calibration loss vs bias $\delta$, per model-uncertainty arm.}
+
+\subsection{The value of true-system data}\label{sec:q2-oracle}
+\needsrun{Learned schemes trained on simulations of the biased model, with
+$\sigma = 0$ and 20\,\%; their gap to the learned-on-truth rows measures what
+training on reanalyses or true-system data implicitly spends.}

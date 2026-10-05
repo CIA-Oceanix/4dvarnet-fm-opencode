@@ -1,0 +1,47 @@
+\section{Q3 --- does the form of the prior drive performance?}\label{sec:q3}
+
+The posterior~\eqref{eq:posterior} is a likelihood times a prior. Model-based DA
+derives the prior from the equations; SDA learns it from data and keeps the same
+explicit likelihood. Comparing them isolates the form of the prior.
+
+\subsection{Same likelihood, two priors}
+At \Sz{} the learned joint-window prior (SDA, 0.453--0.464 on the regular grid)
+beats the true-model hard constraint (Strong-4DVar, 0.703) and the 30-member
+smoother (ETKS, 0.497). It does not beat the 100-member smoother (0.393). The
+ordering is therefore set by the approximation term of the model-based scheme,
+not by the fidelity of its prior --- which, at \Sz, is exact. Along $\tau$, the
+learned prior also gives the better-calibrated posterior: calibration loss 7 to
+18\,\% for SDA against 34\,\% for the 30-member smoother (Table~\ref{tab:fms-s0}).
+
+\figplaceholder{Fig.~8}{Model-derived vs learned priors at matched likelihood: RMSE and $\FMS_\tau$, \Sz{} and \So.}
+
+\subsection{A better prior is not a better estimate}
+Two observations make the point.
+\begin{itemize}[leftmargin=*]
+  \item Training the SDA prior three times longer (400 to 1200 epochs) improves the
+    estimate by 7 to 9\,\%.
+  \item The true equations, used as a hard prior, give the worst DA scheme at
+    \Sz.
+\end{itemize}
+What matters is how much of the prior the scheme can actually use within its
+approximation budget. This reading also resolves the controlled result that
+motivated us~\cite{fablet4dvarnet}: a learned prior can beat the true model
+because of the approximation and restriction terms of the scheme that uses the
+true model, not because the learned prior is better.
+
+\subsection{Conditioning the prior}
+Conditioning the learned prior on the parameters is a restriction term at \Sz{}:
+SDA1 0.464 vs SDA2 0.453 and SDA3-fix 0.455. Under model error it becomes a
+misspecification channel for SDA2, which was trained with clean parameters and
+degrades by 3\,\%, but not for SDA3-fix, trained with noisy ones.
+\needsrun{Conditioning on the forcing $\zv$.}
+
+\subsection{Composition}
+In the operator language of Sect.~\ref{sec:fms}, the hybrid composes DirectUNet's
+mean with the anomaly of SDA3-fix's guided sampler. It has the best mean
+everywhere (0.293 regular, 0.367 random, flat at \So) but not the best
+distribution: the flows overtake it at $\tau = 0.75$ (0.0195 vs 0.0200 on the
+regular grid, 0.025 vs 0.029 on the random one, standardised units). The score
+separates the two components the hybrid composes: an amortised mean, accurate in
+distribution, and an explicit-likelihood sampler whose tempered guidance makes it
+over-confident.

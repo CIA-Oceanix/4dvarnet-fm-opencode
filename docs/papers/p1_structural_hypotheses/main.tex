@@ -1,7 +1,7 @@
 % ============================================================================
 %  P1 -- "Restriction or misspecification? Dissecting the errors of classical
 %         and neural data assimilation"
-%  Draft structure v4 (2026-10-04). Target venue: QJRMS or JAMES.
+%  First draft on structure v4 (2026-10-05). Target venue: QJRMS or JAMES.
 %
 %  SOURCE OF TRUTH: docs/plans/paper/l96_p1_structure_v4.md (SCOPING).
 %  The previous draft (structural hypotheses H1--H3b, partition Psi_mean +
@@ -22,6 +22,8 @@
 \usepackage[T1]{fontenc}
 \usepackage{amsmath,amsfonts,amssymb}
 \usepackage{booktabs}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage{multirow}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage[dvipsnames]{xcolor}
@@ -42,6 +44,9 @@
 \newcommand{\yv}{\mathbf{y}}
 \newcommand{\zv}{\mathbf{z}}
 \newcommand{\thv}{\boldsymbol{\theta}}
+\newcommand{\epsv}{\boldsymbol{\epsilon}}
+\newcommand{\Hop}{\mathcal{H}}
+\newcommand{\Mop}{\mathcal{M}}
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\tr}{\operatorname{tr}}
 \newcommand{\Cov}{\operatorname{Cov}}
@@ -53,435 +58,21 @@
 \title{Restriction or misspecification?\\
        Dissecting the errors of classical and neural data assimilation}
 \author{Ronan Fablet \\[0.3em] \normalsize \todo{affiliation; co-author list}}
-\date{Draft v4 --- \today}
+\date{First draft (structure v4) --- \today}
 
 \begin{document}
 \maketitle
 
-% ============================================================================
-\begin{abstract}
-Model-based data assimilation (DA) often loses to estimators that use less
-physics: observation-only products against ocean reanalyses, learned priors
-against the true dynamical model, neural schemes against classical ones. We
-treat every DA scheme, classical or learned, as an estimator of the conditional
-distribution of the state given its context, and decompose its error along a
-chain of idealisations: an irreducible term, a \emph{restriction} (the scheme
-uses less information than is available), a \emph{misspecification} (it
-believes a wrong model) and an \emph{approximation} (it computes its own target
-only approximately). We extend this chain from the mean to the reported
-uncertainty with a flow-matching score, $\FMS_\tau$, which equals the
-mean-squared error at $\tau = 0$ and is strictly proper for $\tau \in (0, 1)$;
-the split into irreducible, restriction and the remainder is exact at every
-$\tau$. On a two-scale Lorenz-96 system with a perfect model and with a biased
-one, under matched information and tuning parity, we find that \todo{one
-number per question: Q1 smoothing and ensemble size remove most of the
-perfect-model DA deficit; Q2 model error shows in the large-$\tau$ score
-(ETKS calibration loss 34\,\% $\to$ 63\,\%) and collapses the marginal value of
-observations of strong-constraint 4D-Var $7\times$; Q3 a learned prior beats the
-30-member smoother but not the 100-member one}. A restriction costs variance
-honestly and preserves calibration; a misspecification costs bias silently and
-destroys it.
-\end{abstract}
-
-% ============================================================================
-\section{Introduction}\label{sec:intro}
-
-\paragraph{The puzzle.}
-\todo{GLORYS vs DUACS on sea-surface height (effective resolution 239 vs 151 km,
-Gulf Stream example); a learned prior beating DA with the true ODE
-\cite{fablet4dvarnet}; neural-DA skill claims
-\cite{brajard2020combining,bocquet2020bayesian,rozet2023sda}.} Three candidate
-explanations are rarely separated: the dynamical model is wrong; the algorithm
-(filtering, Gaussian updates, finite ensembles, local optimisation) loses
-information; or the scheme does not use all the information available.
-
-\figplaceholder{Fig.~1 -- the puzzle}{(a) SSH: observation-only OI vs model-based reanalysis; (b) learned prior vs true-ODE 4D-Var (JAMES 2020).}
-
-\paragraph{The idea.}
-Every DA scheme estimates the conditional expectation $\E[\xv \mid C]$ and,
-ideally, the conditional distribution $p(\xv \mid C)$. Its error splits along a
-chain of idealisations (Sect.~\ref{sec:chain}). Two schemes with the same RMSE
-can have different budgets, and only the budget says what to fix. The same chain
-extends to the uncertainty a scheme reports, with a single proper score that
-reduces to the mean-squared error at $\tau = 0$ (Sect.~\ref{sec:fms}).
-
-\paragraph{Questions.}
-\begin{enumerate}[label=\textbf{Q\arabic*},leftmargin=*]
-  \item With a perfect model, how close does each scheme get to $\E[\xv\mid C]$, and where does the rest of its error go?
-  \item What does model error do to the budget, and to the uncertainty each scheme reports?
-  \item Does the form of the prior --- derived from the model equations or learned from data --- drive performance?
-\end{enumerate}
-
-\paragraph{Contributions.}
-(i) The error chain applied to classical and learned DA under matched
-information, with each term estimated by a controlled contrast. (ii) Its
-extension along $\tau$ with $\FMS_\tau$, with an exact split at every $\tau$.
-(iii) A controlled two-scale Lorenz-96 study: perfect model and model error, two
-observing systems, five DA and five learned schemes, every inference
-hyper-parameter tuned on validation windows.
-
-\paragraph{What this paper is not.}
-It proposes no new DA method; the target is the state only; unrolled
-variational solvers are out of scope \todo{P2}; the general flow-matching
-representation of DA algorithms is left to future work \todo{ML paper}.
-
-% ============================================================================
-\section{DA as estimation of a conditional distribution}\label{sec:chain}
-
-\subsection{State-space model and context}
-\todo{port eqs.\ dynamics / obs / ssm / context from main.old.tex, Sect.~2.1.}
-The state trajectory $\xv$ over a window follows two-scale dynamics with
-per-window parameters $\thv$ and stochastic forcing $\zv$; observations are
-$\yv_k = H\xv_k + \epsilon_k$, $\epsilon_k \sim \mathcal{N}(0, R)$. With the
-context $C = (\yv, \thv, \zv)$,
-\begin{equation}
-  p(\xv \mid C) \;\propto\; p(\yv \mid \xv)\; p(\xv \mid \thv, \zv).
-\end{equation}
-$\E[\xv\mid C]$ is the MSE-optimal estimator and $\E\tr\Cov(\xv\mid C)$ the
-irreducible error.
-
-\subsection{The error chain}
-A scheme uses the information $S \subseteq C$, believes a model $\tilde p$ and
-computes $\hat m$:
-\begin{equation}
-  m = \E[\xv\mid C] \;\to\; m_S = \E[\xv\mid S] \;\to\; \tilde m = \E_{\tilde p}[\xv\mid S] \;\to\; \hat m .
-\end{equation}
-If $\hat m$ depends only on $S$ and on randomness independent of the truth,
-\begin{equation}\label{eq:chain0}
-  \mathrm{MSE}(\hat m) \;=\; \underbrace{\E\tr\Cov(\xv\mid C)}_{\text{irreducible}}
-  \;+\; \underbrace{\E\|m - m_S\|^2}_{\text{restriction}}
-  \;+\; \underbrace{\E\|m_S - \hat m\|^2}_{\text{misspecification + approximation}},
-\end{equation}
-both splits being exact by the tower property. The last term contains the
-misspecification $\E\|m_S - \tilde m\|^2$, the approximation
-$\E\|\tilde m - \hat m\|^2$ and a cross term; we separate them by controlled
-contrasts (Sect.~\ref{sec:design}), not by an identity.
-
-\subsection{Where DA's commitments land}
-\begin{table}[h]
-\centering\small
-\caption{Where the commitments of DA and of learned schemes land in the error chain.}
-\label{tab:commitments}
-\begin{tabular}{p{5.2cm}p{2.6cm}p{6cm}}
-\toprule
-commitment & link & example \\
-\midrule
-filtering ($S = \yv_{t'\le t}$), cycling & restriction & EnKF/ETKF vs ETKS; 4D-Var sub-windows \\
-ignoring $\thv$, $\zv$ & restriction & DirectUNet, CFM, SDA1 \\
-model error in dynamics, $\thv$, $\zv$ & misspecification & \So{} for every model-based scheme \\
-Gaussian update, mode instead of mean, hard constraint ($Q = 0$), tempered likelihood & misspecification (structural) & ETKF, Strong-4DVar, SDA guidance \\
-finite ensemble, local optimisation, finite network and data & approximation & $N = 30$; L-BFGS; 1200 epochs \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-% ============================================================================
-\section{Scoring the uncertainty: the error chain along $\tau$}\label{sec:fms}
-
-\subsection{The operator of a scheme}
-On the path $\xv_\tau = \tau\xv_1 + (1-\tau)\xv_0$ with $\xv_0 \sim
-\mathcal{N}(0, I)$ (z-scored units), any output distribution $q$ of a scheme
-defines the operator
-\begin{equation}
-  \Psi_q(\xv_\tau, \tau) \;=\; \E_q[\xv_1 \mid \xv_\tau] \;=\; \Psi_{\mathrm{mean}} + \Psi_{\mathrm{anom}} .
-\end{equation}
-\begin{table}[h]
-\centering\small
-\caption{The operator $\Psi_q$ of each class of scheme ($\snr = \tau^2/(1-\tau)^2$).}
-\label{tab:psi}
-\begin{tabular}{lll}
-\toprule
-scheme & $q$ & $\Psi_q(\xv_\tau,\tau)$ \\
-\midrule
-Strong/Weak-4DVar, DirectUNet & point mass at $\hat m$ & $\hat m$ \quad ($\Psi_{\mathrm{anom}} \equiv 0$) \\
-EnKF, ETKF, ETKS (Gaussian form) & $\mathcal{N}(m, v)$ & $m + \dfrac{\snr\, v}{1 + \snr\, v}\,(\xv_\tau/\tau - m)$ \\
-CFM, SDA, ensemble KDE & samples & posterior-weighted average of samples \\
-hybrid DirectUNet $\to$ SDA3-fix & composition & $\Psi_{\mathrm{mean}}$ from DirectUNet, $\Psi_{\mathrm{anom}}$ from SDA \\
-\bottomrule
-\end{tabular}
-\end{table}
-Conditional flow matching learns $\Psi$ directly; the general representation of
-DA algorithms as flows is beyond this paper.
-
-\subsection{The score}
-\begin{equation}
-  \FMS_\tau(q) \;=\; \E\big\|\Psi_q(\xv_\tau, \tau) - \xv_1^\star\big\|^2 .
-\end{equation}
-Properties (proofs in Appendix~\ref{app:proofs}): (i) $\FMS_0$ is the MSE of the
-mean; (ii) $\FMS_\tau$ is strictly proper for $\tau \in (0,1)$; (iii) for a
-Gaussian it is minimised at spread$^2$ = MSE at every $\tau$; (iv) as $\tau \to
-1$ it tends to a universal floor plus the Hyvärinen score; (v) integrated with
-weight $d\snr$ it gives the log score up to a constant \todo{cite Verdú 2010};
-(vi) a point estimate scores its MSE at every $\tau$.
-
-\subsection{The chain at every $\tau$}
-Let $\Psi_p$ and $\Psi_{p_S}$ be the true operators given $C$ and $S$. Under the
-condition of Eq.~\eqref{eq:chain0},
-\begin{equation}\label{eq:chaintau}
-  \FMS_\tau(q) \;=\; \underbrace{\mathrm{mmse}_p(\tau)}_{\text{irreducible}}
-  \;+\; \underbrace{\E\|\Psi_p - \Psi_{p_S}\|^2}_{R_\tau(S)\text{: restriction}}
-  \;+\; \underbrace{\E\|\Psi_q - \Psi_{p_S}\|^2}_{D_\tau(q\|p_S)\text{: misspec.\ + approx.}},
-\end{equation}
-exact at every $\tau$ (tower property conditioning on $(\xv_\tau, S)$), with
-$D_\tau \ge 0$ and $D_\tau = 0$ iff $q = p_S$. Consequences:
-differences between schemes are exact operator divergences, the unknown
-$\mathrm{mmse}_p(\tau)$ being common to all; the filter/smoother identity holds
-along $\tau$ for exact schemes; and a restriction raises the $\FMS_\tau$ curve
-while a misspecification bends it upward at large $\tau$.
-
-\subsection{Derived diagnostics}
-\emph{Calibration loss}: the share of $\FMS_\tau$ removed by the best scalar
-variance rescaling $c\,v$, with optimum $c^\star(\tau)$. \emph{Shape gain}: KDE vs
-Gaussian at the same variance. \emph{Pooled spread/skill}
-$\sqrt{\E v / \E e^2}$. \caveat{the per-window ratio of mean spread to mean RMSE
-is biased low and is not used.}
-
-\paragraph{Relation to CRPS and the log score.}
-The chain decomposition is not unique to $\FMS$: the expected log score splits
-the same way through Kullback--Leibler divergences. $\FMS_\tau$ is used because
-it is computable for samples, Gaussians \emph{and} point estimates (the log score
-is not), is resolved over $\tau$, separating mean and uncertainty, and equals the
-MSE at $\tau = 0$. \todo{cite CRPS / energy score / Bröcker 2009 decomposition.}
-
-\figplaceholder{Fig.~2 -- the chain along $\tau$}{Schematic of the chain, and synthetic Gaussian $\FMS_\tau$ curves for a restriction (raised, same shape) vs a misspecification (bent upward at large $\tau$).}
-
-% ============================================================================
-\section{Experimental design}\label{sec:design}
-
-\paragraph{System and cases.}
-Two-scale Lorenz-96 (8 slow + 32 fast variables, $dt = 0.001$, 3000-step
-windows), per-window $\thv$ ($\pm$20\,\%) and stochastic forcing $\zv$; 24
-observed channels, $R = 0.5$. \Sz: the assimilating model is the truth.
-\So: the model is told biased $\thv_{\mathrm{da}}$ (+10\,\%) and a corrupted
-forcing; the truth is unchanged. \needsrun{$\delta$ sweep: $\delta \in \{0, 5,
-10, 20, 40\,\%\}$ crossed with stated $\sigma \in \{0, 20\,\%\}$, plus one
-structural error.}
-
-\paragraph{Observing systems.}
-The regular 30-obs grid and the canonical random layout (10--100 observations at
-stratified times, 4--16 fast channels, the exact observations the DA schemes
-assimilate); an $n_{\mathrm{obs}} \times k$ factorial and out-of-range probes.
-
-\paragraph{Schemes.}
-DA: ETKF, EnKF, ETKS (30 members; 100 as a sensitivity), Strong-4DVar,
-Weak-4DVar. Learned: DirectUNet, VanillaCFM, PredictStateCFM, SDA1 / SDA2 /
-SDA3-fix, and the DirectUNet $\to$ SDA3-fix hybrid; trained on a random
-observing system with fresh noise every batch, 1200 epochs, 3 seeds.
-\todo{Table 2: schemes, design-matrix labels (F1--U-model, Appendix~\ref{app:matrix}), tuned hyper-parameters.}
-
-\paragraph{Matched information.}
-Every main arm sees the same $\yv$; model-based arms get the \Sz{} or \So{}
-model. Learned arms trained on the true system are a \emph{reference bound} at
-\So{} (the oracle confound). \needsrun{M-trained learned arms, $\sigma = 0$ and
-20\,\%.}
-
-\paragraph{Tuning parity.}
-Every inference hyper-parameter is tuned on 50 validation windows: inflation per
-case, ETKS lag and retro-inflation, Weak-4DVar model-error scale and iterations,
-SDA guidance weight, hybrid $\tau_0$ and guidance (Appendix~\ref{app:tuning}).
-
-\paragraph{Estimating the terms.}
-Irreducible: upper-bounded by the best scheme. Restriction: the filter/smoother
-identity on one ensemble; conditioning contrasts ($\thv$, $\zv$).
-Approximation: ensemble size (30 vs 100), L-BFGS iterations (10 vs 40),
-training budget and data. Misspecification: \Sz{} $\to$ \So{} at fixed scheme,
-the $\delta$ sweep and the model-uncertainty arms.
-
-\paragraph{Scoring.}
-RMSE, pooled spread/skill and $\FMS_\tau$ at $\tau \in \{0, 0.25, 0.5, 0.75\}$
-plus the uniform-$d\tau$ integral; Gaussian form for every scheme, KDE for the
-sample-based ones; physical units; 95\,\% window-bootstrap intervals and paired
-tests.
-
-% ============================================================================
-\section{Q1 --- with a perfect model, where does each scheme's error go?}\label{sec:q1}
-
-\subsection{Overview}
-\begin{table}[h]
-\centering\small
-\caption{RMSE, \Sz{} and \So, regular / random observing system (200 test windows; learned rows: 1200 epochs, 3 seeds). Sources: \texttt{p1\_l96\_benchmark.md}, \texttt{docs/results/l96\_weak4dvar.md}.}
-\label{tab:overview}
-\begin{tabular}{lcccc}
-\toprule
-scheme & \Sz{} regular & \Sz{} random & \So{} regular & \So{} random \\
-\midrule
-ETKF & 0.610 & 0.679 & 1.409 & 1.407 \\
-EnKF & 0.641 & 0.706 & 1.416 & 1.484 \\
-ETKS & 0.497 & 0.572 & 1.338 & 1.347 \\
-Strong-4DVar & 0.703 & 0.742 & 1.436 & 1.444 \\
-Weak-4DVar & 0.695 & \needsrun{} & 1.064 & \needsrun{} \\
-DirectUNet-M & 0.340 & 0.450 & 0.339 & 0.444 \\
-PredictStateCFM-M & 0.341 & 0.443 & 0.338 & 0.447 \\
-VanillaCFM-M & 0.351 & 0.462 & 0.349 & 0.468 \\
-SDA1-M & 0.464 & 0.572 & 0.462 & 0.585 \\
-SDA2-M & 0.453 & 0.550 & 0.465 & 0.575 \\
-SDA3-fix-M & 0.455 & 0.562 & 0.455 & 0.573 \\
-hybrid DirectUNet $\to$ SDA3-fix & \textbf{0.293} & \textbf{0.367} & \textbf{0.289} & \textbf{0.367} \\
-\midrule
-\emph{ETKS, 100 members} & \emph{0.393} & \emph{0.463} & \emph{1.338} & \emph{1.335} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{The budget at $\tau = 0$}
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Irreducible} $\le$ the hybrid's error (RMSE 0.293).
-  \item \textbf{Restriction (filtering).} Smoothing removes 16--19\,\% of the RMSE; the filter/smoother identity, measured on one ensemble, gives an MSE gap of 0.159 ($N = 30$) and 0.162 ($N = 100$) and is approached as the ensemble grows.
-  \item \textbf{Approximation (finite ensemble).} $N = 30 \to 100$ takes the ETKS from 0.497 to 0.393 ($-38$\,\% MSE): the DA deficit against the best learned scheme falls from $1.46\times$ to $1.16\times$.
-  \item \textbf{Approximation (optimisation, training).} Strong-4DVar with 10 vs 40 L-BFGS iterations: 0.721 vs 0.545 (validation); DirectUNet 400 vs 1200 epochs: 0.380 vs 0.340 (0.334 with 3000 windows).
-  \item \textbf{Restriction (context).} SDA1 vs SDA2/SDA3-fix ($\thv$): 0.464 vs 0.453 / 0.455. \needsrun{SDA $\pm$ forcing $\zv$; DirectUNet $\pm (\thv, \zv)$.}
-\end{itemize}
-\todo{Table 5: the budget in pooled MSE, per class, both observing systems.}
-At a perfect model the DA deficit is mostly honest: it shrinks with smoothing,
-ensemble size and iterations.
-
-\subsection{The budget along $\tau$}
-ETKS beats ETKF at $\tau \le 0.5$ and loses at $\tau = 0.75$ (calibration loss
-34\,\% vs 14\,\%): the smoother buys its mean with an over-confident ensemble.
-The flows lose 0--3\,\%, SDA 7--18\,\%. \needsrun{the identity along $\tau$ (FMS of
-the ETKS's own filter pass) and the 100-member FMS rows.}
-\figplaceholder{Fig.~3}{$\FMS_\tau$ curves per scheme, \Sz, both observing systems.}
-
-\subsection{Observing system and density}
-DA is best with $\le 10$ observations per window; learned schemes win from
-$\sim$20. The random/regular RMSE ratio is 1.06 (Strong-4DVar), 1.15 (ETKS),
-1.21--1.24 (SDA), 1.30--1.32 (CFM, DirectUNet): explicit $H, R$ buys robustness
-to the observing system. Beyond the training range (300 $\to$ 1000
-observations) DirectUNet degrades (0.17 $\to$ 0.34) while SDA keeps improving
-(0.30 $\to$ 0.25).
-\figplaceholder{Fig.~4}{RMSE vs number of observation times and of observed fast channels, \Sz.}
-
-% ============================================================================
-\section{Q2 --- what model error does to the budget}\label{sec:q2}
-
-\subsection{The budget at $\tau = 0$}
-Under model error the DA errors grow about sevenfold in MSE (ETKS 0.497 $\to$
-1.338); 100 members change nothing (1.338 $\to$ 1.338); smoothing gains only
-5\,\% and the filter/smoother identity fails (MSE gap 0.237, variance gap 0.534,
-mean shift 0.913): misspecification dominates. The learned rows are flat
-(DirectUNet 0.339, hybrid 0.289), as an oracle bound.
-
-\subsection{The misspecification signature along $\tau$}
-DA calibration loss at $\tau = 0.75$ grows from \Sz{} to \So{} (ETKS 34 $\to$
-63\,\%, $c^\star \ge 8$; ETKF 14 $\to$ 23\,\% regular, 3 $\to$ 14\,\% random), and
-the DA ensembles become short-tailed (+17--30\,\% for KDE vs Gaussian). The
-learned rows are invariant, except SDA2, whose loss falls. Aggregate
-calibration is not calibration: on random \So{} the ETKF's pooled spread/skill
-is 0.99, yet it loses 12\,\% at $\tau = 0.75$.
-\figplaceholder{Fig.~5}{$\FMS_\tau$, \Sz{} vs \So{}, per scheme.}
-
-\subsection{Marginal value of observations}
-From 15 to 30 observations per window, the gain of strong-constraint 4D-Var
-collapses $7.0\times$ under model error and then stays on a floor (1.43 $\to$
-1.38 from 30 to 1000 observations); the filters keep $1.8$--$1.9\times$.
-\needsrun{Weak-4DVar and learned rows of this curve.}
-\figplaceholder{Fig.~6}{RMSE vs $n_{\mathrm{obs}}$ per scheme, \Sz{} and \So.}
-
-\subsection{Representing model uncertainty}
-Weak-constraint 4D-Var, with a model-error scale tuned per case on validation
-windows, ties Strong-4DVar at \Sz{} (0.695 vs 0.703) and cuts \So{} by 26\,\%
-(1.064 vs 1.436), becoming the best DA row at \So{} --- still $\sim$3$\times$ the
-learned schemes. SDA2 (trained with clean $\thv$) leaks the \So{} bias; SDA3-fix
-(noisy $\thv$) stays flat. \needsrun{perturbed-parameter ETKF; $\delta \le \sigma$
-vs $\delta > \sigma$.}
-\figplaceholder{Fig.~7}{RMSE and calibration loss vs $\delta$, per model-uncertainty arm.}
-
-\subsection{The value of true-system data}
-\needsrun{learned-on-truth minus learned-on-model (the oracle gap).}
-
-% ============================================================================
-\section{Q3 --- does the form of the prior drive performance?}\label{sec:q3}
-
-\subsection{Same likelihood, two priors}
-The learned joint-window prior (SDA, 0.453--0.464) beats the true-ODE hard
-constraint (Strong-4DVar, 0.703) and the 30-member smoother (0.497), but not the
-100-member smoother (0.393): the ordering is set by the approximation term, not
-by the fidelity of the prior. Along $\tau$ the SDA operator is better calibrated
-than the smoother's (7--18\,\% vs 34\,\% loss).
-\figplaceholder{Fig.~8}{Model-derived vs learned priors: RMSE and $\FMS_\tau$.}
-
-\subsection{A better prior is not a better estimate}
-Training the SDA prior 400 $\to$ 1200 epochs gains 7--9\,\%; the true ODE used as
-a hard prior (Strong-4DVar) is the worst DA row at \Sz.
-
-\subsection{Conditioning the prior}
-$\thv$ (SDA1 $\to$ SDA2 / SDA3-fix) and forcing $\zv$ as restriction terms; SDA2
-at \So{} as the misspecification case. \needsrun{SDA $\pm$ forcing.}
-
-\subsection{Composition}
-The hybrid composes DirectUNet's mean with SDA3-fix's guided sampler. It has
-the best mean everywhere (0.293 / 0.367, flat at \So) but not the best
-distribution: the flows overtake it at $\tau = 0.75$ (0.0195 vs 0.0200 regular,
-0.025 vs 0.029 random, z-units). The score separates the two components it
-composes.
-
-% ============================================================================
-\section{Discussion}\label{sec:discussion}
-
-\paragraph{Lessons, as budget statements.}
-(a) At a perfect model the DA deficit is restriction and approximation: honest
-and reducible. (b) Under model error misspecification dominates, and shows in
-the large-$\tau$ score before it shows in the RMSE. (c) A better prior does not
-imply a better estimate; approximate priors can beat the true physics. (d)
-Model-based DA can misreport the information value of its conditioning
-variables.
-
-\paragraph{What classical DA still gets right.}
-The sparse-observation regime; observing-system transfer through explicit $H,
-R$; calibration when its assumptions hold; no training set.
-
-\paragraph{Back to the puzzle.}
-\todo{What the budgets suggest for reanalysis vs observation-only products
-(misspecification under model error) and for learned-prior skill (approximation
-and restriction at a perfect model), stated as hypotheses for real systems.}
-
-\paragraph{Limitations.}
-$\mathrm{mmse}_p(\tau)$ is unknown, so only differences and an upper bound are
-available; DA is scored in Gaussian form; one idealised system; the oracle
-confound; the cross term between misspecification and approximation is only
-bounded by contrasts.
-
-\paragraph{Positioning.}
-\todo{Model-error DA \cite{tremolet2006weak,carrassi2018da,farchi2021model};
-unstable-subspace DA \cite{trevisan2004unstable,bocquet2017unstable};
-learned and score-based DA \cite{brajard2020combining,bocquet2020bayesian,rozet2023sda,fablet4dvarnet};
-proper scores and their decompositions; mismatched estimation. Verify every entry of refs.bib.}
-
-\paragraph{Outlook.}
-Flow matching as a generic representation of DA algorithms; self-supervised
-adaptation of learned schemes; transfer to a quasi-geostrophic system.
-
-% ============================================================================
-\section{Conclusion}\label{sec:conclusion}
-\todo{The thesis, and one number per question.}
-
-% ============================================================================
-\appendix
-\section{Operators and proofs}\label{app:proofs}
-\todo{$\Psi_q$ for point, Gaussian and mixture outputs; proofs of properties
-(i)--(vi) and of Eq.~\eqref{eq:chaintau}; synthetic example of Fig.~2.}
-
-\section{The design matrix}\label{app:matrix}
-\todo{F1 prior--likelihood split, F2 dynamics source, F3 sequential inference,
-U-state, U-model; every scheme's row (from the scoping doc, v1).}
-
-\section{Tuning sweeps}\label{app:tuning}
-\todo{ETKF/EnKF/ETKS inflation (30 and 100 members), ETKS lag, Weak-4DVar
-model-error scale and iterations, SDA guidance weight, hybrid $\tau_0$ / guidance.}
-
-\section{Sensitivities}
-\todo{Ensemble size, L-BFGS iterations, training budget and data, flow sampler steps.}
-
-\section{The P1-protocol tier study}
-\todo{S+ / M / L tiers, VanillaCFM vs PredictStateCFM, $\tau = 0$ heads, from
-\texttt{p1\_l96\_benchmark.md} annex A; not comparable with the main tables.}
-
-\section{FMS estimators}
-\todo{Monte Carlo over $\xv_0$, KDE bandwidth, 24-channel snapshot blocks and
-their effective-sample-size degeneration at $\tau = 0.75$, window bootstrap.}
-
-\section{Rank histograms}
-\todo{From docs/results/l96\_rank\_histograms\_c4.md.}
+\input{sections_v4/00_abstract}
+\input{sections_v4/01_introduction}
+\input{sections_v4/02_chain}
+\input{sections_v4/03_fms}
+\input{sections_v4/04_design}
+\input{sections_v4/05_q1}
+\input{sections_v4/06_q2}
+\input{sections_v4/07_q3}
+\input{sections_v4/08_discussion}
+\input{sections_v4/09_appendix}
 
 \bibliographystyle{plain}
 \bibliography{refs}

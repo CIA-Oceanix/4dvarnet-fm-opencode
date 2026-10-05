@@ -1,0 +1,147 @@
+\section{Q1 --- with a perfect model, where does each scheme's error go?}\label{sec:q1}
+
+\subsection{Overview}
+Table~\ref{tab:overview} gives the RMSE of every scheme in both cases and on both
+observing systems. With a perfect model, the learned schemes lead by 30 to
+45\,\%:
+\begin{itemize}[leftmargin=*,nosep]
+  \item DirectUNet 0.340 and PredictStateCFM 0.341 on the regular grid;
+  \item the best DA scheme, the ETKS, 0.497;
+  \item Strong-4DVar, which assimilates with the true equations, 0.703.
+\end{itemize}
+The rest of this section asks where the DA deficit comes from.
+
+\begin{table}[t]
+\centering\small
+\caption{RMSE on the 24 observed channels, 200 test windows; learned rows: 1200 epochs, 3 seeds pooled per window. The italic row is a sensitivity row. Sources: \texttt{reports/l96/outputs/p1\_l96\_benchmark.md}, \texttt{docs/results/l96\_weak4dvar.md}.}
+\label{tab:overview}
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{\Sz{} (perfect model)} & \multicolumn{2}{c}{\So{} (model error)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+scheme & regular & random & regular & random \\
+\midrule
+ETKF & 0.610 & 0.679 & 1.409 & 1.407 \\
+EnKF & 0.641 & 0.706 & 1.416 & 1.484 \\
+ETKS & 0.497 & 0.572 & 1.338 & 1.347 \\
+Strong-4DVar & 0.703 & 0.742 & 1.436 & 1.444 \\
+Weak-4DVar & 0.695 & \needsrun{} & 1.064 & \needsrun{} \\
+\emph{ETKS, 100 members} & \emph{0.393} & \emph{0.463} & \emph{1.338} & \emph{1.335} \\
+\midrule
+DirectUNet & 0.340 & 0.450 & 0.339 & 0.444 \\
+PredictStateCFM & 0.341 & 0.443 & 0.338 & 0.447 \\
+VanillaCFM & 0.351 & 0.462 & 0.349 & 0.468 \\
+SDA1 & 0.464 & 0.572 & 0.462 & 0.585 \\
+SDA2 & 0.453 & 0.550 & 0.465 & 0.575 \\
+SDA3-fix & 0.455 & 0.562 & 0.455 & 0.573 \\
+hybrid DirectUNet $\to$ SDA3-fix & \textbf{0.293} & \textbf{0.367} & \textbf{0.289} & \textbf{0.367} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The budget at \texorpdfstring{$\tau = 0$}{tau = 0}}\label{sec:q1-budget}
+
+\paragraph{Irreducible.}
+The best scheme, the hybrid, reaches 0.293 on the regular grid: the irreducible
+error is at most this. We have no lower bound, so every share below is a share of
+the excess over an upper bound, not over the true $\mathrm{mmse}$.
+
+\paragraph{Restriction: filtering.}
+The ETKS removes 16 to 19\,\% of the ETKF's RMSE (0.610 $\to$ 0.497 regular,
+0.679 $\to$ 0.572 random). To check that this gain is a restriction, we run the
+filter and the smoother on the same ensemble realisation and evaluate both sides
+of the identity
+$\mathrm{MSE}_F - \mathrm{MSE}_S = \mathrm{var}_F - \mathrm{var}_S = \E\|m_F - m_S\|^2$.
+It holds approximately with 100 members --- an MSE gap of 0.162 against a
+variance gap of 0.176 and a mean shift of 0.233 --- and less well with 30
+(0.159, 0.227, 0.296). The deviation shrinks as the ensemble grows, as it should
+if it is an approximation error of the ensemble.
+
+\paragraph{Approximation: finite ensemble.}
+With 100 members and a re-selected inflation, the ETKS goes from 0.497 to 0.393
+(regular) and from 0.572 to 0.463 (random): 38\,\% of its mean-squared error was
+finite-ensemble approximation. Against the best learned scheme, the DA deficit
+falls from $1.46\times$ to $1.16\times$.
+
+\paragraph{Approximation: optimisation and training.}
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{4D-Var.} At the benchmark's 10 L-BFGS iterations per sub-window,
+    the hard-constraint 4D-Var is far from its own optimum: 0.721 against 0.545
+    on the validation windows with 40 iterations.
+  \item \textbf{DirectUNet.} Training it for 1200 instead of 400 epochs takes it
+    from 0.380 to 0.340, and three times more training windows add only 0.006
+    (0.334). The learned approximation term is close to saturation at our
+    budget.
+\end{itemize}
+
+\paragraph{Restriction: context.}
+The unconditional SDA prior (SDA1, 0.464) ignores $\thv$. Conditioning it on
+$\thv$ gains 2\,\% (SDA2 0.453, SDA3-fix 0.455). \needsrun{The forcing $\zv$ as a
+conditioning input of SDA, and $(\thv, \zv)$ as inputs of DirectUNet, complete
+this row.}
+
+\paragraph{Structural misspecification.}
+What remains of the DA excess after these contrasts is structural: the mode
+instead of the mean, a hard constraint and Gaussian updates. It is largest for
+Strong-4DVar.
+\todo{Table~5: the budget in pooled MSE per scheme class, both observing
+systems, with the contrast named in each cell.}
+
+\paragraph{Reading.}
+With a perfect model, the deficit of classical DA is mostly \emph{honest}. It is
+made of a restriction (filtering) and an approximation (30 members, a short
+optimisation), and it shrinks with smoothing, with members and with iterations.
+None of it requires a better model.
+
+\subsection{The budget along \texorpdfstring{$\tau$}{tau}}
+Table~\ref{tab:fms-s0} gives $\FMS_\tau$ for the main schemes at \Sz{} on the regular grid.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{The smoother buys its mean with an over-confident ensemble.} It
+    beats the filter at $\tau = 0$ (0.129 vs 0.187) and still at $\tau = 0.5$,
+    but loses at $\tau = 0.75$ (0.059 vs 0.050). Its calibration loss there is
+    34\,\% against 14\,\%.
+  \item \textbf{The flows are nearly calibrated} (calibration loss 0--3\,\%,
+    pooled spread/skill 0.84--0.94).
+  \item \textbf{The SDA samplers are under-dispersed} (7--18\,\%), as expected
+    from their tempered likelihood.
+\end{itemize}
+\needsrun{The filter/smoother identity along $\tau$ (score of the ETKS's own
+filter pass) and the 100-member rows of this table.}
+
+\begin{table}[t]
+\centering\small
+\caption{$\FMS_\tau$ (standardised units, Gaussian form) and calibration loss at $\tau = 0.75$, \Sz, regular grid. Source: \texttt{docs/results/l96\_p1\_fm\_score.md}.}
+\label{tab:fms-s0}
+\begin{tabular}{lcccc}
+\toprule
+scheme & $\tau = 0$ & $\tau = 0.5$ & $\tau = 0.75$ & calibration loss \\
+\midrule
+ETKF & 0.187 & 0.125 & 0.050 & 14\,\% \\
+ETKS & 0.129 & 0.107 & 0.059 & 34\,\% \\
+PredictStateCFM & 0.054 & 0.040 & \textbf{0.0195} & 2\,\% \\
+VanillaCFM & 0.057 & 0.042 & 0.0196 & 0\,\% \\
+SDA3-fix & 0.088 & 0.067 & 0.034 & 14\,\% \\
+hybrid & \textbf{0.039} & \textbf{0.034} & 0.0200 & 16\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\figplaceholder{Fig.~3}{$\FMS_\tau$ curves per scheme, \Sz, regular and random observing systems, with window-bootstrap intervals.}
+
+\subsection{Observing system and density}\label{sec:q1-density}
+Figure~4 shows how the schemes depend on the number of observations.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Crossover.} DA is best when a window has at most about ten
+    observation times; the learned schemes win from about twenty.
+  \item \textbf{Transfer between observing systems.} The ratio of random to
+    regular RMSE is 1.06 for Strong-4DVar, 1.15 for the ETKS, 1.21--1.24 for
+    SDA and 1.30--1.32 for the CFMs and DirectUNet. Keeping $\Hop$ and $\mathbf{R}$
+    explicit buys robustness to the observing system.
+  \item \textbf{Beyond the training range} (from 300 to 1000 observations),
+    DirectUNet degrades from 0.17 to 0.34, while SDA, whose likelihood is
+    explicit, keeps improving from 0.30 to 0.25.
+\end{itemize}
+In the language of the chain, an amortised map is misspecified once the
+observing system leaves its training distribution; a factorised scheme is not.
+
+\figplaceholder{Fig.~4}{RMSE vs number of observation times and of observed fast channels, \Sz, all schemes.}

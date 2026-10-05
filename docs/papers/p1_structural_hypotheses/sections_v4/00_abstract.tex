@@ -1,0 +1,37 @@
+\begin{abstract}
+Model-based data assimilation (DA) often loses to estimators that use less
+physics. Observation-only products can beat ocean reanalyses, learned priors can
+beat the true dynamical model, and neural schemes are routinely reported to beat
+classical ones. The usual explanations --- a wrong model, a lossy algorithm, a
+poor tuning --- are seldom separated.
+%
+We treat every DA scheme, classical or learned, as an estimator of the
+conditional distribution of the state given its context. We decompose its error
+along a chain of idealisations. The \emph{irreducible} term is what no scheme can
+beat. A \emph{restriction} is the error of using less information than is
+available. A \emph{misspecification} is the error of believing a wrong model. An
+\emph{approximation} is the error of computing one's own target inexactly.
+%
+We extend the chain from the mean to the reported uncertainty with a
+flow-matching score, $\FMS_\tau$. It equals the mean-squared error at
+$\tau = 0$, is strictly proper for $\tau \in (0, 1)$, and splits exactly into an
+irreducible part, a restriction part and a remainder at every $\tau$.
+%
+On a two-scale Lorenz-96 system, with a perfect model and with a biased one,
+under matched information and tuning parity, three results stand out.
+\begin{itemize}[leftmargin=*,nosep]
+  \item With a perfect model, the deficit of classical DA is mostly restriction
+    and approximation. Smoothing removes 16--19\,\% of the filter's RMSE, and
+    going from 30 to 100 ensemble members removes 38\,\% of the smoother's
+    mean-squared error.
+  \item Under model error, misspecification dominates. It shows in the
+    large-$\tau$ score before it shows in the RMSE: the smoother's calibration
+    loss grows from 34\,\% to 63\,\%. The marginal value of observations for
+    strong-constraint 4D-Var collapses sevenfold.
+  \item A learned prior beats the true-model hard constraint and the 30-member
+    smoother, but not the 100-member one. The ordering is set by approximation,
+    not by the fidelity of the prior.
+\end{itemize}
+A restriction costs variance honestly and preserves calibration; a
+misspecification costs bias silently and destroys it.
+\end{abstract}

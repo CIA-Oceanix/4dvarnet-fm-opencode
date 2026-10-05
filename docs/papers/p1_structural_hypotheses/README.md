@@ -1,6 +1,7 @@
 # P1 draft — "Restriction or misspecification? Dissecting the errors of classical and neural data assimilation"
 
-Draft of the DA-venue diagnosis paper (structure v4, 2026-10-04). Target: **QJRMS or JAMES**.
+First draft of the DA-venue diagnosis paper on structure v4 (2026-10-05). Target: **QJRMS or JAMES**.
+`main.tex` holds the preamble and inputs one file per section from `sections_v4/`.
 
 **Source of truth is `docs/plans/paper/l96_p1_structure_v4.md` (SCOPING, detailed structure), not this
 directory.** `main.tex` renders that structure: error chain (irreducible / restriction / misspecification /
@@ -119,12 +120,15 @@ Three markers flag what is not yet settled. Grep for them before circulating:
 resting on an unrun experiment says so in the rendered PDF, in red. Do not
 circulate externally until those are resolved or removed.
 
-## Known gaps in the v4 draft (`main.tex`)
+## Known gaps in the v4 draft (`main.tex` + `sections_v4/`)
 
-- Sections 1–9 are a skeleton with the current numbers; the prose is partial, and `\needsrun` marks the
-  runs listed in the scoping doc §13 (identity along τ, 100-member FMS, Weak-4DVar random layout, M-trained arms,
-  δ sweep, SDA ± forcing).
-- No figures yet (placeholders Fig. 1–8); Appendix A proofs to write.
+- Prose for §1–§9 is written (about 7k words); `\needsrun` marks claims waiting on the runs of the
+  scoping doc §13: the identity along τ, 100-member FMS, Weak-4DVar on the random layout, M-trained arms,
+  the δ sweep, SDA ± forcing, the perturbed-parameter ETKF.
+- `\todo` marks citations still to add (DUACS/GLORYS, Lipman, Verdú, Bröcker, Gneiting & Raftery,
+  Lorenz 1996), the pooled-MSE budget table (Table 5), the "back to the puzzle" paragraph and the
+  appendix proofs.
+- No figures yet (placeholders Fig. 1–8).
 - `refs.bib` is still unverified (see below).
 
 ## Known gaps in the previous draft (`main.old.tex`)
