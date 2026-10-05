@@ -463,7 +463,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
                           cols_per_day_range=None, train_cols_sampling=None,
                           q_loss_weight_scale=None, q_daily_var=None, use_obs_mask=False,
                           hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
-                          warmup_epochs=0, **kw) -> str:
+                          warmup_epochs=0, obs_error_aug=None, **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -494,6 +494,9 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
         "cols_per_day_min": cols_per_day_range[0] if cols_per_day_range else None,
         "cols_per_day_max": cols_per_day_range[1] if cols_per_day_range else None,
         "train_cols_sampling": train_cols_sampling,
+        # Train split only: total white fraction ~ U[lo, hi] and per-pass correlated
+        # fraction ~ U[0, corr_hi] per draw (the S1 altimetry error model).
+        "obs_error_aug": list(obs_error_aug) if obs_error_aug is not None else None,
         "obs_noise_std_frac": cfg.obs_noise_std_frac,
         "init_lag_days": cfg.init_lag_days,
         "s1_param_bias": cfg.s1_param_bias, "s1_amp_bias": cfg.s1_amp_bias,
@@ -674,7 +677,8 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
                                    cond_mode=cond_mode, param_norm_stats=param_norm,
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
                                    include_ic=include_ic, cols_per_day_range=cols_per_day_range,
-                                   cols_sampling=args.train_cols_sampling)
+                                   cols_sampling=args.train_cols_sampling,
+                                   obs_error_aug=getattr(args, "obs_error_aug", None))
         # One fixed obs draw per val window at the test setting (cfg), so
         # val_loss and checkpoint selection compare like with like across epochs.
         val_ds = QGNeuralDataset(with_fixed_obs(val_windows, cfg), cfg, norm,
@@ -965,6 +969,8 @@ def main():
         args.train_cols_sampling = exp_cfg.data.get("train_cols_sampling", None)
     if args.cols_per_day is None:
         args.cols_per_day = int(exp_cfg.data.get("cols_per_day", 4))
+    aug = exp_cfg.data.get("obs_error_aug", None)
+    args.obs_error_aug = tuple(float(v) for v in aug) if aug is not None else None
     results_path = os.path.join(exp_dir, "results.json")
     est_path = os.path.join(exp_dir, "estimates_s0.npz")
 
@@ -1004,6 +1010,7 @@ def main():
             q_loss_weight_scale=q_loss_weight_scale, q_daily_var=q_var,
             use_obs_mask=use_obs_mask, hidden_channels=hidden_channels,
             num_res_blocks=num_res_blocks, warmup_epochs=warmup_epochs,
+            obs_error_aug=args.obs_error_aug,
             use_cosine_scheduler=args.cosine_scheduler, seed=args.seed,
             num_train=args.num_train, num_val=args.num_val, num_test=args.num_test,
             train_seed=args.train_seed, val_seed=args.val_seed, test_seed=args.test_seed,

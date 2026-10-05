@@ -1192,3 +1192,86 @@ def test_configure_optimizers_with_warmup_steps_per_batch():
         opt.step()
         sched["scheduler"].step()
     assert opt.param_groups[0]["lr"] == pytest.approx(3e-4)
+
+
+def test_pass_correlated_error_on_both_obs_layouts():
+    import numpy as np
+
+    from data.qg_neural import add_pass_correlated_error
+    ny = 16
+    dense = torch.full((6, ny), float("nan"))
+    dense[1] = 0.0
+    dense[4] = 0.0
+    out = add_pass_correlated_error(dense, 2.0, ny, np.random.default_rng(0))
+    assert torch.isnan(out[[0, 2, 3, 5]]).all()
+    for t in (1, 4):
+        d = out[t].double()
+        lin = torch.linspace(-1, 1, ny, dtype=torch.float64)
+        resid = d - (d.mean() + (d * lin).sum() / (lin * lin).sum() * lin)
+        assert float(resid.abs().max()) < 1e-5
+    grouped = [None, torch.zeros(3 * ny), None]
+    g = add_pass_correlated_error(grouped, 2.0, ny, np.random.default_rng(1))
+    assert g[0] is None and g[2] is None
+    cols = g[1].reshape(3, ny)
+    assert not torch.allclose(cols[0], cols[1])
+    rms = [float(add_pass_correlated_error(torch.zeros(1, ny), 2.0, ny, np.random.default_rng(s))
+                 .pow(2).mean().sqrt()) for s in range(400)]
+    assert float(np.sqrt(np.mean(np.square(rms)))) == pytest.approx(2.0, rel=0.1)
+
+
+def test_obs_error_aug_draws_within_range_and_needs_on_the_fly_obs():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError, match="on_the_fly_obs"):
+        QGNeuralDataset(windows, cfg, obs_error_aug=(0.05, 0.15, 0.15))
+    with pytest.raises(ValueError):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=(0.2, 0.1, 0.1))
+    ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=(0.05, 0.15, 0.15),
+                         cols_per_day_range=(3, 12), cols_sampling="uniform_slots")
+    for _ in range(50):
+        white, corr = ds._draw_obs_error()
+        assert 0.05 <= white <= 0.15 and 0.0 <= corr <= 0.15
+    _psi, obs_pad, obs_mask, *_ = ds[0]
+    assert obs_mask.any() and torch.isfinite(obs_pad).all()
+    assert cfg.obs_noise_std_frac == _cfg().obs_noise_std_frac
+
+
+def test_obs_error_aug_raises_the_obs_error():
+    """A draw at the S1 end of the range carries more error than the S0 draw of the same window."""
+    import random as _random
+
+    from data.qg_neural import psi_upper
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    truth = psi_upper(windows[0], cfg).reshape(-1, cfg.ny, cfg.nx)
+
+    def err(aug):
+        ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=aug)
+        errs = []
+        for seed in range(10):
+            _random.seed(seed)
+            w = ds._resolved_window(0)
+            for t in w["obs_mask"].nonzero().flatten().tolist():
+                errs.append((w["obs"][t] - truth[t, :, int(w["obs_columns"][t])]).pow(2).mean())
+        return float(torch.stack(errs).mean().sqrt())
+    assert err((0.15, 0.15, 0.15)) > 2.0 * err((0.05, 0.05, 1e-9))
+
+
+@pytest.mark.parametrize("filename,aug", [
+    ("G1S_direct_unet_tchannels_specwind.yaml", True), ("G1_direct_unet_tchannels_specwind.yaml", True),
+    ("G1L_direct_unet_tchannels_specwind.yaml", True), ("G2_vanilla_cfm_tchannels_specwind.yaml", True),
+    ("G3_sda_prior_tchannels_specwind.yaml", False)])
+def test_specwind_obs_error_aug_covers_s0_to_s1(filename, aug):
+    import os
+
+    from omegaconf import OmegaConf
+
+    from evaluation.qg_specwind_s1 import REALISTIC_SELECTED, REALISTIC_VARIANTS, S0_OBS_WHITE
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    if not aug:
+        assert cfg.data.get("obs_error_aug") is None
+        return
+    lo, hi, corr = (float(v) for v in cfg.data.obs_error_aug)
+    s1 = REALISTIC_VARIANTS[REALISTIC_SELECTED]
+    assert lo == S0_OBS_WHITE and hi == s1.obs_white_frac and corr == s1.obs_corr_frac
