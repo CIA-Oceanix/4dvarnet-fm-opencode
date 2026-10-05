@@ -124,7 +124,7 @@ Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): v
 
 ![S1 error budget](figs/qg_specwind_da_s1_budget.png)
 
-**S1-tuned error budgets** — the same attribution with each filter fixed at its S1-tuned setting (R × 6) in all 32 combinations (the S0 corner then runs R × 6 on perfect-model data: it costs nothing, ETKF 0.768 vs 0.764, EnKS 0.809 vs 0.806). Absolute Shapley score loss per group (bootstrap 95% over the 20 windows; largest in bold) and paired contrasts (`docs/results/qg_specwind_da_s1_calibration.md` §3.2):
+**S1-tuned error budgets** — the same attribution with each filter fixed at its S1-tuned setting (R × 6) in all 32 combinations (the S0 corner then runs R × 6 on perfect-model data: it costs nothing, ETKF 0.768 vs 0.764, EnKS 0.809 vs 0.806). Absolute Shapley score loss per group (bootstrap 95% over the 20 windows; largest in bold) and paired contrasts (`docs/results/qg_specwind_da_s1_calibration.md` §3.1d):
 
 | filter (score S0 corner → S1) | forcing | rd | drag | obs | res | interaction | total loss |
 |---|---|---|---|---|---|---|---|

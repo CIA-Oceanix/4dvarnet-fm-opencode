@@ -502,7 +502,7 @@ def main() -> None:
            "(R × 6) in all 32 combinations (the S0 corner then runs R × 6 on perfect-model data: it costs "
            "nothing, ETKF 0.768 vs 0.764, EnKS 0.809 vs 0.806). Absolute Shapley score loss per group "
            "(bootstrap 95% over the 20 windows; largest in bold) and paired contrasts "
-           "(`docs/results/qg_specwind_da_s1_calibration.md` §3.2):", ""]
+           "(`docs/results/qg_specwind_da_s1_calibration.md` §3.1d):", ""]
     md += budget_compare_table(args.s1_root, args.s1_variant) + [""]
     md += ["Share of the EV loss per field, S1-tuned EnKS:", ""]
     md += budget_table(os.path.join(args.s1_root, "enks_R6"), args.s1_variant) + [""]
