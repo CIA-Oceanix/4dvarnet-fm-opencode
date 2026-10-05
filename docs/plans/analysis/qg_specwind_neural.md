@@ -4,8 +4,8 @@
 "done" column): the train-time observing system (§4.3), the obs-mask input, the
 empirical λ_q, the fixed val draw, the G2 / G3 models and their training
 branch, and the S / M / L DirectUNet tiers. E0 (smoke + timing) submitted
-2026-10-04. Not yet implemented: P1 (eval driver), P2 (`base_noobs`), P6
-(SDA sampler). v3 adds a **DirectUNet capacity sweep, S / M / L tiers**
+2026-10-04. P1 (eval driver, `evaluation/run_qg_specwind_neural.py`) implemented.
+Not yet implemented: P2 (`base_noobs`), P6 (SDA sampler). v3 adds a **DirectUNet capacity sweep, S / M / L tiers**
 (§3.1, E2b). v3: **S0 and S1 share
 the S0 observation noise** (5% white). S1 becomes model error only, and the DA
 S1 rows are re-run without their obs-error component (§2.3). v2 recorded the
@@ -322,8 +322,9 @@ Status (2026-10-04): **done** = the training side of P3 / P4 / P6 below
 (`build_model` branches `vanilla_cfm_tchannels` / `sda_prior_tchannels`, the
 random-τ CFM loss with the q term on x̂₁, the `hidden_channels` /
 `num_res_blocks` tiers, configs `config/experiment/G{1,1S,1L,2,3}_*_specwind.yaml`,
-`batch/run_qg_specwind_neural_train.sbatch`). **Open** = P1, P2, the P4
-`ens30_no20` member output, the P6 guidance sampler, P7.
+`batch/run_qg_specwind_neural_train.sbatch`) and P1 (`evaluation/run_qg_specwind_neural.py`,
+`batch/run_qg_specwind_neural_eval.sbatch`, which also returns the P4 `ens30_no20` members).
+**Open** = P2, the P6 guidance sampler, P7.
 
 | piece | content | size |
 |---|---|---|
