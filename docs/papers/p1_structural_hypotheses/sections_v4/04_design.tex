@@ -1,6 +1,50 @@
 \section{Experimental design}\label{sec:design}
 
-\subsection{System, cases and observing systems}
+\subsection{Three case studies}\label{sec:testbeds}
+The three systems are not a repeated benchmark: each carries the part of the
+argument the others cannot (Table~\ref{tab:coverage}).
+\begin{description}[leftmargin=1.5em,style=nextline]
+  \item[Lorenz-63 --- the model-error axis.]
+    A stochastic Lorenz-63 system \todo{cite Lorenz 1963} augmented with a
+    wind-forcing variable. It is small enough to sweep the model error ---
+    bias levels, stated uncertainty, a structural error --- and to run
+    weak-constraint 4D-Var and the full ensemble range on every cell. It is
+    where the conversion of misspecification back into restriction
+    (Sect.~\ref{sec:q2}) is mapped as a function of the bias.
+  \item[Lorenz-96 --- the main testbed.]
+    The two-scale Lorenz-96 system is the only one that carries the full scheme
+    matrix, classical and learned, on two observing systems. Every cross-class
+    statement of Sects.~\ref{sec:q1}--\ref{sec:q3} is made here. Its protocol is
+    given below.
+  \item[Quasi-geostrophic ocean --- realism.]
+    A two-layer quasi-geostrophic ocean on a $64 \times 64$ grid (1000\,km, time
+    step 2\,h), forced by the wind-stress curl of a low-order atmosphere with
+    regime changes. Only the upper-layer streamfunction is observed, on three
+    random meridional columns per day (4.7\,\% of the grid). Its model-error case
+    is realistic rather than parametric: a biased and noisy wind, misplaced
+    storms, wrong deformation radius and bottom drag, correlated altimetry
+    errors, and a DA model on a coarser grid. It tests whether the budgets of
+    Lorenz-96 survive a spatially extended system with unobserved layers.
+\end{description}
+
+\begin{table}[t]
+\centering\small
+\caption{Scheme coverage per case study. Cross-class claims are made on Lorenz-96; Lorenz-63 carries the model-error sweep, QG the transfer to a realistic system.}
+\label{tab:coverage}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+ & filters & smoother & 4D-Var (strong / weak) & DirectUNet, CFM & SDA, hybrid \\
+\midrule
+Lorenz-63 & ETKF, EnKF$^\dagger$ & --- & \checkmark{} / \checkmark$^\dagger$ & DirectUNet, CFM$^\dagger$ & --- \\
+Lorenz-96 & ETKF, EnKF & ETKS & \checkmark{} / \checkmark & \checkmark & \checkmark \\
+QG ocean & ETKF, EnKF & EnKS & \checkmark{} / \checkmark & DirectUNet, CFM$^\ddagger$ & SDA$^\ddagger$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+$^\dagger$\,\needsrun{Lorenz-63 rerun: its results predate a fix of the observation-noise
+sampling (2026-09-18).} $^\ddagger$\,\needsrun{QG learned schemes: first training round in progress.}
+
+\subsection{The Lorenz-96 protocol}
 We use the two-scale Lorenz-96 system \todo{cite Lorenz 1996} with 8 slow and 32
 fast variables, integrated with $\Delta = 0.001$ over windows of 3000 steps.
 Every window draws its own parameters $\thv$ (forcing and coupling coefficients,
@@ -16,7 +60,8 @@ $\thv_{\mathrm{da}}$ (+10\,\%) and a corrupted forcing, while the truth is
 unchanged. \So{} therefore prices model error only for schemes that consume
 model information. \needsrun{A sweep of the bias $\delta \in \{0, 5, 10, 20,
 40\,\%\}$ crossed with a stated uncertainty $\sigma \in \{0, 20\,\%\}$, plus one
-structural error (a modified coupling).}
+structural error (a modified coupling), run on Lorenz-63 for the full grid and on
+Lorenz-96 at three levels.}
 
 \paragraph{Two observing systems.}
 The \emph{regular} system observes all 24 channels at 30 equally spaced times per

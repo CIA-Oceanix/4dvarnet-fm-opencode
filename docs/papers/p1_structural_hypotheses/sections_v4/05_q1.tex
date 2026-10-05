@@ -128,6 +128,16 @@ hybrid & \textbf{0.039} & \textbf{0.034} & 0.0200 & 16\,\% \\
 
 \figplaceholder{Fig.~3}{$\FMS_\tau$ curves per scheme, \Sz, regular and random observing systems, with window-bootstrap intervals.}
 
+\subsection{Transfer to the QG ocean}\label{sec:q1-qg}
+On the QG case study (score = mean explained variance of the two
+streamfunction and two potential-vorticity layers, higher is better; 100 test
+windows of 30 days, forced dataset) the perfect-model ordering of the DA schemes
+is the same as on Lorenz-96. Smoothing gains over filtering (EnKS 0.812 against
+ETKF 0.774 and EnKF 0.761), and the variational scheme, which uses the whole
+window, is best (strong-constraint 4D-Var 0.840). With a perfect model the
+restriction of filtering is again the main reducible term among the DA schemes.
+\needsrun{QG learned schemes (round 1) for the cross-class comparison.}
+
 \subsection{Observing system and density}\label{sec:q1-density}
 Figure~4 shows how the schemes depend on the number of observations.
 \begin{itemize}[leftmargin=*]

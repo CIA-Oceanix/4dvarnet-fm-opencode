@@ -74,6 +74,22 @@ should convert part of it back into a restriction.
 
 \figplaceholder{Fig.~7}{RMSE and calibration loss vs bias $\delta$, per model-uncertainty arm.}
 
+\subsection{Transfer to the QG ocean}
+The QG case study repeats the pattern under its realistic model error (forced
+dataset, score as in Sect.~\ref{sec:q1-qg}).
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Hard constraint.} Strong-constraint 4D-Var, best at \Sz{}
+    (0.840), becomes the worst scheme at \So{} with its \Sz{} settings (0.516).
+  \item \textbf{Ensembles.} The ensemble schemes keep more (ETKF 0.579, EnKF
+    0.596, EnKS 0.612).
+  \item \textbf{Representing model uncertainty.} Re-tuning for \So{} --- a weak
+    constraint for 4D-Var, an inflated observation error for the ensembles ---
+    recovers part of the loss: 4D-Var 0.612, ETKF 0.633, EnKF 0.634, EnKS 0.665.
+\end{itemize}
+The smoother is the most robust scheme under model error on both systems, and
+the hard constraint the least. Misspecification turns the best perfect-model
+scheme into the worst.
+
 \subsection{The value of true-system data}\label{sec:q2-oracle}
 \needsrun{Learned schemes trained on simulations of the biased model, with
 $\sigma = 0$ and 20\,\%; their gap to the learned-on-truth rows measures what

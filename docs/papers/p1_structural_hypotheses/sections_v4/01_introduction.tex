@@ -44,9 +44,11 @@ operational form: \emph{a restriction costs variance honestly and preserves
 calibration; a misspecification costs bias silently and destroys it}.
 
 \paragraph{Questions.}
-We ask three questions on a two-scale Lorenz-96 system, with a perfect model and
-with a biased one, and with five classical and five learned schemes under the
-same observations and the same tuning protocol.
+We ask three questions on three case studies (Sect.~\ref{sec:testbeds}): a
+two-scale Lorenz-96 system, which carries five classical and five learned
+schemes under the same observations and the same tuning protocol; a Lorenz-63
+system, small enough to sweep the model error; and a quasi-geostrophic ocean,
+which tests the transfer to a realistic model-error case.
 \begin{enumerate}[label=\textbf{Q\arabic*},leftmargin=*]
   \item With a perfect model, how close does each scheme get to $\E[\xv\mid C]$,
     and where does the rest of its error go? (Sect.~\ref{sec:q1})
@@ -65,8 +67,9 @@ same observations and the same tuning protocol.
   \item Its extension along $\tau$ with $\FMS_\tau$, a proper score computable
     for point estimates, Gaussians and samples alike, with an exact split at
     every $\tau$.
-  \item A controlled study on a two-scale Lorenz-96 system: a perfect model and
-    model error, a regular and a random observing system, and every inference
+  \item A controlled study on three case studies (Lorenz-63, two-scale
+    Lorenz-96, a quasi-geostrophic ocean): a perfect model and model error, a
+    regular and a random observing system on Lorenz-96, and every inference
     hyper-parameter tuned on validation windows.
 \end{itemize}
 
@@ -74,6 +77,6 @@ same observations and the same tuning protocol.
 It proposes no new DA method; the learned schemes are instruments that relax one
 commitment at a time. The target is the state only, not the parameters. Unrolled
 variational solvers are left to a companion study \todo{P2}, and so is the general
-representation of DA algorithms as flows \todo{ML paper}. One idealised system
-is the price of matched information; we discuss transfer in
-Sect.~\ref{sec:discussion}.
+representation of DA algorithms as flows \todo{ML paper}. Cross-class claims rest on Lorenz-96, where matched information is affordable;
+Lorenz-63 and the quasi-geostrophic ocean carry the model-error sweep and the
+transfer to a realistic system.

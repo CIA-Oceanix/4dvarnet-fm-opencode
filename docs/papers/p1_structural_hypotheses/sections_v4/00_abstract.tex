@@ -17,8 +17,10 @@ flow-matching score, $\FMS_\tau$. It equals the mean-squared error at
 $\tau = 0$, is strictly proper for $\tau \in (0, 1)$, and splits exactly into an
 irreducible part, a restriction part and a remainder at every $\tau$.
 %
-On a two-scale Lorenz-96 system, with a perfect model and with a biased one,
-under matched information and tuning parity, three results stand out.
+On three case studies --- a two-scale Lorenz-96 system carrying the full
+scheme matrix, a Lorenz-63 system for the model-error axis and a
+quasi-geostrophic ocean for realism --- with a perfect model and with model
+error, under matched information and tuning parity, three results stand out.
 \begin{itemize}[leftmargin=*,nosep]
   \item With a perfect model, the deficit of classical DA is mostly restriction
     and approximation. Smoothing removes 16--19\,\% of the filter's RMSE, and
@@ -27,7 +29,9 @@ under matched information and tuning parity, three results stand out.
   \item Under model error, misspecification dominates. It shows in the
     large-$\tau$ score before it shows in the RMSE: the smoother's calibration
     loss grows from 34\,\% to 63\,\%. The marginal value of observations for
-    strong-constraint 4D-Var collapses sevenfold.
+    strong-constraint 4D-Var collapses sevenfold, and on the quasi-geostrophic
+    ocean the best perfect-model scheme, strong-constraint 4D-Var, becomes the
+    worst.
   \item A learned prior beats the true-model hard constraint and the 30-member
     smoother, but not the 100-member one. The ordering is set by approximation,
     not by the fidelity of the prior.

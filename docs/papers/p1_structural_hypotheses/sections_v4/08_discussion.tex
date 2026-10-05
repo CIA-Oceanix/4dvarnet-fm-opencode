@@ -39,8 +39,9 @@ hypotheses for real systems.}
     check.
   \item The cross term between misspecification and approximation is bounded by
     contrasts, not identified.
-  \item One idealised system: transfer to a quasi-geostrophic system is
-    underway.
+  \item Cross-class claims rest on one system (Lorenz-96); the QG ocean so far
+    confirms the DA side of the budget, and its learned schemes are in their
+    first round.
   \item The learned \So{} rows are oracle bounds until the biased-model arms are
     in.
 \end{itemize}
@@ -61,13 +62,13 @@ information across classical and learned schemes.
 The operator~\eqref{eq:psi} suggests a more general programme: writing every DA
 algorithm as a flow, and composing the mean of one with the anomaly of another,
 as the hybrid does. We leave it to future work, together with self-supervised
-adaptation of learned schemes to the observed system and the transfer to a
-quasi-geostrophic system.
+adaptation of learned schemes to the observed system.
 
 \section{Conclusion}\label{sec:conclusion}
 A restriction costs variance honestly and preserves calibration; a
 misspecification costs bias silently and destroys it. On a two-scale Lorenz-96
-system, with five classical and five learned schemes under matched information:
+system with five classical and five learned schemes under matched information,
+with a quasi-geostrophic ocean as a cross-check:
 \begin{itemize}[leftmargin=*,nosep]
   \item \textbf{Perfect model.} The deficit of classical DA is mostly honest:
     smoothing removes 16--19\,\% of the RMSE and 100 members remove 38\,\% of the
