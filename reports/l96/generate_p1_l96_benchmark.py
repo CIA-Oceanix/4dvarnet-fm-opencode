@@ -335,7 +335,8 @@ def main():
     A("| Deterministic | DirectUNet, single forward pass | RMSE; `var ratio` = predicted / true temporal variance "
       "(1.0 = no smoothing) |")
     A("| Flow matching | `ens30_no20` (30 members, 20 early-fine Euler steps) | ensemble-mean RMSE; proper "
-      "ensemble CRPS; `spread/RMSE` (1.0 calibrated) |")
+      "ensemble CRPS; `spread/RMSE` = window-mean spread / window-mean RMSE (biased low against the pooled "
+      "spread/skill, `docs/results/l96_p1_fm_score.md`) |")
     A("| SDA | guided `ens30`, 10 steps, `gw=25` (validation-tuned), `r_var=0.5`; the params-conditioned priors "
       "(SDA2, SDA3-fix) get the biased DA params at S1 | as above |")
     A("| tau=0 mean | `mu(x0, 0, y)` over 30 draws of each flow | the flow's implied posterior mean as a point "
