@@ -4,7 +4,7 @@
 # (391 vs 381 ms, 4.9 vs 4.6 GB), against ~650 ms for the wider ~100 M alternatives ([176, 352, 704]
 # or [144, 288, 576] x 3 res blocks). The coarser bottleneck doubles the largest receptive scale,
 # aimed at the unobserved lower layer (G1-L b16: q2 0.625 vs 4D-Var 0.648). Everything else -- data,
-# loss, observing system, budget -- equals G1-L b16.
+# loss, observing system, budget -- equals G1-L b16, except the peak LR (2.5e-4, see training.lr).
 #
 #   python train_qg_neural.py --model-type direct_unet_tchannels --exp-id G1XL_direct_unet_tchannels_specwind_b16 \
 #     --exp-dir experiments/qg_specwind_neural/G1XL_direct_unet_tchannels_specwind_b16 \
@@ -28,7 +28,11 @@ model:
   cond_extra_dim: 0
 training:
   epochs: 1200
-  lr: 0.0005
+  # Peak LR 2.5e-4, half of G1-L b16's (2026-10-06): the first G1-XL run at 5e-4 tracked G1-L b16
+  # (val 1.389 at epoch 37) and then blew up in one epoch as the warm-up reached the peak (decoder
+  # activation std 2.15 -> 4e8 at epoch 38, val 1.39 -> 2.94), the residual-stream failure seen at
+  # batch 2 with LR 1e-3. The deeper decoder needs a lower peak; everything else is unchanged.
+  lr: 0.00025
   warmup_epochs: 40
   batch_size: 16
   num_workers: 10

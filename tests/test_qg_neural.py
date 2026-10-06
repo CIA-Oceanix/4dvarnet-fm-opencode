@@ -1328,7 +1328,7 @@ def test_g1m_b16_config_is_g1l_b16_at_the_m_tier():
     assert m.training == lg.training and m.data == lg.data
 
 
-def test_g1xl_b16_config_is_g1l_b16_with_a_fourth_level():
+def test_g1xl_b16_config_is_g1l_b16_with_a_fourth_level_and_half_the_peak_lr():
     import os
 
     from omegaconf import OmegaConf
@@ -1341,7 +1341,10 @@ def test_g1xl_b16_config_is_g1l_b16_with_a_fourth_level():
     assert list(xl.model.hidden_channels) == [128, 256, 512, 512]
     assert {k: v for k, v in xl.model.items() if k != "hidden_channels"} == {
         k: v for k, v in lg.model.items() if k != "hidden_channels"}
-    assert xl.training == lg.training and xl.data == lg.data
+    assert float(xl.training.lr) == 2.5e-4
+    assert {k: v for k, v in xl.training.items() if k != "lr"} == {
+        k: v for k, v in lg.training.items() if k != "lr"}
+    assert xl.data == lg.data
     model = build_model("direct_unet_tchannels", QGConfig(nx=64), use_obs_mask=True,
                         hidden_channels=list(xl.model.hidden_channels),
                         num_res_blocks=int(xl.model.num_res_blocks))
