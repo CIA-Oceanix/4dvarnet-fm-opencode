@@ -1,0 +1,46 @@
+# @package _global_
+# M-tier (baseline) variant of monai_vanilla_cfm.yaml (L63) with an EXPLICIT
+# flat LR (use_cosine_scheduler: false), added as a dedicated file for the
+# same reason as monai_direct_unet_flat.yaml: monai_vanilla_cfm.yaml relies
+# on the StageConfig/schema default for use_cosine_scheduler, and that
+# default is True as of the 2026-09-10 policy flip (see AGENTS.md), so it
+# isn't actually a flat run despite predating that naming distinction. This
+# file gives a genuinely flat M-tier run to pair with
+# monai_vanilla_cfm_cosine.yaml for an apples-to-apples S+/M/L x cos/flat
+# comparison, matching the L96 tier ladder's hidden_channels [64,128,256].
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  monai_vanilla_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: false
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

@@ -1,0 +1,40 @@
+# @package _global_
+# M-tier (baseline) variant of monai_direct_unet.yaml (L63) with an EXPLICIT
+# use_cosine_scheduler: true, mirroring the L96 M/cosine tier
+# (config/experiment/L1b_monai_unet_s0s1_norm_cosine.yaml). Behaviorally
+# equivalent to monai_direct_unet.yaml under the current StageConfig default
+# (True), but named/pinned explicitly so it isn't silently affected by any
+# future default change -- and to pair cleanly with
+# monai_direct_unet_flat.yaml in the S+/M/L x cos/flat comparison.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 3
+  param_dim: 4
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: true
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

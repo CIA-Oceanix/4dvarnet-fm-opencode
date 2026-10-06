@@ -1,0 +1,49 @@
+# @package _global_
+# MonaiUNet1D-backed PredictStateCFM (the "V3" CFM variant that predicts
+# mu = E[x1|x_tau,y] directly instead of the velocity x1-x0 -- see
+# models/vanilla_cfm.py::PredictStateCFM's docstring for the ODE
+# derivation: v = (mu - x)/(1-tau)). Same conditioning contract/interpolant
+# as monai_vanilla_cfm.yaml (identical field set on the plain PredictStateCFM
+# vs VanillaCFM classes), only the training target/sampling ODE differs, so
+# this mirrors monai_vanilla_cfm.yaml's L63 hyperparameters exactly for a
+# fair backbone/target-only comparison. cond_extra_dim mirrors
+# monai_vanilla_cfm.yaml's effective obs+forcing+params conditioning
+# (param_dim=4 default -> 1 forcing + 4 params = 5).
+#
+# M tier (hidden [64,128,256], num_res_blocks=2) is the default here,
+# matching monai_vanilla_cfm.yaml/monai_direct_unet.yaml's convention.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_predict_state_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  monai_predict_state_cfm:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

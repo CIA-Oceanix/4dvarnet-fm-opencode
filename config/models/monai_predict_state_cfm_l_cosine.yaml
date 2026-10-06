@@ -1,0 +1,40 @@
+# @package _global_
+# L complexity-tier variant of monai_predict_state_cfm.yaml (L63), cosine
+# LR. hidden_channels [128,256,512], identical to
+# monai_predict_state_cfm_l.yaml except use_cosine_scheduler: true.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_predict_state_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  monai_predict_state_cfm:
+    hidden_channels: [128, 256, 512]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: true
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

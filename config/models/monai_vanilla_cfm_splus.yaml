@@ -1,0 +1,46 @@
+# @package _global_
+# S+ complexity-tier variant of monai_vanilla_cfm.yaml (L63), mirroring the
+# L96 S+ tier (config/experiment/L2b_monai_vanilla_cfm_s0s1_norm_splus_cosine.yaml,
+# which pairs the S+ tier with cosine LR there): hidden_channels [32,64,128]
+# vs the M-tier baseline's [64,128,256], same data setup and training
+# hyperparameters -- only backbone capacity changes. use_cosine_scheduler is
+# set explicitly (flat LR) rather than left to the StageConfig default,
+# since that default is True (deliberate policy since 2026-09-10, see
+# AGENTS.md) and would otherwise silently turn this into a cosine run --
+# same reasoning as monai_direct_unet_splus.yaml.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_vanilla_cfm
+  state_dim: 3
+  N_ensemble: 50
+  param_dim: 4
+  monai_vanilla_cfm:
+    hidden_channels: [32, 64, 128]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: false
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

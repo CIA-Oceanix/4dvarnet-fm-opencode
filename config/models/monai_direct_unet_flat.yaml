@@ -1,0 +1,44 @@
+# @package _global_
+# M-tier (baseline) variant of monai_direct_unet.yaml (L63) with an EXPLICIT
+# flat LR (use_cosine_scheduler: false). Added as a dedicated file rather
+# than reusing monai_direct_unet.yaml: that file relies on the
+# StageConfig/schema default for use_cosine_scheduler, and that default is
+# True as of the 2026-09-10 policy flip (see AGENTS.md) -- so
+# monai_direct_unet.yaml's already-published result
+# (experiments_monaiv0/l63/monai_direct_unet) was actually trained with
+# cosine LR, not flat, despite predating that naming distinction. This file
+# gives a genuinely flat M-tier run to pair with monai_direct_unet_cosine.yaml
+# for an apples-to-apples S+/M/L x cos/flat comparison, matching the L96
+# tier ladder's hidden_channels [64,128,256].
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 3
+  param_dim: 4
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: false
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

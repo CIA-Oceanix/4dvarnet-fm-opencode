@@ -1,0 +1,39 @@
+# @package _global_
+# L complexity-tier variant of monai_direct_unet.yaml (L63), flat LR,
+# mirroring the L96 L tier (config/experiment/L1b_monai_unet_s0s1_norm_l.yaml):
+# hidden_channels [128,256,512] vs the M-tier baseline's [64,128,256]. Same
+# data setup and training hyperparameters; use_cosine_scheduler is set
+# explicitly (see monai_direct_unet_flat.yaml for why -- the schema default
+# is True as of 2026-09-10, so an unset flag here would silently be cosine).
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 3
+  param_dim: 4
+  monai_direct_unet:
+    hidden_channels: [128, 256, 512]
+    dropout: 0.1
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: false
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

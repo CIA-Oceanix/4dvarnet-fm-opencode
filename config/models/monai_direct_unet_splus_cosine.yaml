@@ -1,0 +1,39 @@
+# @package _global_
+# S+ complexity-tier variant of monai_direct_unet.yaml (L63), cosine-LR,
+# mirroring the L96 S+/cosine tier
+# (config/experiment/L1b_monai_unet_s0s1_norm_splus_cosine.yaml):
+# hidden_channels [32,64,128], identical to monai_direct_unet_splus.yaml
+# except use_cosine_scheduler: true (CosineAnnealingLR over the full
+# 3000-epoch stage1 run, subject to early stopping).
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_direct_unet
+  state_dim: 3
+  param_dim: 4
+  monai_direct_unet:
+    hidden_channels: [32, 64, 128]
+    dropout: 0.1
+    cond_extra_dim: 5
+    num_res_blocks: 2
+    norm_num_groups: 32
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+    use_cosine_scheduler: true
+  batch_size: 128
+
+data:
+  normalize: true
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs
