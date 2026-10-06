@@ -1,0 +1,47 @@
+# @package _global_
+# Clone of monai_sda_prior_cond.yaml (SDA2, same model_type/architecture)
+# isolating exactly one new variable: the *params* fed as training
+# conditioning. SDA2 trains on the true physical params; SDA3 instead
+# trains on a noisy per-window estimate -- for each training access, a
+# fresh random fraction in [0, noisy_da_max] of the window's own true->DA
+# bias is added to the true value (data.noisy_da_bias/noisy_da_max,
+# data/dataloader.py::FlowMatchingDataset._extract_params). S0 windows
+# carry no *_da bias, so this is a no-op there regardless of the sampled
+# fraction -- mirrors the L96 SDA3_cond_noisy_l96.yaml convention.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 3
+  param_dim: 4
+  N_ensemble: 50
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+    guidance_weight: 20.0
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  stage2:
+    epochs: 0
+  batch_size: 128
+
+data:
+  noisy_da_bias: true
+  noisy_da_max: 1.5
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

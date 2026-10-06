@@ -1,0 +1,46 @@
+# @package _global_
+# MonaiUNet1D-backed params+forcing-conditioned SDA prior (SDA2): same
+# ConditionalPriorCFM contract as models/sda.py's non-monai sda_prior_cond
+# (obs never a network input, only the forcing+params `_cond` tensor),
+# guided at inference time the same way as monai_sda_prior.yaml
+# (eval_sda_l63.py, evaluation/sda_sampler.py). M tier (hidden
+# [64,128,256]) to match monai_sda_prior.yaml's convention.
+#
+# Trained unnormalized (no data.normalize here), matching
+# monai_sda_prior.yaml -- pass +data.normalize=true on the eval_sda_l63.py
+# hybrid CLI invocation when warm-starting from a mean model trained with
+# data.normalize: true, so the guidance cost/warm-start operate in the same
+# normalized space the mean model expects.
+defaults:
+  - /lorenz63
+  - _self_
+
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 3
+  param_dim: 4
+  N_ensemble: 50
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 1.0
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+    guidance_weight: 20.0
+
+training:
+  stage1:
+    epochs: 3000
+    lr: 0.001
+    gradient_clip_val: 10.0
+    early_stopping_patience: 300
+    early_stopping_min_delta: 0.001
+  stage2:
+    epochs: 0
+  batch_size: 128
+
+paths:
+  checkpoint_dir: checkpoints
+  checkpoint_stage1: checkpoints/stage1.pt
+  outputs_dir: outputs

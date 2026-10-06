@@ -42,7 +42,7 @@ from monai.networks.nets import DiffusionModelUNet
 from models.interpolant import LinearInterpolant
 from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.unet import cond_extra_width
-from models.vanilla_cfm import VanillaCFM, TweedieCFM
+from models.vanilla_cfm import VanillaCFM, TweedieCFM, PredictStateCFM
 
 _PATCHED_1D_RESBLOCK = False
 
@@ -231,6 +231,60 @@ class MonaiVanillaCFM(VanillaCFM):
             self.use_params = use_params and param_dim > 0
             cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
         self.cond_extra_dim = cond_extra_dim
+        self.unet = MonaiUNet1D(
+            state_dim=state_dim,
+            obs_dim=state_dim + cond_extra_dim,
+            hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups,
+            use_obs=True,
+            dropout=dropout,
+        )
+        self.interpolant = LinearInterpolant(nu=1.0, tau_sampling=tau_sampling,
+                                              logit_normal_loc=logit_normal_loc,
+                                              logit_normal_scale=logit_normal_scale,
+                                              beta_alpha=beta_alpha, beta_beta=beta_beta)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
+
+
+class MonaiPredictStateCFM(PredictStateCFM):
+    """MonaiUNet1D-backed drop-in for PredictStateCFM (the "V3" CFM variant
+    that predicts mu = E[x1 | x_tau, y] directly instead of the velocity
+    x1 - x0 -- see PredictStateCFM's docstring for the ODE derivation).
+    forward/compute_loss/sample are inherited unchanged from PredictStateCFM
+    -- they only ever call ``self.unet(...)``, and MonaiUNet1D's forward has
+    the same (x, obs=, tau=) call shape as UNet1D's -- only the backbone
+    construction differs here, exactly as in MonaiVanillaCFM above.
+    """
+
+    def __init__(self, state_dim=3, hidden_channels=None, time_emb_dim=64,
+                 N_outer=10, sigma_prior=1.0, dropout=0.1, train_tau_0_only=False,
+                 param_dim=4, use_obs=True, use_forcing=False, use_params=False,
+                 cond_extra_dim=None, num_res_blocks=2, norm_num_groups=32,
+                 tau_sampling="uniform", logit_normal_loc=0.0, logit_normal_scale=1.0,
+                 beta_alpha=2.5, beta_beta=1.0):
+        nn.Module.__init__(self)
+        self.param_dim = param_dim
+        # Same legacy-vs-flags resolution as PredictStateCFM.__init__ (not
+        # called directly here since it would also build a throwaway UNet1D)
+        # -- forward()/compute_loss()/sample() are inherited unchanged from
+        # PredictStateCFM and read self.use_obs/use_forcing/use_params via
+        # models.unet.make_cond, so these must be set for real, not left to
+        # AttributeError.
+        self.use_obs = use_obs
+        if cond_extra_dim is not None:
+            self.use_forcing = cond_extra_dim > 0
+            self.use_params = cond_extra_dim > 0 and param_dim > 0
+        else:
+            self.use_forcing = use_forcing
+            self.use_params = use_params and param_dim > 0
+            cond_extra_dim = cond_extra_width(param_dim, self.use_forcing, self.use_params)
+        self.cond_extra_dim = cond_extra_dim
+        self.hidden_channels = hidden_channels if hidden_channels is not None else [64, 128, 256]
+        self.time_emb_dim = time_emb_dim
         self.unet = MonaiUNet1D(
             state_dim=state_dim,
             obs_dim=state_dim + cond_extra_dim,

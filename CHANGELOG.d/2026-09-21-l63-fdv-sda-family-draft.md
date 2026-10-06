@@ -1,0 +1,6 @@
+## 2026-09-21: L63 FDV solvers, conditioned SDA priors, SDA warm-start hybrids (draft)
+
+**Summary:** Draft of the remaining L96 model families for L63: FDV1/FDV2 unrolled solvers (`obs+state`, `grad+state`, `subgrad+state`), SDA2 (params+forcing conditioned) and SDA3 (noisy-params conditioned) monai priors, and the L96-style SDEdit warm-start hybrid (frozen mean model + guided SDA sampling) in `eval_sda_l63.py`. Configs are untrained drafts; only 1-epoch smoke runs were performed.
+**Files modified:** `config/models/monai_fdv_{obsstate,grad,subgrad}.yaml`, `config/models/monai_sda_prior_cond{,_noisy}.yaml` — new L63 configs; `eval_sda_l63.py` — conditioned priors, checkpoint dir from config name, `+hybrid.mean_model/tau0` mode; `data/dataloader.py` — `noisy_da_bias` generalized beyond the L96 8-param layout; `train.py` — L63 dataloaders forward `noisy_da_bias/max`; `tests/test_l63_noisy_da_params.py` — new.
+**Rationale:** L63 lagged L96 (no FDV, SDA1 only, no hybrids). The SDA model class/sampler were already shared; the gaps were conditioning, noisy-params training and the warm-start path.
+**Verification:** 1-epoch train of `monai_fdv_subgrad` and `monai_sda_prior_cond_noisy` on 8 windows, then `eval_sda_l63.py` hybrid eval end to end (s0+s1); `pytest tests/test_l63_noisy_da_params.py`.
