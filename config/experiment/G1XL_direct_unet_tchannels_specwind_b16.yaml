@@ -1,0 +1,56 @@
+# G1-XL, batch-16 protocol (2026-10-06): G1L_direct_unet_tchannels_specwind_b16.yaml with a fourth
+# U-Net level -- hidden [128, 256, 512, 512], 2 res blocks, 96.1 M params (G1-L 57.8 M). The extra
+# level is at the 8 x 8 bottleneck: about the same cost per step as G1-L on an RTX 8000 at batch 16
+# (391 vs 381 ms, 4.9 vs 4.6 GB), against ~650 ms for the wider ~100 M alternatives ([176, 352, 704]
+# or [144, 288, 576] x 3 res blocks). The coarser bottleneck doubles the largest receptive scale,
+# aimed at the unobserved lower layer (G1-L b16: q2 0.625 vs 4D-Var 0.648). Everything else -- data,
+# loss, observing system, budget -- equals G1-L b16.
+#
+#   python train_qg_neural.py --model-type direct_unet_tchannels --exp-id G1XL_direct_unet_tchannels_specwind_b16 \
+#     --exp-dir experiments/qg_specwind_neural/G1XL_direct_unet_tchannels_specwind_b16 \
+#     --specwind-spec qg_specwind_gyrostat_v1 --specwind-root ../experiments/qg_datasets \
+#     --regen-windows 1000 --regen-every 5 --seed 0
+
+experiment_id: G1XL_direct_unet_tchannels_specwind_b16
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [128, 256, 512, 512]
+  num_res_blocks: 2
+  use_obs_mask: true
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 1200
+  lr: 0.0005
+  warmup_epochs: 40
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration draw;
+  # scale 3 selected by the E1 sweep on val (0.699 vs 0.688 at 1, 0.694 at 10).
+  q_loss_weight_scale: 3.0
+data:
+  normalize: true
+  # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):
+  # 3 psi1 columns per day, sequential sampler, 5% white noise.
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  # Train split only: a fresh draw per sample, 3-30 distinct (step, column)
+  # slots per day, uniform over the 12 x 64 slots of a day (plan section 4.3).
+  cols_per_day_min: 3
+  cols_per_day_max: 30
+  train_cols_sampling: uniform_slots
+  # Train split only (2026-10-05, S1 keeps its altimetry error): each draw gets a total white
+  # error ~ U[5%, 15%] and a per-pass correlated error (offset + tilt) ~ U[0, 15%] of the
+  # window's psi1 std -- from the S0 obs model to the S1 one (evaluation/qg_specwind_s1.py).
+  obs_error_aug: [0.05, 0.15, 0.15]

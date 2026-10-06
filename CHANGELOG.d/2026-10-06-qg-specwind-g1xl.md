@@ -1,0 +1,6 @@
+## 2026-10-06: QG gyrostat neural — G1-XL (96 M params, 4-level U-Net) on the batch-16 protocol
+
+**Summary:** New config `G1XL_direct_unet_tchannels_specwind_b16.yaml`: G1-L b16 with a fourth U-Net level, hidden [128, 256, 512, 512], 2 res blocks, 96.1 M params (G1-L 57.8 M); data, loss, observing system and budget equal G1-L b16.
+**Files modified:** `config/experiment/G1XL_direct_unet_tchannels_specwind_b16.yaml`; `tests/test_qg_neural.py`.
+**Rationale:** Capacity still pays (G1 S/M/L 0.696/0.717/0.734 at epoch 58; G1-M b16 0.802 at epoch 833 vs G1-L b16 0.834 final at S0). Three ~100 M candidates were benchmarked on an RTX 8000 at batch 16 with the q loss: 4 levels [128, 256, 512, 512] (96.1 M) 391 ms/step and 4.9 GB, against 643 / 651 ms and 6.7 GB for the wider [176, 352, 704] (109 M) and [144, 288, 576] x 3 res blocks (95 M), and 381 ms / 4.6 GB for G1-L. The extra level sits at the 8 x 8 bottleneck, so it is nearly free, and it doubles the largest receptive scale -- aimed at the unobserved lower layer, where G1-L b16 still trails 4D-Var (q2 0.625 vs 0.648, psi2 0.956 vs 0.983).
+**Verification:** `pytest tests/test_qg_neural.py -k "g1xl or g1m_b16 or large_batch"` (equals G1-L b16 apart from the channels; 96,133,180 params).

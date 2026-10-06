@@ -1326,3 +1326,23 @@ def test_g1m_b16_config_is_g1l_b16_at_the_m_tier():
     assert {k: v for k, v in m.model.items() if k != "hidden_channels"} == {
         k: v for k, v in lg.model.items() if k != "hidden_channels"}
     assert m.training == lg.training and m.data == lg.data
+
+
+def test_g1xl_b16_config_is_g1l_b16_with_a_fourth_level():
+    import os
+
+    from omegaconf import OmegaConf
+
+    from train_qg_neural import build_model
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    xl = OmegaConf.load(os.path.join(base, "G1XL_direct_unet_tchannels_specwind_b16.yaml"))
+    lg = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind_b16.yaml"))
+    assert xl.experiment_id == "G1XL_direct_unet_tchannels_specwind_b16"
+    assert list(xl.model.hidden_channels) == [128, 256, 512, 512]
+    assert {k: v for k, v in xl.model.items() if k != "hidden_channels"} == {
+        k: v for k, v in lg.model.items() if k != "hidden_channels"}
+    assert xl.training == lg.training and xl.data == lg.data
+    model = build_model("direct_unet_tchannels", QGConfig(nx=64), use_obs_mask=True,
+                        hidden_channels=list(xl.model.hidden_channels),
+                        num_res_blocks=int(xl.model.num_res_blocks))
+    assert sum(p.numel() for p in model.parameters()) == 96_133_180
