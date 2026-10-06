@@ -77,3 +77,5 @@ reports/qg/outputs/qg_tune_4dvar/
 # Reviewer PAT (never commit)
 .reviewer-token
 reviewer-token
+
+logs/
