@@ -43,13 +43,17 @@ EXP_DIR = os.path.join(BASE, "experiments")
 
 
 def make_experiment_dataloaders(datasets, batch_size=32, num_workers=4,
-                                base_cfg=None, with_params=False):
-    kw = dict(batch_size=batch_size, collate_fn=collate_fm,
-              num_workers=num_workers, pin_memory=True)
+                                base_cfg=None, with_params=False,
+                                noisy_da_bias=False, noisy_da_max=1.5,
+                                norm_stats=None):
+    kw = dict(batch_size=batch_size, num_workers=num_workers, pin_memory=True)
     obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
+    noisy_cfg = dict(noisy_da_bias=noisy_da_bias, noisy_da_max=noisy_da_max)
     return {
-        "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg), shuffle=True, **kw),
-        "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg), shuffle=False, **kw),
+        "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg, **noisy_cfg),
+                            shuffle=True, collate_fn=make_collate_fm(norm_stats), **kw),
+        "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg, **noisy_cfg),
+                          shuffle=False, collate_fn=make_collate_fm(norm_stats), **kw),
     }
 
 
@@ -300,6 +304,28 @@ def model_factory(cfg: DictConfig, device: torch.device):
             beta_alpha=psc.get("beta_alpha", 2.5),
             beta_beta=psc.get("beta_beta", 1.0),
         )
+    elif model_type == "monai_predict_state_cfm":
+        from models.monai_unet_adapter import MonaiPredictStateCFM
+        mpsc = cfg.model.monai_predict_state_cfm
+        param_dim = cfg.model.get("param_dim", 4)
+        model = MonaiPredictStateCFM(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mpsc.hidden_channels,
+            N_outer=mpsc.N_outer,
+            sigma_prior=mpsc.sigma_prior,
+            dropout=mpsc.dropout,
+            train_tau_0_only=mpsc.get("train_tau_0_only", False),
+            param_dim=param_dim,
+            use_obs=use_obs, use_forcing=use_forcing, use_params=use_params,
+            cond_extra_dim=mpsc.get("cond_extra_dim", None),
+            num_res_blocks=mpsc.get("num_res_blocks", 2),
+            norm_num_groups=mpsc.get("norm_num_groups", 32),
+            tau_sampling=mpsc.get("tau_sampling", "uniform"),
+            logit_normal_loc=mpsc.get("logit_normal_loc", 0.0),
+            logit_normal_scale=mpsc.get("logit_normal_scale", 1.0),
+            beta_alpha=mpsc.get("beta_alpha", 2.5),
+            beta_beta=mpsc.get("beta_beta", 1.0),
+        )
     elif model_type == "tweedie_cfm":
         from models.vanilla_cfm import TweedieCFM
         tc = cfg.model.tweedie_cfm
@@ -443,12 +469,21 @@ def model_factory(cfg: DictConfig, device: torch.device):
 
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
-                     param_dim=4, use_biased_params=False, obs_var_indices=None):
+                     param_dim=4, use_biased_params=False, obs_var_indices=None,
+                     norm_stats=None):
+    """`norm_stats`, when given, z-score normalizes `obs` (the model's
+    input) only -- `states` stays raw always: it is never fed to the model,
+    only used later for scoring (mirrors evaluation/neural_inference.py's
+    make_collate_eval for L96; the model's prediction is denormalized back
+    before scoring, in evaluate_model/save_trajectories)."""
     from data.dataloader import FlowMatchingBatch, _l96_biased_param_vector
     states = w["true_state"].unsqueeze(0).to(device)
     if obs_var_indices is not None and states.shape[-1] != len(obs_var_indices):
         states = states[..., obs_var_indices]
     obs = w["obs"].unsqueeze(0).to(device)
+    if norm_stats is not None:
+        from data.normalization import normalize
+        obs = normalize(obs, norm_stats)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
     if param_dim == 0:
@@ -483,7 +518,7 @@ def _eval_true_param_list(w, param_names):
 STOCHASTIC_MODEL_TYPES = {
     "tweedie", "vanilla_cfm", "monai_vanilla_cfm",
     "joint_cfm", "joint_cfm_coupled", "joint_tweedie_cfm",
-    "predict_state_cfm", "tweedie_cfm", "monai_tweedie_cfm",
+    "predict_state_cfm", "monai_predict_state_cfm", "tweedie_cfm", "monai_tweedie_cfm",
     "sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond",
     "fourdvarnet_cfm",
 }
@@ -501,7 +536,8 @@ def _predict_once(model, batch, model_type, return_params=False):
     elif model_type in ("param_head", "param_head_unet"):
         pred, params = model(batch)
         return pred, params
-    elif model_type in ("vanilla_cfm", "monai_vanilla_cfm", "predict_state_cfm", "tweedie_cfm",
+    elif model_type in ("vanilla_cfm", "monai_vanilla_cfm", "predict_state_cfm",
+                        "monai_predict_state_cfm", "tweedie_cfm",
                         "monai_tweedie_cfm",
                         "sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond",
                         "fourdvarnet", "fourdvarnet_cfm"):
@@ -517,7 +553,8 @@ EvalMetrics = namedtuple(
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
                    param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                   obs_var_indices=None, N_ensemble=1, use_biased_params=False):
+                   obs_var_indices=None, N_ensemble=1, use_biased_params=False,
+                   norm_stats=None):
     """Evaluate `model` over every window in `dataset`.
 
     Mirrors `evaluation.run.evaluate_baseline`/`fmt_rmse`'s metrics so ML and
@@ -527,6 +564,12 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
     "ensemble") mean/std across windows. `ensemble_spread` (RMS ensemble
     std, pooled like R^2) is populated only when multiple stochastic draws
     are actually taken.
+
+    `norm_stats`, when given, normalizes the model's `obs` input
+    (`_make_eval_batch`) and denormalizes its state-space prediction back to
+    raw physical units before any metric is computed against `truth` (which
+    is always raw) -- a predicted `params` vector (joint models) is a
+    different physical quantity and is never touched by state norm_stats.
     """
     n_draws = N_ensemble if (model_type in STOCHASTIC_MODEL_TYPES and N_ensemble > 1) else 1
     rmse_list = []
@@ -540,7 +583,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
-                                 obs_var_indices=obs_var_indices)
+                                 obs_var_indices=obs_var_indices, norm_stats=norm_stats)
         member_preds, member_params = [], []
         for _ in range(n_draws):
             pred, params = _predict_once(model, batch, model_type, return_params=return_params)
@@ -551,6 +594,9 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
         if obs_var_indices is not None and member_preds[0].shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
         ensemble = np.stack(member_preds, axis=0)  # (n_draws, T, D)
+        if norm_stats is not None:
+            from data.normalization import denormalize
+            ensemble = denormalize(ensemble, norm_stats)
         pred = ensemble.mean(axis=0)
         rmse_list.append(rmse(pred, truth))
         es_list.append(energy_score(ensemble, truth))
@@ -598,18 +644,23 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 def save_trajectories(model, dataset, device, model_type, save_path,
                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None, N_ensemble=1, use_biased_params=False):
+                      obs_var_indices=None, N_ensemble=1, use_biased_params=False,
+                      norm_stats=None):
     n_draws = N_ensemble if (model_type in STOCHASTIC_MODEL_TYPES and N_ensemble > 1) else 1
     trajs, truths, members = [], [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
-                                 obs_var_indices=obs_var_indices)
+                                 obs_var_indices=obs_var_indices, norm_stats=norm_stats)
         member_preds = []
         for _ in range(n_draws):
             pred, _ = _predict_once(model, batch, model_type)
-            member_preds.append(pred.detach().cpu().numpy()[0])
+            member_pred = pred.detach().cpu().numpy()[0]  # (T, D)
+            if norm_stats is not None:
+                from data.normalization import denormalize
+                member_pred = denormalize(member_pred, norm_stats)
+            member_preds.append(member_pred)
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and member_preds[0].shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -668,14 +719,17 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
     dc = cfg.data
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
     datasets, test_keys, base_cfg, system, obs_var_indices = build_datasets(cfg, train_case=case)
+    norm_stats = None
+    if dc.get("normalize", False):
+        from data.normalization import load_norm_stats
+        default_norm_stats_path = {
+            "lorenz96": os.path.join(EXP_DIR, "l96_norm_stats_obsj2.pt"),
+            "lorenz63": os.path.join(EXP_DIR, "l63_norm_stats.pt"),
+        }.get(system)
+        norm_stats_path = dc.get("norm_stats_path", default_norm_stats_path)
+        norm_stats = load_norm_stats(norm_stats_path)
+        logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
     if system == "lorenz96":
-        norm_stats = None
-        if dc.get("normalize", False):
-            from data.normalization import load_norm_stats
-            norm_stats_path = dc.get("norm_stats_path",
-                                      os.path.join(EXP_DIR, "l96_norm_stats_obsj2.pt"))
-            norm_stats = load_norm_stats(norm_stats_path)
-            logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
         obs_density_cfg = None
         if dc.get("obs_density_augment", False):
             obs_density_cfg = {
@@ -704,6 +758,9 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
             datasets, batch_size=cfg.training.batch_size,
             num_workers=4, base_cfg=base_cfg,
             with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "joint_tweedie_cfm")),
+            noisy_da_bias=dc.get("noisy_da_bias", False),
+            noisy_da_max=dc.get("noisy_da_max", 1.5),
+            norm_stats=norm_stats,
         )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")
@@ -814,13 +871,15 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
                                      return_params=True, param_names=param_names,
                                      param_dim=param_dim, obs_var_indices=obs_var_indices,
                                      N_ensemble=N_ensemble,
-                                     use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                                     use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                                     norm_stats=norm_stats)
             param_metrics[key] = metrics.param_rmse
         else:
             metrics = evaluate_model(model, datasets[key], device, model_type,
                                      param_names=param_names, param_dim=param_dim,
                                      obs_var_indices=obs_var_indices, N_ensemble=N_ensemble,
-                                     use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                                     use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                                     norm_stats=norm_stats)
         eval_elapsed[key] = time.time() - t_case0
         results_metrics[key] = metrics
     eval_t = time.time() - t0
@@ -833,7 +892,8 @@ def run_experiment(cfg: DictConfig, device: torch.device, case: str = None):
                               os.path.join(exp_dir, f"trajectories_{case}.npz"),
                               param_names=param_names, param_dim=param_dim,
                               obs_var_indices=obs_var_indices, N_ensemble=N_ensemble,
-                              use_biased_params=(model_type in ("param_head", "param_head_unet")))
+                              use_biased_params=(model_type in ("param_head", "param_head_unet")),
+                              norm_stats=norm_stats)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 
