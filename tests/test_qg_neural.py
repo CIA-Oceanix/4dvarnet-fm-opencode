@@ -1312,3 +1312,17 @@ def test_train_cli_budget_flags_default_to_the_yaml():
                     defaults[node.args[0].value] = kw.value.value
     for flag in ("--epochs", "--batch-size", "--num-workers", "--regen-every"):
         assert defaults.get(flag, "missing") is None, flag
+
+
+def test_g1m_b16_config_is_g1l_b16_at_the_m_tier():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    m = OmegaConf.load(os.path.join(base, "G1_direct_unet_tchannels_specwind_b16.yaml"))
+    lg = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind_b16.yaml"))
+    assert m.experiment_id == "G1_direct_unet_tchannels_specwind_b16"
+    assert list(m.model.hidden_channels) == [64, 128, 256]
+    assert {k: v for k, v in m.model.items() if k != "hidden_channels"} == {
+        k: v for k, v in lg.model.items() if k != "hidden_channels"}
+    assert m.training == lg.training and m.data == lg.data
