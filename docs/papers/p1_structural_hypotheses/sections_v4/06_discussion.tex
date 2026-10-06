@@ -1,0 +1,85 @@
+\section{Discussion}\label{sec:discussion}
+
+\paragraph{Four lessons, as budget statements.}
+\begin{enumerate}[label=(\alph*),leftmargin=*]
+  \item With a perfect model, the deficit of classical DA is restriction and
+    approximation. It is honest --- the scheme stays calibrated for what it uses
+    --- and it is reducible by smoothing, members and iterations.
+  \item Under model error, misspecification dominates. It shows in the
+    large-$\tau$ score before it shows in the RMSE, and a scalar inflation hides
+    it in aggregate without removing it.
+  \item A better prior is not a better estimate. An approximate learned prior
+    can beat the true equations, because the ordering is set by the
+    approximation budget of the scheme that uses them.
+  \item Model-based DA can misreport the information value of its conditioning
+    variables: with a wrong model, additional observations stop helping, and the
+    reported uncertainty does not say so.
+\end{enumerate}
+
+\paragraph{What classical DA still gets right.}
+It wins in the sparse regime (at most about ten observation times per window).
+It transfers across observing systems, because it keeps $\Hop$ and $\mathbf{R}$
+explicit. It is calibrated when its assumptions hold, and it needs no training
+set. The learned schemes we compare were trained on 1000 windows of the true
+system; that data is a resource classical DA does not use, and
+Sect.~\ref{sec:q2-oracle} is designed to price it.
+
+\paragraph{Back to the puzzle.}
+\todo{What the budgets suggest for reanalysis vs observation-only products:
+misspecification under model error, visible as a floor in the marginal value of
+observations; and for the skill of learned priors: approximation and
+restriction terms of the model-based scheme at a perfect model. Stated as
+hypotheses for real systems.}
+
+\paragraph{Limitations.}
+\begin{itemize}[leftmargin=*,nosep]
+  \item $\mathrm{mmse}_p(\tau)$ is unknown, so the irreducible term is only
+    upper-bounded and every share is a share of an excess.
+  \item The DA ensembles are scored in Gaussian form; the kernel density is a
+    check.
+  \item The cross term between misspecification and approximation is bounded by
+    contrasts, not identified.
+  \item Cross-class claims rest on one system (Lorenz-96); the QG ocean so far
+    confirms the DA side of the budget, and its learned schemes are in their
+    first round.
+  \item The learned \So{} rows are oracle bounds until the biased-model arms are
+    in.
+\end{itemize}
+
+\paragraph{Positioning.}
+\todo{Model-error DA: weak-constraint 4D-Var~\cite{tremolet2006weak}, inflation and
+model-error estimation~\cite{carrassi2018da,farchi2021model}, unstable-subspace
+DA~\cite{trevisan2004unstable,bocquet2017unstable}. Learned and hybrid DA:
+\cite{brajard2020combining,bocquet2020bayesian,fablet4dvarnet}; score-based and
+flow-based DA~\cite{rozet2023sda}. Proper scores and their decompositions;
+mismatched estimation. Verify every entry of \texttt{refs.bib} (all currently
+unverified).} The gap we address: no controlled study measures \emph{where} the
+error of a DA scheme comes from --- restriction, misspecification or
+approximation --- for the mean and for the reported uncertainty, at matched
+information across classical and learned schemes.
+
+\paragraph{Outlook.}
+The operator~\eqref{eq:psi} suggests a more general programme: writing every DA
+algorithm as a flow, and composing the mean of one with the anomaly of another,
+as the hybrid does. We leave it to future work, together with self-supervised
+adaptation of learned schemes to the observed system.
+
+\section{Conclusion}\label{sec:conclusion}
+A restriction costs variance honestly and preserves calibration; a
+misspecification costs bias silently and destroys it. On a two-scale Lorenz-96
+system with five classical and five learned schemes under matched information,
+with a quasi-geostrophic ocean as a cross-check:
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{Perfect model.} The deficit of classical DA is mostly honest:
+    smoothing removes 16--19\,\% of the RMSE and 100 members remove 38\,\% of the
+    smoother's MSE.
+  \item \textbf{Model error.} Misspecification dominates and shows in the
+    large-$\tau$ score (smoother calibration loss 34 $\to$ 63\,\%). The marginal
+    value of observations of strong-constraint 4D-Var collapses sevenfold, and a
+    weak constraint recovers a quarter of its error.
+  \item \textbf{Form of the prior.} The learned prior beats the 30-member smoother
+    and not the 100-member one, so the approximation term, not the fidelity of
+    the prior, decides.
+\end{itemize}
+The flow-matching score makes the distinction measurable, for the mean and for
+the uncertainty alike.
