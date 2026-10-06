@@ -50,6 +50,9 @@ def _l96_true_param_vector(w):
     return tuple(vec)
 
 
+L96_JOINT_PARAM_NAMES = ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]
+
+
 class FlowMatchingBatch:
     def __init__(self, states, obs, obs_mask, forcing, params=None, true_params=None):
         self.states = states
@@ -103,8 +106,13 @@ class FlowMatchingDataset(Dataset):
             # S0 windows carry no *_da entries, so _l96_biased_param_vector
             # falls back to the true value there (bias vector = 0, so this is
             # a no-op on S0 regardless of the sampled fraction).
-            true_vec = _l96_true_param_vector(w)
-            da_vec = _l96_biased_param_vector(w)
+            if self.param_names == L96_JOINT_PARAM_NAMES:
+                true_vec = _l96_true_param_vector(w)
+                da_vec = _l96_biased_param_vector(w)
+            else:
+                true_vec = tuple(float(w.get(f"true_{n}", w.get(n, 1.0 if n == "c1" else 0.0)))
+                                 for n in self.param_names)
+                da_vec = tuple(float(w.get(n, 1.0 if n == "c1" else 0.0)) for n in self.param_names)
             frac = torch.empty(len(true_vec)).uniform_(0.0, self.noisy_da_max)
             return tuple(t + float(f) * (d - t) for t, d, f in zip(true_vec, da_vec, frac.tolist()))
         if self.resample_bias_draws:
