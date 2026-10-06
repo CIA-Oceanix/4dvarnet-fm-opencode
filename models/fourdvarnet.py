@@ -1043,7 +1043,10 @@ class FourDVarNetSolver(nn.Module):
         # x <- x - m * sigmoid(a + logit(gain_init)) * (x - y) - c / N, i.e. a nudging
         # term with a learned per-element gain in (0, 1) applied outside the
         # network on observed entries only, plus a free correction c.
-        if update_head not in ("direct", "gain"):
+        # update_head="gated": the UNet outputs (a, c) and the step is
+        # x <- x - 2 * sigmoid(a) * c / N, a learned per-element gate on the free
+        # update (g = 1 at initialisation, so it starts as the direct head).
+        if update_head not in ("direct", "gain", "gated"):
             raise ValueError(f"unknown update_head {update_head!r}")
         if not 0.0 < gain_init < 1.0:
             raise ValueError("gain_init must be in (0, 1)")
@@ -1091,7 +1094,7 @@ class FourDVarNetSolver(nn.Module):
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
             dropout=dropout,
-            output_dim=2 * state_dim if update_head == "gain" else state_dim,
+            output_dim=2 * state_dim if update_head in ("gain", "gated") else state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
             monai_num_res_blocks=monai_num_res_blocks,
             qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
@@ -1259,6 +1262,8 @@ class FourDVarNetSolver(nn.Module):
             )
             if self.update_head == "gain":
                 x = x - self._gain_step(gmod, x, obs_clean, obs_mask, N)
+            elif self.update_head == "gated":
+                x = x - self._gated_step(gmod, N)
             else:
                 x = x - (1.0 / N) * gmod
             x = torch.clamp(x, -self.clip_range, self.clip_range)
@@ -1282,6 +1287,11 @@ class FourDVarNetSolver(nn.Module):
         gain = torch.sigmoid(gmod[..., :D] + self.gain_logit_offset)
         mask = obs_mask.expand_as(x).to(x.dtype)
         return mask * gain * (x - obs_clean) + (1.0 / N) * gmod[..., D:]
+
+    @staticmethod
+    def _gated_step(gmod, N):
+        D = gmod.shape[-1] // 2
+        return 2.0 * torch.sigmoid(gmod[..., :D]) * gmod[..., D:] / N
 
     def forward(self, batch, N_outer=None):
         return self._unrolled_blocks(batch, N_outer=N_outer)[-1]
