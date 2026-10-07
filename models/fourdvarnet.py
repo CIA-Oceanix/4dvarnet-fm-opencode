@@ -259,6 +259,15 @@ def _prior_ae(prior_unet, state, tau=None, residual=False):
     return state + raw if residual else raw
 
 
+def _prior_ae_frozen(prior_unet, state, tau=None, residual=False):
+    """``_prior_ae`` with Phi's parameters detached: gradients still flow to
+    ``state`` through Phi, but the loss that consumes the output cannot update Phi."""
+    params = {k: v.detach() for k, v in prior_unet.named_parameters()}
+    raw = torch.func.functional_call(prior_unet, params, (state.transpose(1, 2),),
+                                     {"tau": tau}).transpose(1, 2)
+    return state + raw if residual else raw
+
+
 def _prior_cost(prior_unet, state, tau=None, residual=False):
     """sum((state - Phi(state))^2) -- MSE(state, Phi(state)) with
     reduction="sum", matching _masked_obs_cost's sum-based (not
@@ -477,7 +486,7 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_residual=False, detach_var_cost_grad=False,
                          x_tau=None, beta_tau=None,
                          prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
-                         zero_prior_input=False):
+                         zero_prior_input=False, freeze_prior_in_solver=False):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -666,14 +675,16 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         # "subgrad+state" plus the observation mask as an explicit channel block
         # (same change as "resid+state" -> "resid+mask+state").
         mask = obs_mask.expand_as(x).to(x.dtype)
-        g_prior = x - _prior_ae(prior_unet, x, tau, residual=prior_residual)
+        prior = _prior_ae_frozen if freeze_prior_in_solver else _prior_ae
+        g_prior = x - prior(prior_unet, x, tau, residual=prior_residual)
         return torch.cat([(obs_clean - x) * mask, g_prior, x, mask], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
         # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
         # channel layout); Phi is then trained by the aux prior loss only.
+        prior = _prior_ae_frozen if freeze_prior_in_solver else _prior_ae
         g_prior = (torch.zeros_like(x) if zero_prior_input
-                   else x - _prior_ae(prior_unet, x, tau, residual=prior_residual))
+                   else x - prior(prior_unet, x, tau, residual=prior_residual))
         return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "subgrad+state+xtau":
         assert x_tau is not None and beta_tau is not None, (
@@ -720,7 +731,7 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
                        detach_var_cost_grad=False, x_tau=None, beta_tau=None,
                        prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
-                       zero_prior_input=False):
+                       zero_prior_input=False, freeze_prior_in_solver=False):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -772,7 +783,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                prior_ode_forcing=prior_ode_forcing,
                                prior_ode_params=prior_ode_params,
                                true_dynamics=true_dynamics,
-                               zero_prior_input=zero_prior_input).transpose(1, 2)
+                               zero_prior_input=zero_prior_input,
+                               freeze_prior_in_solver=freeze_prior_in_solver).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -874,6 +886,7 @@ class FourDVarNetSolver(nn.Module):
                  zero_prior_input=False,
                  aux_detach_x_final=False,
                  update_head="direct",
+                 freeze_prior_in_solver=False,
                  gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
@@ -1036,6 +1049,11 @@ class FourDVarNetSolver(nn.Module):
         if zero_prior_input and update_input != "subgrad+state":
             raise ValueError("zero_prior_input is an ablation of update_input='subgrad+state' only")
         self.zero_prior_input = zero_prior_input
+        # freeze_prior_in_solver: Phi's parameters are detached where Phi feeds the
+        # solver input (x - Phi(x)), so Phi is trained by the aux prior loss only.
+        if freeze_prior_in_solver and update_input not in ("subgrad+state", "subgrad+mask+state"):
+            raise ValueError("freeze_prior_in_solver applies to subgrad+state / subgrad+mask+state only")
+        self.freeze_prior_in_solver = freeze_prior_in_solver
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
@@ -1258,6 +1276,7 @@ class FourDVarNetSolver(nn.Module):
                 self.prior_residual, self.detach_var_cost_grad,
                 prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
                 true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
+                freeze_prior_in_solver=self.freeze_prior_in_solver,
                 use_reentrant=False,
             )
             if self.update_head == "gain":

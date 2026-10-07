@@ -431,6 +431,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             zero_prior_input=fdv.get("zero_prior_input", False),
             aux_detach_x_final=fdv.get("aux_detach_x_final", False),
             update_head=fdv.get("update_head", "direct"),
+            freeze_prior_in_solver=fdv.get("freeze_prior_in_solver", False),
             gain_init=fdv.get("gain_init", 0.5),
             obs_var_indices=model_obs_var_indices,
             true_dynamics_dt=true_dynamics_dt,

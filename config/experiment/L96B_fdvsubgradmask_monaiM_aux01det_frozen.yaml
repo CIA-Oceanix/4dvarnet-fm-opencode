@@ -1,0 +1,25 @@
+# @package _global_
+# L96B_fdvsubgradmask_monaiM_aux01det (FDV2-M + mask, trained prior) with Phi frozen inside the
+# solver input (freeze_prior_in_solver): x - Phi(x) is computed with Phi's parameters detached,
+# so the solver's MSE loss trains the update UNet only and Phi is trained by the aux prior loss
+# alone (gradients still reach x through Phi). Stabilisation candidate after seed 2 of the
+# unfrozen config diverged at epoch ~101.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+mask+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    aux_detach_x_final: true
+    freeze_prior_in_solver: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2
