@@ -28,6 +28,7 @@ Run as a module from the repo root:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import time
@@ -40,7 +41,14 @@ from scipy.interpolate import CubicSpline
 from data.normalization import load_norm_stats
 from data.qg import QGConfig
 from data.qg_datasets import SPECS, shard_indices
-from data.qg_neural import QGNeuralDataset, denorm_psi, psi_to_q, qg_collate, steps_per_day
+from data.qg_neural import (
+    QGNeuralDataset,
+    denorm_psi,
+    psi_to_q,
+    qg_collate,
+    steps_per_day,
+    windowed_estimate,
+)
 from evaluation.metrics import crps as ensemble_crps
 from evaluation.qg_specwind_s1 import REALISTIC_SELECTED, REALISTIC_VARIANTS
 from evaluation.run_qg_specwind_da import (
@@ -87,7 +95,9 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     model_type = str(m.model_type)
     if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", "sda_prior_tchannels"):
         raise ValueError(f"{model_type!r} is not scored by this driver")
-    model = build_model(model_type, cfg, param_dim=int(m.get("param_dim", 0)),
+    days = rc.data.get("train_window_days", None)
+    model_cfg = dataclasses.replace(cfg, window_days=float(days)) if days is not None else cfg
+    model = build_model(model_type, model_cfg, param_dim=int(m.get("param_dim", 0)),
                         cond_extra_dim=int(m.get("cond_extra_dim", 0)), ic_dim=int(m.get("ic_dim", 0)),
                         use_obs_mask=bool(m.get("use_obs_mask", False)),
                         hidden_channels=list(m.get("hidden_channels", [64, 128, 256])),
@@ -178,14 +188,17 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
 def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg: QGConfig,
              device: torch.device, n_members: int = 1, interp: str = "cubic",
              batch_size: int = 4, guidance_weight: float = 100.0,
-             sda_steps: int = 10) -> list[dict]:
+             sda_steps: int = 10, window_stride: int = 5) -> list[dict]:
+    """Per-window scores; a network built for fewer days than the window estimates it
+    from overlapping sub-windows `window_stride` days apart (`windowed_estimate`)."""
     ds = QGNeuralDataset(windows, cfg, norm, on_the_fly_obs=False)
     per_window = []
     for start in range(0, len(windows), batch_size):
         idx = list(range(start, min(start + batch_size, len(windows))))
         batch = qg_collate([ds[i] for i in idx]).to(device)
-        members = estimate_members(model, model_type, batch, n_members, guidance_weight,
-                                   sda_steps).cpu()
+        members = windowed_estimate(
+            lambda b: estimate_members(model, model_type, b, n_members, guidance_weight, sda_steps),
+            batch, getattr(model, "T", batch.T), window_stride).cpu()
         for b, i in enumerate(idx):
             w = windows[i]
             phys = denorm_psi(members[:, b], cfg, norm).numpy()
@@ -217,6 +230,9 @@ def main() -> None:
     p.add_argument("--guidance-weight", type=float, default=100.0,
                    help="SDA: L2 guidance step per Euler step over one window's normalized state")
     p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
+    p.add_argument("--window-stride", type=int, default=None,
+                   help="days between the overlapping sub-windows of a network trained on a "
+                        "shorter window (default: the run's data.window_stride, else 5)")
     p.add_argument("--interp", default="cubic", choices=INTERP_KINDS)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--out", required=True, help="output path; per-window scores go to <out>_meta.json")
@@ -235,12 +251,17 @@ def main() -> None:
     load_s = time.time() - t0
     model, model_type, norm = load_run(args.run_dir, cfg, device)
     t0 = time.time()
+    rc = OmegaConf.load(os.path.join(args.run_dir, "resolved_config.yaml"))
+    stride = args.window_stride or int(rc.data.get("window_stride", None) or 5)
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
-                          args.interp, args.batch_size, args.guidance_weight, args.sda_steps)
+                          args.interp, args.batch_size, args.guidance_weight, args.sda_steps,
+                          window_stride=stride)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "N": per_window[0]["n_members"] if per_window else None, "interp": args.interp,
+            "network_window_days": rc.data.get("train_window_days", None),
+            "window_stride": stride if rc.data.get("train_window_days", None) else None,
             "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps}
                     if model_type == "sda_prior_tchannels" else None),
             "load": report, "load_seconds": round(load_s, 1),
