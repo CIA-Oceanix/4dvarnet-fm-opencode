@@ -57,9 +57,11 @@ obs-density-augmented training; see `data/qg_neural.py`'s
 `config/experiment/Q1_direct_unet_s0_obsdensity_aug.yaml`.
 """
 import argparse
+import dataclasses
 import json
 import math
 import os
+import shutil
 import time
 from types import SimpleNamespace
 
@@ -84,6 +86,8 @@ from data.qg_neural import (
     q_daily,
     q_from_psi_norm,
     qg_collate,
+    window_starts,
+    windowed_estimate,
 )
 from models.vanilla_cfm import VanillaCFM
 from training.pipeline import create_trainer
@@ -463,7 +467,9 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
                           cols_per_day_range=None, train_cols_sampling=None,
                           q_loss_weight_scale=None, q_daily_var=None, use_obs_mask=False,
                           hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
-                          warmup_epochs=0, obs_error_aug=None, regen=None, **kw) -> str:
+                          warmup_epochs=0, obs_error_aug=None, regen=None,
+                          cols_per_day_power=None, train_window_days=None, window_stride=None,
+                          init_from=None, **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -494,6 +500,11 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
         "cols_per_day_min": cols_per_day_range[0] if cols_per_day_range else None,
         "cols_per_day_max": cols_per_day_range[1] if cols_per_day_range else None,
         "train_cols_sampling": train_cols_sampling,
+        # Train split only: P(K) ~ K**-power over [min, max] (None = uniform).
+        "cols_per_day_power": cols_per_day_power,
+        # Network window (days) cropped from the 30-day windows, and the stride of the
+        # overlapping sub-windows a full window is estimated with (None = full window).
+        "train_window_days": train_window_days, "window_stride": window_stride,
         # Train split only: total white fraction ~ U[lo, hi] and per-pass correlated
         # fraction ~ U[0, corr_hi] per draw (the S1 altimetry error model).
         "obs_error_aug": list(obs_error_aug) if obs_error_aug is not None else None,
@@ -536,6 +547,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
             "q_loss_weight_scale": q_loss_weight_scale, "q_daily_var": q_daily_var,
             "use_cosine_scheduler": kw["use_cosine_scheduler"],
             "warmup_epochs": warmup_epochs,
+            "init_from": init_from,
             "seed": kw["seed"],
         },
     })
@@ -546,7 +558,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
 
 def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_members=1,
                      cond_mode="none", param_norm_stats=None, noisy_max=1.5,
-                     forcing_norm_stats=None, include_ic=False):
+                     forcing_norm_stats=None, include_ic=False, window_stride=5):
     """Return per-window physical psi estimates (W, days, 2*ny*nx) + per-window rd list."""
     dataset = QGNeuralDataset(windows, cfg, norm, cond_mode=cond_mode,
                               param_norm_stats=param_norm_stats, noisy_max=noisy_max,
@@ -560,12 +572,14 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
         for batch in loader:
             batch = batch.to(device)
             if model_type in DIRECT_TYPES:
-                pred = model(batch)
+                pred = windowed_estimate(model, batch, getattr(model, "T", batch.T), window_stride)
             elif model_type == "vanilla_cfm_tchannels":
                 # Ensemble mean of n_members flow samples (one sample if 1);
                 # the benchmark ensembles (CRPS, spread) are scored by the
                 # evaluation driver, not here.
-                pred = torch.stack([model.sample(batch) for _ in range(max(1, n_members))]).mean(0)
+                pred = windowed_estimate(
+                    lambda b: torch.stack([model.sample(b) for _ in range(max(1, n_members))]).mean(0),
+                    batch, model.T, window_stride)
             elif model_type == "fourdvarnet":
                 T = batch.states.shape[1]
                 needs_pad = model.unet_backbone == "monai"
@@ -585,6 +599,17 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
             for b in range(pred.shape[0]):
                 estimates.append(denorm_psi(pred[b], cfg, norm))
     return np.stack([e.numpy() for e in estimates]), np.asarray(rds)
+
+
+def load_run_weights(run_dir: str) -> dict:
+    """The network weights of a finished run: its best Lightning checkpoint, else stage1_best.pt."""
+    for name in ("checkpoints/stage1_best.ckpt", "stage1_best.pt"):
+        path = os.path.join(run_dir, name)
+        if os.path.exists(path):
+            state = torch.load(path, map_location="cpu", weights_only=False)
+            state = state["state_dict"] if isinstance(state, dict) and "state_dict" in state else state
+            return {(k[6:] if k.startswith("model.") else k): v for k, v in state.items()}
+    raise FileNotFoundError(f"no checkpoint in {run_dir}")
 
 
 def pooled_metrics(est, truth):
@@ -680,14 +705,21 @@ def _build_specwind_data(args, cfg, exp_dir, device, cond_mode, include_ic, cols
                                    noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
                                    include_ic=include_ic, cols_per_day_range=cols_per_day_range,
                                    cols_sampling=args.train_cols_sampling,
-                                   obs_error_aug=getattr(args, "obs_error_aug", None))
+                                   obs_error_aug=getattr(args, "obs_error_aug", None),
+                                   cols_per_day_power=getattr(args, "cols_per_day_power", None),
+                                   crop_days=getattr(args, "train_window_days", None))
+        crop = getattr(args, "train_window_days", None)
+        # A shorter network window is validated on non-overlapping crops tiling each
+        # val window, so the val loss still covers every day of every window.
         # One fixed obs draw per val window at the test setting (cfg), so
         # val_loss and checkpoint selection compare like with like across epochs.
         val_ds = QGNeuralDataset(with_fixed_obs(val_windows, cfg), cfg, norm,
                                  on_the_fly_obs=False,
                                  cond_mode=cond_mode, param_norm_stats=param_norm,
                                  noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
-                                 include_ic=include_ic)
+                                 include_ic=include_ic, crop_days=crop,
+                                 crop_starts=(window_starts(num_days(cfg), crop, crop)
+                                              if crop else None))
         callback = RegenerateTrainWindows(train_ds, source, args.regen_every,
                                           log_path=os.path.join(exp_dir, "regen_log.jsonl"))
     with open(os.path.join(exp_dir, "specwind.json"), "w") as fh:
@@ -862,6 +894,11 @@ def main():
                     help="Regenerate the train windows every this many epochs (YAML "
                          "data.regen_every, else 5).")
     ap.add_argument("--regen-batch-size", type=int, default=256)
+    ap.add_argument("--init-from", default=None,
+                    help="Fine-tune: start from this finished run directory's best checkpoint, "
+                         "with its psi normalization and q-loss weight (the architecture and "
+                         "network window must match). Falls back to the YAML's "
+                         "training.init_from.")
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
@@ -918,7 +955,7 @@ def main():
         q_loss_weight = None  # derived once the first train draw exists
     else:
         q_loss_weight = (args.q_loss_weight if args.q_loss_weight is not None
-                         else float(exp_cfg.training.q_loss_weight))
+                         else exp_cfg.training.get("q_loss_weight", None))
     do_normalize = (args.normalize if args.normalize is not None
                     else bool(exp_cfg.data.get("normalize", True)))
     specwind = args.specwind_spec is not None
@@ -984,6 +1021,44 @@ def main():
         args.train_cols_sampling = exp_cfg.data.get("train_cols_sampling", None)
     if args.cols_per_day is None:
         args.cols_per_day = int(exp_cfg.data.get("cols_per_day", 4))
+    power = exp_cfg.data.get("cols_per_day_power", None)
+    args.cols_per_day_power = float(power) if power is not None else None
+    if args.cols_per_day_power is not None and cols_per_day_range is None:
+        raise ValueError("data.cols_per_day_power needs data.cols_per_day_min/max")
+    crop = exp_cfg.data.get("train_window_days", None)
+    args.train_window_days = int(crop) if crop is not None else None
+    window_stride = int(exp_cfg.data.get("window_stride", 5)) if crop is not None else None
+    if args.train_window_days is not None and not specwind:
+        raise ValueError("data.train_window_days needs --specwind-spec")
+    init_from = args.init_from or exp_cfg.training.get("init_from", None)
+    if init_from is not None:
+        parent = OmegaConf.load(os.path.join(init_from, "resolved_config.yaml"))
+        mine = {"model_type": model_type,
+                "hidden_channels": list(hidden_channels or DEFAULT_HIDDEN_CHANNELS),
+                "num_res_blocks": num_res_blocks, "use_obs_mask": use_obs_mask,
+                "train_window_days": args.train_window_days}
+        theirs = {"model_type": parent.model.model_type,
+                  "hidden_channels": list(parent.model.hidden_channels),
+                  "num_res_blocks": int(parent.model.num_res_blocks),
+                  "use_obs_mask": bool(parent.model.get("use_obs_mask", False)),
+                  "train_window_days": parent.data.get("train_window_days", None)}
+        if mine != theirs:
+            raise ValueError(f"--init-from {init_from}: architecture {theirs} != this run's {mine}")
+        if not specwind or not do_normalize:
+            raise ValueError("--init-from needs --specwind-spec and normalization")
+        # The parent's normalization and q-loss weight, so the inputs, targets and loss
+        # the weights were trained on are unchanged.
+        norm_stats_path = os.path.join(exp_dir, "specwind_psi_norm_stats.pt")
+        shutil.copyfile(os.path.join(init_from, "specwind_psi_norm_stats.pt"), norm_stats_path)
+        args.norm_stats_path = norm_stats_path
+        norm = load_norm_stats(norm_stats_path)
+        if args.q_loss_weight is None:
+            q_loss_weight = float(parent.training.q_loss_weight)
+        q_loss_weight_scale = None
+    if q_loss_weight is None and q_loss_weight_scale is None:
+        raise ValueError("no q-loss weight: set training.q_loss_weight(_scale), --q-loss-weight "
+                         "or --init-from")
+    q_loss_weight = float(q_loss_weight) if q_loss_weight is not None else None
     aug = exp_cfg.data.get("obs_error_aug", None)
     args.obs_error_aug = tuple(float(v) for v in aug) if aug is not None else None
     results_path = os.path.join(exp_dir, "results.json")
@@ -1002,10 +1077,15 @@ def main():
                         s1_param_bias=s1_param_bias, s1_amp_bias=s1_amp_bias)
     state_dim = test_cfg.state_dim
 
-    model = build_model(model_type, test_cfg, param_dim=param_dim,
+    model_cfg = (dataclasses.replace(test_cfg, window_days=float(args.train_window_days))
+                 if args.train_window_days is not None else test_cfg)
+    model = build_model(model_type, model_cfg, param_dim=param_dim,
                        cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
                        fdv_kwargs=fdv_kwargs, use_obs_mask=use_obs_mask,
                        hidden_channels=hidden_channels, num_res_blocks=num_res_blocks).to(device)
+    if init_from is not None and args.eval_only is None:
+        model.load_state_dict(load_run_weights(init_from), strict=True)
+        print(f"initialized from {init_from}")
 
     # Written before the skip-check below, so re-running an already-finished
     # experiment backfills the config its checkpoints belong to instead of
@@ -1038,6 +1118,8 @@ def main():
             cond_mode=cond_mode, noisy_max=noisy_max, param_dim=param_dim,
             cond_extra_dim=cond_extra_dim, include_ic=include_ic, ic_dim=ic_dim,
             cols_per_day_range=cols_per_day_range, train_cols_sampling=args.train_cols_sampling,
+            cols_per_day_power=args.cols_per_day_power, train_window_days=args.train_window_days,
+            window_stride=window_stride, init_from=init_from,
             fdv_kwargs=fdv_kwargs)
 
     resolved_path = _write_resolved(q_loss_weight)
@@ -1166,7 +1248,7 @@ def main():
                                        device, norm=norm, n_members=args.n_members,
                                        cond_mode=cond_mode, param_norm_stats=param_norm,
                                        noisy_max=noisy_max, forcing_norm_stats=forcing_norm,
-                                       include_ic=include_ic)
+                                       include_ic=include_ic, window_stride=window_stride or 5)
 
     truth_psi = np.stack([psi_daily(w, test_cfg).numpy() for w in test_windows])
     truth_q = np.stack([q_daily(w, test_cfg).numpy() for w in test_windows])

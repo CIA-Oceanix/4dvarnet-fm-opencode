@@ -463,6 +463,48 @@ class QGBatch:
         return self
 
 
+def slice_days(batch: QGBatch, start: int, stop: int) -> QGBatch:
+    """The days [start, stop) of every per-day field of a batch."""
+    d = slice(start, stop)
+    return QGBatch(batch.states[:, d], batch.obs[:, d], batch.obs_mask[:, d], batch.forcing[:, d],
+                   batch.states_q[:, d], batch.rd, params=batch.params, ic=batch.ic)
+
+
+def window_starts(n_days: int, t_model: int, stride: int) -> list[int]:
+    """Sub-window starts covering [0, n_days) every `stride` days, the last one flush with the end."""
+    if not 1 <= t_model <= n_days:
+        raise ValueError(f"model window {t_model} outside [1, {n_days}]")
+    starts = list(range(0, n_days - t_model + 1, max(1, stride)))
+    if starts[-1] != n_days - t_model:
+        starts.append(n_days - t_model)
+    return starts
+
+
+def windowed_estimate(estimate, batch: QGBatch, t_model: int, stride: int) -> torch.Tensor:
+    """Estimate a long window with a network built for `t_model` days.
+
+    `estimate(sub_batch) -> (..., B, t_model, D)` runs on overlapping sub-windows
+    (`window_starts`); each day's estimate is the average of the sub-windows covering
+    it, weighted by a tent that is largest mid-sub-window, where the network sees
+    observations on both sides. Identity when the window is `t_model` days long.
+    """
+    n_days = batch.obs.shape[1]
+    if n_days == t_model:
+        return estimate(batch)
+    tent = torch.minimum(torch.arange(1, t_model + 1), torch.arange(t_model, 0, -1)).float()
+    total = weight = None
+    for s in window_starts(n_days, t_model, stride):
+        est = estimate(slice_days(batch, s, s + t_model))
+        if total is None:
+            shape = (*est.shape[:-2], n_days, est.shape[-1])
+            total = torch.zeros(shape, dtype=est.dtype, device=est.device)
+            weight = torch.zeros(n_days, dtype=est.dtype, device=est.device)
+        w = tent.to(est.device, est.dtype)
+        total[..., s:s + t_model, :] += est * w[:, None]
+        weight[s:s + t_model] += w
+    return total / weight[:, None]
+
+
 class QGNeuralDataset(Dataset):
     """Daily-mean-binned S0 QG windows with a 2-layer streamfunction target.
 
@@ -495,6 +537,16 @@ class QGNeuralDataset(Dataset):
     split (`cols_per_day` distinct (step, column) slots per day, uniform over
     all `steps_per_day * nx`, so densities above `steps_per_day` work) while
     val/test keep the test sampler. `None` (default) keeps `cfg.cols_sampling`.
+
+    `cols_per_day_power=a` (with `cols_per_day_range`) draws the density with
+    P(K) proportional to K**-a over the range instead of uniformly: a = 1.5 over
+    3-30 puts the median at 6 and 22% of the draws at K = 3, against 17 and 3.6%
+    for the uniform draw. `None` (default) keeps the uniform draw.
+
+    `crop_days=n` returns n-day sub-windows of the (longer) windows, for a network
+    built at T = n: a random whole-day start per draw (`crop_starts=None`, train) or
+    one item per window and start in `crop_starts` (val). The crop is taken from the
+    full window's daily tensors, so the observations are those of the full window.
     """
 
     def __init__(self, windows: list, cfg: QGConfig, psi_norm_stats: dict | None = None,
@@ -503,7 +555,22 @@ class QGNeuralDataset(Dataset):
                  forcing_norm_stats: dict | None = None, include_ic: bool = False,
                  cols_per_day_range: tuple[int, int] | None = None,
                  cols_sampling: str | None = None,
-                 obs_error_aug: tuple[float, float, float] | None = None):
+                 obs_error_aug: tuple[float, float, float] | None = None,
+                 cols_per_day_power: float | None = None,
+                 crop_days: int | None = None, crop_starts: list[int] | None = None):
+        if cols_per_day_power is not None and cols_per_day_range is None:
+            raise ValueError("cols_per_day_power needs cols_per_day_range")
+        if crop_starts is not None and crop_days is None:
+            raise ValueError("crop_starts needs crop_days")
+        if crop_days is not None:
+            if include_ic:
+                raise ValueError("crop_days is incompatible with include_ic (the IC is the "
+                                 "full window's initial state)")
+            if not 1 <= crop_days <= num_days(cfg):
+                raise ValueError(f"crop_days={crop_days} outside [1, {num_days(cfg)}]")
+            if crop_starts is not None and any(
+                    not 0 <= s <= num_days(cfg) - crop_days for s in crop_starts):
+                raise ValueError(f"crop_starts {crop_starts} leave the {num_days(cfg)}-day window")
         if obs_error_aug is not None:
             if not on_the_fly_obs:
                 raise ValueError("obs_error_aug requires on_the_fly_obs=True")
@@ -582,9 +649,19 @@ class QGNeuralDataset(Dataset):
         self.cols_per_day_range = cols_per_day_range
         self.cols_sampling = cols_sampling
         self.obs_error_aug = tuple(obs_error_aug) if obs_error_aug is not None else None
+        self.cols_per_day_power = cols_per_day_power
+        self.crop_days = crop_days
+        self.crop_starts = list(crop_starts) if crop_starts is not None else None
 
     def __len__(self) -> int:
-        return len(self.windows)
+        return len(self.windows) * (len(self.crop_starts) if self.crop_starts else 1)
+
+    def _draw_cols_per_day(self) -> int:
+        lo, hi = self.cols_per_day_range
+        if self.cols_per_day_power is None:
+            return random.randint(lo, hi)
+        ks = range(lo, hi + 1)
+        return random.choices(ks, weights=[k ** -self.cols_per_day_power for k in ks])[0]
 
     def _draw_obs_error(self) -> tuple[float, float]:
         white_lo, white_hi, corr_hi = self.obs_error_aug
@@ -601,12 +678,11 @@ class QGNeuralDataset(Dataset):
         draw = random.randrange(1, 1_000_000)
         cfg = self.cfg
         if self.cols_per_day_range is not None:
-            lo, hi = self.cols_per_day_range
             # Same per-draw-cfg-override pattern as `_noisy_forcing_and_params`'s
             # `_dc_replace` call below -- a fresh `cols_per_day` this draw only,
             # the shared `self.cfg` (and any other dataset instance using it,
             # e.g. a fixed-density val/test split) is untouched.
-            cfg = _dc_replace(cfg, cols_per_day=random.randint(lo, hi))
+            cfg = _dc_replace(cfg, cols_per_day=self._draw_cols_per_day())
         if self.cols_sampling is not None:
             cfg = _dc_replace(cfg, cols_sampling=self.cols_sampling)
         corr_frac = 0.0
@@ -623,6 +699,19 @@ class QGNeuralDataset(Dataset):
         return w
 
     def __getitem__(self, idx: int) -> tuple:
+        if self.crop_starts:
+            idx, start = divmod(idx, len(self.crop_starts))
+            start = self.crop_starts[start]
+        elif self.crop_days is not None:
+            start = random.randint(0, num_days(self.cfg) - self.crop_days)
+        item = self._full_item(idx)
+        if self.crop_days is None:
+            return item
+        days = slice(start, start + self.crop_days)
+        psi_n, obs_pad, obs_mask, forcing, qs, rd, params, ic = item
+        return psi_n[days], obs_pad[days], obs_mask[days], forcing[days], qs[days], rd, params, ic
+
+    def _full_item(self, idx: int) -> tuple:
         w = self._resolved_window(idx)
         split = layer_split(self.cfg)
         days = num_days(self.cfg)
