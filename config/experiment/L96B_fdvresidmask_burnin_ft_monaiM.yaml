@@ -1,0 +1,31 @@
+# @package _global_
+# Fine-tuning of L96B_fdvresidmask_monaiM (seed 1, stage1_best) with a random training burn-in:
+# with probability 0.5, first M ~ U{1..30} iterations without gradient, then the 10 trained
+# iterations at k = M..M+9 (loss at the end). tau_schedule clamp: tau_k = min(k/9, 1), identical
+# to the pretrained schedule over k = 0..9 and constant beyond; step fixed at 1/10. Weights-only
+# initialisation (fresh Adam + cosine schedule), 300 epochs at lr 1e-4.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: resid+mask+state
+    tau_schedule: clamp
+    burnin_prob: 0.5
+    burnin_max: 30
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2
+training:
+  stage1:
+    epochs: 300
+    lr: 1.0e-4
+    init_from: /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-fdv-mask/experiments/L96B_fdvresidmask_monaiM_seed1/checkpoints/stage1_best.ckpt

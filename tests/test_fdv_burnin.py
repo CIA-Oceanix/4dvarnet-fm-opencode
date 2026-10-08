@@ -75,3 +75,29 @@ def test_no_burnin_in_eval_or_when_prob_zero(monkeypatch):
 def test_invalid(kw):
     with pytest.raises(ValueError):
         _solver(**kw)
+
+
+def test_clamp_schedule_matches_linear_then_saturates(monkeypatch):
+    calls = _record(monkeypatch)
+    _solver(tau_schedule="clamp").eval().sample(_Batch(), N_outer=6)
+    assert [t for t, _ in calls] == pytest.approx([0.0, 0.5, 1.0, 1.0, 1.0, 1.0])
+
+
+def test_clamp_schedule_identical_to_linear_at_n_outer():
+    a, b = _solver().eval(), _solver(tau_schedule="clamp").eval()
+    batch = _Batch()
+    torch.testing.assert_close(a(batch), b(batch))
+
+
+def test_load_init_weights_both_formats(tmp_path):
+    from training.resume import load_init_weights
+    src, dst = _solver(), _solver(tau_schedule="clamp")
+    for p in src.parameters():
+        torch.nn.init.normal_(p)
+    lightning = {"state_dict": {f"model.{k}": v for k, v in src.state_dict().items()}, "epoch": 3}
+    for blob in (lightning, src.state_dict()):
+        path = tmp_path / "w.ckpt"
+        torch.save(blob, path)
+        load_init_weights(dst, str(path))
+        for k, v in src.state_dict().items():
+            torch.testing.assert_close(dst.state_dict()[k], v)

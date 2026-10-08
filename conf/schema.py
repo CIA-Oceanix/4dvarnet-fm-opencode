@@ -468,6 +468,7 @@ class StageConfig:
     use_cosine_scheduler: bool = True  # deliberate default since 2026-09-10, see CHANGELOG.md
     obs_weight_lr_scale: float = 1.0
     prior_unet_lr_scale: float = 1.0
+    init_from: Optional[str] = None  # weights-only initialisation (fine-tuning)
 
 
 @dataclass

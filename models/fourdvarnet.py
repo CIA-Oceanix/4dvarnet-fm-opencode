@@ -1085,10 +1085,10 @@ class FourDVarNetSolver(nn.Module):
         # iteration index, with a fixed step 1/N_outer at any number of iterations. burnin_prob /
         # burnin_max: in training, with probability burnin_prob, first run M ~ U{1..burnin_max}
         # iterations without gradient, then the N_outer trained ones from iteration M.
-        if tau_schedule not in ("linear", "exp"):
+        if tau_schedule not in ("linear", "exp", "clamp"):
             raise ValueError(f"unknown tau_schedule {tau_schedule!r}")
-        if burnin_max > 0 and tau_schedule != "exp":
-            raise ValueError("burn-in needs tau_schedule='exp' (absolute iteration index)")
+        if burnin_max > 0 and tau_schedule == "linear":
+            raise ValueError("burn-in needs an absolute-iteration tau_schedule ('exp' or 'clamp')")
         if not 0.0 <= burnin_prob <= 1.0 or burnin_max < 0 or tau_scale <= 0:
             raise ValueError("invalid burnin_prob / burnin_max / tau_scale")
         self.tau_schedule = tau_schedule
@@ -1301,7 +1301,7 @@ class FourDVarNetSolver(nn.Module):
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
         block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
-        step_n = self.N_outer if self.tau_schedule == "exp" else N
+        step_n = self.N_outer if self.tau_schedule in ("exp", "clamp") else N
         k0 = 0
         if self.training and self.burnin_max > 0 and torch.rand(()).item() < self.burnin_prob:
             k0 = int(torch.randint(1, self.burnin_max + 1, ()).item())
@@ -1332,9 +1332,15 @@ class FourDVarNetSolver(nn.Module):
         return block_states
 
     def _iteration_tau(self, k, denom, B, device):
-        # tau_schedule="exp": tau = 1 - exp(-k / tau_scale), an absolute-iteration schedule
-        # (0 at k = 0, -> 1 as k grows) that stays meaningful past N and after a burn-in.
-        value = 1.0 - math.exp(-k / self.tau_scale) if self.tau_schedule == "exp" else k / denom
+        # Absolute-iteration schedules that stay meaningful past N and after a burn-in:
+        # "exp": 1 - exp(-k / tau_scale); "clamp": min(k / (N_outer - 1), 1), identical to the
+        # default linear schedule over the trained iterations, constant beyond.
+        if self.tau_schedule == "exp":
+            value = 1.0 - math.exp(-k / self.tau_scale)
+        elif self.tau_schedule == "clamp":
+            value = min(k / max(self.N_outer - 1, 1), 1.0)
+        else:
+            value = k / denom
         return torch.full((B,), value, device=device)
 
     def _solver_step(self, x, tau_k, step_n, obs_clean, obs_mask, grad_norm_cache,
