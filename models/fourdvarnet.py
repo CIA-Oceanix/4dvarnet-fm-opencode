@@ -907,6 +907,7 @@ class FourDVarNetSolver(nn.Module):
                  burnin_max=0,
                  burnin_start_epoch=0,
                  burnin_ramp_epochs=0,
+                 train_n_blocks=1,
                  gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
@@ -1105,6 +1106,14 @@ class FourDVarNetSolver(nn.Module):
         self.burnin_start_epoch = burnin_start_epoch
         self.burnin_ramp_epochs = burnin_ramp_epochs
         self.burnin_max_current = burnin_max if burnin_start_epoch == 0 and burnin_ramp_epochs == 0 else 0
+        # train_n_blocks: in training only, unroll train_n_blocks * N_outer iterations in blocks of
+        # N_outer (state detached between blocks) with the MSE averaged over the block ends, i.e.
+        # deep supervision beyond the N_outer-iteration test horizon. Needs a fixed step 1/N_outer.
+        if train_n_blocks < 1:
+            raise ValueError("train_n_blocks must be >= 1")
+        if train_n_blocks > 1 and (tau_schedule == "linear" or tbptt_n_blocks > 1):
+            raise ValueError("train_n_blocks > 1 needs tau_schedule 'exp'/'clamp' and tbptt_n_blocks = 1")
+        self.train_n_blocks = train_n_blocks
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
@@ -1311,6 +1320,9 @@ class FourDVarNetSolver(nn.Module):
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
         block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
+        if self.training and N_outer is None and self.train_n_blocks > 1:
+            N = self.N_outer * self.train_n_blocks
+            block_size = self.N_outer
         step_n = self.N_outer if self.tau_schedule in ("exp", "clamp") else N
         k0 = 0
         if self.training and self.burnin_max_current > 0 and torch.rand(()).item() < self.burnin_prob:

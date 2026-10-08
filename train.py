@@ -439,6 +439,7 @@ def model_factory(cfg: DictConfig, device: torch.device):
             burnin_max=fdv.get("burnin_max", 0),
             burnin_start_epoch=fdv.get("burnin_start_epoch", 0),
             burnin_ramp_epochs=fdv.get("burnin_ramp_epochs", 0),
+            train_n_blocks=fdv.get("train_n_blocks", 1),
             gain_init=fdv.get("gain_init", 0.5),
             obs_var_indices=model_obs_var_indices,
             true_dynamics_dt=true_dynamics_dt,

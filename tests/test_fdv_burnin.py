@@ -138,3 +138,51 @@ def test_lightning_hook_sets_the_epoch():
     model.burnin_max_current = 99
     LitModel(model, model_type="fourdvarnet").on_train_epoch_start()
     assert model.burnin_max_current == 0
+
+
+def test_train_n_blocks_unrolls_beyond_horizon_in_training_only(monkeypatch):
+    calls = _record(monkeypatch)
+    model = _solver(tau_schedule="clamp", train_n_blocks=2).train()
+    blocks = model._unrolled_blocks(_Batch())
+    assert len(calls) == 6 and len(blocks) == 2
+    assert [t for t, _ in calls] == pytest.approx([0.0, 0.5, 1.0, 1.0, 1.0, 1.0])
+    calls.clear()
+    model.eval()
+    assert len(model._unrolled_blocks(_Batch())) == 1 and len(calls) == 3
+
+
+def test_train_n_blocks_loss_is_mean_over_block_ends():
+    model = _solver(tau_schedule="clamp", train_n_blocks=2, dropout=0.0).train()
+    batch = _Batch()
+    torch.manual_seed(5)
+    blocks = model._unrolled_blocks(batch)
+    expected = sum(torch.nn.functional.mse_loss(b, batch.states) for b in blocks) / 2
+    torch.manual_seed(5)
+    torch.testing.assert_close(model.compute_loss(batch), expected)
+
+
+def test_train_n_blocks_detaches_between_blocks():
+    model = _solver(tau_schedule="clamp", train_n_blocks=2, dropout=0.0).train()
+    first, second = model._unrolled_blocks(_Batch())
+    seen = []
+
+    def walk(fn):
+        stack, visited = [fn], set()
+        while stack:
+            f = stack.pop()
+            if f is None or f in visited:
+                continue
+            visited.add(f)
+            seen.append(f)
+            stack.extend(n for n, _ in f.next_functions)
+
+    walk(second.grad_fn)
+    assert first.grad_fn not in seen
+
+
+@pytest.mark.parametrize("kw", [{"train_n_blocks": 0}, {"train_n_blocks": 2},
+                                {"train_n_blocks": 2, "tau_schedule": "clamp", "tbptt_n_blocks": 3,
+                                 "tbptt_block_size": 1}])
+def test_train_n_blocks_invalid(kw):
+    with pytest.raises(ValueError):
+        _solver(**kw)
