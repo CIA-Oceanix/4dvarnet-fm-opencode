@@ -49,6 +49,13 @@ ARGS=(--model-type "$MODEL_TYPE" --exp-id "$EXP_ID" --exp-dir "$OUT"
 [ -n "${REGEN_EVERY:-}" ] && ARGS+=(--regen-every "$REGEN_EVERY")
 [ -n "${EPOCHS:-}" ] && ARGS+=(--epochs "$EPOCHS")
 [ -n "${QSCALE:-}" ] && ARGS+=(--q-loss-weight-scale "$QSCALE")
+# RESUME=1 continues an interrupted run from $OUT/checkpoints/stage1_last.ckpt (RESUME=<path> from
+# that checkpoint); its log is appended to, not overwritten.
+TEE=(tee)
+if [ -n "${RESUME:-}" ]; then
+  [ "$RESUME" = 1 ] && ARGS+=(--resume) || ARGS+=(--resume "$RESUME")
+  TEE=(tee -a)
+fi
 mkdir -p "$OUT"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-/usr/bin/time -v "$PY" train_qg_neural.py "${ARGS[@]}" ${EXTRA:-} 2>&1 | tee "$OUT/train.log"
+/usr/bin/time -v "$PY" train_qg_neural.py "${ARGS[@]}" ${EXTRA:-} 2>&1 | "${TEE[@]}" "$OUT/train.log"

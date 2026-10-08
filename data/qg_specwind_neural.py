@@ -253,12 +253,15 @@ class RegenerateTrainWindows(pl.Callback):
         self.source = source
         self.every = int(every)
         self.log_path = log_path
+        self.round = 0
 
     def on_train_epoch_start(self, trainer, pl_module) -> None:
+        # The round is set by the epoch, not counted, so a run resumed mid-round from a
+        # checkpoint draws the round the uninterrupted run would be on.
         epoch = trainer.current_epoch
-        if epoch == 0 or epoch % self.every:
-            return
         round_ = epoch // self.every
+        if round_ == self.round:
+            return
         t0 = time.time()
         # Drop the previous round before drawing the next: holding both (~12 GB each at
         # 1000 windows) pushed a 64 GB job over its limit at the first regeneration.
@@ -266,6 +269,7 @@ class RegenerateTrainWindows(pl.Callback):
         gc.collect()
         release_freed_memory()
         self.dataset.windows = self.source.draw(round_)
+        self.round = round_
         entry = {"epoch": epoch, "round": round_, "n": len(self.dataset.windows),
                  "seconds": round(time.time() - t0, 1),
                  "first_index": self.source.indices(round_)[0]}
