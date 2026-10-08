@@ -1,0 +1,26 @@
+# @package _global_
+# FDV2-M + mask with a trained prior, PARTIALLY coupled to the solver (option B): the gradient of
+# the solver's MSE loss reaching Phi's parameters through x - Phi(x) is scaled by
+# prior_solver_grad_scale = 1e-3 (1 = L96B_fdvsubgradmask_monaiM_aux01det, 0 = its _frozen variant).
+# Value and gradient w.r.t. x are unchanged. Measured on the coupled seed-1 checkpoint, the MSE path
+# pulls Phi ~50-250x harder than the aux prior loss (0.01), so 1e-3 makes the solver's task ~10-25%
+# of Phi's gradient while Phi stays mainly a prior. Costs one extra Phi forward per iteration.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+mask+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    aux_detach_x_final: true
+    prior_solver_grad_scale: 0.001
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

@@ -65,3 +65,54 @@ def test_forward_identical_and_gradient_reaches_x():
 def test_rejects_other_modes():
     with pytest.raises(ValueError):
         _solver(mode="resid+mask+state")
+
+
+def _phi_grads(scale, backbone="unet1d"):
+    torch.manual_seed(1)
+    extra = {"monai_norm_num_groups": 4, "prior_output_init_std": 0.1} if backbone == "monai" else {}
+    model = F.FourDVarNetSolver(state_dim=D, hidden_channels=[8, 16], time_emb_dim=8, N_outer=3,
+                                update_input="subgrad+mask+state", unet_backbone=backbone, dropout=0.0,
+                                prior_dropout=0.0, prior_solver_grad_scale=scale, **extra)
+    if backbone == "monai":
+        final = model.unet.backbone.out[-1]
+        torch.nn.init.normal_((final.conv if hasattr(final, "conv") else final).weight, std=0.1)
+    model.eval()
+    model.zero_grad()
+    loss = model.compute_loss(_Batch())
+    loss.backward()
+    def grads(module):
+        return [torch.zeros_like(p) if p.grad is None else p.grad.clone() for p in module.parameters()]
+
+    return loss.detach(), grads(model.prior_unet), grads(model.unet)
+
+
+@pytest.mark.parametrize("backbone", ["unet1d", "monai"])
+@pytest.mark.parametrize("scale", [0.3, 0.05])
+def test_prior_solver_grad_scale_scales_phi_gradient_only(backbone, scale):
+    loss1, phi1, unet1 = _phi_grads(1.0, backbone)
+    loss_s, phi_s, unet_s = _phi_grads(scale, backbone)
+    torch.testing.assert_close(loss_s, loss1)
+    for a, b in zip(phi_s, phi1):
+        torch.testing.assert_close(a, scale * b, rtol=1e-4, atol=1e-7)
+    for a, b in zip(unet_s, unet1):
+        torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-7)
+
+
+def test_prior_solver_grad_scale_zero_matches_freeze():
+    _, phi0, unet0 = _phi_grads(0.0)
+    assert all((g == 0).all() for g in phi0)
+    torch.manual_seed(1)
+    frozen = F.FourDVarNetSolver(state_dim=D, hidden_channels=[8, 16], time_emb_dim=8, N_outer=3,
+                                 update_input="subgrad+mask+state", unet_backbone="unet1d", dropout=0.0,
+                                 prior_dropout=0.0, freeze_prior_in_solver=True).eval()
+    frozen.compute_loss(_Batch()).backward()
+    for a, b in zip(unet0, [p.grad for p in frozen.unet.parameters()]):
+        torch.testing.assert_close(a, b)
+
+
+@pytest.mark.parametrize("kw", [{"prior_solver_grad_scale": 1.5},
+                                {"prior_solver_grad_scale": 0.5, "freeze_prior_in_solver": True}])
+def test_prior_solver_grad_scale_invalid(kw):
+    with pytest.raises(ValueError):
+        F.FourDVarNetSolver(state_dim=D, hidden_channels=[8, 16], time_emb_dim=8, N_outer=3,
+                            update_input="subgrad+mask+state", unet_backbone="unet1d", **kw)
