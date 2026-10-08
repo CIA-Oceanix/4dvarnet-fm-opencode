@@ -1,0 +1,27 @@
+# @package _global_
+# L96B_fdvresidmask_monaiM (input [x, (x - y) * m, m]) with an absolute-iteration tau schedule
+# and a random training burn-in: tau_k = 1 - exp(-k / 5) (0 at k = 0, ~0.83 at k = 9, -> 1), step
+# fixed at 1/N_outer = 1/10 at any number of iterations; in training, with probability 0.5, first
+# M ~ U{1..30} iterations without gradient, then the 10 trained iterations at k = M..M+9 (loss at
+# the end). Validation/test: no burn-in, 10 iterations from the noise initial state.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: resid+mask+state
+    tau_schedule: exp
+    tau_scale: 5.0
+    burnin_prob: 0.5
+    burnin_max: 30
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

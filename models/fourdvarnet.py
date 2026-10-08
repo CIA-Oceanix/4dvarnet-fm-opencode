@@ -901,6 +901,10 @@ class FourDVarNetSolver(nn.Module):
                  update_head="direct",
                  freeze_prior_in_solver=False,
                  prior_solver_grad_scale=1.0,
+                 tau_schedule="linear",
+                 tau_scale=5.0,
+                 burnin_prob=0.0,
+                 burnin_max=0,
                  gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
@@ -1077,6 +1081,20 @@ class FourDVarNetSolver(nn.Module):
         if freeze_prior_in_solver and prior_solver_grad_scale != 1.0:
             raise ValueError("set either freeze_prior_in_solver or prior_solver_grad_scale, not both")
         self.prior_solver_grad_scale = 0.0 if freeze_prior_in_solver else prior_solver_grad_scale
+        # tau_schedule="exp": iteration conditioning tau_k = 1 - exp(-k / tau_scale) on the absolute
+        # iteration index, with a fixed step 1/N_outer at any number of iterations. burnin_prob /
+        # burnin_max: in training, with probability burnin_prob, first run M ~ U{1..burnin_max}
+        # iterations without gradient, then the N_outer trained ones from iteration M.
+        if tau_schedule not in ("linear", "exp"):
+            raise ValueError(f"unknown tau_schedule {tau_schedule!r}")
+        if burnin_max > 0 and tau_schedule != "exp":
+            raise ValueError("burn-in needs tau_schedule='exp' (absolute iteration index)")
+        if not 0.0 <= burnin_prob <= 1.0 or burnin_max < 0 or tau_scale <= 0:
+            raise ValueError("invalid burnin_prob / burnin_max / tau_scale")
+        self.tau_schedule = tau_schedule
+        self.tau_scale = tau_scale
+        self.burnin_prob = burnin_prob
+        self.burnin_max = burnin_max
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
@@ -1283,32 +1301,21 @@ class FourDVarNetSolver(nn.Module):
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
         block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
+        step_n = self.N_outer if self.tau_schedule == "exp" else N
+        k0 = 0
+        if self.training and self.burnin_max > 0 and torch.rand(()).item() < self.burnin_prob:
+            k0 = int(torch.randint(1, self.burnin_max + 1, ()).item())
+            with torch.no_grad():
+                for k in range(k0):
+                    x = self._solver_step(x, self._iteration_tau(k, denom, B, x.device), step_n,
+                                          obs_clean, obs_mask, grad_norm_cache,
+                                          prior_ode_forcing, prior_ode_params)
+            x = x.detach()
         block_states = []
         for k in range(N):
-            tau_k = torch.full((B,), k / denom, device=x.device)
-            # prior_tau_k=None (default): the prior operator gets no
-            # iteration-conditioning (self.prior_unet built with
-            # time_emb_dim=0) -- only the main solver UNet below is
-            # conditioned on tau_k. prior_tau_conditioning=True (legacy
-            # checkpoints only) instead feeds it the same tau_k.
-            prior_tau_k = tau_k if self.prior_tau_conditioning else None
-            gmod = checkpoint(
-                _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
-                tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
-                grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
-                self.prior_residual, self.detach_var_cost_grad,
-                prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
-                true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
-                prior_solver_grad_scale=self.prior_solver_grad_scale,
-                use_reentrant=False,
-            )
-            if self.update_head == "gain":
-                x = x - self._gain_step(gmod, x, obs_clean, obs_mask, N)
-            elif self.update_head == "gated":
-                x = x - self._gated_step(gmod, N)
-            else:
-                x = x - (1.0 / N) * gmod
-            x = torch.clamp(x, -self.clip_range, self.clip_range)
+            tau_k = self._iteration_tau(k0 + k, denom, B, x.device)
+            x = self._solver_step(x, tau_k, step_n, obs_clean, obs_mask, grad_norm_cache,
+                                  prior_ode_forcing, prior_ode_params)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
             if (k + 1) % block_size == 0:
@@ -1323,6 +1330,35 @@ class FourDVarNetSolver(nn.Module):
             # sole "final" state is just the untouched x_0.
             block_states.append(x)
         return block_states
+
+    def _iteration_tau(self, k, denom, B, device):
+        # tau_schedule="exp": tau = 1 - exp(-k / tau_scale), an absolute-iteration schedule
+        # (0 at k = 0, -> 1 as k grows) that stays meaningful past N and after a burn-in.
+        value = 1.0 - math.exp(-k / self.tau_scale) if self.tau_schedule == "exp" else k / denom
+        return torch.full((B,), value, device=device)
+
+    def _solver_step(self, x, tau_k, step_n, obs_clean, obs_mask, grad_norm_cache,
+                     prior_ode_forcing, prior_ode_params):
+        # prior_tau_k=None (default): the prior operator gets no iteration-conditioning;
+        # prior_tau_conditioning=True (legacy checkpoints only) feeds it the same tau_k.
+        prior_tau_k = tau_k if self.prior_tau_conditioning else None
+        gmod = checkpoint(
+            _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
+            tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
+            grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
+            self.prior_residual, self.detach_var_cost_grad,
+            prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
+            true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
+            prior_solver_grad_scale=self.prior_solver_grad_scale,
+            use_reentrant=False,
+        )
+        if self.update_head == "gain":
+            x = x - self._gain_step(gmod, x, obs_clean, obs_mask, step_n)
+        elif self.update_head == "gated":
+            x = x - self._gated_step(gmod, step_n)
+        else:
+            x = x - (1.0 / step_n) * gmod
+        return torch.clamp(x, -self.clip_range, self.clip_range)
 
     def _gain_step(self, gmod, x, obs_clean, obs_mask, N):
         D = x.shape[-1]
