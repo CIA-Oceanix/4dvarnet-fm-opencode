@@ -101,3 +101,40 @@ def test_load_init_weights_both_formats(tmp_path):
         load_init_weights(dst, str(path))
         for k, v in src.state_dict().items():
             torch.testing.assert_close(dst.state_dict()[k], v)
+
+
+def test_burnin_warmup_and_ramp_schedule():
+    m = _solver(tau_schedule="clamp", burnin_prob=0.5, burnin_max=30, burnin_start_epoch=200,
+                burnin_ramp_epochs=200)
+    assert m.burnin_max_current == 0
+    expected = {0: 0, 199: 0, 200: 1, 299: 15, 399: 30, 400: 30, 1199: 30}
+    for epoch, value in expected.items():
+        m.set_epoch(epoch)
+        assert m.burnin_max_current == value, epoch
+
+
+def test_burnin_without_warmup_is_active_from_the_start():
+    m = _solver(tau_schedule="clamp", burnin_prob=0.5, burnin_max=30)
+    assert m.burnin_max_current == 30
+    m.set_epoch(0)
+    assert m.burnin_max_current == 30
+
+
+def test_no_burnin_during_warmup(monkeypatch):
+    calls = _record(monkeypatch)
+    model = _solver(tau_schedule="clamp", burnin_prob=1.0, burnin_max=5, burnin_start_epoch=10).train()
+    model.set_epoch(3)
+    model.compute_loss(_Batch())
+    assert len(calls) == 3
+    calls.clear()
+    model.set_epoch(10)
+    model.compute_loss(_Batch())
+    assert len(calls) > 3
+
+
+def test_lightning_hook_sets_the_epoch():
+    from training.lightning_module import LitModel
+    model = _solver(tau_schedule="clamp", burnin_prob=0.5, burnin_max=30, burnin_start_epoch=5)
+    model.burnin_max_current = 99
+    LitModel(model, model_type="fourdvarnet").on_train_epoch_start()
+    assert model.burnin_max_current == 0

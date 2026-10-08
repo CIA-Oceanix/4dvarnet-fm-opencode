@@ -905,6 +905,8 @@ class FourDVarNetSolver(nn.Module):
                  tau_scale=5.0,
                  burnin_prob=0.0,
                  burnin_max=0,
+                 burnin_start_epoch=0,
+                 burnin_ramp_epochs=0,
                  gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
@@ -1095,6 +1097,14 @@ class FourDVarNetSolver(nn.Module):
         self.tau_scale = tau_scale
         self.burnin_prob = burnin_prob
         self.burnin_max = burnin_max
+        # burnin_start_epoch / burnin_ramp_epochs: no burn-in before burnin_start_epoch, then the
+        # maximum burn-in length ramps linearly from 1 to burnin_max over burnin_ramp_epochs
+        # (set each epoch through set_epoch, called by LitModel).
+        if burnin_start_epoch < 0 or burnin_ramp_epochs < 0:
+            raise ValueError("burnin_start_epoch / burnin_ramp_epochs must be >= 0")
+        self.burnin_start_epoch = burnin_start_epoch
+        self.burnin_ramp_epochs = burnin_ramp_epochs
+        self.burnin_max_current = burnin_max if burnin_start_epoch == 0 and burnin_ramp_epochs == 0 else 0
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
@@ -1303,8 +1313,8 @@ class FourDVarNetSolver(nn.Module):
         block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
         step_n = self.N_outer if self.tau_schedule in ("exp", "clamp") else N
         k0 = 0
-        if self.training and self.burnin_max > 0 and torch.rand(()).item() < self.burnin_prob:
-            k0 = int(torch.randint(1, self.burnin_max + 1, ()).item())
+        if self.training and self.burnin_max_current > 0 and torch.rand(()).item() < self.burnin_prob:
+            k0 = int(torch.randint(1, self.burnin_max_current + 1, ()).item())
             with torch.no_grad():
                 for k in range(k0):
                     x = self._solver_step(x, self._iteration_tau(k, denom, B, x.device), step_n,
@@ -1330,6 +1340,15 @@ class FourDVarNetSolver(nn.Module):
             # sole "final" state is just the untouched x_0.
             block_states.append(x)
         return block_states
+
+    def set_epoch(self, epoch: int) -> None:
+        if self.burnin_max == 0 or epoch < self.burnin_start_epoch:
+            self.burnin_max_current = 0
+        elif self.burnin_ramp_epochs == 0:
+            self.burnin_max_current = self.burnin_max
+        else:
+            frac = min((epoch - self.burnin_start_epoch + 1) / self.burnin_ramp_epochs, 1.0)
+            self.burnin_max_current = max(1, round(frac * self.burnin_max))
 
     def _iteration_tau(self, k, denom, B, device):
         # Absolute-iteration schedules that stay meaningful past N and after a burn-in:
