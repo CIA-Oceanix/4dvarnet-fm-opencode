@@ -121,6 +121,16 @@ def test_callback_swaps_windows_every_k_epochs(tmp_path):
     assert (tmp_path / "regen.jsonl").read_text().count("\n") == 1
 
 
+def test_regeneration_on_resume_draws_the_round_of_the_resume_epoch():
+    drawn = []
+    src = SimpleNamespace(draw=lambda r: drawn.append(r) or [r], indices=lambda r: [r])
+    ds = SimpleNamespace(windows=[0])
+    cb = RegenerateTrainWindows(ds, src, every=30)
+    for epoch in (279, 280, 299, 300):
+        cb.on_train_epoch_start(SimpleNamespace(current_epoch=epoch), None)
+    assert drawn == [9, 10] and ds.windows == [10]
+
+
 def _eval_args(root, spec_name="tiny_g5"):
     return SimpleNamespace(specwind_spec=spec_name, specwind_root=root, regen_windows=2,
                            regen_every=1, regen_batch_size=2, eval_only="stage1_best.pt", num_test=100)

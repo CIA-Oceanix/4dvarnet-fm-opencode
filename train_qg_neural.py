@@ -469,7 +469,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
                           hidden_channels=None, num_res_blocks=DEFAULT_NUM_RES_BLOCKS,
                           warmup_epochs=0, obs_error_aug=None, regen=None,
                           cols_per_day_power=None, train_window_days=None, window_stride=None,
-                          init_from=None, **kw) -> str:
+                          init_from=None, resume_from=None, **kw) -> str:
     """Persist the config this run actually used, beside its checkpoints.
 
     Mirrors L96's `train.py` (`OmegaConf.save(cfg, exp_dir/resolved_config.yaml,
@@ -548,6 +548,7 @@ def write_resolved_config(exp_dir: str, experiment_id: str, model, *, model_type
             "use_cosine_scheduler": kw["use_cosine_scheduler"],
             "warmup_epochs": warmup_epochs,
             "init_from": init_from,
+            "resume_from": resume_from,
             "seed": kw["seed"],
         },
     })
@@ -899,6 +900,10 @@ def main():
                          "with its psi normalization and q-loss weight (the architecture and "
                          "network window must match). Falls back to the YAML's "
                          "training.init_from.")
+    ap.add_argument("--resume", nargs="?", const="last", default=None,
+                    help="Continue an interrupted run from a Lightning checkpoint (epoch, "
+                         "optimizer, LR schedule and best-checkpoint tracking restored); bare "
+                         "--resume uses <exp-dir>/checkpoints/stage1_last.ckpt.")
     ap.add_argument("--eval-only", nargs="?", const="stage1_best.pt", default=None,
                     help="Path to a checkpoint; skip training and just evaluate.")
     args = ap.parse_args()
@@ -1083,7 +1088,15 @@ def main():
                        cond_extra_dim=cond_extra_dim, ic_dim=ic_dim,
                        fdv_kwargs=fdv_kwargs, use_obs_mask=use_obs_mask,
                        hidden_channels=hidden_channels, num_res_blocks=num_res_blocks).to(device)
-    if init_from is not None and args.eval_only is None:
+    resume_ckpt = None
+    if args.resume is not None:
+        if args.eval_only is not None:
+            raise ValueError("--resume and --eval-only are exclusive")
+        resume_ckpt = (os.path.join(exp_dir, "checkpoints", "stage1_last.ckpt")
+                       if args.resume == "last" else args.resume)
+        if not os.path.exists(resume_ckpt):
+            raise FileNotFoundError(f"--resume: no checkpoint at {resume_ckpt}")
+    if init_from is not None and args.eval_only is None and resume_ckpt is None:
         model.load_state_dict(load_run_weights(init_from), strict=True)
         print(f"initialized from {init_from}")
 
@@ -1119,7 +1132,7 @@ def main():
             cond_extra_dim=cond_extra_dim, include_ic=include_ic, ic_dim=ic_dim,
             cols_per_day_range=cols_per_day_range, train_cols_sampling=args.train_cols_sampling,
             cols_per_day_power=args.cols_per_day_power, train_window_days=args.train_window_days,
-            window_stride=window_stride, init_from=init_from,
+            window_stride=window_stride, init_from=init_from, resume_from=resume_ckpt,
             fdv_kwargs=fdv_kwargs)
 
     resolved_path = _write_resolved(q_loss_weight)
@@ -1221,7 +1234,7 @@ def main():
         if regen_callback is not None:
             trainer.callbacks.append(regen_callback)
         t0 = time.time()
-        trainer.fit(lit, train_loader, val_loader)
+        trainer.fit(lit, train_loader, val_loader, ckpt_path=resume_ckpt)
         total_train = time.time() - t0
         ckpt = os.path.join(exp_dir, "stage1_best.pt")
         torch.save(lit.model.state_dict(), ckpt)
