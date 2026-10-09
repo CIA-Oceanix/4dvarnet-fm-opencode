@@ -1,0 +1,53 @@
+# Fine-tuning of the finished G1-L b16 run on the sparse-tilted density draw (2026-10-08): the
+# G1-M recipe of G1_direct_unet_tchannels_specwind_b16_kpow_ft.yaml (S0 0.813 -> 0.820, S1
+# 0.782 -> 0.790 at K = 3) on the L tier -- starts from
+# experiments/qg_specwind_neural/G1L_direct_unet_tchannels_specwind_b16_s0 (its best checkpoint,
+# psi normalization and q-loss weight), 150 epochs at P(K) ~ K**-1.5 over 3-30, 5-epoch warm-up
+# to a peak LR of 1e-4 (a fifth of the from-scratch peak), cosine decay, 5 fresh rounds.
+#
+#   EXP_ID=G1L_direct_unet_tchannels_specwind_b16_kpow_ft sbatch --cpus-per-task=12 --mem=80G \
+#     batch/run_qg_specwind_neural_train.sbatch
+
+experiment_id: G1L_direct_unet_tchannels_specwind_b16_kpow_ft
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [128, 256, 512]
+  num_res_blocks: 2
+  use_obs_mask: true
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 150
+  lr: 0.0001
+  warmup_epochs: 5
+  init_from: experiments/qg_specwind_neural/G1L_direct_unet_tchannels_specwind_b16_s0
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q is the parent run's (scale 3 / its Var(q_daily)), read from init_from.
+data:
+  normalize: true
+  # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):
+  # 3 psi1 columns per day, sequential sampler, 5% white noise.
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  # Train split only: a fresh draw per sample, 3-30 distinct (step, column)
+  # slots per day, uniform over the 12 x 64 slots of a day (plan section 4.3).
+  cols_per_day_min: 3
+  cols_per_day_max: 30
+  train_cols_sampling: uniform_slots
+  cols_per_day_power: 1.5
+  # Train split only (2026-10-05, S1 keeps its altimetry error): each draw gets a total white
+  # error ~ U[5%, 15%] and a per-pass correlated error (offset + tilt) ~ U[0, 15%] of the
+  # window's psi1 std -- from the S0 obs model to the S1 one (evaluation/qg_specwind_s1.py).
+  obs_error_aug: [0.05, 0.15, 0.15]
