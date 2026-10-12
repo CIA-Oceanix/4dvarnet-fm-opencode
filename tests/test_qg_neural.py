@@ -1129,3 +1129,223 @@ def test_build_model_refuses_a_tier_for_untiered_types():
     from train_qg_neural import build_model
     with pytest.raises(ValueError, match="fixed M tier"):
         build_model("direct_unet", QGConfig(nx=64), hidden_channels=[32, 64, 128])
+
+
+def test_warmup_cosine_factor_shape():
+    from train_qg_neural import warmup_cosine_factor
+    f = warmup_cosine_factor(100, 1000)
+    assert f(0) == pytest.approx(0.01)
+    assert f(50) == pytest.approx(0.01 + 0.99 * 0.5)
+    assert f(100) == pytest.approx(1.0)
+    assert f(550) == pytest.approx(0.5)
+    assert f(1000) == pytest.approx(0.0, abs=1e-12)
+    values = [f(s) for s in range(100, 1001, 50)]
+    assert all(a >= b for a, b in zip(values, values[1:]))
+    assert warmup_cosine_factor(100, 1000, cosine=False)(900) == 1.0
+
+
+def test_configure_optimizers_without_warmup_keeps_the_epoch_cosine():
+    from train_qg_neural import QGNeuralLightning
+    lit = QGNeuralLightning(torch.nn.Linear(2, 2), "direct_unet_tchannels", None, QGConfig(nx=16),
+                            max_epochs=200)
+    out = lit.configure_optimizers()
+    assert isinstance(out["lr_scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+    assert out["lr_scheduler"].T_max == 200
+
+
+def test_decoder_output_module_found_on_the_tchannels_backbone():
+    from train_qg_neural import build_model, decoder_output_module
+    cfg = QGConfig(nx=16)
+    assert decoder_output_module(build_model("direct_unet_tchannels", cfg)) is not None
+    assert decoder_output_module(torch.nn.Linear(2, 2)) is None
+
+
+@pytest.mark.parametrize("filename", [
+    "G1S_direct_unet_tchannels_specwind.yaml", "G1_direct_unet_tchannels_specwind.yaml",
+    "G1L_direct_unet_tchannels_specwind.yaml", "G2_vanilla_cfm_tchannels_specwind.yaml",
+    "G3_sda_prior_tchannels_specwind.yaml"])
+def test_specwind_configs_share_the_stabilized_protocol(filename):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    assert float(cfg.training.lr) == 3e-4
+    assert int(cfg.training.warmup_epochs) == 5
+    assert float(cfg.training.q_loss_weight_scale) == 3.0
+    assert float(cfg.training.gradient_clip_val) == 1.0
+
+
+def test_configure_optimizers_with_warmup_steps_per_batch():
+    from types import SimpleNamespace
+
+    from train_qg_neural import QGNeuralLightning
+    lit = QGNeuralLightning(torch.nn.Linear(2, 2), "direct_unet_tchannels", None, QGConfig(nx=16),
+                            lr=3e-4, max_epochs=200, warmup_epochs=5)
+    lit._trainer = SimpleNamespace(estimated_stepping_batches=200 * 500)
+    out = lit.configure_optimizers()
+    sched = out["lr_scheduler"]
+    assert sched["interval"] == "step"
+    opt = out["optimizer"]
+    assert opt.param_groups[0]["lr"] == pytest.approx(3e-6)
+    for _ in range(2500):
+        opt.step()
+        sched["scheduler"].step()
+    assert opt.param_groups[0]["lr"] == pytest.approx(3e-4)
+
+
+def test_pass_correlated_error_on_both_obs_layouts():
+    import numpy as np
+
+    from data.qg_neural import add_pass_correlated_error
+    ny = 16
+    dense = torch.full((6, ny), float("nan"))
+    dense[1] = 0.0
+    dense[4] = 0.0
+    out = add_pass_correlated_error(dense, 2.0, ny, np.random.default_rng(0))
+    assert torch.isnan(out[[0, 2, 3, 5]]).all()
+    for t in (1, 4):
+        d = out[t].double()
+        lin = torch.linspace(-1, 1, ny, dtype=torch.float64)
+        resid = d - (d.mean() + (d * lin).sum() / (lin * lin).sum() * lin)
+        assert float(resid.abs().max()) < 1e-5
+    grouped = [None, torch.zeros(3 * ny), None]
+    g = add_pass_correlated_error(grouped, 2.0, ny, np.random.default_rng(1))
+    assert g[0] is None and g[2] is None
+    cols = g[1].reshape(3, ny)
+    assert not torch.allclose(cols[0], cols[1])
+    rms = [float(add_pass_correlated_error(torch.zeros(1, ny), 2.0, ny, np.random.default_rng(s))
+                 .pow(2).mean().sqrt()) for s in range(400)]
+    assert float(np.sqrt(np.mean(np.square(rms)))) == pytest.approx(2.0, rel=0.1)
+
+
+def test_obs_error_aug_draws_within_range_and_needs_on_the_fly_obs():
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    with pytest.raises(ValueError, match="on_the_fly_obs"):
+        QGNeuralDataset(windows, cfg, obs_error_aug=(0.05, 0.15, 0.15))
+    with pytest.raises(ValueError):
+        QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=(0.2, 0.1, 0.1))
+    ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=(0.05, 0.15, 0.15),
+                         cols_per_day_range=(3, 12), cols_sampling="uniform_slots")
+    for _ in range(50):
+        white, corr = ds._draw_obs_error()
+        assert 0.05 <= white <= 0.15 and 0.0 <= corr <= 0.15
+    _psi, obs_pad, obs_mask, *_ = ds[0]
+    assert obs_mask.any() and torch.isfinite(obs_pad).all()
+    assert cfg.obs_noise_std_frac == _cfg().obs_noise_std_frac
+
+
+def test_obs_error_aug_raises_the_obs_error():
+    """A draw at the S1 end of the range carries more error than the S0 draw of the same window."""
+    import random as _random
+
+    from data.qg_neural import psi_upper
+    cfg = _cfg()
+    windows = ensure_truth_only_cache(cfg, 1, "/tmp/qg_neural_test_cache")
+    truth = psi_upper(windows[0], cfg).reshape(-1, cfg.ny, cfg.nx)
+
+    def err(aug):
+        ds = QGNeuralDataset(windows, cfg, on_the_fly_obs=True, obs_error_aug=aug)
+        errs = []
+        for seed in range(10):
+            _random.seed(seed)
+            w = ds._resolved_window(0)
+            for t in w["obs_mask"].nonzero().flatten().tolist():
+                errs.append((w["obs"][t] - truth[t, :, int(w["obs_columns"][t])]).pow(2).mean())
+        return float(torch.stack(errs).mean().sqrt())
+    assert err((0.15, 0.15, 0.15)) > 2.0 * err((0.05, 0.05, 1e-9))
+
+
+@pytest.mark.parametrize("filename,aug", [
+    ("G1S_direct_unet_tchannels_specwind.yaml", True), ("G1_direct_unet_tchannels_specwind.yaml", True),
+    ("G1L_direct_unet_tchannels_specwind.yaml", True), ("G2_vanilla_cfm_tchannels_specwind.yaml", True),
+    ("G3_sda_prior_tchannels_specwind.yaml", False)])
+def test_specwind_obs_error_aug_covers_s0_to_s1(filename, aug):
+    import os
+
+    from omegaconf import OmegaConf
+
+    from evaluation.qg_specwind_s1 import REALISTIC_SELECTED, REALISTIC_VARIANTS, S0_OBS_WHITE
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = OmegaConf.load(os.path.join(base, "config", "experiment", filename))
+    if not aug:
+        assert cfg.data.get("obs_error_aug") is None
+        return
+    lo, hi, corr = (float(v) for v in cfg.data.obs_error_aug)
+    s1 = REALISTIC_VARIANTS[REALISTIC_SELECTED]
+    assert lo == S0_OBS_WHITE and hi == s1.obs_white_frac and corr == s1.obs_corr_frac
+
+
+@pytest.mark.parametrize("batch", [16, 64])
+def test_g1l_large_batch_configs_differ_only_by_the_budget(batch):
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    ref = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind.yaml"))
+    cfg = OmegaConf.load(os.path.join(base, f"G1L_direct_unet_tchannels_specwind_b{batch}.yaml"))
+    assert cfg.experiment_id == f"G1L_direct_unet_tchannels_specwind_b{batch}"
+    assert cfg.model == ref.model
+    t = cfg.training
+    assert (int(t.batch_size), int(t.epochs), float(t.lr), int(t.warmup_epochs), int(t.num_workers)) == (
+        batch, 1200, 5e-4, 40, 10)
+    assert int(cfg.data.regen_every) == 30
+    for k in ("q_loss_weight_scale", "gradient_clip_val"):
+        assert t[k] == ref.training[k]
+    assert {k: v for k, v in cfg.data.items() if k != "regen_every"} == dict(ref.data)
+
+
+def test_train_cli_budget_flags_default_to_the_yaml():
+    """--epochs / --batch-size / --num-workers / --regen-every must default to None so the
+    experiment YAML's values apply (the sbatch passes them only when set)."""
+    import ast
+    import os
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tree = ast.parse(open(os.path.join(base, "train_qg_neural.py")).read())
+    defaults = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)):
+            for kw in node.keywords:
+                if kw.arg == "default" and isinstance(kw.value, ast.Constant):
+                    defaults[node.args[0].value] = kw.value.value
+    for flag in ("--epochs", "--batch-size", "--num-workers", "--regen-every"):
+        assert defaults.get(flag, "missing") is None, flag
+
+
+def test_g1m_b16_config_is_g1l_b16_at_the_m_tier():
+    import os
+
+    from omegaconf import OmegaConf
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    m = OmegaConf.load(os.path.join(base, "G1_direct_unet_tchannels_specwind_b16.yaml"))
+    lg = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind_b16.yaml"))
+    assert m.experiment_id == "G1_direct_unet_tchannels_specwind_b16"
+    assert list(m.model.hidden_channels) == [64, 128, 256]
+    assert {k: v for k, v in m.model.items() if k != "hidden_channels"} == {
+        k: v for k, v in lg.model.items() if k != "hidden_channels"}
+    assert m.training == lg.training and m.data == lg.data
+
+
+def test_g1xl_b16_config_is_g1l_b16_with_a_fourth_level_and_half_the_peak_lr():
+    import os
+
+    from omegaconf import OmegaConf
+
+    from train_qg_neural import build_model
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "experiment")
+    xl = OmegaConf.load(os.path.join(base, "G1XL_direct_unet_tchannels_specwind_b16.yaml"))
+    lg = OmegaConf.load(os.path.join(base, "G1L_direct_unet_tchannels_specwind_b16.yaml"))
+    assert xl.experiment_id == "G1XL_direct_unet_tchannels_specwind_b16"
+    assert list(xl.model.hidden_channels) == [128, 256, 512, 512]
+    assert {k: v for k, v in xl.model.items() if k != "hidden_channels"} == {
+        k: v for k, v in lg.model.items() if k != "hidden_channels"}
+    assert float(xl.training.lr) == 2.5e-4
+    assert {k: v for k, v in xl.training.items() if k != "lr"} == {
+        k: v for k, v in lg.training.items() if k != "lr"}
+    assert xl.data == lg.data
+    model = build_model("direct_unet_tchannels", QGConfig(nx=64), use_obs_mask=True,
+                        hidden_channels=list(xl.model.hidden_channels),
+                        num_res_blocks=int(xl.model.num_res_blocks))
+    assert sum(p.numel() for p in model.parameters()) == 96_133_180

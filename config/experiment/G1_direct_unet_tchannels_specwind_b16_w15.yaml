@@ -1,0 +1,55 @@
+# G1-M, batch-16 protocol on a 15-day network window (2026-10-08): identical to
+# G1_direct_unet_tchannels_specwind_b16.yaml (uniform 3-30 columns per day) except that the
+# network is built for T = 15 days and trained on 15-day crops of the 30-day windows (a random
+# whole-day start per draw, the observations those of the full window). Val tiles each window
+# with two crops; the 30-day test windows are estimated from overlapping 15-day sub-windows
+# 5 days apart, averaged with tent weights (data.qg_neural.windowed_estimate).
+#
+#   EXP_ID=G1_direct_unet_tchannels_specwind_b16_w15 sbatch --cpus-per-task=12 --mem=80G \
+#     batch/run_qg_specwind_neural_train.sbatch
+
+experiment_id: G1_direct_unet_tchannels_specwind_b16_w15
+entry_point: train_qg_neural.py
+system: qg
+model_type: direct_unet_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  num_res_blocks: 2
+  use_obs_mask: true
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 1200
+  lr: 0.0005
+  warmup_epochs: 40
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration draw;
+  # scale 3 selected by the E1 sweep on val (0.699 vs 0.688 at 1, 0.694 at 10).
+  q_loss_weight_scale: 3.0
+data:
+  normalize: true
+  # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):
+  # 3 psi1 columns per day, sequential sampler, 5% white noise.
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  train_window_days: 15
+  window_stride: 5
+  # Train split only: a fresh draw per sample, 3-30 distinct (step, column)
+  # slots per day, uniform over the 12 x 64 slots of a day (plan section 4.3).
+  cols_per_day_min: 3
+  cols_per_day_max: 30
+  train_cols_sampling: uniform_slots
+  # Train split only (2026-10-05, S1 keeps its altimetry error): each draw gets a total white
+  # error ~ U[5%, 15%] and a per-pass correlated error (offset + tilt) ~ U[0, 15%] of the
+  # window's psi1 std -- from the S0 obs model to the S1 one (evaluation/qg_specwind_s1.py).
+  obs_error_aug: [0.05, 0.15, 0.15]

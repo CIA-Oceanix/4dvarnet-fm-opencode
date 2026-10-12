@@ -124,6 +124,29 @@ Both filters were tuned on val (`docs/results/qg_specwind_da2_val_tuning.md`): v
 
 ![S1 error budget](figs/qg_specwind_da_s1_budget.png)
 
+**S1-tuned error budgets** — the same attribution with each filter fixed at its S1-tuned setting (R × 6) in all 32 combinations (the S0 corner then runs R × 6 on perfect-model data: it costs nothing, ETKF 0.768 vs 0.764, EnKS 0.809 vs 0.806). Absolute Shapley score loss per group (bootstrap 95% over the 20 windows; largest in bold) and paired contrasts (`docs/results/qg_specwind_da_s1_calibration.md` §3.1d):
+
+| filter (score S0 corner → S1) | forcing | rd | drag | obs | res | interaction | total loss |
+|---|---|---|---|---|---|---|---|
+| ETKF, S0-tuned (R × 1) (0.764 → 0.580) | 0.016 [0.011, 0.021] | 0.034 [0.030, 0.038] | 0.030 [0.026, 0.034] | **0.058 [0.047, 0.069]** | 0.047 [0.027, 0.068] | -0.000 | 0.184 |
+| ETKF, S1-tuned (R × 6) (0.768 → 0.641) | 0.015 [0.010, 0.020] | 0.019 [0.015, 0.023] | 0.023 [0.020, 0.026] | 0.033 [0.026, 0.040] | **0.038 [0.020, 0.057]** | -0.031 | 0.127 |
+| EnKS, S1-tuned (R × 6, taper 8 d) (0.809 → 0.679) | 0.025 [0.015, 0.038] | 0.016 [0.013, 0.020] | 0.023 [0.020, 0.026] | **0.034 [0.026, 0.042]** | 0.031 [0.016, 0.048] | -0.036 | 0.130 |
+
+| paired contrast (score loss, 95% CI) | forcing | rd | drag | obs | res |
+|---|---|---|---|---|---|
+| S1 tuning (ETKF, R × 6 − R × 1) | -0.001 [-0.002, -0.000] | -0.015 [-0.016, -0.014] | -0.007 [-0.009, -0.005] | -0.025 [-0.031, -0.020] | -0.009 [-0.013, -0.005] |
+| smoothing (EnKS − ETKF, both R × 6) | +0.010 [+0.004, +0.020] | -0.002 [-0.003, -0.001] | +0.000 [-0.001, +0.001] | +0.001 [-0.002, +0.004] | -0.007 [-0.009, -0.004] |
+
+Share of the EV loss per field, S1-tuned EnKS:
+
+| metric (S0 → S1) | forcing | rd | drag | obs | res | interaction |
+|---|---|---|---|---|---|---|
+| score (0.809 → 0.679) | 19% | 13% | 18% | **26%** | 24% | -0.036 |
+| ψ₁ (0.968 → 0.910) | 32% | 9% | 6% | **32%** | 21% | -0.007 |
+| ψ₂ (0.973 → 0.876) | **54%** | 6% | 17% | 2% | 21% | -0.013 |
+| q₁ (0.695 → 0.520) | 7% | 11% | 5% | **57%** | 20% | -0.056 |
+| q₂ (0.602 → 0.411) | 10% | 19% | **33%** | 8% | 30% | -0.068 |
+
 ### Large-ensemble reference (N = 320)
 
 The benchmark uses N = 80. At N = 320, S0 is still not converged (val: +0.022 for the EnKS from 80 to 320), while S1 saturates by N = 160. In S0 the N = 320 rows use settings re-tuned at that size (wider localization). Use these rows to quote converged skill, for instance against learned methods (`docs/results/qg_specwind_ensemble_size.md`).

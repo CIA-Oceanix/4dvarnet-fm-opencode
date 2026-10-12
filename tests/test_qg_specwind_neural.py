@@ -121,6 +121,16 @@ def test_callback_swaps_windows_every_k_epochs(tmp_path):
     assert (tmp_path / "regen.jsonl").read_text().count("\n") == 1
 
 
+def test_regeneration_on_resume_draws_the_round_of_the_resume_epoch():
+    drawn = []
+    src = SimpleNamespace(draw=lambda r: drawn.append(r) or [r], indices=lambda r: [r])
+    ds = SimpleNamespace(windows=[0])
+    cb = RegenerateTrainWindows(ds, src, every=30)
+    for epoch in (279, 280, 299, 300):
+        cb.on_train_epoch_start(SimpleNamespace(current_epoch=epoch), None)
+    assert drawn == [9, 10] and ds.windows == [10]
+
+
 def _eval_args(root, spec_name="tiny_g5"):
     return SimpleNamespace(specwind_spec=spec_name, specwind_root=root, regen_windows=2,
                            regen_every=1, regen_batch_size=2, eval_only="stage1_best.pt", num_test=100)
@@ -159,3 +169,23 @@ def test_eval_only_fails_loudly_without_saved_stats(built, tmp_path, monkeypatch
         train_qg_neural._build_specwind_data(
             _eval_args(built), CFG, str(tmp_path), "cpu", "none", False, None, 1.5, None, None,
             None, True, os.path.join(str(tmp_path), "specwind_psi_norm_stats.pt"))
+
+
+def test_chunked_draw_matches_one_call_over_the_round():
+    """draw() generates one batch_size chunk at a time to bound memory; the windows
+    must be the ones a single generate_windows call over the whole round gives."""
+    import numpy as np
+
+    from data.qg_datasets import generate_windows
+
+    src = SpecWindTrainSource(TINY, 3, batch_size=2)
+    chunked = src.draw(1)
+    whole = legacy_windows(generate_windows(TINY, "train", src.indices(1), batch_size=2,
+                                            factors=src.factors(1), keep_every=1), TINY)
+    assert len(chunked) == len(whole) == 3
+    for a, b in zip(chunked, whole):
+        assert torch.equal(a["true_state"], b["true_state"])
+        assert torch.equal(a["wind_state_true"], b["wind_state_true"])
+        assert a["specwind"]["index"] == b["specwind"]["index"]
+        assert a["true_params"] == b["true_params"]
+        assert np.isclose(a["wind_amp"], b["wind_amp"])

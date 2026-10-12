@@ -1,0 +1,6 @@
+## 2026-10-04: QG gyrostat regeneration — bounded memory per round
+
+**Summary:** `SpecWindTrainSource.draw` now generates and converts one `batch_size` chunk at a time instead of concatenating the whole round and then cloning it, and the regeneration callback returns freed heap pages to the OS (`malloc_trim`) after dropping the previous round.
+**Files modified:** `data/qg_specwind_neural.py` — chunked `draw`, `release_freed_memory`; `tests/test_qg_specwind_neural.py` — chunked draw equals one call over the round.
+**Rationale:** The first G1 λ_q sweep (job 58502) and a 3-epoch memory check (58527) were killed at the 64 GB limit at the first and second regeneration: 1000 windows × 481 frames are about 16 GB, held twice by `generate_windows` (chunks plus concatenation) and a third time by the legacy clones, on top of a ~25 GB baseline. Freeing the previous round alone (#318) was not enough. Windows are seeded per index and simulated per batch, so the chunked draw is bit-identical.
+**Verification:** `pytest tests/test_qg_specwind_neural.py tests/test_qg_datasets.py` (22 passed); memory check job 58547 (4 epochs, a regeneration every epoch): 3 regenerations (392 s each) completed; peak RSS of the training process 34 GB (was 40 GB before any fix), job-level MaxRSS 62 GB under the 64 GB limit.

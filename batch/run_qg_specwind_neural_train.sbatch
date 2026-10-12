@@ -20,6 +20,8 @@
 # MODEL_TYPE defaults to the YAML's model_type; QSCALE overrides training.q_loss_weight_scale
 # (QSCALES + an array task picks one per task, tagged e<EPOCHS>_lq<scale>); EXTRA is passed
 # through to train_qg_neural.py.
+# The batch-16 / batch-64 configs (G1L_*_b16 / _b64) need more CPUs and memory: submit them
+# with sbatch --cpus-per-task=12 --mem=80G.
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -39,10 +41,21 @@ MODEL_TYPE="${MODEL_TYPE:-$("$PY" -c "from omegaconf import OmegaConf; print(Ome
 OUT="experiments/qg_specwind_neural/${EXP_ID}_${TAG}"
 ARGS=(--model-type "$MODEL_TYPE" --exp-id "$EXP_ID" --exp-dir "$OUT"
       --specwind-spec "$SPEC" --specwind-root "$ROOT"
-      --regen-windows "${REGEN_WINDOWS:-1000}" --regen-every "${REGEN_EVERY:-5}"
-      --batch-size "${BATCH:-2}" --num-workers 4 --seed "$SEED")
+      --regen-windows "${REGEN_WINDOWS:-1000}" --seed "$SEED")
+# Batch, loader workers and regeneration spacing come from the experiment YAML
+# (training.batch_size / training.num_workers / data.regen_every) unless overridden here.
+[ -n "${BATCH:-}" ] && ARGS+=(--batch-size "$BATCH")
+[ -n "${NUM_WORKERS:-}" ] && ARGS+=(--num-workers "$NUM_WORKERS")
+[ -n "${REGEN_EVERY:-}" ] && ARGS+=(--regen-every "$REGEN_EVERY")
 [ -n "${EPOCHS:-}" ] && ARGS+=(--epochs "$EPOCHS")
 [ -n "${QSCALE:-}" ] && ARGS+=(--q-loss-weight-scale "$QSCALE")
+# RESUME=1 continues an interrupted run from $OUT/checkpoints/stage1_last.ckpt (RESUME=<path> from
+# that checkpoint); its log is appended to, not overwritten.
+TEE=(tee)
+if [ -n "${RESUME:-}" ]; then
+  [ "$RESUME" = 1 ] && ARGS+=(--resume) || ARGS+=(--resume "$RESUME")
+  TEE=(tee -a)
+fi
 mkdir -p "$OUT"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-/usr/bin/time -v "$PY" train_qg_neural.py "${ARGS[@]}" ${EXTRA:-} 2>&1 | tee "$OUT/train.log"
+/usr/bin/time -v "$PY" train_qg_neural.py "${ARGS[@]}" ${EXTRA:-} 2>&1 | "${TEE[@]}" "$OUT/train.log"

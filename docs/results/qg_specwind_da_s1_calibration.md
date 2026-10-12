@@ -1,9 +1,8 @@
 # S1 (model error) for the spectral-wind QG DA: calibration and attribution on val
 
 **Status:** RESULTS (2026-09-27; base attribution re-run 2026-09-28 with the
-exact localized ETKF). Design: `docs/plans/analysis/qg_specwind_da_s1.md`. Val
-only, 20 windows of the forced dataset; test untouched. No S1 re-tuning; no
-4D-Var.
+exact localized ETKF; S1-tuned ETKF and EnKS attributions added 2026-10-05, §3.1d). Design: `docs/plans/analysis/qg_specwind_da_s1.md`. Val
+only, 20 windows of the forced dataset; test untouched. No 4D-Var.
 
 **Which ETKF:**
 - **§3.1, the current base attribution:** the exact localized EnSRF update
@@ -18,7 +17,9 @@ only, 20 windows of the forced dataset; test untouched. No S1 re-tuning; no
 `--variant base` or `--variant high` for the attributions) over
 `experiments/qg_specwind_s1_ensrf/` (EnSRF ETKF, §3.1) and `experiments/qg_specwind_s1/`
 (legacy ETKF). Run with `batch/run_qg_specwind_s1.sbatch` (SLURM 55959, 56000, 56034,
-56039, 56172, 56181; EnSRF 56545).
+56039, 56172, 56181; EnSRF 56545). The S1-tuned attributions (§3.1d) are under
+`experiments/qg_specwind_s1_ensrf/etkf_R6/` and `.../enks_R6/` (`--method etkf|enks --r-scale 6`;
+SLURM 58529 and 58483).
 
 **Target** (user request): per-window analysis EVs typically in upper-layer
 q ∈ [0, 0.25] and upper-layer ψ ∈ [0.7, 0.9], read as the median over the 20
@@ -136,6 +137,76 @@ loss. "Interaction" is the full loss minus the sum of stand-alone losses.
   each other; the exact filter degrades additively.
 - **Forcing stays the smallest group** (9%; 18% of ψ₂).
 
+### 3.1d Realistic base — S1-tuned ETKF and EnKS (R × 6; 5 groups, 32 runs each)
+
+§3.1 attributes the loss of the S0-tuned ETKF. These two sweeps repeat it with
+each filter fixed at its S1-tuned setting (`docs/results/qg_specwind_s1_tuning.md`)
+in all 32 combinations:
+- the ETKF at R × 6;
+- the EnKS (localized smoother on that ETKF) at R × 6 with the 8-day taper.
+
+Three budgets then separate the effect of the tuning (ETKF R × 1 → R × 6) from
+the effect of smoothing (ETKF → EnKS, both at R × 6).
+
+**R × 6 costs nothing in the perfect-model corner.** The S0 corner scores 0.768
+for the ETKF (S0-tuned: 0.764) and 0.809 for the EnKS (S0-tuned, same windows:
+0.806). The S1-tuned budgets therefore start from the S0 optimum.
+
+**Absolute Shapley score loss per group** (bootstrap 95% over windows):
+
+| filter (S0 corner → S1) | forcing | rd | drag | obs | res | interaction | total |
+|---|---|---|---|---|---|---|---|
+| ETKF, R × 1 (0.764 → 0.580) | 0.016 | 0.034 | 0.030 | **0.058** [0.047, 0.069] | 0.047 | −0.000 [−0.009, +0.008] | 0.184 |
+| ETKF, R × 6 (0.768 → 0.641) | 0.015 | 0.019 | 0.023 | 0.033 [0.026, 0.040] | **0.038** [0.020, 0.057] | −0.031 [−0.040, −0.023] | 0.127 |
+| EnKS, R × 6 (0.809 → 0.679) | 0.025 [0.015, 0.038] | 0.016 | 0.023 | **0.034** [0.026, 0.042] | 0.031 | −0.036 [−0.045, −0.027] | 0.130 |
+
+**Paired contrasts** (score loss, bootstrap 95%; negative = the error costs
+less):
+
+| contrast | forcing | rd | drag | obs | res |
+|---|---|---|---|---|---|
+| tuning: ETKF R × 6 − R × 1 | −0.001 | −0.015 [−0.016, −0.014] | −0.007 | **−0.025** [−0.031, −0.020] | −0.009 |
+| smoothing: EnKS − ETKF (R × 6) | **+0.010** [+0.004, +0.020] | −0.002 | +0.000 | +0.001 | −0.007 [−0.009, −0.004] |
+
+**Share of the EV loss per field, S1-tuned EnKS:**
+
+| metric (S0 → S1) | forcing | rd | drag | obs | res | interaction |
+|---|---|---|---|---|---|---|
+| score (0.809 → 0.679) | 19% | 13% | 18% | **26%** | 24% | −0.036 |
+| ψ₁ (0.968 → 0.910) | 32% | 9% | 6% | **32%** | 21% | −0.007 |
+| ψ₂ (0.973 → 0.876) | **54%** | 6% | 17% | 2% | 21% | −0.013 |
+| q₁ (0.695 → 0.520) | 7% | 11% | 5% | **57%** | 20% | −0.056 |
+| q₂ (0.602 → 0.411) | 10% | 19% | **33%** | 8% | 30% | −0.068 |
+
+The S1-tuned ETKF's per-field shares are in the report (§4). Its score shares
+are 12 / 15 / 18 / 26 / 30% (forcing, rd, drag, obs, res).
+
+**Findings:**
+1. **The tuning removes a third of the S1 loss** (0.184 → 0.127). It acts
+   mostly on observation error (−0.025) and rd (−0.015), and mostly on the
+   unobserved layer: on q₂, the observation-error cost falls by 0.052
+   [0.041, 0.064] and the rd cost by 0.037. It leaves the forcing cost
+   unchanged. A smaller gain stops the filter fitting noisy, pass-correlated
+   observations to a wrong model and passing that misfit to the deep layer
+   through the cross-layer covariances.
+2. **Smoothing raises the cost of wind-forcing error** (+0.010 on the score).
+   The rise is concentrated on ψ₂: +0.030 [+0.007, +0.062], taking forcing to
+   54% of the EnKS's ψ₂ loss. The smoother spreads each observation over a
+   longer time span, so forcing errors over that span enter the estimate. It
+   lowers the resolution cost (−0.007). It moves the observation-error cost
+   between fields (q₁ +0.020, ψ₂ −0.012) without changing the total.
+3. **The S1-tuned budgets are sub-additive and the S0-tuned one is
+   additive.** The interaction is about −0.03 for both S1-tuned filters,
+   against 0.000 at R × 1. A large R absorbs several error sources at once,
+   so removing one recovers less than its single-error cost. This comes from
+   the tuning, not from smoothing.
+4. **What limits the best baseline (S1-tuned EnKS):**
+   - observation error, on the upper-layer PV (q₁, 57%);
+   - wind forcing, on the deep streamfunction (ψ₂, 54%);
+   - drag and resolution, on the deep PV (q₂, 33% and 30%).
+
+   rd costs the S1-tuned filters little (13–15%).
+
 ### 3.1c Realistic base — legacy ETKF (5 groups, 32 runs; superseded by §3.1)
 
 | metric (S0 → S1) | forcing | rd | drag | obs | res | interaction |
@@ -200,8 +271,8 @@ upper-layer losses.
 ## 4. Caveats
 
 - **20 val windows, one density** (3 columns per day), one DA
-  configuration (S0-tuned ETKF, no inflation). Under S1, inflation or a
-  larger R could recover part of the loss. That re-tuning is a follow-up.
+  configuration (S0-tuned ETKF, no inflation) for the scenario choice. The
+  S1-tuned filters (R × 6) are attributed in §3.1d; 4D-Var is not attributed.
 - **Parameter errors have one sign each** (rd and drag underestimated).
   The opposite signs are not tested.
 - **The observation-error correlation model is simple** (offset and linear

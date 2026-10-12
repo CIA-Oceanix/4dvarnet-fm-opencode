@@ -310,6 +310,11 @@ def main_tables(da: list[dict], learned: list[dict]) -> list[str]:
                  f"{ms(r['can']['s0']['rmse'])} | {ms(r['can']['s1']['rmse'])} | "
                  f"{r['can']['s0']['rmse'].mean() / r['reg']['s0']['rmse'].mean():.2f} | {sd} |")
     A += ["\n### CRPS / spread-over-RMSE (S0; S1 in parentheses)\n",
+          "spread/RMSE = window-mean spread / window-mean RMSE. It is biased low against the pooled spread/skill "
+          "`sqrt(E var / E err²)` (the spread is averaged as a standard deviation per time step, the RMSE as the root of "
+          "a time-mean, so the numerator loses more to Jensen's inequality), and values below 1 do "
+          "not by themselves mean under-dispersion; pooled values and a proper score are in "
+          "`docs/results/l96_p1_fm_score.md`.\n",
           "| group | scheme | CRPS regular | CRPS random | spread/RMSE regular | spread/RMSE random |", "|---|---|---|---|---|---|"]
     for r in da:
         if r["reg"]["s0"]["crps"] is None:

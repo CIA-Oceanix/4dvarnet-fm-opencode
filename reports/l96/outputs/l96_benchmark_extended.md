@@ -82,6 +82,8 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 
 ### CRPS / spread-over-RMSE (S0; S1 in parentheses)
 
+spread/RMSE = window-mean spread / window-mean RMSE. It is biased low against the pooled spread/skill `sqrt(E var / E err²)` (the spread is averaged as a standard deviation per time step, the RMSE as the root of a time-mean, so the numerator loses more to Jensen's inequality), and values below 1 do not by themselves mean under-dispersion; pooled values and a proper score are in `docs/results/l96_p1_fm_score.md`.
+
 | group | scheme | CRPS regular | CRPS random | spread/RMSE regular | spread/RMSE random |
 |---|---|---|---|---|---|
 | DA | ETKF | 0.270 (0.758) | 0.306 (0.786) | 0.61 (0.61) | 0.72 (0.93) |
