@@ -19,12 +19,15 @@ which would leak/discard information across the domain's actual periodic
 boundary. We register a replacement "conv" factory function (MONAI's own
 public per-name-override mechanism, `LayerFactory.add_factory_callable` --
 not a private monkeypatch) that swaps in a `padding_mode="circular"`
-`nn.Conv2d` subclass for `spatial_dims=2` only; dims 1 and 3 fall back to the
-stock `nn.Conv1d`/`nn.Conv3d` unchanged, so this cannot affect L96's
-`MonaiUNet1D` (spatial_dims=1) sharing the same process.
+`nn.Conv2d` subclass for `spatial_dims=2`, and for `spatial_dims=3` an
+`nn.Conv3d` subclass periodic in its two spatial axes and zero-padded along the
+first (time) axis (the 3D QG prior, `MonaiSDAPrior3DQG`); dim 1 falls back to
+the stock `nn.Conv1d` unchanged, so this cannot affect L96's `MonaiUNet1D`
+(spatial_dims=1) sharing the same process.
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.interpolant import LinearInterpolant
 from models.vanilla_cfm import VanillaCFM
@@ -37,6 +40,22 @@ class CircularConv2d(nn.Conv2d):
         super().__init__(*args, padding_mode=padding_mode, **kwargs)
 
 
+class SpaceCircularConv3d(nn.Conv3d):
+    """Conv3d over (time, ny, nx): circular padding in the two spatial axes (the doubly
+    periodic QG domain), zero padding along time (a window has real ends)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._space_pad = tuple(self.padding[1:])
+        self.padding = (self.padding[0], 0, 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        ph, pw = self._space_pad
+        if ph or pw:
+            x = F.pad(x, (pw, pw, ph, ph, 0, 0), mode="circular")
+        return super().forward(x)
+
+
 def _patch_conv2d_circular() -> None:
     global _PATCHED_CIRCULAR_CONV2D
     if _PATCHED_CIRCULAR_CONV2D:
@@ -44,7 +63,7 @@ def _patch_conv2d_circular() -> None:
     from monai.networks.layers.factories import Conv
 
     def _circular_conv_factory(dim: int):
-        types = (nn.Conv1d, CircularConv2d, nn.Conv3d)
+        types = (nn.Conv1d, CircularConv2d, SpaceCircularConv3d)
         return types[dim - 1]
 
     Conv.add_factory_callable("conv", _circular_conv_factory)
@@ -416,3 +435,55 @@ class MonaiSDAPriorQGChannelTime(VanillaCFM):
         if x_t.shape[1] != self.T:
             raise ValueError(f"expected T={self.T} (days), got {x_t.shape[1]}")
         return self.unet(x_t.transpose(1, 2), tau=tau).transpose(1, 2)
+
+
+class MonaiSDAPrior3DQG(VanillaCFM):
+    """Unconditional flow prior for SDA on a 3D backbone: MONAI's `DiffusionModelUNet` with
+    `spatial_dims=3` over (time, ny, nx), the two layers as channels -- unlike
+    `MonaiSDAPriorQGChannelTime`, which stacks the days into the channels of a 2D U-Net.
+    Convolutions are local in time and share their weights across days, so one network
+    runs on any window length: `T` is the training window (what `ComposedFlow` composes
+    over), and `any_length` lets the evaluation also run it on the full window directly.
+    Time is zero-padded at the end to a multiple of the backbone's downsampling factor and
+    the padded days are dropped from the output. `forward(x_tau, batch, tau) -> (B, T, D)`.
+    """
+
+    any_length = True
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None, N_outer: int = 10,
+                 sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 8):
+        nn.Module.__init__(self)
+        _patch_conv2d_circular()
+        from monai.networks.nets import DiffusionModelUNet
+        from monai.networks.nets import diffusion_model_unet as _dmu
+
+        hidden_channels = list(hidden_channels or [32, 64, 128])
+        self.ny, self.nx, self.T, self.nlayers = ny, nx, T, nlayers
+        self.state_dim = nlayers * ny * nx
+        self.param_dim = 0
+        self.cond_extra_dim = 0
+        self.time_multiple = 2 ** (len(hidden_channels) - 1)
+        self.backbone = DiffusionModelUNet(
+            spatial_dims=3, in_channels=nlayers, out_channels=nlayers,
+            channels=tuple(hidden_channels),
+            attention_levels=tuple(False for _ in hidden_channels),
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups)
+        if dropout > 0:
+            for module in self.backbone.modules():
+                if isinstance(module, _dmu.DiffusionUNetResnetBlock):
+                    module.dropout = nn.Dropout(dropout)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = False
+
+    def forward(self, x_t: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        b, t, _ = x_t.shape
+        x = x_t.reshape(b, t, self.nlayers, self.ny, self.nx).permute(0, 2, 1, 3, 4)
+        pad = -t % self.time_multiple
+        if pad:
+            x = F.pad(x, (0, 0, 0, 0, 0, pad))
+        v = self.backbone(x, tau)[:, :, :t]
+        return v.permute(0, 2, 1, 3, 4).reshape(b, t, self.state_dim)

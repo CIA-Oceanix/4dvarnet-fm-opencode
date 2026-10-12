@@ -116,7 +116,9 @@ DEFAULT_NUM_RES_BLOCKS = 2
 # spectral-wind round 1, docs/plans/analysis/qg_specwind_neural.md): the loss is
 # the CFM velocity MSE, and the q term is applied to the endpoint estimate
 # x1_hat = x_tau + (1 - tau) v.
-FLOW_TYPES = ("vanilla_cfm_tchannels", "sda_prior_tchannels")
+FLOW_TYPES = ("vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d")
+# Unconditional priors for SDA: no obs-only estimate, scored by the guided sampler.
+SDA_TYPES = ("sda_prior_tchannels", "sda_prior_3d")
 DIRECT_TYPES = ("direct_unet", "direct_unet_tchannels")
 TIERED_TYPES = ("direct_unet_tchannels", *FLOW_TYPES)
 
@@ -182,6 +184,12 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
         return MonaiSDAPriorQGChannelTime(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
                                           hidden_channels=tier, num_res_blocks=num_res_blocks,
                                           sigma_prior=0.5, norm_num_groups=4)
+    if model_type == "sda_prior_3d":
+        # G3-3D: the same prior on a 3D (time, ny, nx) backbone, weights shared across days.
+        from models.monai_unet_qg2d import MonaiSDAPrior3DQG
+        return MonaiSDAPrior3DQG(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                 hidden_channels=tier, num_res_blocks=num_res_blocks,
+                                 sigma_prior=0.5, norm_num_groups=8)
     if model_type == "vanilla_cfm":
         return VanillaCFM(state_dim=cfg.state_dim, param_dim=param_dim,
                           cond_extra_dim=cond_extra_dim,
@@ -732,7 +740,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-type",
                     choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels",
-                             "vanilla_cfm_tchannels", "sda_prior_tchannels"],
+                             "vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d"],
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)
@@ -1247,7 +1255,7 @@ def main():
         print(f"Loaded checkpoint {args.eval_only}")
 
     model.eval()
-    if model_type == "sda_prior_tchannels":
+    if model_type in SDA_TYPES:
         # An unconditional prior has no obs-only estimate to score here: the SDA
         # rows come from the guided sampler in the evaluation driver.
         result = {"model_type": model_type, "train_time_seconds": total_train,

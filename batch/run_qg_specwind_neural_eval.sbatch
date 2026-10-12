@@ -18,7 +18,8 @@
 # one window's normalized state), SDA_STEPS = guided Euler steps; put the GW in TAG.
 # S1=1 scores on the realistic-S1 observations (the DA S1 rows' exact altimetry-error draws).
 # WARM=<DirectUNet run dir> warm-starts the SDA members from that run's estimate at flow time
-# TAU0 (default 0.5); put both in TAG.
+# TAU0 (default 0.5); put both in TAG. FULL=1 runs a length-agnostic (3D) prior on the whole
+# window instead of composing it over its training window.
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -33,4 +34,5 @@ mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_neural --run-dir "$RUN_DIR" --spec "$SPEC" --root "$ROOT" \
   --split "$SPLIT" --n-windows "$N_WINDOWS" --cols-per-day "$COLS" --n-members "$N" \
   --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" $([ "$S1" = 1 ] && echo "--s1" || true) \
-  ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} --out "$OUT" --device cuda
+  ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
+  --out "$OUT" --device cuda

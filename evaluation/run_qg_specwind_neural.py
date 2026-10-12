@@ -65,7 +65,7 @@ from evaluation.run_qg_specwind_da import (
     s0_windows,
     window_metrics,
 )
-from train_qg_neural import DIRECT_TYPES, build_model
+from train_qg_neural import DIRECT_TYPES, SDA_TYPES, build_model
 
 INTERP_KINDS = ("cubic", "linear")
 
@@ -99,7 +99,7 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     rc = OmegaConf.load(os.path.join(run_dir, "resolved_config.yaml"))
     m = rc.model
     model_type = str(m.model_type)
-    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", "sda_prior_tchannels"):
+    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", *SDA_TYPES):
         raise ValueError(f"{model_type!r} is not scored by this driver")
     days = rc.data.get("train_window_days", None)
     model_cfg = dataclasses.replace(cfg, window_days=float(days)) if days is not None else cfg
@@ -203,7 +203,7 @@ def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: 
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
         return model(batch)[None]
-    if model_type == "sda_prior_tchannels":
+    if model_type in SDA_TYPES:
         return sda_members(model, batch, n_members, guidance_weight, sda_steps, mean_estimate,
                            tau0)
     return torch.stack([model.sample(batch) for _ in range(n_members)])
@@ -247,19 +247,22 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
              device: torch.device, n_members: int = 1, interp: str = "cubic",
              batch_size: int = 4, guidance_weight: float = 100.0,
              sda_steps: int = 10, window_stride: int = 5, warm_start=None,
-             tau0: float = 0.5) -> list[dict]:
+             tau0: float = 0.5, full_window: bool = False) -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
     overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
     estimates (`windowed_estimate`), a flow blends its velocity at every step
     (`ComposedFlow`), so each member stays one coherent trajectory. `warm_start`
     `(model, model_type, norm)` -- a deterministic run -- gives the SDA members their
-    starting estimate at flow time `tau0`."""
+    starting estimate at flow time `tau0`. `full_window` runs a network that accepts any
+    window length (`any_length`, the 3D prior) on the whole window instead."""
+    if full_window and not getattr(model, "any_length", False):
+        raise ValueError("full_window needs a network that accepts any window length")
     ds = QGNeuralDataset(windows, cfg, norm, on_the_fly_obs=False)
     per_window = []
     for start in range(0, len(windows), batch_size):
         idx = list(range(start, min(start + batch_size, len(windows))))
         batch = qg_collate([ds[i] for i in idx]).to(device)
-        t_model = getattr(model, "T", batch.T)
+        t_model = batch.T if full_window else getattr(model, "T", batch.T)
         mean_estimate = None
         if warm_start is not None:
             w_model, w_type, w_norm = warm_start
@@ -310,6 +313,9 @@ def main() -> None:
                    help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
                         "at flow time --tau0 instead of pure noise")
     p.add_argument("--tau0", type=float, default=0.5, help="SDA warm start: starting flow time")
+    p.add_argument("--full-window", action="store_true",
+                   help="run a network that accepts any window length (3D prior) on the whole "
+                        "window instead of composing it over its training window")
     p.add_argument("--window-stride", type=int, default=None,
                    help="days between the overlapping sub-windows of a network trained on a "
                         "shorter window (default: the run's data.window_stride, else 5)")
@@ -340,18 +346,21 @@ def main() -> None:
             raise ValueError(f"--warm-start-run must be a DirectUNet run, got {warm[1]!r}")
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
                           args.interp, args.batch_size, args.guidance_weight, args.sda_steps,
-                          window_stride=stride, warm_start=warm, tau0=args.tau0)
+                          window_stride=stride, warm_start=warm, tau0=args.tau0,
+                          full_window=args.full_window)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "N": per_window[0]["n_members"] if per_window else None, "interp": args.interp,
             "network_window_days": rc.data.get("train_window_days", None),
-            "window_stride": stride if rc.data.get("train_window_days", None) else None,
+            "window_stride": (stride if rc.data.get("train_window_days", None)
+                              and not args.full_window else None),
+            "full_window": args.full_window,
             "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps,
                      "warm_start_run": (os.path.abspath(args.warm_start_run)
                                         if args.warm_start_run else None),
                      "tau0": args.tau0 if args.warm_start_run else None}
-                    if model_type == "sda_prior_tchannels" else None),
+                    if model_type in SDA_TYPES else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": 1.0 if args.s1 else 0.0,
