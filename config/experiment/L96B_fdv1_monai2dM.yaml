@@ -1,0 +1,14 @@
+# @package _global_
+# L96B_fdv1_monaiM (FDV1, update_input obs+state) with the 2D (time x sector) circular
+# backbone of L96B_directunet2d_monaiM: [40, 80, 160], GroupNorm 8, per-sector time-axial
+# bottleneck attention. Every 24-channel block of the update input is laid out on the
+# (T, NO) grid, so the solver is equivariant to cyclic sector shifts.
+defaults:
+  - /experiment/L96B_fdv1_monaiM
+  - _self_
+model:
+  fdv:
+    hidden_channels: [40, 80, 160]
+    unet_backbone: monai_sector2d
+    monai_norm_num_groups: 8
+    monai_mid_attention: time

@@ -24,8 +24,14 @@ except ImportError:
     # Same optional-dependency guard as MonaiUNet1D above.
     class MonaiUNet2DQGSolver:
         pass
+try:
+    from models.monai_unet_l96_2d import MonaiUNet2DSectorSolver
+except ImportError:
+    # Same optional-dependency guard as MonaiUNet1D above.
+    class MonaiUNet2DSectorSolver:
+        pass
 
-_VALID_UNET_BACKBONES = ("unet1d", "monai", "monai2d")
+_VALID_UNET_BACKBONES = ("unet1d", "monai", "monai2d", "monai_sector2d")
 
 
 def _validate_unet_backbone(unet_backbone):
@@ -38,7 +44,8 @@ def _validate_unet_backbone(unet_backbone):
 def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_dim,
                           dropout, output_dim, monai_norm_num_groups=32,
                           monai_num_res_blocks=2, qg_T=None, qg_ny=None, qg_nx=None,
-                          monai_output_init_std=0.0):
+                          monai_output_init_std=0.0, l96_NO=8, l96_block_dim=None,
+                          monai_mid_attention="time"):
     """Dispatches ``self.unet``/``self.prior_unet`` construction between
     ``UNet1D`` (default) and ``models.monai_unet_adapter.MonaiUNet1D``
     (``unet_backbone="monai"``) -- both built with ``use_obs=False``
@@ -80,6 +87,12 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
     why zero-init is a permanent dead end there specifically (not for the
     main solver ``self.unet``, which never sets this). Ignored for
     ``unet_backbone="unet1d"``.
+
+    ``unet_backbone="monai_sector2d"`` (L96 only) builds
+    ``models.monai_unet_l96_2d.MonaiUNet2DSectorSolver``: every
+    ``l96_block_dim``-sized channel block (the solver's own ``state_dim``)
+    is laid out on the (time, ``l96_NO`` sectors) grid, circular in sector;
+    ``monai_mid_attention`` sets its bottleneck attention.
     """
     _validate_unet_backbone(unet_backbone)
     if unet_backbone == "unet1d":
@@ -108,6 +121,18 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
             hidden_channels=hidden_channels, output_dim=output_dim,
             dropout=dropout, norm_num_groups=monai_norm_num_groups,
             num_res_blocks=monai_num_res_blocks,
+        )
+    if unet_backbone == "monai_sector2d":
+        if MonaiUNet2DSectorSolver.__module__ == __name__:
+            raise ImportError(
+                "unet_backbone='monai_sector2d' requires the optional 'monai' package "
+                "(not installed in this environment) -- see models/monai_unet_l96_2d.py")
+        return MonaiUNet2DSectorSolver(
+            state_dim=state_dim, block_dim=l96_block_dim, NO=l96_NO,
+            hidden_channels=hidden_channels, output_dim=output_dim,
+            dropout=dropout, norm_num_groups=monai_norm_num_groups,
+            num_res_blocks=monai_num_res_blocks, mid_attention=monai_mid_attention,
+            output_init_std=monai_output_init_std,
         )
     if MonaiUNet1D.__module__ == __name__:
         raise ImportError(
@@ -888,6 +913,7 @@ class FourDVarNetSolver(nn.Module):
                  grad_clip_range=None,
                  init_state_var=0.0,
                  qg_T=None, qg_ny=None, qg_nx=None,
+                 l96_NO=8, monai_mid_attention="time",
                  gradsplit_prior_scale=1.0,
                  prior_residual=False,
                  prior_dropout=None,
@@ -949,7 +975,7 @@ class FourDVarNetSolver(nn.Module):
                 "space as x (no embedding needed)."
             )
         _validate_unet_backbone(unet_backbone)
-        if unet_backbone in ("monai", "monai2d") and prior_tau_conditioning:
+        if unet_backbone in ("monai", "monai2d", "monai_sector2d") and prior_tau_conditioning:
             raise ValueError(
                 "prior_tau_conditioning=True exists only to reproduce legacy "
                 "UNet1D checkpoints trained with a tau-conditioned prior_unet -- "
@@ -1176,6 +1202,7 @@ class FourDVarNetSolver(nn.Module):
             monai_norm_num_groups=monai_norm_num_groups,
             monai_num_res_blocks=monai_num_res_blocks,
             qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
+            l96_NO=l96_NO, l96_block_dim=state_dim, monai_mid_attention=monai_mid_attention,
         )
         self.prior_unet = None
         if update_input in _PRIOR_MODES or aux_var_cost_weight > 0:
@@ -1231,6 +1258,7 @@ class FourDVarNetSolver(nn.Module):
                 monai_num_res_blocks=monai_num_res_blocks,
                 qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
                 monai_output_init_std=self.prior_output_init_std,
+                l96_NO=l96_NO, l96_block_dim=state_dim, monai_mid_attention=monai_mid_attention,
             )
 
     @property
