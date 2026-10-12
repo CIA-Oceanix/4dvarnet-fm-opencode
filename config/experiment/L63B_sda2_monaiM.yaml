@@ -1,0 +1,34 @@
+# @package _global_
+# SDA2-M (prior conditioned on forcing + clean true parameters) on Lorenz-63, L96-benchmark recipe (1200 epochs, cosine LR, lr 1e-3, clip 10, batch 16, S0/S1 training data),
+# Training windows use train_bias_mode random_da: true truth parameters, DA parameters biased by a random 0-20%, forcing corrupted by a random 0-20% state bias (the S1 test construction).
+# 30 observations per 300-step window. Velocity-target prior: evaluate with reports/l63/eval_sda.py (guided sampler), never plain sampling.
+defaults:
+  - /lorenz63_default
+  - _self_
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 3
+  param_dim: 4
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  seed: null
+  loss: {use_gradient: true, gradient_weight: 0.1}
+data:
+  data_setup: s0_s1
+  obs_interval: 10
+  bias_max: 0.2
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
+  condition_on_true_params: true
+  train_bias_mode: random_da
