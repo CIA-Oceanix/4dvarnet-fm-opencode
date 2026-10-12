@@ -1,0 +1,6 @@
+## 2026-10-11: L63 SDA benchmark rows (SDA1-M, SDA2-M, SDA3-fix-M, hybrid)
+
+**Summary:** Adds the L63 configs and guided-sampler evaluation for the SDA rows of the P1 benchmark, and lets the L63 s0_s1 loader condition on true parameters (SDA2) or on a random fraction of the true-to-DA bias (SDA3-fix).
+**Files modified:** `data/dataloader.py` — `condition_on_true_params`, `noisy_da_bias` generalized beyond L96 parameter names; `train.py` — passes both flags and `train_bias_mode` to the L63 s0_s1 loaders, and `_make_eval_batch` defaults a missing `c1` to 1.0 (was 0.0, which broke S0 evaluation of param-conditioned models); `data/random_bias_dataset.py` — new `random_da` bias mode (true params, randomly biased DA params and corrupted forcing); `data/lorenz63.py` — `train_bias_mode` plumbing and cache key; `config/experiment/L63B_sda{1,2,3fix}_monaiM.yaml` — new; `reports/l63/eval_sda.py` — validation-tuned guidance weight, 30-member guided evaluation, DirectUNet-warm-started hybrid.
+**Rationale:** Reproduce section 4 of `reports/l96/outputs/p1_l96_benchmark.md` on Lorenz-63.
+**Verification:** 1-epoch smoke trainings of the SDA2 and SDA3-fix configs and a 4-window guided evaluation ran end to end; SDA2-M and SDA3-fix-M retrained 3 seeds on `random_da` windows and evaluated; results in `reports/l63/README.md`.
