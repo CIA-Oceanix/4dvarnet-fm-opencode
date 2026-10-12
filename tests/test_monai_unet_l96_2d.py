@@ -120,7 +120,9 @@ def test_gradient_reaches_parameters():
 
 
 @pytest.mark.parametrize("name,n_params", [
+    ("L96B_directunet2d_monaiS", 2_032_851),
     ("L96B_directunet2d_monaiM", 5_634_483),
+    ("L96B_directunet2d_monaiL", 22_500_963),
     ("L96B_directunet2d_monaiMwide", 14_406_531),
 ])
 def test_experiment_configs_build_through_model_factory(name, n_params):
