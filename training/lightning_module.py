@@ -199,7 +199,7 @@ class LitModel(pl.LightningModule):
             else:
                 pred = self.model(batch.obs)
             loss = self.loss_fn(pred, batch.states)
-        elif self.model_type in ("direct_unet", "monai_direct_unet"):
+        elif self.model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = self.model(batch)
             loss = self.loss_fn(pred, batch.states)
         elif self.model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
@@ -255,7 +255,7 @@ class LitModel(pl.LightningModule):
         return loss
 
     def forward(self, batch, **kwargs):
-        if self.model_type in ("direct_unet", "monai_direct_unet"):
+        if self.model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             return self.model(batch)
         elif self.model_type in ("predict_state_cfm", "monai_predict_state_cfm"):
             return self.model.sample(batch)
