@@ -126,6 +126,8 @@ class LitModel(pl.LightningModule):
     def on_train_epoch_start(self):
         if getattr(self.model, "var_weight", 0.0) > 0:
             self.model.var_active = self.current_epoch >= self.var_start_epoch
+        if hasattr(self.model, "set_epoch"):
+            self.model.set_epoch(self.current_epoch)
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         teacher = self.teacher

@@ -29,7 +29,7 @@ from models.solver import TweedieSolver  # noqa: E402
 from models.direct_unet import DirectUNet  # noqa: E402
 from models.vanilla_cfm import VanillaCFM  # noqa: E402
 from training.pipeline import create_trainer, train_stage  # noqa: E402
-from training.resume import resolve_experiment_dir, resume_ckpt_path  # noqa: E402
+from training.resume import load_init_weights, resolve_experiment_dir, resume_ckpt_path  # noqa: E402
 from training.lightning_module import LitModel  # noqa: E402
 from evaluation.metrics import rmse, param_rmse  # noqa: E402
 
@@ -430,6 +430,17 @@ def model_factory(cfg: DictConfig, device: torch.device):
             detach_var_cost_grad=fdv.get("detach_var_cost_grad", False),
             zero_prior_input=fdv.get("zero_prior_input", False),
             aux_detach_x_final=fdv.get("aux_detach_x_final", False),
+            update_head=fdv.get("update_head", "direct"),
+            freeze_prior_in_solver=fdv.get("freeze_prior_in_solver", False),
+            prior_solver_grad_scale=fdv.get("prior_solver_grad_scale", 1.0),
+            tau_schedule=fdv.get("tau_schedule", "linear"),
+            tau_scale=fdv.get("tau_scale", 5.0),
+            burnin_prob=fdv.get("burnin_prob", 0.0),
+            burnin_max=fdv.get("burnin_max", 0),
+            burnin_start_epoch=fdv.get("burnin_start_epoch", 0),
+            burnin_ramp_epochs=fdv.get("burnin_ramp_epochs", 0),
+            train_n_blocks=fdv.get("train_n_blocks", 1),
+            gain_init=fdv.get("gain_init", 0.5),
             obs_var_indices=model_obs_var_indices,
             true_dynamics_dt=true_dynamics_dt,
             loss_type=fdv.get("loss_type", "mse"),
@@ -906,6 +917,10 @@ def main(cfg: DictConfig):
                                prior_unet_lr_scale=stage_cfg.get("prior_unet_lr_scale", 1.0),
                                **psc_teacher_options(cfg))
                 trainer = create_trainer(cfg, 1)
+                init_from = stage_cfg.get("init_from", None)
+                if init_from and resume_ckpt_path(1) is None:
+                    load_init_weights(lit.model, init_from)
+                    print(f"Stage 1 initialised from {init_from} (fine-tuning)")
                 trainer.fit(lit, loaders["train"], loaders["val"], ckpt_path=resume_ckpt_path(1))
                 path = cfg.paths.checkpoint_stage1
                 torch.save(lit.model.state_dict(), path)

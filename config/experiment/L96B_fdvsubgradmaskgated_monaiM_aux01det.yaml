@@ -1,0 +1,27 @@
+# @package _global_
+# FDV2-M with the observation mask and a trained prior (L96B_fdvsubgradmask_monaiM_aux01det,
+# input [(y - x) * m, x - Phi(x), x, m]) plus the gated update head (update_head gated), as in
+# L96B_fdv1gated_monaiM: the UNet outputs (a, c) and each iteration applies
+#   x <- clamp(x - 2 * sigmoid(a) * c / N)
+# a learned per-element, per-iteration gate on the free update (final conv zero-initialised,
+# so the gate starts at 1). Phi is trained by the aux prior loss (0.01, x_hat detached in that
+# term) and through the solver input; val_loss includes the aux term.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+mask+state
+    update_head: gated
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    aux_detach_x_final: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

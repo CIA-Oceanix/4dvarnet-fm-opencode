@@ -77,3 +77,16 @@ def resume_ckpt_path(stage: int) -> str | None:
     chdir'd-into) experiment directory, or None if there isn't one yet."""
     path = os.path.join("checkpoints", f"stage{stage}_last.ckpt")
     return path if os.path.exists(path) else None
+
+
+def load_init_weights(model, path: str) -> None:
+    """Initialise ``model`` from the weights in ``path`` (a Lightning checkpoint whose
+    state_dict keys carry the LitModel ``model.`` prefix, or a plain state_dict) for
+    fine-tuning: only the weights are loaded, the optimizer and schedule start fresh."""
+    import torch
+
+    blob = torch.load(path, map_location="cpu", weights_only=False)
+    state = blob.get("state_dict", blob) if isinstance(blob, dict) else blob
+    if any(k.startswith("model.") for k in state):
+        state = {k[len("model."):]: v for k, v in state.items() if k.startswith("model.")}
+    model.load_state_dict(state, strict=True)

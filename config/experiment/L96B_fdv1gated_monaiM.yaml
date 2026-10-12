@@ -1,0 +1,23 @@
+# @package _global_
+# FDV1-M (L96B_fdv1_monaiM, input [x, y]) with the gated update head (update_head gated):
+# the UNet outputs (a, c) and each iteration applies x <- clamp(x - 2 * sigmoid(a) * c / N),
+# a learned per-element, per-iteration gate on the free update. The final conv is
+# zero-initialised, so a = 0 and the gate is 1 at the start (= the direct head).
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: obs+state
+    update_head: gated
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

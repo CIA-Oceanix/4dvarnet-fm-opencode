@@ -1,0 +1,26 @@
+# @package _global_
+# L96B_fdvresidmask_monaiM (input [x, (x - y) * m, m]) with the explicit gain head
+# (update_head gain): the UNet outputs (a, c) and each iteration applies
+#   x <- clamp(x - m * sigmoid(a) * (x - y) - c / N)
+# a nudging step with a learned per-element gain in (0, 1) on observed entries,
+# plus a free correction c (same 1/N scaling as the direct head). gain_init 0.5
+# is the gain at initialisation (final conv zero-initialised, so a = c = 0).
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: resid+mask+state
+    update_head: gain
+    gain_init: 0.5
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

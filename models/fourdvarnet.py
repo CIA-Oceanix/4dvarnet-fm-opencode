@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -138,8 +140,9 @@ def _build_backbone_unet(unet_backbone, *, state_dim, hidden_channels, time_emb_
 # SEPARATE ("gradsplit+state" -- same two-channel input shape as
 # "subgrad+state", but each channel is a true gradient via its own
 # torch.autograd.grad call instead of a cheap proxy).
-_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "obs-only", "grad-only", "grad+state",
-                              "subgrad+state", "gradsplit+state", "subgrad+state+xtau",
+_IMPLEMENTED_UPDATE_INPUTS = ("obs+state", "resid+state", "resid+mask+state",
+                              "residnorm+mask+state", "obs-only", "grad-only", "grad+state",
+                              "subgrad+state", "subgrad+mask+state", "gradsplit+state", "subgrad+state+xtau",
                               "subgrad+state+trueprior", "subgrad+trueprior")
 
 # Modes needing a real torch.autograd.grad call each iteration.
@@ -147,7 +150,7 @@ _AUTOGRAD_MODES = ("grad-only", "grad+state", "gradsplit+state")
 # Modes needing the trainable prior operator (prior_unet). "subgrad+state+trueprior"
 # deliberately excluded -- its "prior" is the KNOWN true ODE (zero trainable
 # parameters), not a learned network; see _true_ode_prior_residual.
-_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "gradsplit+state",
+_PRIOR_MODES = ("grad-only", "grad+state", "subgrad+state", "subgrad+mask+state", "gradsplit+state",
                 "subgrad+state+xtau")
 # Number of state_dim-sized channel blocks the main update UNet's input has,
 # per mode -- drives in_state_dim at construction time.
@@ -155,9 +158,12 @@ _UPDATE_INPUT_CHANNEL_MULTIPLIER = {
     "obs-only": 1,
     "obs+state": 2,
     "resid+state": 2,
+    "resid+mask+state": 3,
+    "residnorm+mask+state": 4,
     "grad-only": 1,
     "grad+state": 2,
     "subgrad+state": 3,
+    "subgrad+mask+state": 4,
     "gradsplit+state": 3,
     "subgrad+state+xtau": 4,
     "subgrad+state+trueprior": 3,
@@ -251,6 +257,28 @@ def _prior_ae(prior_unet, state, tau=None, residual=False):
     (``Phi(x) = x - CNN(x)`` or similar) would give structurally for free."""
     raw = prior_unet(state.transpose(1, 2), tau=tau).transpose(1, 2)
     return state + raw if residual else raw
+
+
+def _prior_ae_frozen(prior_unet, state, tau=None, residual=False):
+    """``_prior_ae`` with Phi's parameters detached: gradients still flow to
+    ``state`` through Phi, but the loss that consumes the output cannot update Phi."""
+    params = {k: v.detach() for k, v in prior_unet.named_parameters()}
+    raw = torch.func.functional_call(prior_unet, params, (state.transpose(1, 2),),
+                                     {"tau": tau}).transpose(1, 2)
+    return state + raw if residual else raw
+
+
+def _prior_for_solver(prior_unet, state, tau=None, residual=False, grad_scale=1.0):
+    """Phi(state) as fed to the solver input, with the gradient reaching Phi's
+    parameters scaled by ``grad_scale`` (1 = unchanged, 0 = frozen); the value
+    and the gradient reaching ``state`` are unchanged."""
+    if grad_scale == 1.0:
+        return _prior_ae(prior_unet, state, tau, residual=residual)
+    frozen = _prior_ae_frozen(prior_unet, state, tau, residual=residual)
+    if grad_scale == 0.0:
+        return frozen
+    live = _prior_ae(prior_unet, state.detach(), tau, residual=residual)
+    return frozen + grad_scale * (live - live.detach())
 
 
 def _prior_cost(prior_unet, state, tau=None, residual=False):
@@ -471,7 +499,7 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
                          prior_residual=False, detach_var_cost_grad=False,
                          x_tau=None, beta_tau=None,
                          prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
-                         zero_prior_input=False):
+                         zero_prior_input=False, prior_solver_grad_scale=1.0):
     """Returns the tensor fed to the main per-iteration update UNet.
 
     "grad-only"/"grad+state" compute a real autograd gradient of
@@ -641,12 +669,35 @@ def _build_update_input(update_input, x, obs_clean, obs_mask, tau,
         # at unobserved times and NaN channels instead of y = 0. Same channel
         # count, no prior, so it isolates the obs representation against FDV1.
         return torch.cat([x, (x - obs_clean) * obs_mask], dim=-1)
+    if update_input == "resid+mask+state":
+        # "resid+state" plus the observation mask as an explicit channel block, so
+        # an observed entry with a near-zero residual stays distinguishable from
+        # an unobserved one.
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        return torch.cat([x, (x - obs_clean) * mask, mask], dim=-1)
+    if update_input == "residnorm+mask+state":
+        # "resid+mask+state" with the residual rescaled per sample by its RMS
+        # over the observed entries (detached, recomputed every iteration), and
+        # that RMS fed back as a constant log-RMS channel block.
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        resid = (x - obs_clean) * mask
+        n_obs = mask.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
+        rms = ((resid ** 2).sum(dim=(1, 2), keepdim=True) / n_obs).sqrt().clamp_min(1e-4).detach()
+        return torch.cat([x, resid / rms, mask, torch.log(rms).expand_as(x)], dim=-1)
+    if update_input == "subgrad+mask+state":
+        # "subgrad+state" plus the observation mask as an explicit channel block
+        # (same change as "resid+state" -> "resid+mask+state").
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        g_prior = x - _prior_for_solver(prior_unet, x, tau, residual=prior_residual,
+                                        grad_scale=prior_solver_grad_scale)
+        return torch.cat([(obs_clean - x) * mask, g_prior, x, mask], dim=-1)
     if update_input == "subgrad+state":
         g_obs = (obs_clean - x) * obs_mask
         # zero_prior_input: ablation feeding zeros in place of x - Phi(x) (same
         # channel layout); Phi is then trained by the aux prior loss only.
         g_prior = (torch.zeros_like(x) if zero_prior_input
-                   else x - _prior_ae(prior_unet, x, tau, residual=prior_residual))
+                   else x - _prior_for_solver(prior_unet, x, tau, residual=prior_residual,
+                                              grad_scale=prior_solver_grad_scale))
         return torch.cat([g_obs, g_prior, x], dim=-1)
     if update_input == "subgrad+state+xtau":
         assert x_tau is not None and beta_tau is not None, (
@@ -693,7 +744,7 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                        clip_range=50.0, gradsplit_prior_scale=1.0, prior_residual=False,
                        detach_var_cost_grad=False, x_tau=None, beta_tau=None,
                        prior_ode_forcing=None, prior_ode_params=None, true_dynamics=None,
-                       zero_prior_input=False):
+                       zero_prior_input=False, prior_solver_grad_scale=1.0):
     """One unrolled solver step -- build the per-iteration update-UNet input
     (``_build_update_input``) then run the main solver UNet -- factored out
     of ``FourDVarNetSolver.forward``/``FourDVarNetPredictStateCFM.forward``
@@ -745,7 +796,8 @@ def _solver_iteration(unet, update_input, x, obs_clean, obs_mask, tau_k, prior_t
                                prior_ode_forcing=prior_ode_forcing,
                                prior_ode_params=prior_ode_params,
                                true_dynamics=true_dynamics,
-                               zero_prior_input=zero_prior_input).transpose(1, 2)
+                               zero_prior_input=zero_prior_input,
+                               prior_solver_grad_scale=prior_solver_grad_scale).transpose(1, 2)
     return unet(inp, tau=tau_k).transpose(1, 2)
 
 
@@ -846,6 +898,17 @@ class FourDVarNetSolver(nn.Module):
                  true_dynamics_NO=8,
                  zero_prior_input=False,
                  aux_detach_x_final=False,
+                 update_head="direct",
+                 freeze_prior_in_solver=False,
+                 prior_solver_grad_scale=1.0,
+                 tau_schedule="linear",
+                 tau_scale=5.0,
+                 burnin_prob=0.0,
+                 burnin_max=0,
+                 burnin_start_epoch=0,
+                 burnin_ramp_epochs=0,
+                 train_n_blocks=1,
+                 gain_init=0.5,
                  true_dynamics_J=4,
                  true_dynamics_h=1.0,
                  true_dynamics_coupling_exponent=1.6,
@@ -1007,9 +1070,66 @@ class FourDVarNetSolver(nn.Module):
         if zero_prior_input and update_input != "subgrad+state":
             raise ValueError("zero_prior_input is an ablation of update_input='subgrad+state' only")
         self.zero_prior_input = zero_prior_input
+        # freeze_prior_in_solver: Phi's parameters are detached where Phi feeds the
+        # solver input (x - Phi(x)), so Phi is trained by the aux prior loss only.
+        if freeze_prior_in_solver and update_input not in ("subgrad+state", "subgrad+mask+state"):
+            raise ValueError("freeze_prior_in_solver applies to subgrad+state / subgrad+mask+state only")
+        self.freeze_prior_in_solver = freeze_prior_in_solver
+        # prior_solver_grad_scale: fraction of the solver-loss gradient reaching Phi's
+        # parameters through x - Phi(x) (1 = fully coupled, 0 = freeze_prior_in_solver).
+        if not 0.0 <= prior_solver_grad_scale <= 1.0:
+            raise ValueError("prior_solver_grad_scale must be in [0, 1]")
+        if prior_solver_grad_scale != 1.0 and update_input not in ("subgrad+state", "subgrad+mask+state"):
+            raise ValueError("prior_solver_grad_scale applies to subgrad+state / subgrad+mask+state only")
+        if freeze_prior_in_solver and prior_solver_grad_scale != 1.0:
+            raise ValueError("set either freeze_prior_in_solver or prior_solver_grad_scale, not both")
+        self.prior_solver_grad_scale = 0.0 if freeze_prior_in_solver else prior_solver_grad_scale
+        # tau_schedule="exp": iteration conditioning tau_k = 1 - exp(-k / tau_scale) on the absolute
+        # iteration index, with a fixed step 1/N_outer at any number of iterations. burnin_prob /
+        # burnin_max: in training, with probability burnin_prob, first run M ~ U{1..burnin_max}
+        # iterations without gradient, then the N_outer trained ones from iteration M.
+        if tau_schedule not in ("linear", "exp", "clamp"):
+            raise ValueError(f"unknown tau_schedule {tau_schedule!r}")
+        if burnin_max > 0 and tau_schedule == "linear":
+            raise ValueError("burn-in needs an absolute-iteration tau_schedule ('exp' or 'clamp')")
+        if not 0.0 <= burnin_prob <= 1.0 or burnin_max < 0 or tau_scale <= 0:
+            raise ValueError("invalid burnin_prob / burnin_max / tau_scale")
+        self.tau_schedule = tau_schedule
+        self.tau_scale = tau_scale
+        self.burnin_prob = burnin_prob
+        self.burnin_max = burnin_max
+        # burnin_start_epoch / burnin_ramp_epochs: no burn-in before burnin_start_epoch, then the
+        # maximum burn-in length ramps linearly from 1 to burnin_max over burnin_ramp_epochs
+        # (set each epoch through set_epoch, called by LitModel).
+        if burnin_start_epoch < 0 or burnin_ramp_epochs < 0:
+            raise ValueError("burnin_start_epoch / burnin_ramp_epochs must be >= 0")
+        self.burnin_start_epoch = burnin_start_epoch
+        self.burnin_ramp_epochs = burnin_ramp_epochs
+        self.burnin_max_current = burnin_max if burnin_start_epoch == 0 and burnin_ramp_epochs == 0 else 0
+        # train_n_blocks: in training only, unroll train_n_blocks * N_outer iterations in blocks of
+        # N_outer (state detached between blocks) with the MSE averaged over the block ends, i.e.
+        # deep supervision beyond the N_outer-iteration test horizon. Needs a fixed step 1/N_outer.
+        if train_n_blocks < 1:
+            raise ValueError("train_n_blocks must be >= 1")
+        if train_n_blocks > 1 and (tau_schedule == "linear" or tbptt_n_blocks > 1):
+            raise ValueError("train_n_blocks > 1 needs tau_schedule 'exp'/'clamp' and tbptt_n_blocks = 1")
+        self.train_n_blocks = train_n_blocks
         # aux_detach_x_final: the aux prior cost on the solver output trains Phi only
         # (stop-gradient on x_final), removing its pull on the solver toward Phi's fixed points.
         self.aux_detach_x_final = aux_detach_x_final
+        # update_head="gain": the UNet outputs (a, c) and the step is
+        # x <- x - m * sigmoid(a + logit(gain_init)) * (x - y) - c / N, i.e. a nudging
+        # term with a learned per-element gain in (0, 1) applied outside the
+        # network on observed entries only, plus a free correction c.
+        # update_head="gated": the UNet outputs (a, c) and the step is
+        # x <- x - 2 * sigmoid(a) * c / N, a learned per-element gate on the free
+        # update (g = 1 at initialisation, so it starts as the direct head).
+        if update_head not in ("direct", "gain", "gated"):
+            raise ValueError(f"unknown update_head {update_head!r}")
+        if not 0.0 < gain_init < 1.0:
+            raise ValueError("gain_init must be in (0, 1)")
+        self.update_head = update_head
+        self.gain_logit_offset = math.log(gain_init / (1.0 - gain_init))
         # obs_var_indices/true_dynamics_*: _FULL_STATE_UPDATE_INPUTS modes only
         # (see that validation above -- both None for every other mode).
         # obs_var_indices: which of state_dim's channels
@@ -1052,7 +1172,7 @@ class FourDVarNetSolver(nn.Module):
             hidden_channels=hidden_channels,
             time_emb_dim=time_emb_dim,
             dropout=dropout,
-            output_dim=state_dim,
+            output_dim=2 * state_dim if update_head in ("gain", "gated") else state_dim,
             monai_norm_num_groups=monai_norm_num_groups,
             monai_num_res_blocks=monai_num_res_blocks,
             qg_T=qg_T, qg_ny=qg_ny, qg_nx=qg_nx,
@@ -1200,25 +1320,24 @@ class FourDVarNetSolver(nn.Module):
         grad_norm_cache = {}  # fresh per forward() call -- one unrolled solve
         denom = max(N - 1, 1)
         block_size = self.tbptt_block_size if (N_outer is None and self.tbptt_n_blocks > 1) else N
+        if self.training and N_outer is None and self.train_n_blocks > 1:
+            N = self.N_outer * self.train_n_blocks
+            block_size = self.N_outer
+        step_n = self.N_outer if self.tau_schedule in ("exp", "clamp") else N
+        k0 = 0
+        if self.training and self.burnin_max_current > 0 and torch.rand(()).item() < self.burnin_prob:
+            k0 = int(torch.randint(1, self.burnin_max_current + 1, ()).item())
+            with torch.no_grad():
+                for k in range(k0):
+                    x = self._solver_step(x, self._iteration_tau(k, denom, B, x.device), step_n,
+                                          obs_clean, obs_mask, grad_norm_cache,
+                                          prior_ode_forcing, prior_ode_params)
+            x = x.detach()
         block_states = []
         for k in range(N):
-            tau_k = torch.full((B,), k / denom, device=x.device)
-            # prior_tau_k=None (default): the prior operator gets no
-            # iteration-conditioning (self.prior_unet built with
-            # time_emb_dim=0) -- only the main solver UNet below is
-            # conditioned on tau_k. prior_tau_conditioning=True (legacy
-            # checkpoints only) instead feeds it the same tau_k.
-            prior_tau_k = tau_k if self.prior_tau_conditioning else None
-            gmod = checkpoint(
-                _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
-                tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
-                grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
-                self.prior_residual, self.detach_var_cost_grad,
-                prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
-                true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
-                use_reentrant=False,
-            )
-            x = torch.clamp(x - (1.0 / N) * gmod, -self.clip_range, self.clip_range)
+            tau_k = self._iteration_tau(k0 + k, denom, B, x.device)
+            x = self._solver_step(x, tau_k, step_n, obs_clean, obs_mask, grad_norm_cache,
+                                  prior_ode_forcing, prior_ode_params)
             if self.update_input in _AUTOGRAD_MODES and not self.training:
                 x = x.detach().requires_grad_(True)
             if (k + 1) % block_size == 0:
@@ -1233,6 +1352,61 @@ class FourDVarNetSolver(nn.Module):
             # sole "final" state is just the untouched x_0.
             block_states.append(x)
         return block_states
+
+    def set_epoch(self, epoch: int) -> None:
+        if self.burnin_max == 0 or epoch < self.burnin_start_epoch:
+            self.burnin_max_current = 0
+        elif self.burnin_ramp_epochs == 0:
+            self.burnin_max_current = self.burnin_max
+        else:
+            frac = min((epoch - self.burnin_start_epoch + 1) / self.burnin_ramp_epochs, 1.0)
+            self.burnin_max_current = max(1, round(frac * self.burnin_max))
+
+    def _iteration_tau(self, k, denom, B, device):
+        # Absolute-iteration schedules that stay meaningful past N and after a burn-in:
+        # "exp": 1 - exp(-k / tau_scale); "clamp": min(k / (N_outer - 1), 1), identical to the
+        # default linear schedule over the trained iterations, constant beyond.
+        if self.tau_schedule == "exp":
+            value = 1.0 - math.exp(-k / self.tau_scale)
+        elif self.tau_schedule == "clamp":
+            value = min(k / max(self.N_outer - 1, 1), 1.0)
+        else:
+            value = k / denom
+        return torch.full((B,), value, device=device)
+
+    def _solver_step(self, x, tau_k, step_n, obs_clean, obs_mask, grad_norm_cache,
+                     prior_ode_forcing, prior_ode_params):
+        # prior_tau_k=None (default): the prior operator gets no iteration-conditioning;
+        # prior_tau_conditioning=True (legacy checkpoints only) feeds it the same tau_k.
+        prior_tau_k = tau_k if self.prior_tau_conditioning else None
+        gmod = checkpoint(
+            _solver_iteration, self.unet, self.update_input, x, obs_clean, obs_mask,
+            tau_k, prior_tau_k, self.prior_unet, self.R_var, self.prior_weight, 1.0,
+            grad_norm_cache, self.grad_clip_range, self.gradsplit_prior_scale,
+            self.prior_residual, self.detach_var_cost_grad,
+            prior_ode_forcing=prior_ode_forcing, prior_ode_params=prior_ode_params,
+            true_dynamics=self.true_dynamics, zero_prior_input=self.zero_prior_input,
+            prior_solver_grad_scale=self.prior_solver_grad_scale,
+            use_reentrant=False,
+        )
+        if self.update_head == "gain":
+            x = x - self._gain_step(gmod, x, obs_clean, obs_mask, step_n)
+        elif self.update_head == "gated":
+            x = x - self._gated_step(gmod, step_n)
+        else:
+            x = x - (1.0 / step_n) * gmod
+        return torch.clamp(x, -self.clip_range, self.clip_range)
+
+    def _gain_step(self, gmod, x, obs_clean, obs_mask, N):
+        D = x.shape[-1]
+        gain = torch.sigmoid(gmod[..., :D] + self.gain_logit_offset)
+        mask = obs_mask.expand_as(x).to(x.dtype)
+        return mask * gain * (x - obs_clean) + (1.0 / N) * gmod[..., D:]
+
+    @staticmethod
+    def _gated_step(gmod, N):
+        D = gmod.shape[-1] // 2
+        return 2.0 * torch.sigmoid(gmod[..., :D]) * gmod[..., D:] / N
 
     def forward(self, batch, N_outer=None):
         return self._unrolled_blocks(batch, N_outer=N_outer)[-1]

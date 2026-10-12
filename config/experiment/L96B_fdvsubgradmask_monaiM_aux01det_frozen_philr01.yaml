@@ -1,0 +1,28 @@
+# @package _global_
+# L96B_fdvsubgradmask_monaiM_aux01det_frozen with a 10x slower learning rate for Phi
+# (training.stage1.prior_unet_lr_scale 0.1: Phi's param group at 1e-4, the solver at 1e-3, both
+# cosine-annealed). Phi stays frozen in the solver input (trained by the aux prior loss only).
+# Stabilisation test: seed 1 of the frozen config diverged at epoch ~148, plausibly from the
+# solver's x - Phi(x) input drifting as Phi moves at the full learning rate.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: subgrad+mask+state
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.01
+    aux_detach_x_final: true
+    freeze_prior_in_solver: true
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2
+training:
+  stage1:
+    prior_unet_lr_scale: 0.1

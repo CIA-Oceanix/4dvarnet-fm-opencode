@@ -1,0 +1,28 @@
+# @package _global_
+# L96B_fdvresidmask_monaiM trained FROM SCRATCH with a burn-in curriculum: no burn-in for epochs
+# 0-199 (standard training), then the maximum burn-in length ramps linearly 1 -> 30 over epochs
+# 200-399 and stays at 30 (probability 0.5 per batch: M ~ U{1..M_max} iterations without gradient,
+# then the 10 trained iterations at k = M..M+9). tau_schedule clamp: tau_k = min(k/9, 1); step 1/10.
+# The from-scratch run without warm-up (L96B_fdvresidmask_burnin_monaiM) never learned.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: fourdvarnet
+  fdv:
+    hidden_channels: [64, 128, 256]
+    time_emb_dim: 64
+    N_outer: 10
+    dropout: 0.1
+    update_input: resid+mask+state
+    tau_schedule: clamp
+    burnin_prob: 0.5
+    burnin_max: 30
+    burnin_start_epoch: 200
+    burnin_ramp_epochs: 200
+    clip_range: 50.0
+    init_state_var: 0.1
+    aux_var_cost_weight: 0.0
+    unet_backbone: monai
+    monai_norm_num_groups: 32
+    monai_num_res_blocks: 2

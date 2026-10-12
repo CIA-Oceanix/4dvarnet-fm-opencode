@@ -16,7 +16,7 @@
 # run; see docs/results/l96_fdv_m_input_ablation.md for the variants);
 # FDV_SEED the training seed (default 1).
 set -euo pipefail
-cd /Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-etks
+cd "${SLURM_SUBMIT_DIR:-/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-etks}"
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export CONDA_DEFAULT_ENV=fdv-monai-proto
 export PYTHONUNBUFFERED=1
