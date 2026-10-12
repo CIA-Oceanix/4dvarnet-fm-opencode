@@ -5,6 +5,14 @@ from data.qg import QGConfig
 from models.monai_unet_qg2d import MonaiSDAPrior3DQG, SpaceCircularConv3d
 
 
+@pytest.fixture(autouse=True)
+def _no_onednn():
+    # oneDNN's first CPU Conv3d spends minutes building its kernels on a small runner (it hung
+    # the CI pytest job); the native kernels run these tiny shapes in well under a second.
+    with torch.backends.mkldnn.flags(enabled=False):
+        yield
+
+
 def _prior(T: int = 5) -> MonaiSDAPrior3DQG:
     torch.manual_seed(0)
     return MonaiSDAPrior3DQG(ny=16, nx=16, T=T, hidden_channels=[8, 16, 32], dropout=0.0).eval()
