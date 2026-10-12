@@ -480,21 +480,14 @@ def window_starts(n_days: int, t_model: int, stride: int) -> list[int]:
     return starts
 
 
-def windowed_estimate(estimate, batch: QGBatch, t_model: int, stride: int) -> torch.Tensor:
-    """Estimate a long window with a network built for `t_model` days.
-
-    `estimate(sub_batch) -> (..., B, t_model, D)` runs on overlapping sub-windows
-    (`window_starts`); each day's estimate is the average of the sub-windows covering
-    it, weighted by a tent that is largest mid-sub-window, where the network sees
-    observations on both sides. Identity when the window is `t_model` days long.
-    """
-    n_days = batch.obs.shape[1]
-    if n_days == t_model:
-        return estimate(batch)
+def compose_days(sub_estimate, n_days: int, t_model: int, stride: int) -> torch.Tensor:
+    """Blend `sub_estimate(start) -> (..., t_model, D)` over overlapping sub-windows into
+    (..., n_days, D): each day is the average of the sub-windows covering it, weighted by a
+    tent that is largest mid-sub-window, where the network sees context on both sides."""
     tent = torch.minimum(torch.arange(1, t_model + 1), torch.arange(t_model, 0, -1)).float()
     total = weight = None
     for s in window_starts(n_days, t_model, stride):
-        est = estimate(slice_days(batch, s, s + t_model))
+        est = sub_estimate(s)
         if total is None:
             shape = (*est.shape[:-2], n_days, est.shape[-1])
             total = torch.zeros(shape, dtype=est.dtype, device=est.device)
@@ -503,6 +496,21 @@ def windowed_estimate(estimate, batch: QGBatch, t_model: int, stride: int) -> to
         total[..., s:s + t_model, :] += est * w[:, None]
         weight[s:s + t_model] += w
     return total / weight[:, None]
+
+
+def windowed_estimate(estimate, batch: QGBatch, t_model: int, stride: int) -> torch.Tensor:
+    """Estimate a long window with a network built for `t_model` days.
+
+    `estimate(sub_batch) -> (..., B, t_model, D)` runs on overlapping sub-windows
+    (`window_starts`), blended by `compose_days`. Identity when the window is `t_model`
+    days long. For a deterministic estimate only: blending independent ensemble members
+    shrinks their spread -- flows compose their velocity instead (`ComposedFlow`).
+    """
+    n_days = batch.obs.shape[1]
+    if n_days == t_model:
+        return estimate(batch)
+    return compose_days(lambda s: estimate(slice_days(batch, s, s + t_model)), n_days, t_model,
+                        stride)
 
 
 class QGNeuralDataset(Dataset):
