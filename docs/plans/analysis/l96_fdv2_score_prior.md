@@ -164,7 +164,7 @@ i.e. the 4D-Var background gradient. Keep the input layout `subgrad+mask+state` 
    - Score on held-out odd windows, regular and random, S0 and S1: CRPS, spread/RMSE, rank histograms, ensemble-mean RMSE.
    - Baselines, all with 30 members: the perturbed-observation ensemble with the same model (CRPS 0.1147 / 0.1333), SDA from noise, and the SDA warm start (3a: best point estimate 0.2262 / 0.2685 at τ0 = 0.7; best CRPS 0.1166 / 0.1347 at τ0 = 0.1).
    - Combined variant: perturbed y plus annealed sampling (closest to randomised maximum likelihood with a prior).
-5. **Write-up:** a new results note `docs/results/l96_fdv2_score_prior.md` (append-only convention) and a PR.
+5. **Write-up:** a new results note named `l96_fdv2_score_prior.md` under `docs/results/` (append-only convention) and a PR.
 
 ## 5. Success criteria
 
