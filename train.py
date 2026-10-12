@@ -40,11 +40,12 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
                                 num_workers=4, randomize_params=False, param_noise=0.2,
                                 base_cfg=None, num_train_windows=1000,
-                                data_setup="legacy", with_params=False):
+                                data_setup="legacy", with_params=False, param_cond_cfg=None):
     kw = dict(batch_size=batch_size, collate_fn=collate_fm,
               num_workers=num_workers, pin_memory=True)
     if data_setup == "s0_s1":
         obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
+        obs_cfg.update(param_cond_cfg or {})
         return {
             "train": DataLoader(FlowMatchingDataset(datasets["train"], with_params=True, **obs_cfg), shuffle=True, **kw),
             "val": DataLoader(FlowMatchingDataset(datasets["val"], with_params=True, **obs_cfg), shuffle=False, **kw),
@@ -483,7 +484,7 @@ def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
             params = torch.tensor([_l96_biased_param_vector(w)],
                                   dtype=torch.float32, device=device)
         else:
-            params = torch.tensor([[w.get(nm, 0.0) for nm in param_names]],
+            params = torch.tensor([[w.get(nm, 1.0 if nm == "c1" else 0.0) for nm in param_names]],
                                   dtype=torch.float32, device=device)
     if param_names == ["F", "c1", "hx", "eps", "w1", "w2", "w3", "w4"]:
         from data.dataloader import _l96_true_param_vector
@@ -774,6 +775,7 @@ def main(cfg: DictConfig):
                     num_test_windows=dc.get("num_test_windows", 200),
                     param_noise=dc.get("test_param_noise", 0.2),
                     bias_range=(0.0, bias_max),
+                    train_bias_mode=dc.get("train_bias_mode", "random"),
                 )
                 test_keys = ["test_s0", "test_s1"]
         else:
@@ -867,6 +869,9 @@ def main(cfg: DictConfig):
             num_train_windows=dc.get("num_train_windows", 1000),
             data_setup=data_setup,
             with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet")),
+            param_cond_cfg={"condition_on_true_params": dc.get("condition_on_true_params", False),
+                            "noisy_da_bias": dc.get("noisy_da_bias", False),
+                            "noisy_da_max": dc.get("noisy_da_max", 1.5)},
         )
 
     print(f"  Train: {len(loaders['train'].dataset)}, Val: {len(loaders['val'].dataset)}")

@@ -286,7 +286,8 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
                           num_val_windows: int,
                           num_test_windows: int,
                           param_noise: float,
-                          bias_range: Tuple[float, float]) -> str:
+                          bias_range: Tuple[float, float],
+                          train_bias_mode: str = "random") -> str:
     import hashlib
     key_data = {
         "num_train_windows": num_train_windows,
@@ -294,6 +295,7 @@ def _make_s0_s1_cache_key(cfg: Lorenz63Config, *,
         "num_test_windows": num_test_windows,
         "param_noise": param_noise,
         "bias_range": bias_range,
+        **({"train_bias_mode": train_bias_mode} if train_bias_mode != "random" else {}),
         "dt": cfg.dt, "T_max": cfg.T_max,
         "obs_interval": cfg.obs_interval, "R_var": cfg.R_var,
         "spinup_steps": cfg.spinup_steps, "window_spacing": cfg.window_spacing,
@@ -314,7 +316,8 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                         num_val_windows: int = 100,
                         num_test_windows: int = 200,
                         param_noise: float = 0.2,
-                        bias_range: Tuple[float, float] = (0.0, 0.2)) -> Dict[str, "Lorenz63Dataset"]:
+                        bias_range: Tuple[float, float] = (0.0, 0.2),
+                        train_bias_mode: str = "random") -> Dict[str, "Lorenz63Dataset"]:
     import os
     from data.random_param_dataset import RandomParamLorenz63Dataset
     from data.random_bias_dataset import RandomBiasLorenz63Dataset
@@ -336,17 +339,17 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
     cache_key = _make_s0_s1_cache_key(
         cfg, num_train_windows=num_train_windows,
         num_val_windows=num_val_windows, num_test_windows=num_test_windows,
-        param_noise=param_noise, bias_range=bias_range)
+        param_noise=param_noise, bias_range=bias_range, train_bias_mode=train_bias_mode)
     cache_path = os.path.join(cache_dir, f"{cache_key}.pt")
 
     if os.path.exists(cache_path):
         print(f"  Loading cached datasets ({cache_key[:12]}...)")
         cached = torch.load(cache_path, weights_only=False)
         train = RandomBiasLorenz63Dataset(
-            train_cfg, param_noise=param_noise, bias_mode='random',
+            train_cfg, param_noise=param_noise, bias_mode=train_bias_mode,
             bias_range=bias_range, cached_windows=cached["train_windows"])
         val = RandomBiasLorenz63Dataset(
-            val_cfg, param_noise=param_noise, bias_mode='random',
+            val_cfg, param_noise=param_noise, bias_mode=train_bias_mode,
             bias_range=bias_range, cached_windows=cached["val_windows"])
         test_s0 = RandomParamLorenz63Dataset(
             test_s0_cfg, param_noise=param_noise,
@@ -358,9 +361,9 @@ def make_s0_s1_trainval(cfg: Lorenz63Config, *,
                 "test_s0": test_s0, "test_s1": test_s1}
 
     train = RandomBiasLorenz63Dataset(
-        train_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+        train_cfg, param_noise=param_noise, bias_mode=train_bias_mode, bias_range=bias_range)
     val = RandomBiasLorenz63Dataset(
-        val_cfg, param_noise=param_noise, bias_mode='random', bias_range=bias_range)
+        val_cfg, param_noise=param_noise, bias_mode=train_bias_mode, bias_range=bias_range)
     test_s0 = RandomParamLorenz63Dataset(test_s0_cfg, param_noise=param_noise)
     test_s1 = RandomBiasLorenz63Dataset(
         test_s1_cfg, param_noise=param_noise, bias_mode='fixed')

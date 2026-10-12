@@ -52,6 +52,12 @@ class RandomBiasDataset:
                     truth_sigma, truth_rho, truth_beta = sigma0, rho0, beta0
                     truth_c1 = 1.0
                     da_c1 = 1.0 * (1.0 - p_bias)
+                elif bias_mode == 'random_da':
+                    p_bias = torch.empty(1, device=self.device).uniform_(bias_range[0], bias_range[1], generator=rng).item()
+                    f_bias = torch.empty(1, device=self.device).uniform_(bias_range[0], bias_range[1], generator=rng).item()
+                    truth_sigma, truth_rho, truth_beta = sigma0, rho0, beta0
+                    truth_c1 = 1.0
+                    da_c1 = 1.0 * (1.0 - p_bias)
                 else:
                     p_bias = torch.empty(1, device=self.device).uniform_(bias_range[0], bias_range[1], generator=rng).item()
                     f_bias = torch.empty(1, device=self.device).uniform_(bias_range[0], bias_range[1], generator=rng).item()
@@ -81,7 +87,7 @@ class RandomBiasDataset:
                     f"{max_window_retries} retries (cfg.seed={cfg.seed})"
                 )
 
-            if cfg.use_corrupted_forcing or (bias_mode == 'fixed' and abs(f_bias) > 0):
+            if cfg.use_corrupted_forcing or (bias_mode in ('fixed', 'random_da') and abs(f_bias) > 0):
                 W_L_star = generate_corrupted_forcing(
                     W_L_true, true_fluid[:, 0], cfg.num_steps, cfg.dt,
                     cfg.tau_eta, cfg.sigma_eta, traj_seed,
