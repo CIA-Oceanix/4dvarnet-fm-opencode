@@ -1,0 +1,11 @@
+# @package _global_
+# Width-matched arm of L96B_directunet2d_monaiM: DirectUNet-M's widths
+# [64, 128, 256] and GroupNorm 32 on the 2D (time x sector) circular backbone,
+# 14.4 M parameters (3x3 kernels), about 2.5x the parameter-matched run's cost.
+defaults:
+  - /experiment/L96B_directunet2d_monaiM
+  - _self_
+model:
+  monai_direct_unet_2d:
+    hidden_channels: [64, 128, 256]
+    norm_num_groups: 32

@@ -1,0 +1,11 @@
+# @package _global_
+# L tier of the 2D (time x sector) circular DirectUNet: widths [80, 160, 320],
+# GroupNorm 16, 22.5 M parameters (4x the M tier; 1D DU-L has 23.5 M). Expect
+# about 4x the M tier's step time, so submit with --time beyond 24 h.
+defaults:
+  - /experiment/L96B_directunet2d_monaiM
+  - _self_
+model:
+  monai_direct_unet_2d:
+    hidden_channels: [80, 160, 320]
+    norm_num_groups: 16
