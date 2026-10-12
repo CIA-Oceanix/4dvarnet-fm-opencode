@@ -172,6 +172,21 @@ def model_factory(cfg: DictConfig, device: torch.device):
             num_res_blocks=mdu.get("num_res_blocks", 2),
             norm_num_groups=mdu.get("norm_num_groups", 32),
         )
+    elif model_type == "monai_direct_unet_2d":
+        from models.monai_unet_l96_2d import MonaiDirectUNet2D
+        mdu = cfg.model.monai_direct_unet_2d
+        model = MonaiDirectUNet2D(
+            state_dim=cfg.model.state_dim,
+            NO=cfg.data.get("NO", 8),
+            hidden_channels=mdu.hidden_channels,
+            dropout=mdu.get("dropout", 0.1),
+            param_dim=cfg.model.get("param_dim", 0),
+            cond_extra_dim=mdu.get("cond_extra_dim", 0),
+            num_res_blocks=mdu.get("num_res_blocks", 2),
+            norm_num_groups=mdu.get("norm_num_groups", 8),
+            use_flash_attention=mdu.get("use_flash_attention", True),
+            mid_attention=mdu.get("mid_attention", "time"),
+        )
     elif model_type == "vanilla_cfm":
         vc = cfg.model.vanilla_cfm
         param_dim = cfg.model.get("param_dim", 4)
@@ -528,7 +543,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
                                  with_true_forcing=with_true_forcing)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type in ("direct_unet", "monai_direct_unet"):
+        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -603,7 +618,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
                                  with_true_forcing=with_true_forcing)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type in ("direct_unet", "monai_direct_unet"):
+        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -1034,6 +1049,7 @@ def main(cfg: DictConfig):
 
     hc_src = (cfg.model.direct_unet if model_type in ("direct_unet", "joint_direct_unet")
               else cfg.model.get("monai_direct_unet") if model_type == "monai_direct_unet"
+              else cfg.model.get("monai_direct_unet_2d") if model_type == "monai_direct_unet_2d"
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
               else cfg.model.get("monai_vanilla_cfm") if model_type == "monai_vanilla_cfm"
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
