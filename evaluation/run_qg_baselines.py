@@ -1040,7 +1040,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
         fourdvar_opt_steps=150, fourdvar_lr=0.05, b_var_scale=1.0,
         q_var_scale=1.0, fourdvar_grad_clip=100.0, fourdvar_b="diag", loc_cross_layer=0.0,
         init_ensemble_kind="white", breed_days=3.0, etkf_loc_mode="square_root", enks_lag=None,
-        enks_taper_steps=None, relax=None, relax_alpha=0.0):
+        enks_taper_steps=None, relax=None, relax_alpha=0.0, ensemble_hook=None):
     device = device or torch.device(
         "cuda" if torch.cuda.is_available() else "cpu")
     if loc_cross_layer > 0.0 and obs_var == "q":
@@ -1055,6 +1055,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             continue
         rmse_list = []
         crps_list = []
+        hook_list = []
         fcast_rmse = []
         analyses = []
         refs = []
@@ -1279,6 +1280,8 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             if is_qg1l:
                 ens = ens[:, :, :per_layer]
             crps_list.append(float(np.mean(_crps(ens, ref))))
+            if ensemble_hook is not None:
+                hook_list.append(ensemble_hook(ens, ref, w))
             ens_mean = ens.mean(0)
             ens_var = ens.var(0, ddof=1) if ens.shape[0] > 1 else np.zeros_like(ens_mean)
             ratios = {}
@@ -1365,6 +1368,7 @@ def run(method_name, cfg, device=None, N_ensemble=60, inflation=1.05,
             "rmse_list": rmse_list,
             "crps_mean": float(np.mean(crps_list)),
             "crps_list": crps_list,
+            "ensemble_hook_list": hook_list,
             "crps_normalized": float(np.mean(crps_list)) / max(q_std_pooled, 1e-30),
             "q_std_pooled": q_std_pooled,
             "crps_is_deterministic": getattr(res, "ensemble", None) is None,
