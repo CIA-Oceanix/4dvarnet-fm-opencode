@@ -119,8 +119,8 @@ DEFAULT_NUM_RES_BLOCKS = 2
 FLOW_TYPES = ("vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d")
 # Unconditional priors for SDA: no obs-only estimate, scored by the guided sampler.
 SDA_TYPES = ("sda_prior_tchannels", "sda_prior_3d")
-DIRECT_TYPES = ("direct_unet", "direct_unet_tchannels")
-TIERED_TYPES = ("direct_unet_tchannels", *FLOW_TYPES)
+DIRECT_TYPES = ("direct_unet", "direct_unet_tchannels", "direct_unet_3d")
+TIERED_TYPES = ("direct_unet_tchannels", "direct_unet_3d", *FLOW_TYPES)
 
 
 def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
@@ -167,6 +167,12 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
                                            norm_num_groups=4,
                                            param_dim=param_dim, cond_extra_dim=cond_extra_dim,
                                            ic_dim=ic_dim, use_obs_mask=use_obs_mask)
+    if model_type == "direct_unet_3d":
+        # G1-3D: the DirectUNet on a 3D (time, ny, nx) backbone, weights shared across days;
+        # always fed the obs mask (the 3D input is obs + mask per layer).
+        from models.monai_unet_qg2d import MonaiDirectUNet3DQG
+        return MonaiDirectUNet3DQG(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                   hidden_channels=tier, num_res_blocks=num_res_blocks)
     if model_type == "vanilla_cfm_tchannels":
         # G2: generative obs-conditioned flow, same backbone and capacity as
         # direct_unet_tchannels (norm_num_groups=4 for the same divisibility
@@ -303,12 +309,17 @@ def warmup_cosine_factor(warmup_steps: int, total_steps: int, start: float = 0.0
 
 
 def decoder_output_module(model: torch.nn.Module) -> torch.nn.Module | None:
-    """The last decoder block of a T-channels MONAI backbone, whose activation scale is the
-    early sign of the residual-stream blow-up seen in the first G1-L / G2 / G3 runs."""
-    try:
-        return model.unet.backbone2d.backbone.up_blocks[-1]
-    except AttributeError:
-        return None
+    """The last decoder block of a MONAI backbone (T-channels 2D or 3D), whose activation scale
+    is the early sign of the residual-stream blow-up seen in the first G1-L / G2 / G3 runs."""
+    for path in ("unet.backbone2d.backbone", "backbone2d.backbone", "backbone"):
+        module = model
+        try:
+            for name in path.split("."):
+                module = getattr(module, name)
+            return module.up_blocks[-1]
+        except AttributeError:
+            continue
+    return None
 
 
 class QGNeuralLightning(pl.LightningModule):
@@ -740,7 +751,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model-type",
                     choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels",
-                             "vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d"],
+                             "vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d",
+                             "direct_unet_3d"],
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)

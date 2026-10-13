@@ -487,3 +487,51 @@ class MonaiSDAPrior3DQG(VanillaCFM):
             x = F.pad(x, (0, 0, 0, 0, 0, pad))
         v = self.backbone(x, tau)[:, :, :t]
         return v.permute(0, 2, 1, 3, 4).reshape(b, t, self.state_dim)
+
+
+class MonaiDirectUNet3DQG(nn.Module):
+    """DirectUNet (single-pass regression, the G1 role) on a 3D backbone: MONAI's
+    `DiffusionModelUNet` with `spatial_dims=3` over (time, ny, nx), the per-cell obs and obs
+    mask of both layers as the 4 input channels and the 2-layer psi as the output; the
+    flow-time input is held at 0. Convolutions are periodic in space and zero-padded in
+    time (`SpaceCircularConv3d`) and share their weights across days, so one network runs on
+    any window length (`any_length`); `T` is the training window. Time is zero-padded at
+    the end to a multiple of the backbone's downsampling factor, padded days dropped.
+    `forward(batch) -> (B, T, D)`, the contract of `MonaiDirectUNetQGChannelTime`.
+    """
+
+    any_length = True
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None, num_res_blocks: int = 2,
+                 norm_num_groups: int = 8, dropout: float = 0.1):
+        super().__init__()
+        _patch_conv2d_circular()
+        from monai.networks.nets import DiffusionModelUNet
+        from monai.networks.nets import diffusion_model_unet as _dmu
+
+        hidden_channels = list(hidden_channels or [32, 64, 128, 128])
+        self.ny, self.nx, self.T, self.nlayers = ny, nx, T, nlayers
+        self.state_dim = nlayers * ny * nx
+        self.time_multiple = 2 ** (len(hidden_channels) - 1)
+        self.backbone = DiffusionModelUNet(
+            spatial_dims=3, in_channels=2 * nlayers, out_channels=nlayers,
+            channels=tuple(hidden_channels),
+            attention_levels=tuple(False for _ in hidden_channels),
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups)
+        if dropout > 0:
+            for module in self.backbone.modules():
+                if isinstance(module, _dmu.DiffusionUNetResnetBlock):
+                    module.dropout = nn.Dropout(dropout)
+
+    def forward(self, batch) -> torch.Tensor:
+        obs = batch.obs
+        b, t, _ = obs.shape
+        grid = (b, t, self.nlayers, self.ny, self.nx)
+        x = torch.cat([obs.reshape(grid), batch.obs_mask.to(obs.dtype).reshape(grid)], dim=2)
+        x = x.permute(0, 2, 1, 3, 4)
+        pad = -t % self.time_multiple
+        if pad:
+            x = F.pad(x, (0, 0, 0, 0, 0, pad))
+        out = self.backbone(x, torch.zeros(b, device=obs.device, dtype=obs.dtype))[:, :, :t]
+        return out.permute(0, 2, 1, 3, 4).reshape(b, t, self.state_dim)
