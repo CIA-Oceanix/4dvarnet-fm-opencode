@@ -181,6 +181,15 @@ class TestShapesAndStarts:
         assert torch.allclose(mixed[1], scalar[1], atol=1e-10)
         assert torch.allclose(mixed[0], post_mean[0].unsqueeze(-1).expand_as(mixed[0]), atol=1e-4)
 
+    def test_member_chunk_matches_full_batch_when_deterministic(self):
+        prior, batch, _, post_mean, _ = _toy()
+        kw = dict(x_start=post_mean, tau0=0.3, gamma=0.0, guidance="dps", R_norm=0.3, n_steps=5, n_members=5)
+        torch.manual_seed(4)
+        full, _ = fm_posterior_sample(prior, batch, **kw)
+        torch.manual_seed(4)
+        chunked, _ = fm_posterior_sample(prior, batch, member_chunk=2, **kw)
+        assert torch.allclose(full, chunked, atol=1e-12)
+
     def test_warm_start_requires_start(self):
         prior, batch, _, _, _ = _toy()
         with pytest.raises(ValueError):

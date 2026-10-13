@@ -165,6 +165,52 @@ def tau_grid(n_steps: int, step_power: float = 1.0) -> list:
     return [1.0 - (1.0 - k / n_steps) ** step_power for k in range(n_steps + 1)]
 
 
+def _integrate(prior, rep, x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor, tau0_rep: torch.Tensor,
+               grid: list, *, gamma: float, guidance: str, guidance_weight, R_norm, n_correctors: int,
+               corrector_snr: float, pigdm_cov: str, pigdm_diag: str, hutchinson_probes: int,
+               generator: Optional[torch.Generator]) -> torch.Tensor:
+    sigma_p = prior.sigma_prior
+    n_steps = len(grid) - 1
+
+    def randn(*shape):
+        return torch.randn(*shape, device=x.device, dtype=x.dtype, generator=generator)
+
+    def _guided(x, tau, dtau):
+        w = guidance_weight(tau) if callable(guidance_weight) else guidance_weight
+        return posterior_state_prediction(prior, rep, x, tau, y=y, mask=mask, R_norm=R_norm, guidance=guidance,
+                                          guidance_weight=w, dtau=dtau, pigdm_cov=pigdm_cov,
+                                          pigdm_diag=pigdm_diag, hutchinson_probes=hutchinson_probes,
+                                          generator=generator)
+
+    def _score(x, tau, psi_y):
+        tau_b = _bcast(tau, x)
+        return (tau_b * psi_y - x) / ((1.0 - tau_b) ** 2 * sigma_p ** 2)
+
+    for k in range(n_steps):
+        tau = tau0_rep + (1.0 - tau0_rep) * grid[k]
+        dtau = tau0_rep + (1.0 - tau0_rep) * grid[k + 1] - tau
+        for _ in range(n_correctors):
+            _, _, psi_y, _ = _guided(x, tau, dtau)
+            score = _score(x, tau, psi_y)
+            eps = 2.0 * corrector_snr ** 2 * score[0].numel() / score.flatten(1).pow(2).sum(1).clamp_min(1e-24)
+            eps = _bcast(eps, x)
+            xi = randn(*x.shape)
+            x = (x + eps * score + (2.0 * eps).sqrt() * xi).detach()
+        v, psi, psi_y, shift = _guided(x, tau, dtau)
+        dtau_b = _bcast(dtau, x)
+        if k == n_steps - 1:
+            x = x + dtau_b * v - shift if shift is not None else psi_y
+            break
+        drift_x = x + dtau_b * v - shift if shift is not None else x + dtau_b * (psi_y - x) / (1.0 - _bcast(tau, x))
+        if gamma > 0.0:
+            tau_b = _bcast(tau, x)
+            tau_c = tau_b.clamp_min(TAU_EPS)
+            g2 = torch.where(tau_b < TAU_EPS, 0.0, 2.0 * gamma * sigma_p ** 2 * (1.0 - tau_c) / tau_c)
+            drift_x = drift_x + dtau_b * 0.5 * g2 * _score(x, tau, psi_y) + (g2 * dtau_b).sqrt() * randn(*x.shape)
+        x = drift_x.detach()
+    return x.detach()
+
+
 def fm_posterior_sample(prior, batch, *, x_start: Optional[torch.Tensor] = None, tau0: float = 0.0,
                         gamma: float = 0.0, guidance: str = "pigdm",
                         guidance_weight: Union[float, Callable] = 1.0, R_norm: Union[float, torch.Tensor] = 1.0,
@@ -175,14 +221,15 @@ def fm_posterior_sample(prior, batch, *, x_start: Optional[torch.Tensor] = None,
                         obs_indices: Optional[Sequence[int]] = None,
                         obs_channel_mask: Optional[torch.Tensor] = None, pigdm_cov: str = "tweedie",
                         pigdm_diag: str = "hutchinson", hutchinson_probes: int = 4,
-                        generator: Optional[torch.Generator] = None):
+                        member_chunk: Optional[int] = None, generator: Optional[torch.Generator] = None):
     """Posterior ensemble ``(B, T, D, n_members)`` in the prior's (normalised) space, and the NFE per member.
 
     ``guidance_weight`` is a float or a callable of the per-element ``tau`` tensor. ``tau0_per_window`` (B,)
     overrides ``tau0``; both are clipped to ``[0, TAU0_MAX]`` (``tau0 = 1`` returns the start up to
     ``1e-6`` noise). ``member_starts`` (B, T, D, M) overrides ``x_start`` and sets ``n_members = M``.
     ``R_norm`` is a float or a tensor broadcastable to the channel dimension. NFE = network evaluations per
-    member, ``n_steps * (1 + n_correctors)``.
+    member, ``n_steps * (1 + n_correctors)``. ``member_chunk`` caps the members per network batch
+    (memory); the start noises are drawn before chunking, the later draws chunk by chunk.
     """
     obs = batch.obs
     B, T, _ = obs.shape
@@ -211,51 +258,22 @@ def fm_posterior_sample(prior, batch, *, x_start: Optional[torch.Tensor] = None,
                       (1.0 - _bcast(tau0_w, noise)) * noise + _bcast(tau0_w, noise) * start)
     x = torch.cat(starts, dim=0)
 
-    rep = _repeat_batch(batch, M, B)
-    y = torch.nan_to_num(obs, nan=0.0).repeat(M, 1, 1)
-    channel_mask = None if obs_channel_mask is None else \
-        obs_channel_mask.expand(B, T, D).repeat(M, 1, 1)
-    mask = observation_mask(obs, batch.obs_mask, obs_indices, None).repeat(M, 1, 1)
-    if channel_mask is not None:
-        mask = mask * channel_mask.to(dtype)
+    chunk = M if member_chunk is None else max(1, min(member_chunk, M))
+    grid = tau_grid(n_steps, step_power)
     if torch.is_tensor(R_norm):
         R_norm = R_norm.to(device=device, dtype=dtype)
-    tau0_rep = tau0_w.repeat(M)
-    grid = tau_grid(n_steps, step_power)
-
-    def _guided(x, tau, dtau):
-        w = guidance_weight(tau) if callable(guidance_weight) else guidance_weight
-        return posterior_state_prediction(prior, rep, x, tau, y=y, mask=mask, R_norm=R_norm, guidance=guidance,
-                                          guidance_weight=w, dtau=dtau, pigdm_cov=pigdm_cov,
-                                          pigdm_diag=pigdm_diag, hutchinson_probes=hutchinson_probes,
-                                          generator=generator)
-
-    def _score(x, tau, psi_y):
-        tau_b = _bcast(tau, x)
-        return (tau_b * psi_y - x) / ((1.0 - tau_b) ** 2 * sigma_p ** 2)
-
-    for k in range(n_steps):
-        tau = tau0_rep + (1.0 - tau0_rep) * grid[k]
-        dtau = tau0_rep + (1.0 - tau0_rep) * grid[k + 1] - tau
-        for _ in range(n_correctors):
-            _, _, psi_y, _ = _guided(x, tau, dtau)
-            score = _score(x, tau, psi_y)
-            eps = 2.0 * corrector_snr ** 2 * score[0].numel() / score.flatten(1).pow(2).sum(1).clamp_min(1e-24)
-            eps = _bcast(eps, x)
-            xi = _randn(*x.shape)
-            x = (x + eps * score + (2.0 * eps).sqrt() * xi).detach()
-        v, psi, psi_y, shift = _guided(x, tau, dtau)
-        dtau_b = _bcast(dtau, x)
-        if k == n_steps - 1:
-            x = x + dtau_b * v - shift if shift is not None else psi_y
-            break
-        drift_x = x + dtau_b * v - shift if shift is not None else x + dtau_b * (psi_y - x) / (1.0 - _bcast(tau, x))
-        if gamma > 0.0:
-            tau_b = _bcast(tau, x)
-            tau_c = tau_b.clamp_min(TAU_EPS)
-            g2 = torch.where(tau_b < TAU_EPS, 0.0, 2.0 * gamma * sigma_p ** 2 * (1.0 - tau_c) / tau_c)
-            drift_x = drift_x + dtau_b * 0.5 * g2 * _score(x, tau, psi_y) + (g2 * dtau_b).sqrt() * _randn(*x.shape)
-        x = drift_x.detach()
-
+    obs_mask = observation_mask(obs, batch.obs_mask, obs_indices, None)
+    if obs_channel_mask is not None:
+        obs_mask = obs_mask * obs_channel_mask.to(dtype).expand(B, T, D)
+    y_full = torch.nan_to_num(obs, nan=0.0)
+    out = []
+    for m0 in range(0, M, chunk):
+        mc = min(chunk, M - m0)
+        out.append(_integrate(prior, _repeat_batch(batch, mc, B), x[m0 * B:(m0 + mc) * B], y_full.repeat(mc, 1, 1),
+                              obs_mask.repeat(mc, 1, 1), tau0_w.repeat(mc), grid, gamma=gamma, guidance=guidance,
+                              guidance_weight=guidance_weight, R_norm=R_norm, n_correctors=n_correctors,
+                              corrector_snr=corrector_snr, pigdm_cov=pigdm_cov, pigdm_diag=pigdm_diag,
+                              hutchinson_probes=hutchinson_probes, generator=generator))
+    x = torch.cat(out, dim=0)
     members = x.detach().view(M, B, T, D).permute(1, 2, 3, 0)
     return members, n_steps * (1 + n_correctors)
