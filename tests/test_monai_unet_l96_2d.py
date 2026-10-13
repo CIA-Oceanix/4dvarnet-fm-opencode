@@ -10,6 +10,7 @@ from models.monai_unet_adapter import MonaiDirectUNet  # noqa: E402
 from models.monai_unet_l96_2d import (  # noqa: E402
     MonaiDirectUNet2D,
     MonaiUNet2DSectorSolver,
+    MonaiVanillaCFM2D,
     SectorCircularConv2d,
     from_sector_grid,
     to_sector_grid,
@@ -207,6 +208,43 @@ def test_fourdvarnet_solver_with_sector_backbone_is_equivariant(update_input):
         y_shifted = model(SimpleNamespace(obs=_roll_sectors(obs, 2), obs_mask=mask))
     assert y.shape == (2, 64, D)
     assert torch.allclose(y_shifted, _roll_sectors(y, 2), atol=1e-4)
+
+
+def test_vanilla_cfm_2d_velocity_is_equivariant_and_samples():
+    from models.vanilla_cfm import VanillaCFM
+
+    torch.manual_seed(0)
+    m = MonaiVanillaCFM2D(state_dim=D, NO=NO, hidden_channels=[16, 32], num_res_blocks=1,
+                          norm_num_groups=8, dropout=0.0, use_flash_attention=False, N_outer=2)
+    assert isinstance(m, VanillaCFM)
+    for p in m.parameters():
+        p.data.normal_(0.0, 0.05)
+    m.eval()
+    obs = torch.randn(2, 64, D)
+    obs[torch.rand(2, 64, D) < 0.7] = float("nan")
+    x = torch.randn(2, 64, D)
+    tau = torch.full((2,), 0.4)
+    with torch.no_grad():
+        v = m(x, SimpleNamespace(obs=obs, forcing=None, params=None), tau)
+        v_shifted = m(_roll_sectors(x, 3), SimpleNamespace(obs=_roll_sectors(obs, 3), forcing=None,
+                                                           params=None), tau)
+        sample = m.sample(SimpleNamespace(obs=obs, forcing=None, params=None))
+    assert v.shape == sample.shape == (2, 64, D)
+    assert torch.allclose(v_shifted, _roll_sectors(v, 3), atol=1e-5)
+    batch = SimpleNamespace(obs=obs, forcing=None, params=None, states=torch.randn(2, 64, D))
+    assert torch.isfinite(m.compute_cfm_loss(batch))
+
+
+def test_vanilla_cfm_2d_config_builds_through_model_factory():
+    from hydra import compose, initialize_config_dir
+    from train import model_factory
+
+    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        cfg = compose(config_name="experiment/L96B_vanillacfm_monai2dM_ep1200")
+    model = model_factory(cfg, torch.device("cpu"))
+    assert isinstance(model, MonaiVanillaCFM2D)
+    assert sum(p.numel() for p in model.parameters()) == 5_635_563
 
 
 @pytest.mark.parametrize("name,n_unet,n_prior", [

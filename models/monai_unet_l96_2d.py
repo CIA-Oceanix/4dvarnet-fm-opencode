@@ -29,7 +29,9 @@ import torch.nn.functional as F
 from monai.networks.nets import DiffusionModelUNet
 from monai.networks.nets import diffusion_model_unet as _dmu
 
+from models.interpolant import LinearInterpolant
 from models.monai_unet_adapter import MonaiDirectUNet, _patch_resblock_for_1d
+from models.vanilla_cfm import VanillaCFM
 
 
 class SectorCircularConv2d(nn.Conv2d):
@@ -245,3 +247,45 @@ class MonaiUNet2DSectorSolver(nn.Module):
                 tau: torch.Tensor = None) -> torch.Tensor:
         out = self.unet2d(self._to_grid(x, self.in_blocks), tau=tau)
         return self._from_grid(out, self.out_blocks)
+
+
+class SectorObsConditionedUNet(nn.Module):
+    """`(x, obs, tau)` -> velocity on the sector grid: `[x, obs]` enter as two
+    state-sized blocks of `MonaiUNet2DSectorSolver`, matching the
+    `UNet1D`/`MonaiUNet1D` `use_obs=True` call signature used by the CFMs."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, **backbone_kwargs):
+        super().__init__()
+        self.backbone = MonaiUNet2DSectorSolver(state_dim=2 * state_dim, block_dim=state_dim,
+                                                NO=NO, output_dim=state_dim, **backbone_kwargs)
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor, tau: torch.Tensor = None) -> torch.Tensor:
+        return self.backbone(torch.cat([x, obs], dim=1), tau=tau)
+
+
+class MonaiVanillaCFM2D(VanillaCFM):
+    """`MonaiVanillaCFM` with the 2D (time x sector) circular backbone: the
+    same CFM loss and sampler (inherited), the velocity network replaced by
+    `SectorObsConditionedUNet`. Subclassing keeps the `isinstance(model,
+    VanillaCFM)` eval dispatch. Observation-only conditioning, as for
+    `MonaiDirectUNet2D`."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, hidden_channels=None,
+                 N_outer: int = 10, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 train_tau_0_only: bool = False, param_dim: int = 0, cond_extra_dim: int = 0,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 use_flash_attention: bool = True, mid_attention: str = "time"):
+        nn.Module.__init__(self)
+        if cond_extra_dim:
+            raise ValueError(f"MonaiVanillaCFM2D supports obs-only conditioning (got cond_extra_dim={cond_extra_dim})")
+        self.cond_extra_dim = 0
+        self.param_dim = param_dim
+        self.unet = SectorObsConditionedUNet(
+            state_dim=state_dim, NO=NO, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only

@@ -202,7 +202,7 @@ class LitModel(pl.LightningModule):
         elif self.model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = self.model(batch)
             loss = self.loss_fn(pred, batch.states)
-        elif self.model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
+        elif self.model_type in ("vanilla_cfm", "monai_vanilla_cfm", "monai_vanilla_cfm_2d"):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type in ("joint_cfm", "joint_cfm_coupled"):
             loss = self.model.compute_param_loss(batch) if self.stage == 2 \
