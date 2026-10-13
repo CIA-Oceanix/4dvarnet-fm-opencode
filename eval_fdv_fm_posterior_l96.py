@@ -227,7 +227,8 @@ def resolve_inflation(args: dict, split: str) -> float | None:
 def git_sha() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)),
-                                       text=True).strip()
+                                       text=True, stderr=subprocess.DEVNULL,
+                                       env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}).strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
