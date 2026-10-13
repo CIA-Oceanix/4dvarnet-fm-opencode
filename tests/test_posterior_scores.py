@@ -130,9 +130,47 @@ def test_harness_registry_and_argument_parsing():
     assert harness.parse_windows("0:3,7", 10) == [0, 1, 2, 7]
     assert harness.window_seed(0, 3, "mean") == harness.window_seed(0, 3, "mean")
     assert harness.window_seed(0, 3, "mean") != harness.window_seed(0, 4, "mean")
+    test_opts = harness.build_parser().parse_args(["--method", "B5", "--split", "test", "--out", "x.json"])
     with pytest.raises(ValueError):
-        harness.resolve_inflation({"inflation": None, "inflation_from": None}, "test")
-    assert harness.resolve_inflation({"inflation": 1.5, "inflation_from": None}, "test") == 1.5
+        harness.resolve_inflation({"inflation": None, "inflation_from": None}, test_opts)
+    assert harness.resolve_inflation({"inflation": 1.5, "inflation_from": None}, test_opts) == 1.5
+
+
+def _write_val_run(path, harness, method: str, ssr: float, inflation=None, **overrides) -> str:
+    margs = dict(harness.METHODS[method].defaults)
+    config = {"method": method, "method_args": margs, "split": "val", "layout": "regular", "case": "s0",
+              "fdv_seed": 2, "fdv_run": harness.FDV_RUNS[2], "sda_run": harness.SDA_RUN, "n_members": 30}
+    if inflation is not None:
+        config["inflation"] = inflation
+    config.update(overrides)
+    with open(path, "w") as f:
+        json.dump({"config": config, "aggregate": {"ssr": ssr}}, f)
+    return str(path)
+
+
+def test_resolve_inflation_from_a_tuned_b5_val_run_uses_its_stored_factor(tmp_path):
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    src = _write_val_run(tmp_path / "b5.json", harness, "B5", ssr=1.0, inflation=1.7)
+    opts = harness.build_parser().parse_args(["--method", "B5", "--split", "test", "--out", "x.json"])
+    margs = harness.parse_args_kv(f"inflation_from={src}", harness.METHODS["B5"].defaults)
+    assert harness.resolve_inflation(margs, opts) == pytest.approx(1.7)
+
+
+def test_resolve_inflation_from_b3_inverts_ssr_and_rejects_mismatched_runs(tmp_path):
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    opts = harness.build_parser().parse_args(["--method", "B5", "--split", "test", "--out", "x.json"])
+    b3 = _write_val_run(tmp_path / "b3.json", harness, "B3", ssr=0.5)
+    margs = harness.parse_args_kv(f"inflation_from={b3}", harness.METHODS["B5"].defaults)
+    assert harness.resolve_inflation(margs, opts) == pytest.approx(2.0)
+    for name, method, overrides in [("b1", "B1", {}), ("tau", "B3", {"method_args": {"tau0": 0.5}}),
+                                    ("lay", "B3", {"layout": "random"}), ("seed", "B3", {"fdv_seed": 1}),
+                                    ("m", "B3", {"n_members": 10}), ("case", "B3", {"case": "s1"})]:
+        if "method_args" in overrides:
+            overrides = {"method_args": {**harness.METHODS[method].defaults, **overrides["method_args"]}}
+        bad = _write_val_run(tmp_path / f"{name}.json", harness, method, ssr=0.5, **overrides)
+        with pytest.raises(ValueError):
+            harness.resolve_inflation(harness.parse_args_kv(f"inflation_from={bad}",
+                                                            harness.METHODS["B5"].defaults), opts)
 
 
 PROBE_JSON = ("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-fdv-mask/experiments/"

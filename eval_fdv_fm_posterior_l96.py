@@ -210,16 +210,38 @@ def parse_windows(text: str | None, n: int) -> list[int]:
     return idx
 
 
-def resolve_inflation(args: dict, split: str) -> float | None:
-    if args.get("inflation") not in (None, "None"):
-        return float(args["inflation"])
-    if args.get("inflation_from"):
-        with open(args["inflation_from"]) as f:
+INFLATION_KEYS = ("inflation", "inflation_from")
+
+
+def run_signature(margs: dict, layout: str, case: str, fdv_seed: int, n_members: int, fdv_run: str,
+                  sda_run: str) -> dict:
+    return {"method_args": {k: v for k, v in margs.items() if k not in INFLATION_KEYS}, "layout": layout,
+            "case": case, "fdv_seed": fdv_seed, "n_members": n_members, "fdv_run": os.path.abspath(fdv_run),
+            "sda_run": os.path.abspath(sda_run)}
+
+
+def resolve_inflation(margs: dict, opts: argparse.Namespace) -> float | None:
+    if margs.get("inflation") not in (None, "None"):
+        return float(margs["inflation"])
+    if margs.get("inflation_from"):
+        with open(margs["inflation_from"]) as f:
             src = json.load(f)
-        if src["config"]["split"] != "val":
+        cfg = src["config"]
+        if cfg["split"] != "val":
             raise ValueError("inflation_from must be a validation-split run")
+        if cfg.get("inflation") is None and cfg["method"] != "B3":
+            raise ValueError(f"inflation_from must be a tuned B5 or an uninflated B3 run, got {cfg['method']}")
+        cur = run_signature(margs, opts.layout, opts.case, opts.fdv_seed, opts.n_members,
+                            opts.fdv_run or FDV_RUNS[opts.fdv_seed], opts.sda_run)
+        theirs = run_signature(cfg["method_args"], cfg["layout"], cfg["case"], cfg["fdv_seed"], cfg["n_members"],
+                               cfg["fdv_run"], cfg["sda_run"])
+        diff = sorted(k for k in cur if cur[k] != theirs[k])
+        if diff:
+            raise ValueError(f"inflation_from run does not match the current run on {diff}")
+        if cfg.get("inflation") is not None:
+            return float(cfg["inflation"])
         return 1.0 / src["aggregate"]["ssr"]
-    if split != "val":
+    if opts.split != "val":
         raise ValueError("B5 on the test split needs inflation=<f> or inflation_from=<val json>")
     return None
 
@@ -247,7 +269,7 @@ def run(opts: argparse.Namespace) -> dict:
     windows = parse_windows(opts.windows, len(full.dataset))
     loader = DataLoader(Subset(full.dataset, windows), batch_size=1, shuffle=False, collate_fn=full.collate_fn)
 
-    inflation = resolve_inflation(margs, opts.split) if spec.tune_inflation else None
+    inflation = resolve_inflation(margs, opts) if spec.tune_inflation else None
     keep = spec.tune_inflation and inflation is None
     kept: list[tuple[torch.Tensor, torch.Tensor]] = []
     per_window, nfe, t0 = [], 0, time.time()
