@@ -15,7 +15,12 @@ def _no_onednn():
 
 def _prior(T: int = 5) -> MonaiSDAPrior3DQG:
     torch.manual_seed(0)
-    return MonaiSDAPrior3DQG(ny=16, nx=16, T=T, hidden_channels=[8, 16, 32], dropout=0.0).eval()
+    prior = MonaiSDAPrior3DQG(ny=16, nx=16, T=T, hidden_channels=[8, 16, 32], dropout=0.0).eval()
+    # MONAI zero-initializes the output conv: without this the periodicity check is 0 == 0.
+    with torch.no_grad():
+        for p in prior.parameters():
+            p.normal_(0.0, 0.1)
+    return prior
 
 
 @pytest.mark.parametrize("days", [5, 15, 30])
@@ -35,7 +40,9 @@ def test_3d_prior_is_periodic_in_space():
         return z.reshape(1, 8, 2, 16, 16).roll(4, dims=-1).reshape(1, 8, -1)
 
     with torch.no_grad():
-        assert torch.allclose(model(roll(x), None, tau), roll(model(x, None, tau)), atol=1e-4)
+        out = model(x, None, tau)
+        assert out.abs().mean() > 1e-3
+        assert torch.allclose(model(roll(x), None, tau), roll(out), atol=1e-4)
 
 
 def test_3d_prior_does_not_wrap_in_time():
