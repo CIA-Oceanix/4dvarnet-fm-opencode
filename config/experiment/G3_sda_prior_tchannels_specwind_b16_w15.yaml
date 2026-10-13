@@ -1,0 +1,45 @@
+# G3 SDA prior on the batch-16 protocol with a 15-day window (2026-10-12): the unconditional flow
+# prior of G3_sda_prior_tchannels_specwind.yaml (M tier, T-channels 2D backbone) trained like the
+# winning G1 runs -- batch 16, 1200 epochs, a fresh 1000-window round every 30 epochs, 40-epoch
+# warm-up then cosine -- on random 15-day crops of the 30-day windows. Peak LR 3e-4, not G1's
+# 5e-4: the flow models collapsed more readily than G1 at high LR. The prior never sees
+# observations, so the density draw and the obs-error augmentation do not apply. At test time
+# the 30-day state is sampled as one trajectory, the velocity composed over 15-day sub-windows
+# 5 days apart at every flow step (evaluation/run_qg_specwind_neural.py ComposedFlow).
+#
+#   EXP_ID=G3_sda_prior_tchannels_specwind_b16_w15 sbatch --cpus-per-task=12 --mem=80G \
+#     batch/run_qg_specwind_neural_train.sbatch
+
+experiment_id: G3_sda_prior_tchannels_specwind_b16_w15
+entry_point: train_qg_neural.py
+system: qg
+model_type: sda_prior_tchannels
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [64, 128, 256]
+  num_res_blocks: 2
+  use_obs_mask: false
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 1200
+  lr: 0.0003
+  warmup_epochs: 40
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily) on the endpoint estimate x1_hat, as for G1/G2.
+  q_loss_weight_scale: 3.0
+data:
+  normalize: true
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  train_window_days: 15
+  window_stride: 5

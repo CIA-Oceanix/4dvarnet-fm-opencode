@@ -107,3 +107,74 @@ def test_sda_guidance_pulls_observed_cells_towards_the_obs():
         assert x.shape == (3, *batch.obs.shape)
         misfit[w] = float(((x - batch.obs) ** 2)[:, batch.obs_mask].mean())
     assert misfit[5.0] < misfit[0.0]
+
+
+class _DayLocalFlow(torch.nn.Module):
+    """A 'network' whose velocity at each day depends on that day only: composing it over
+    sub-windows must reproduce it applied to the whole window."""
+
+    def __init__(self, T: int, d: int):
+        super().__init__()
+        self.T, self.state_dim, self.sigma_prior, self.N_outer = T, d, 1.0, 4
+        self.train_tau_0_only = False
+        from models.interpolant import LinearInterpolant
+        self.interpolant = LinearInterpolant(nu=1.0)
+
+    def forward(self, x, batch, tau):
+        if x.shape[1] != self.T:
+            raise ValueError("wrong window")
+        return torch.tanh(x) * (1.0 + tau[:, None, None])
+
+
+def test_composed_flow_reproduces_a_day_local_velocity_on_the_full_window():
+    from evaluation.run_qg_specwind_neural import ComposedFlow
+    _, batch = _sda_prior_and_batch(nx=4, days=12)
+    inner = _DayLocalFlow(T=5, d=batch.obs.shape[-1])
+    flow = ComposedFlow(inner, n_days=12, stride=2)
+    x = torch.randn(batch.obs.shape)
+    tau = torch.full((2,), 0.3)
+    assert torch.allclose(flow(x, batch, tau), torch.tanh(x) * 1.3, atol=1e-6)
+    assert flow.sample(batch).shape == batch.obs.shape
+
+
+def test_composed_flow_samples_keep_the_spread_of_independent_members():
+    from evaluation.run_qg_specwind_neural import ComposedFlow
+    _, batch = _sda_prior_and_batch(nx=4, days=12)
+
+    class Zero(_DayLocalFlow):
+        def forward(self, x, batch, tau):
+            return torch.zeros_like(x)
+
+    flow = ComposedFlow(Zero(T=5, d=batch.obs.shape[-1]), n_days=12, stride=2)
+    torch.manual_seed(0)
+    members = torch.stack([flow.sample(batch) for _ in range(200)])
+    assert members.std(0).mean() == pytest.approx(1.0, abs=0.05)
+
+
+def test_sda_members_with_a_composed_prior_cover_the_long_window():
+    from evaluation.run_qg_specwind_neural import ComposedFlow, sda_members
+    _, batch = _sda_prior_and_batch(days=6)
+    from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime
+    prior = MonaiSDAPriorQGChannelTime(ny=16, nx=16, T=4, hidden_channels=[8, 16, 32],
+                                       norm_num_groups=4).eval()
+    flow = ComposedFlow(prior, n_days=6, stride=1)
+    x = sda_members(flow, batch, n_members=2, guidance_weight=5.0, n_steps=3)
+    assert x.shape == (2, *batch.obs.shape) and torch.isfinite(x).all()
+
+
+def test_warm_start_at_tau0_one_returns_the_starting_estimate():
+    from evaluation.run_qg_specwind_neural import sda_members
+    model, batch = _sda_prior_and_batch()
+    start = torch.randn(batch.obs.shape)
+    x = sda_members(model, batch, n_members=1, guidance_weight=5.0, n_steps=5,
+                    mean_estimate=start, tau0=1.0)
+    assert torch.allclose(x[0], start, atol=1e-6)
+
+
+def test_renorm_inverts_denorm():
+    from data.qg_neural import denorm_psi
+    from evaluation.run_qg_specwind_neural import renorm_psi
+    cfg = QGConfig(nx=16)
+    norm = {"mean": torch.tensor([1.0, -2.0]), "std": torch.tensor([3.0, 0.5])}
+    x = torch.randn(2, 4, 2 * 16 * 16)
+    assert torch.allclose(renorm_psi(denorm_psi(x, cfg, norm), cfg, norm), x, atol=1e-5)
