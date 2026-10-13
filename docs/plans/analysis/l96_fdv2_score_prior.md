@@ -1,6 +1,6 @@
 # L96 FDV2 with a score-based prior: denoising-score-matching Φ, 4D-Var prior channel and posterior sampling
 
-**Status:** PLAN v1 (2026-10-12). Not started; gate (section 4, step 0) passed. Follows `docs/results/l96_fdv_m_mask_prior_unroll.md` (FDV2 + mask, frozen Φ, deep-supervision fine-tune) and the uncertainty probes of 2026-10-12 summarised in section 1.
+**Status:** SUPERSEDED (2026-10-12) by `docs/plans/analysis/l96_fdv2_fm_posterior.md`, before any implementation; its sections 1.1–1.5 (evidence) remain the reference cited there. Was PLAN v1 (2026-10-12); gate (section 4, step 0) passed. Follows `docs/results/l96_fdv_m_mask_prior_unroll.md` (FDV2 + mask, frozen Φ, deep-supervision fine-tune) and the uncertainty probes of 2026-10-12 summarised in section 1.
 
 ## 0. Goal
 
