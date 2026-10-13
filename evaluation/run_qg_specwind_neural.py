@@ -32,6 +32,7 @@ import dataclasses
 import json
 import os
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -41,9 +42,14 @@ from scipy.interpolate import CubicSpline
 from data.normalization import load_norm_stats
 from data.qg import QGConfig
 from data.qg_datasets import SPECS, shard_indices
+from data.normalization import normalize
 from data.qg_neural import (
+    QGBatch,
     QGNeuralDataset,
+    compose_days,
     denorm_psi,
+    layer_split,
+    slice_days,
     psi_to_q,
     qg_collate,
     steps_per_day,
@@ -59,7 +65,7 @@ from evaluation.run_qg_specwind_da import (
     s0_windows,
     window_metrics,
 )
-from train_qg_neural import DIRECT_TYPES, build_model
+from train_qg_neural import DIRECT_TYPES, SDA_TYPES, build_model
 
 INTERP_KINDS = ("cubic", "linear")
 
@@ -93,7 +99,7 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     rc = OmegaConf.load(os.path.join(run_dir, "resolved_config.yaml"))
     m = rc.model
     model_type = str(m.model_type)
-    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", "sda_prior_tchannels"):
+    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", *SDA_TYPES):
         raise ValueError(f"{model_type!r} is not scored by this driver")
     days = rc.data.get("train_window_days", None)
     model_cfg = dataclasses.replace(cfg, window_days=float(days)) if days is not None else cfg
@@ -117,8 +123,56 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     return model.to(device).eval(), model_type, norm
 
 
+def _sub_window(batch, start: int, stop: int, n_days: int):
+    """Days [start, stop) of a QGBatch, or of every per-day tensor of a sampler's batch shim."""
+    if isinstance(batch, QGBatch):
+        return slice_days(batch, start, stop)
+    return SimpleNamespace(**{k: v[:, start:stop] if torch.is_tensor(v) and v.dim() > 1
+                              and v.shape[1] == n_days else v for k, v in vars(batch).items()})
+
+
+class ComposedFlow(torch.nn.Module):
+    """A flow network built for `inner.T` days run on an `n_days` state: at every flow step
+    its velocity is computed on overlapping sub-windows and blended (`compose_days`), as SDA
+    composes a local score over a long trajectory (Rozet & Louppe 2023). Sampling then draws
+    one coherent `n_days` trajectory -- unlike blending independently sampled sub-windows,
+    which averages independent members and shrinks the ensemble spread where they overlap.
+    Exposes what `VanillaCFM.sample` and `sda_guided_sample` read (`forward`, `sample`,
+    `state_dim`, `sigma_prior`, `N_outer`, `interpolant`, `T`).
+    """
+
+    def __init__(self, inner: torch.nn.Module, n_days: int, stride: int):
+        super().__init__()
+        self.inner = inner
+        self.T = n_days
+        self.stride = stride
+        for name in ("state_dim", "sigma_prior", "N_outer", "interpolant", "train_tau_0_only"):
+            setattr(self, name, getattr(inner, name))
+
+    def forward(self, x: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        t, n = self.inner.T, x.shape[1]
+        return compose_days(lambda s: self.inner(x[:, s:s + t], _sub_window(batch, s, s + t, n), tau),
+                            n, t, self.stride)
+
+    def sample(self, batch, N_outer=None):
+        from models.vanilla_cfm import VanillaCFM
+        return VanillaCFM.sample(self, batch, N_outer=N_outer)
+
+
+def renorm_psi(psi_phys: torch.Tensor, cfg: QGConfig, norm: dict | None) -> torch.Tensor:
+    """Physical daily psi -> the global per-layer z-score of `norm` (inverse of `denorm_psi`)."""
+    if norm is None:
+        return psi_phys
+    split = layer_split(cfg)
+    out = psi_phys.clone()
+    for k, sl in enumerate((slice(None, split), slice(split, None))):
+        out[..., sl] = normalize(psi_phys[..., sl], {"mean": norm["mean"][k], "std": norm["std"][k]})
+    return out
+
+
 def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: float,
-                n_steps: int = 10) -> torch.Tensor:
+                n_steps: int = 10, mean_estimate: torch.Tensor | None = None,
+                tau0: float = 0.0) -> torch.Tensor:
     """(n_members, B, days, D) SDA1 samples: the unconditional prior's Euler ODE nudged by the
     normalized gradient of the observation misfit at x_hat_1 (`evaluation.sda_sampler`).
 
@@ -127,27 +181,31 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
     NaN never occurs in the zero-filled QG obs, the mask alone selects the observed cells.
     The guidance step is normalized by the gradient norm, so the scalar R cancels and only
     `guidance_weight` (an L2 step over one window's whole normalized state) matters.
+    `mean_estimate` (normalized like the prior's state) warm-starts every member at flow time
+    `tau0` from the interpolant between noise and that estimate (SDEdit), the remaining
+    steps guided as usual.
     """
-    from types import SimpleNamespace
-
     from evaluation.sda_sampler import sda_guided_sample
     b, t, _ = batch.obs.shape
     shim = SimpleNamespace(obs=batch.obs,
                            obs_mask=torch.ones(b, t, dtype=torch.bool, device=batch.obs.device))
     out, _ = sda_guided_sample(model, shim, R_var=1.0, N_outer=n_steps,
                                guidance_weight=guidance_weight, n_members=n_members,
-                               obs_channel_mask=batch.obs_mask)
+                               obs_channel_mask=batch.obs_mask, mean_estimate=mean_estimate,
+                               tau0=tau0)
     return out[None] if n_members == 1 else out.permute(3, 0, 1, 2)
 
 
 @torch.no_grad()
 def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int,
-                     guidance_weight: float = 100.0, sda_steps: int = 10) -> torch.Tensor:
+                     guidance_weight: float = 100.0, sda_steps: int = 10,
+                     mean_estimate: torch.Tensor | None = None, tau0: float = 0.0) -> torch.Tensor:
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
         return model(batch)[None]
-    if model_type == "sda_prior_tchannels":
-        return sda_members(model, batch, n_members, guidance_weight, sda_steps)
+    if model_type in SDA_TYPES:
+        return sda_members(model, batch, n_members, guidance_weight, sda_steps, mean_estimate,
+                           tau0)
     return torch.stack([model.sample(batch) for _ in range(n_members)])
 
 
@@ -188,17 +246,38 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
 def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg: QGConfig,
              device: torch.device, n_members: int = 1, interp: str = "cubic",
              batch_size: int = 4, guidance_weight: float = 100.0,
-             sda_steps: int = 10, window_stride: int = 5) -> list[dict]:
-    """Per-window scores; a network built for fewer days than the window estimates it
-    from overlapping sub-windows `window_stride` days apart (`windowed_estimate`)."""
+             sda_steps: int = 10, window_stride: int = 5, warm_start=None,
+             tau0: float = 0.5, full_window: bool = False) -> list[dict]:
+    """Per-window scores. A network built for fewer days than the window covers it with
+    overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
+    estimates (`windowed_estimate`), a flow blends its velocity at every step
+    (`ComposedFlow`), so each member stays one coherent trajectory. `warm_start`
+    `(model, model_type, norm)` -- a deterministic run -- gives the SDA members their
+    starting estimate at flow time `tau0`. `full_window` runs a network that accepts any
+    window length (`any_length`, the 3D prior) on the whole window instead."""
+    if full_window and not getattr(model, "any_length", False):
+        raise ValueError("full_window needs a network that accepts any window length")
     ds = QGNeuralDataset(windows, cfg, norm, on_the_fly_obs=False)
     per_window = []
     for start in range(0, len(windows), batch_size):
         idx = list(range(start, min(start + batch_size, len(windows))))
         batch = qg_collate([ds[i] for i in idx]).to(device)
-        members = windowed_estimate(
-            lambda b: estimate_members(model, model_type, b, n_members, guidance_weight, sda_steps),
-            batch, getattr(model, "T", batch.T), window_stride).cpu()
+        t_model = batch.T if full_window else getattr(model, "T", batch.T)
+        mean_estimate = None
+        if warm_start is not None:
+            w_model, w_type, w_norm = warm_start
+            w_est = windowed_estimate(lambda b: estimate_members(w_model, w_type, b, 1)[0], batch,
+                                      getattr(w_model, "T", batch.T), window_stride)
+            mean_estimate = renorm_psi(denorm_psi(w_est, cfg, w_norm), cfg, norm)
+        if model_type in DIRECT_TYPES:
+            members = windowed_estimate(
+                lambda b: estimate_members(model, model_type, b, n_members), batch, t_model,
+                window_stride)
+        else:
+            flow = model if t_model == batch.T else ComposedFlow(model, batch.T, window_stride)
+            members = estimate_members(flow, model_type, batch, n_members, guidance_weight,
+                                       sda_steps, mean_estimate, tau0)
+        members = members.cpu()
         for b, i in enumerate(idx):
             w = windows[i]
             phys = denorm_psi(members[:, b], cfg, norm).numpy()
@@ -230,6 +309,13 @@ def main() -> None:
     p.add_argument("--guidance-weight", type=float, default=100.0,
                    help="SDA: L2 guidance step per Euler step over one window's normalized state")
     p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
+    p.add_argument("--warm-start-run", default=None,
+                   help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
+                        "at flow time --tau0 instead of pure noise")
+    p.add_argument("--tau0", type=float, default=0.5, help="SDA warm start: starting flow time")
+    p.add_argument("--full-window", action="store_true",
+                   help="run a network that accepts any window length (3D prior) on the whole "
+                        "window instead of composing it over its training window")
     p.add_argument("--window-stride", type=int, default=None,
                    help="days between the overlapping sub-windows of a network trained on a "
                         "shorter window (default: the run's data.window_stride, else 5)")
@@ -253,17 +339,28 @@ def main() -> None:
     t0 = time.time()
     rc = OmegaConf.load(os.path.join(args.run_dir, "resolved_config.yaml"))
     stride = args.window_stride or int(rc.data.get("window_stride", None) or 5)
+    warm = None
+    if args.warm_start_run:
+        warm = load_run(args.warm_start_run, cfg, device)
+        if warm[1] not in DIRECT_TYPES:
+            raise ValueError(f"--warm-start-run must be a DirectUNet run, got {warm[1]!r}")
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
                           args.interp, args.batch_size, args.guidance_weight, args.sda_steps,
-                          window_stride=stride)
+                          window_stride=stride, warm_start=warm, tau0=args.tau0,
+                          full_window=args.full_window)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
             "N": per_window[0]["n_members"] if per_window else None, "interp": args.interp,
             "network_window_days": rc.data.get("train_window_days", None),
-            "window_stride": stride if rc.data.get("train_window_days", None) else None,
-            "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps}
-                    if model_type == "sda_prior_tchannels" else None),
+            "window_stride": (stride if rc.data.get("train_window_days", None)
+                              and not args.full_window else None),
+            "full_window": args.full_window,
+            "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps,
+                     "warm_start_run": (os.path.abspath(args.warm_start_run)
+                                        if args.warm_start_run else None),
+                     "tau0": args.tau0 if args.warm_start_run else None}
+                    if model_type in SDA_TYPES else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
             "s1_kappa": 1.0 if args.s1 else 0.0,
