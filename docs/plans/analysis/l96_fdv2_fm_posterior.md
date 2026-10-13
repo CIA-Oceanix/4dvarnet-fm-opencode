@@ -147,7 +147,7 @@ Execution is split into independent tracks, each run by one agent in its own git
 
 - **Agent S "synthesis":**
   - Pick one configuration per method on validation and run a single test scoring (both seeds, S0/S1, both layouts) with bootstrap CIs.
-  - Write the results note `docs/results/l96_fdv2_fm_posterior.md`: the table with bold best and italic second-best per metric; rank-histogram and SSR-vs-lead-time figures.
+  - Write the results note (`l96_fdv2_fm_posterior.md` under `docs/results/`): the table with bold best and italic second-best per metric; rank-histogram and SSR-vs-lead-time figures.
   - Archive the ckpt + config of benchmark rows to `experiments/l96/`.
   - PR, stopping at CI green + reviewer approval for the user to merge.
 
