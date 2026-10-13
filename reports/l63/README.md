@@ -23,19 +23,19 @@ Details and hyper-parameters: `outputs/l63_da_baselines_table.md`.
 
 | scheme | S0 | S1 | S1/S0 | CRPS S0 | CRPS S1 | spread/RMSE (S0) | spread/RMSE (S1) |
 |---|---|---|---|---|---|---|---|
-| DirectUNet-M | 0.437 ± 0.053 | 0.437 ± 0.053 | 1.00 | n/a | n/a | n/a | n/a |
-| PredictStateCFM-M, tau=0 mean | 0.438 ± 0.056 | 0.438 ± 0.056 | 1.00 | n/a | n/a | n/a | n/a |
-| VanillaCFM-M, tau=0 mean | 0.419 ± 0.051 | 0.419 ± 0.051 | 1.00 | n/a | n/a | n/a | n/a |
+| DirectUNet-M | 0.418 ± 0.071 | 0.63 ± 0.206 | 1.11 | n/a | n/a | n/a | n/a |
+| PredictStateCFM-M, tau=0 mean | 0.454 ± 0.073 | 0.468 ± 0.211 | 1.03 | n/a | n/a | n/a | n/a |
+| VanillaCFM-M, tau=0 mean | 0.475 ± 0.064 | 0.474 ± 0.255 | 1.00 | n/a | n/a | n/a | n/a |
 
 ## 3. Flow matching
 
 | scheme | S0 | S1 | S1/S0 | CRPS S0 | CRPS S1 | spread/RMSE (S0) | spread/RMSE (S1) |
 |---|---|---|---|---|---|---|---|
-| PredictStateCFM-M, 1200 ep | 0.436 ± 0.066 | 0.436 ± 0.066 | 1.00 | 0.258 | 0.258 | 0.60 | 0.60 |
-| VanillaCFM-M, 1200 ep | 0.389 ± 0.050 | 0.389 ± 0.050 | 1.00 | 0.221 | 0.221 | 0.83 | 0.83 |
-| PredictStateCFM-M, 400 ep | 0.402 ± 0.057 | 0.402 ± 0.057 | 1.00 | 0.233 | 0.233 | 0.67 | 0.67 |
-| VanillaCFM-M, 400 ep | **0.377 ± 0.051** | **0.377 ± 0.051** | 1.00 | **0.213** | **0.213** | 0.87 | 0.87 |
-| PredictStateCFM-M ×3 (velocity average) | 0.396 ± 0.060 | 0.396 ± 0.060 | 1.00 | 0.232 | 0.232 | 0.63 | 0.63 |
+| PredictStateCFM-M, 1200 ep | 0.450 ± 0.065 | 0.447 ± 0.217 | 0.99 | 0.275 | 0.262 | 0.49 | 0.59 |
+| VanillaCFM-M, 1200 ep | 0.423 ± 0.058 | 0.441 ± 0.234 | 1.04 | 0.246 | 0.254 | 0.67 | 0.84 |
+| PredictStateCFM-M, 400 ep | 0.424 ± 0.061 | 0.438 ± 0.240 | 1.03 | 0.258 | 0.254 | 0.51 | 0.64 |
+| VanillaCFM-M, 400 ep | 0.413 ± 0.059 | 0.408 ± 0.195 | 0.99 | 0.241 | 0.229** | 0.67 | 0.83 |
+| PredictStateCFM-M ×3 (velocity average) |  0.402 ± 0.069 | 0.396 ± 0.060 | 1.00 | 0.242 | 0.232 | 0.54 | 0.63 |
 
 ## 4. SDA (score-based prior + guidance)
 
