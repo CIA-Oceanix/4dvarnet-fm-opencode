@@ -31,6 +31,13 @@ class GaussianPrior(torch.nn.Module):
         return (self.psi(x, tau) - x) / (1 - tau.view(-1, 1, 1))
 
 
+class TiltedPrior(GaussianPrior):
+    """GaussianPrior with a small non-zero Jacobian of Psi at tau = 0, as a trained prior has."""
+
+    def psi(self, x: torch.Tensor, tau: torch.Tensor) -> torch.Tensor:
+        return super().psi(x, tau) + 1e-2 * x
+
+
 def _toy(B=2, T=3, D=2, R=0.3, seed=0):
     g = torch.Generator().manual_seed(seed)
     mu = torch.randn(T, D, generator=g, dtype=torch.float64)
@@ -96,6 +103,29 @@ class TestPosteriorStatePrediction:
         _, psi, psi_y, _ = posterior_state_prediction(prior, batch, x, tau, y=torch.nan_to_num(batch.obs),
                                                       mask=mask, R_norm=0.3, guidance="pigdm")
         assert torch.equal(psi_y[mask == 0], psi[mask == 0])
+
+
+    @pytest.mark.parametrize("guidance", ["dps", "pigdm"])
+    def test_guidance_vanishes_at_tau0_with_nonzero_jacobian(self, guidance):
+        prior, batch, mask, _, _ = _toy()
+        prior = TiltedPrior(prior.mu, prior.s2)
+        x = prior.sigma_prior * torch.randn(2, 3, 2, dtype=torch.float64)
+        y = torch.nan_to_num(batch.obs)
+        kw = dict(y=y, mask=mask, R_norm=0.3, guidance=guidance)
+        _, psi, psi_y, _ = posterior_state_prediction(prior, batch, x, torch.zeros(2, dtype=torch.float64), **kw)
+        assert torch.equal(psi_y, psi)
+        tau = torch.tensor([0.0, 0.5], dtype=torch.float64)
+        _, psi, psi_y, _ = posterior_state_prediction(prior, batch, x, tau, **kw)
+        assert torch.equal(psi_y[0], psi[0]) and (psi_y[1] - psi[1]).abs().max() > 0
+
+    @pytest.mark.parametrize("guidance", ["dps", "pigdm"])
+    def test_first_step_from_noise_bounded_with_nonzero_jacobian(self, guidance):
+        prior, batch, _, post_mean, post_var = _toy()
+        prior = TiltedPrior(prior.mu, prior.s2)
+        torch.manual_seed(0)
+        members, _ = fm_posterior_sample(prior, batch, tau0=0.0, gamma=0.0, guidance=guidance, R_norm=0.3,
+                                         n_steps=10, n_members=20)
+        assert ((members - post_mean.unsqueeze(-1)) / post_var.sqrt().unsqueeze(-1)).abs().max() < 6
 
 
 class TestToyPosterior:
@@ -193,7 +223,12 @@ class TestShapesAndStarts:
     def test_warm_start_requires_start(self):
         prior, batch, _, _, _ = _toy()
         with pytest.raises(ValueError):
-            fm_posterior_sample(prior, batch, tau0=0.5, n_members=2)
+            fm_posterior_sample(prior, batch, tau0=0.5, R_norm=0.3, n_members=2)
+
+    def test_R_norm_is_required(self):
+        prior, batch, _, _, _ = _toy()
+        with pytest.raises(TypeError):
+            fm_posterior_sample(prior, batch, n_members=2)
 
     def test_tau_grid_early_fine(self):
         assert tau_grid(4, 0.5) == flow_tau_grid(4, 0.5)

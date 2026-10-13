@@ -44,8 +44,10 @@ per batch element), so the cost does not depend on ``tau0_w``.
 
 Warm start: ``x_tau0 = tau0 * start + (1 - tau0) sigma_p eps`` with ``start = x_start`` (shared by
 members) or ``member_starts[..., m]``; neither given requires ``tau0 = 0`` (pure noise). ``c_tau`` uses
-``max(tau, TAU_EPS)``, and ``g = 0`` for ``tau < TAU_EPS``: ``p_0 = N(0, sigma_p^2 I)`` with or without ``y``,
-so a pure-noise start needs no correction, while ``g^2 ~ 1 / tau`` would make that first step overshoot. Members run batched along the batch dimension (member-major);
+``max(tau, TAU_EPS)``, and both ``g = 0`` and the DPS / PiGDM guidance vanish for ``tau < TAU_EPS``:
+``p_0 = N(0, sigma_p^2 I)`` with or without ``y``, so a pure-noise start needs no correction, while
+``g^2 ~ 1 / tau`` and ``c_tau ~ 1 / tau`` would make that first step overshoot (a trained prior's ``J_Psi``
+is not exactly 0 at ``tau = 0``). Members run batched along the batch dimension (member-major);
 start noises are drawn member by member with shape ``(B, T, D)``, in the order of ``sda_guided_sample``.
 """
 import copy
@@ -156,7 +158,7 @@ def posterior_state_prediction(prior, batch, x: torch.Tensor, tau: torch.Tensor,
             variance = (R_norm + k_tau * jdiag).detach()
         grad = torch.autograd.grad(0.5 * (resid * (psi - y) / variance).sum(), x)[0]
     v, psi = v.detach(), psi.detach()
-    return v, psi, psi - w * c_tau * grad, None
+    return v, psi, torch.where(tau_b < TAU_EPS, psi, psi - w * c_tau * grad), None
 
 
 def tau_grid(n_steps: int, step_power: float = 1.0) -> list:
@@ -213,7 +215,7 @@ def _integrate(prior, rep, x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor,
 
 def fm_posterior_sample(prior, batch, *, x_start: Optional[torch.Tensor] = None, tau0: float = 0.0,
                         gamma: float = 0.0, guidance: str = "pigdm",
-                        guidance_weight: Union[float, Callable] = 1.0, R_norm: Union[float, torch.Tensor] = 1.0,
+                        guidance_weight: Union[float, Callable] = 1.0, R_norm: Union[float, torch.Tensor],
                         n_steps: int = 10, step_power: float = 1.0, n_correctors: int = 0,
                         corrector_snr: float = 0.1, n_members: int = 30,
                         member_starts: Optional[torch.Tensor] = None,
@@ -227,7 +229,8 @@ def fm_posterior_sample(prior, batch, *, x_start: Optional[torch.Tensor] = None,
     ``guidance_weight`` is a float or a callable of the per-element ``tau`` tensor. ``tau0_per_window`` (B,)
     overrides ``tau0``; both are clipped to ``[0, TAU0_MAX]`` (``tau0 = 1`` returns the start up to
     ``1e-6`` noise). ``member_starts`` (B, T, D, M) overrides ``x_start`` and sets ``n_members = M``.
-    ``R_norm`` is a float or a tensor broadcastable to the channel dimension. NFE = network evaluations per
+    ``R_norm`` (required, normalised units ``R_var / sigma_clim^2``) is a float or a tensor broadcastable to
+    the channel dimension. NFE = network evaluations per
     member, ``n_steps * (1 + n_correctors)``. ``member_chunk`` caps the members per network batch
     (memory); the start noises are drawn before chunking, the later draws chunk by chunk.
     """
