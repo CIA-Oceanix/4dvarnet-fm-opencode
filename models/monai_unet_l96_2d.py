@@ -31,6 +31,7 @@ from monai.networks.nets import diffusion_model_unet as _dmu
 
 from models.interpolant import LinearInterpolant
 from models.monai_unet_adapter import MonaiDirectUNet, _patch_resblock_for_1d
+from models.sda import UnconditionalPriorCFM
 from models.vanilla_cfm import VanillaCFM
 
 
@@ -289,3 +290,26 @@ class MonaiVanillaCFM2D(VanillaCFM):
         self.sigma_prior = sigma_prior
         self.state_dim = state_dim
         self.train_tau_0_only = train_tau_0_only
+
+
+class MonaiUnconditionalPriorCFM2D(UnconditionalPriorCFM):
+    """SDA1 unconditional prior p(x_1) with the 2D (time x sector) circular
+    backbone: `MonaiUNet2DSectorSolver` on the state alone (one block, no
+    observation input). Subclassing keeps the `isinstance(model,
+    UnconditionalPriorCFM)` dispatch of the guided sampler and the hybrid
+    eval unchanged."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, hidden_channels=None,
+                 N_outer: int = 10, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 use_flash_attention: bool = True, mid_attention: str = "time"):
+        nn.Module.__init__(self)
+        self.unet = MonaiUNet2DSectorSolver(
+            state_dim=state_dim, block_dim=state_dim, NO=NO, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = False

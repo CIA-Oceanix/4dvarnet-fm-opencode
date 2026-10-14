@@ -216,7 +216,7 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_loss(batch)
         elif self.model_type in ("param_head", "param_head_unet"):
             loss = self.model.compute_loss(batch)
-        elif self.model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
+        elif self.model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d"):
             loss = self.model.compute_cfm_loss(batch)
         elif self.model_type == "fourdvarnet":
             loss = self.model.compute_loss(batch)
