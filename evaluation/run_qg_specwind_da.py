@@ -43,6 +43,7 @@ from evaluation.qg_specwind_s1 import (
     obs_error_frac,
     s1_windows,
 )
+from evaluation.metrics import crps as ensemble_crps
 from evaluation.run_qg_baselines import run
 from models.qg_dynamics import QGDynamics
 from models.qg_wind_modes import FourierWindBasis
@@ -110,6 +111,17 @@ def _layers(q: np.ndarray, tp: dict, cfg: QGConfig, device) -> dict:
     return {"psi1": psi[:, 0], "psi2": psi[:, 1], "q1": q[:, :per], "q2": q[:, per:]}
 
 
+def field_crps(ensemble: np.ndarray, truth: np.ndarray, tp: dict, cfg: QGConfig, device) -> dict:
+    """Per-field CRPS of psi1/psi2/q1/q2 from an (N, T, D) q-state ensemble (MAE when N = 1).
+
+    Every member is inverted to psi with the window's own true parameters, as in `window_metrics`.
+    """
+    t = _layers(truth, tp, cfg, device)
+    members = [_layers(np.asarray(e), tp, cfg, device) for e in ensemble]
+    return {f"crps_{k}": float(np.mean(ensemble_crps(np.stack([m[k] for m in members]), t[k])))
+            for k in FIELDS}
+
+
 def window_metrics(analysis: np.ndarray, free: np.ndarray, truth: np.ndarray, tp: dict,
                    cfg: QGConfig, device) -> dict:
     """Per-window EV and RMSE of psi1/psi2/q1/q2 for the analysis and the free forecast.
@@ -148,6 +160,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag, obs_var_r_scale=r_scale,
                       enks_taper_steps=(enks_taper_days * 86400.0 / cfg.dt
                                         if enks_taper_days is not None else None),
+                      ensemble_hook=lambda ens, ref, w: field_crps(ens, ref, w["true_params"], cfg,
+                                                                   device),
                       **var_kwargs)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
@@ -155,6 +169,7 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
         for k, w in enumerate(windows):
             m = window_metrics(traj["analyses"][k], traj["free_forecast"][k], traj["refs"][k],
                                w["true_params"], cfg, device)
+            m.update(s["ensemble_hook_list"][k])
             m.update({"index": int(w["init_seed_key"]), "crps": s["crps_list"][k],
                       "level": w["specwind"]["factors"]["level"],
                       **{f"spread_ratio_{f}": v for f, v in s["spread_ratio_list"][k].items()},

@@ -14,7 +14,8 @@ from evaluation.run_qg_baselines import (
     _sample_init_state,
     run,
 )
-from evaluation.run_qg_specwind_da import build_cfg, s0_windows
+from evaluation.metrics import crps as ensemble_crps
+from evaluation.run_qg_specwind_da import FIELDS, _layers, build_cfg, evaluate, field_crps, s0_windows
 from models.qg_batched import BatchedQGDynamics, SpectralWindForcing
 from models.qg_dynamics import QGDynamics
 from models.qg_wind_modes import FourierWindBasis
@@ -250,3 +251,26 @@ def test_4dvar_rejects_an_optimization_that_increases_the_cost(built, monkeypatc
                   b_var_scale=1.0, fourdvar_b="spectral")
     s = payload["scenarios"]["test_s0"]
     assert s["fallback_list"][0] >= 1 and s["expvar_full"] == s["expvar_full"]
+
+
+def test_per_window_field_crps_matches_the_pooled_q_crps(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.35)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    _, per_window = evaluate(ws, cfg, "etkf", torch.device("cpu"), N=6, loc_radius=2.0,
+                             init_ensemble="white", init_lag_days=0.35)
+    for m in per_window:
+        assert all(m[f"crps_{k}"] > 0 for k in FIELDS)
+        assert abs(0.5 * (m["crps_q1"] + m["crps_q2"]) - m["crps"]) <= 1e-6 * m["crps"]
+
+
+def test_field_crps_of_a_single_member_is_its_mae(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.35)
+    ws, _ = s0_windows(TINY, "test", built, [0], cfg)
+    truth = ws[0]["true_state"].cpu().numpy()
+    tp = ws[0]["true_params"]
+    est = truth + 1e-6 * torch.randn(truth.shape, generator=torch.Generator().manual_seed(0)).numpy()
+    out = field_crps(est[None], truth, tp, cfg, torch.device("cpu"))
+    t, e = _layers(truth, tp, cfg, torch.device("cpu")), _layers(est, tp, cfg, torch.device("cpu"))
+    for k in FIELDS:
+        assert abs(out[f"crps_{k}"] - float(abs(e[k] - t[k]).mean())) <= 1e-6 * out[f"crps_{k}"]
+    assert float(ensemble_crps(truth[None], truth).mean()) == 0.0

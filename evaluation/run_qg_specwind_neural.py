@@ -62,6 +62,7 @@ from evaluation.run_qg_specwind_da import (
     OBS_SEED,
     apply_s1,
     build_cfg,
+    field_crps,
     s0_windows,
     window_metrics,
 )
@@ -233,6 +234,7 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
     out.update({f"daily_{k}": v for k, v in md.items() if k.startswith(("ev_da", "rmse_da"))})
     out["daily_score"] = md["score"]
     out["crps"] = float(np.mean(ensemble_crps(q, truth)))
+    out.update(field_crps(q, truth, window["true_params"], cfg, device))
     if n > 1:
         per = d // 2
         var = q.var(0, ddof=1)
