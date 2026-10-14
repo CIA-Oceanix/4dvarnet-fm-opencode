@@ -211,13 +211,133 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
     return out[None] if n_members == 1 else out.permute(3, 0, 1, 2)
 
 
+@dataclasses.dataclass(frozen=True)
+class PublishedSDA:
+    """Guidance as in SDA (Rozet & Louppe 2023), on our linear flow x_tau = (1 - tau) x0 + tau x1,
+    x0 ~ N(0, sigma_p^2): the likelihood p(y | x_tau) ~ N(y | H x1_hat, obs_sigma^2 + gamma
+    (sigma_tau / mu_tau)^2) with sigma_tau / mu_tau = (1 - tau) sigma_p / tau, so the guidance
+    fades where x1_hat is still mostly noise; its score is added to the prior's, i.e. the
+    velocity gets + (1 - tau) sigma_p^2 / tau * grad log p(y | x_tau); `n_corrector` Langevin
+    steps (step lmc_tau / mean(score^2)) follow every Euler step. `obs_sigma` is the
+    observation-error std in the normalized psi units."""
+
+    obs_sigma: float = 0.05
+    gamma: float = 0.1
+    n_corrector: int = 1
+    lmc_tau: float = 0.1
+
+
+def published_sda_members(model: torch.nn.Module, batch, n_members: int, n_steps: int,
+                          opts: PublishedSDA, tau_floor: float = 1e-3) -> torch.Tensor:
+    """(n_members, B, days, D) samples of the prior guided as in the SDA paper (`PublishedSDA`),
+    started from pure noise."""
+    mask = batch.obs_mask.to(batch.obs.dtype)
+    sigma_p = float(model.sigma_prior)
+    dt = 1.0 / n_steps
+
+    def velocity_and_loglik_grad(x, tau):
+        with torch.enable_grad():
+            x = x.detach().requires_grad_(True)
+            t = torch.full((x.shape[0],), tau, device=x.device)
+            v = model(x, batch, t)
+            x1_hat = x + (1.0 - tau) * v
+            ratio = (1.0 - tau) * sigma_p / max(tau, tau_floor)
+            var = opts.obs_sigma ** 2 + opts.gamma * ratio ** 2
+            loglik = -0.5 * ((x1_hat - batch.obs) ** 2 * mask).sum() / var
+            grad = torch.autograd.grad(loglik, x)[0]
+        return v.detach(), grad
+
+    def one_member():
+        x = torch.randn_like(batch.obs) * sigma_p
+        for k in range(n_steps):
+            tau = k * dt
+            v, g = velocity_and_loglik_grad(x, tau)
+            x = x + dt * (v + (1.0 - tau) * sigma_p ** 2 / max(tau, tau_floor) * g)
+            tau_next = (k + 1) * dt
+            if tau_next >= 1.0:
+                continue
+            for _ in range(opts.n_corrector):
+                v, g = velocity_and_loglik_grad(x, tau_next)
+                score = -(x - tau_next * v) / ((1.0 - tau_next) * sigma_p ** 2) + g
+                delta = opts.lmc_tau / score.flatten(1).square().mean(1).clamp_min(1e-12)
+                delta = delta.view(-1, *([1] * (x.dim() - 1)))
+                x = x + delta * score + (2.0 * delta).sqrt() * torch.randn_like(x)
+        return x.detach()
+
+    return torch.stack([one_member() for _ in range(n_members)])
+
+
+@dataclasses.dataclass(frozen=True)
+class FMPosterior:
+    """`evaluation.fm_posterior_sampler.fm_posterior_sample` on the QG state (the L96 FDV2 x FM
+    posterior study's sampler, docs/results/l96_fdv2_fm_posterior.md): likelihood guidance
+    (`guidance` dps / pigdm / normalized, weight `guidance_weight`) with the obs-error variance
+    `r_norm` in normalized psi units, Euler-Maruyama noise `gamma`, `n_correctors` Langevin
+    steps. With a warm start, `obs_pert` > 0 gives every member its own start, the warm-start
+    network re-run on observations perturbed by `obs_pert` x the obs-error std (the M1b
+    starts); `inflation` scales the members' deviations from their mean (M1bI)."""
+
+    guidance: str = "dps"
+    guidance_weight: float = 1.0
+    gamma: float = 0.5
+    r_norm: float = 0.05 ** 2
+    n_correctors: int = 0
+    obs_pert: float = 0.0
+    inflation: float = 1.0
+    member_chunk: int = 4
+
+
+def fm_posterior_members(model: torch.nn.Module, batch, n_members: int, n_steps: int,
+                         opts: FMPosterior, tau0: float = 0.0,
+                         mean_estimate: torch.Tensor | None = None,
+                         member_starts: torch.Tensor | None = None) -> torch.Tensor:
+    """(n_members, B, days, D) members of `fm_posterior_sample`, per-cell obs mask."""
+    from evaluation.fm_posterior_sampler import fm_posterior_sample
+    b, t, _ = batch.obs.shape
+    shim = SimpleNamespace(obs=batch.obs,
+                           obs_mask=torch.ones(b, t, dtype=torch.bool, device=batch.obs.device))
+    members, _ = fm_posterior_sample(
+        model, shim, x_start=mean_estimate, member_starts=member_starts,
+        tau0=tau0 if (mean_estimate is not None or member_starts is not None) else 0.0,
+        gamma=opts.gamma, guidance=opts.guidance, guidance_weight=opts.guidance_weight,
+        R_norm=opts.r_norm, n_steps=n_steps, n_correctors=opts.n_correctors, n_members=n_members,
+        obs_channel_mask=batch.obs_mask, member_chunk=max(1, opts.member_chunk))
+    members = members.permute(3, 0, 1, 2)
+    if opts.inflation != 1.0:
+        mean = members.mean(0, keepdim=True)
+        members = mean + opts.inflation * (members - mean)
+    return members
+
+
+def perturbed_obs_starts(warm_start, batch, cfg: QGConfig, norm: dict | None, n_members: int,
+                         scale: float, window_stride: int) -> torch.Tensor:
+    """(B, days, D, n_members) warm starts, one per member: the warm-start network on the
+    observations plus N(0, scale^2) noise on the observed cells (normalized units)."""
+    w_model, w_type, w_norm = warm_start
+    starts = []
+    for _ in range(n_members):
+        noisy = QGBatch(batch.states, torch.where(batch.obs_mask, batch.obs + scale *
+                                                  torch.randn_like(batch.obs), batch.obs),
+                        batch.obs_mask, batch.forcing, batch.states_q, batch.rd,
+                        params=batch.params, ic=batch.ic)
+        est = windowed_estimate(lambda b: estimate_members(w_model, w_type, b, 1)[0], noisy,
+                                getattr(w_model, "T", noisy.T), window_stride)
+        starts.append(renorm_psi(denorm_psi(est, cfg, w_norm), cfg, norm))
+    return torch.stack(starts, dim=-1)
+
+
 @torch.no_grad()
 def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int,
                      guidance_weight: GuidanceWeight = 100.0, sda_steps: int = 10,
-                     mean_estimate: torch.Tensor | None = None, tau0: float = 0.0) -> torch.Tensor:
+                     mean_estimate: torch.Tensor | None = None, tau0: float = 0.0,
+                     published: PublishedSDA | None = None) -> torch.Tensor:
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
         return model(batch)[None]
+    if model_type in SDA_TYPES and published is not None:
+        if mean_estimate is not None:
+            raise ValueError("the published-SDA sampler starts from pure noise (no warm start)")
+        return published_sda_members(model, batch, n_members, sda_steps, published)
     if model_type in SDA_TYPES:
         return sda_members(model, batch, n_members, guidance_weight, sda_steps, mean_estimate,
                            tau0)
@@ -263,7 +383,9 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
              device: torch.device, n_members: int = 1, interp: str = "cubic",
              batch_size: int = 4, guidance_weight: GuidanceWeight = 100.0,
              sda_steps: int = 10, window_stride: int = 5, warm_start=None,
-             tau0: float = 0.5, full_window: bool = False) -> list[dict]:
+             tau0: float = 0.5, full_window: bool = False,
+             published: PublishedSDA | None = None,
+             fm_posterior: FMPosterior | None = None) -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
     overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
     estimates (`windowed_estimate`), a flow blends its velocity at every step
@@ -289,10 +411,23 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
             members = windowed_estimate(
                 lambda b: estimate_members(model, model_type, b, n_members), batch, t_model,
                 window_stride)
+        elif fm_posterior is not None:
+            if model_type not in SDA_TYPES:
+                raise ValueError("the FM posterior sampler needs an unconditional SDA prior")
+            flow = model if t_model == batch.T else ComposedFlow(model, batch.T, window_stride)
+            starts = None
+            if fm_posterior.obs_pert > 0:
+                if warm_start is None:
+                    raise ValueError("perturbed-obs starts need a warm start")
+                starts = perturbed_obs_starts(warm_start, batch, cfg, norm, n_members,
+                                              fm_posterior.obs_pert * fm_posterior.r_norm ** 0.5,
+                                              window_stride)
+            members = fm_posterior_members(flow, batch, n_members, sda_steps, fm_posterior, tau0,
+                                           None if starts is not None else mean_estimate, starts)
         else:
             flow = model if t_model == batch.T else ComposedFlow(model, batch.T, window_stride)
             members = estimate_members(flow, model_type, batch, n_members, guidance_weight,
-                                       sda_steps, mean_estimate, tau0)
+                                       sda_steps, mean_estimate, tau0, published)
         members = members.cpu()
         for b, i in enumerate(idx):
             w = windows[i]
@@ -331,6 +466,28 @@ def main() -> None:
                    help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
                         "at flow time --tau0 instead of pure noise")
     p.add_argument("--tau0", type=float, default=0.5, help="SDA warm start: starting flow time")
+    p.add_argument("--sda-published", action="store_true",
+                   help="SDA: guidance as in Rozet & Louppe 2023 (noise-aware likelihood variance, "
+                        "Langevin corrector), from pure noise; see --obs-sigma/--gamma/--n-corrector")
+    p.add_argument("--obs-sigma", type=float, default=None,
+                   help="published SDA: obs-error std in normalized psi units (default: "
+                        "--obs-noise-frac)")
+    p.add_argument("--gamma", type=float, default=0.1, help="published SDA: gamma")
+    p.add_argument("--n-corrector", type=int, default=1, help="published SDA: Langevin steps")
+    p.add_argument("--lmc-tau", type=float, default=0.1, help="published SDA: Langevin step ratio")
+    p.add_argument("--fm-posterior", action="store_true",
+                   help="SDA prior sampled with evaluation.fm_posterior_sampler (likelihood "
+                        "guidance, EM noise, optional perturbed-obs starts and inflation)")
+    p.add_argument("--fm-guidance", default="dps", choices=("dps", "pigdm", "normalized"))
+    p.add_argument("--fm-weight", type=float, default=1.0, help="FM posterior: guidance weight")
+    p.add_argument("--fm-gamma", type=float, default=0.5, help="FM posterior: EM noise gamma")
+    p.add_argument("--r-norm", type=float, default=None,
+                   help="FM posterior: obs-error variance in normalized psi units (default "
+                        "obs_noise_frac^2)")
+    p.add_argument("--obs-pert", type=float, default=0.0,
+                   help="FM posterior: perturbed-obs starts, x the obs-error std (needs a warm start)")
+    p.add_argument("--inflation", type=float, default=1.0, help="FM posterior: member inflation")
+    p.add_argument("--member-chunk", type=int, default=4, help="FM posterior: members per batch")
     p.add_argument("--full-window", action="store_true",
                    help="run a network that accepts any window length (3D prior) on the whole "
                         "window instead of composing it over its training window")
@@ -357,6 +514,20 @@ def main() -> None:
     t0 = time.time()
     rc = OmegaConf.load(os.path.join(args.run_dir, "resolved_config.yaml"))
     stride = args.window_stride or int(rc.data.get("window_stride", None) or 5)
+    published = None
+    if args.sda_published:
+        published = PublishedSDA(obs_sigma=(args.obs_sigma if args.obs_sigma is not None
+                                            else args.obs_noise_frac),
+                                 gamma=args.gamma, n_corrector=args.n_corrector,
+                                 lmc_tau=args.lmc_tau)
+    fmpost = None
+    if args.fm_posterior:
+        fmpost = FMPosterior(guidance=args.fm_guidance, guidance_weight=args.fm_weight,
+                             gamma=args.fm_gamma,
+                             r_norm=(args.r_norm if args.r_norm is not None
+                                     else args.obs_noise_frac ** 2),
+                             obs_pert=args.obs_pert, inflation=args.inflation,
+                             member_chunk=args.member_chunk)
     warm = None
     if args.warm_start_run:
         warm = load_run(args.warm_start_run, cfg, device)
@@ -367,7 +538,7 @@ def main() -> None:
                           guidance_schedule(args.guidance_weight, args.guidance_schedule),
                           args.sda_steps,
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
-                          full_window=args.full_window)
+                          full_window=args.full_window, published=published, fm_posterior=fmpost)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
@@ -378,6 +549,8 @@ def main() -> None:
             "full_window": args.full_window,
             "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps,
                      "guidance_schedule": args.guidance_schedule,
+                     "published": dataclasses.asdict(published) if published else None,
+                     "fm_posterior": dataclasses.asdict(fmpost) if fmpost else None,
                      "warm_start_run": (os.path.abspath(args.warm_start_run)
                                         if args.warm_start_run else None),
                      "tau0": args.tau0 if args.warm_start_run else None}
