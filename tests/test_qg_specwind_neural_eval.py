@@ -196,3 +196,37 @@ def test_sda_members_accept_a_scheduled_guidance_weight():
     x = sda_members(model, batch, n_members=2, guidance_weight=guidance_schedule(5.0, "linear-decay"),
                     n_steps=4)
     assert x.shape == (2, *batch.obs.shape) and torch.isfinite(x).all()
+
+
+def test_published_sda_without_information_reproduces_the_prior_sample():
+    from evaluation.run_qg_specwind_neural import PublishedSDA, published_sda_members
+    model, batch = _sda_prior_and_batch()
+    torch.manual_seed(1)
+    guided = published_sda_members(model, batch, 1, 5, PublishedSDA(obs_sigma=1e8, n_corrector=0))
+    torch.manual_seed(1)
+    x = torch.randn(batch.obs.shape) * model.sigma_prior
+    with torch.no_grad():
+        for k in range(5):
+            x = x + 0.2 * model(x, batch, torch.full((2,), k / 5))
+    assert torch.allclose(guided[0], x, atol=1e-5)
+
+
+def test_published_sda_guidance_pulls_towards_the_obs_and_corrector_runs():
+    from evaluation.run_qg_specwind_neural import PublishedSDA, published_sda_members
+    model, batch = _sda_prior_and_batch()
+    misfit = {}
+    for name, opts in (("off", PublishedSDA(obs_sigma=1e8, n_corrector=0)),
+                       ("on", PublishedSDA(obs_sigma=0.1, gamma=0.1, n_corrector=1))):
+        torch.manual_seed(2)
+        x = published_sda_members(model, batch, 3, 5, opts)
+        assert x.shape == (3, *batch.obs.shape) and torch.isfinite(x).all()
+        misfit[name] = float(((x - batch.obs) ** 2)[:, batch.obs_mask].mean())
+    assert misfit["on"] < misfit["off"]
+
+
+def test_published_sda_refuses_a_warm_start():
+    from evaluation.run_qg_specwind_neural import PublishedSDA, estimate_members
+    model, batch = _sda_prior_and_batch()
+    with pytest.raises(ValueError):
+        estimate_members(model, "sda_prior_tchannels", batch, 1, sda_steps=3,
+                         mean_estimate=torch.zeros(batch.obs.shape), published=PublishedSDA())

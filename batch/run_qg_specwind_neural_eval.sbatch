@@ -20,7 +20,8 @@
 # WARM=<DirectUNet run dir> warm-starts the SDA members from that run's estimate at flow time
 # TAU0 (default 0.5); put both in TAG. FULL=1 runs a length-agnostic (3D) prior on the whole
 # window instead of composing it over its training window. GSCHED=linear-decay makes the SDA
-# guidance weight 2 GW (1 - tau) instead of constant.
+# guidance weight 2 GW (1 - tau) instead of constant. PUBLISHED=1 uses the SDA paper's guidance from
+# pure noise (GAMMA, NCORR Langevin steps, LMC_TAU; OBS_SIGMA defaults to the obs noise fraction).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -34,6 +35,7 @@ OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/neural_${TAG}_c${COLS}_${INTERP
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_neural --run-dir "$RUN_DIR" --spec "$SPEC" --root "$ROOT" \
   --split "$SPLIT" --n-windows "$N_WINDOWS" --cols-per-day "$COLS" --n-members "$N" \
-  --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" --guidance-schedule "${GSCHED:-constant}" $([ "$S1" = 1 ] && echo "--s1" || true) \
+  --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" --guidance-schedule "${GSCHED:-constant}" \
+  $([ "${PUBLISHED:-0}" = 1 ] && echo "--sda-published --gamma ${GAMMA:-0.1} --n-corrector ${NCORR:-1} --lmc-tau ${LMC_TAU:-0.1}" || true) ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} $([ "$S1" = 1 ] && echo "--s1" || true) \
   ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
   --out "$OUT" --device cuda
