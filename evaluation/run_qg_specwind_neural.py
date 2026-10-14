@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from collections.abc import Callable
 import json
 import os
 import time
@@ -69,6 +70,19 @@ from evaluation.run_qg_specwind_da import (
 from train_qg_neural import DIRECT_TYPES, SDA_TYPES, build_model
 
 INTERP_KINDS = ("cubic", "linear")
+GUIDANCE_SCHEDULES = ("constant", "linear-decay")
+GuidanceWeight = float | Callable[[float], float]
+
+
+def guidance_schedule(weight: float, schedule: str = "constant") -> GuidanceWeight:
+    """The guidance weight as a function of flow time: `constant`, or `linear-decay`
+    2 w (1 - tau), the same total push as the constant w but concentrated early, on the
+    large scales, leaving the late small-scale steps (which carry q) to the prior."""
+    if schedule == "constant":
+        return weight
+    if schedule == "linear-decay":
+        return lambda tau: 2.0 * weight * (1.0 - tau)
+    raise ValueError(f"unknown guidance schedule {schedule!r}")
 
 
 def bin_centres(n_days: int, spd: int) -> np.ndarray:
@@ -171,7 +185,7 @@ def renorm_psi(psi_phys: torch.Tensor, cfg: QGConfig, norm: dict | None) -> torc
     return out
 
 
-def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: float,
+def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: GuidanceWeight,
                 n_steps: int = 10, mean_estimate: torch.Tensor | None = None,
                 tau0: float = 0.0) -> torch.Tensor:
     """(n_members, B, days, D) SDA1 samples: the unconditional prior's Euler ODE nudged by the
@@ -199,7 +213,7 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
 
 @torch.no_grad()
 def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int,
-                     guidance_weight: float = 100.0, sda_steps: int = 10,
+                     guidance_weight: GuidanceWeight = 100.0, sda_steps: int = 10,
                      mean_estimate: torch.Tensor | None = None, tau0: float = 0.0) -> torch.Tensor:
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
@@ -247,7 +261,7 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
 
 def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg: QGConfig,
              device: torch.device, n_members: int = 1, interp: str = "cubic",
-             batch_size: int = 4, guidance_weight: float = 100.0,
+             batch_size: int = 4, guidance_weight: GuidanceWeight = 100.0,
              sda_steps: int = 10, window_stride: int = 5, warm_start=None,
              tau0: float = 0.5, full_window: bool = False) -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
@@ -311,6 +325,8 @@ def main() -> None:
     p.add_argument("--guidance-weight", type=float, default=100.0,
                    help="SDA: L2 guidance step per Euler step over one window's normalized state")
     p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
+    p.add_argument("--guidance-schedule", default="constant", choices=GUIDANCE_SCHEDULES,
+                   help="SDA: guidance weight along the flow (linear-decay: 2 w (1 - tau))")
     p.add_argument("--warm-start-run", default=None,
                    help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
                         "at flow time --tau0 instead of pure noise")
@@ -347,7 +363,9 @@ def main() -> None:
         if warm[1] not in DIRECT_TYPES:
             raise ValueError(f"--warm-start-run must be a DirectUNet run, got {warm[1]!r}")
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
-                          args.interp, args.batch_size, args.guidance_weight, args.sda_steps,
+                          args.interp, args.batch_size,
+                          guidance_schedule(args.guidance_weight, args.guidance_schedule),
+                          args.sda_steps,
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
                           full_window=args.full_window)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
@@ -359,6 +377,7 @@ def main() -> None:
                               and not args.full_window else None),
             "full_window": args.full_window,
             "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps,
+                     "guidance_schedule": args.guidance_schedule,
                      "warm_start_run": (os.path.abspath(args.warm_start_run)
                                         if args.warm_start_run else None),
                      "tau0": args.tau0 if args.warm_start_run else None}
