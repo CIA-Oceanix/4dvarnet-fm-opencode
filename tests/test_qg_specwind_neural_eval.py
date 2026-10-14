@@ -230,3 +230,58 @@ def test_published_sda_refuses_a_warm_start():
     with pytest.raises(ValueError):
         estimate_members(model, "sda_prior_tchannels", batch, 1, sda_steps=3,
                          mean_estimate=torch.zeros(batch.obs.shape), published=PublishedSDA())
+
+
+def test_fm_posterior_members_on_a_composed_prior_and_inflation():
+    from evaluation.run_qg_specwind_neural import ComposedFlow, FMPosterior, fm_posterior_members
+    from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime
+    _, batch = _sda_prior_and_batch(days=6)
+    torch.manual_seed(0)
+    prior = MonaiSDAPriorQGChannelTime(ny=16, nx=16, T=4, hidden_channels=[8, 16, 32],
+                                       norm_num_groups=4).eval()
+    flow = ComposedFlow(prior, n_days=6, stride=1)
+    start = torch.randn(batch.obs.shape)
+    out = {}
+    for infl in (1.0, 2.0):
+        torch.manual_seed(5)
+        out[infl] = fm_posterior_members(flow, batch, 3, 3, FMPosterior(inflation=infl, member_chunk=2),
+                                         tau0=0.5, mean_estimate=start)
+        assert out[infl].shape == (3, *batch.obs.shape) and torch.isfinite(out[infl]).all()
+    assert torch.allclose(out[1.0].mean(0), out[2.0].mean(0), atol=1e-5)
+    assert torch.allclose(out[2.0].std(0), 2.0 * out[1.0].std(0), atol=1e-5)
+
+
+def test_fm_posterior_guidance_pulls_towards_the_obs():
+    from evaluation.run_qg_specwind_neural import FMPosterior, fm_posterior_members
+    model, batch = _sda_prior_and_batch()
+    misfit = {}
+    start = torch.zeros(batch.obs.shape)
+    for w in (0.0, 1.0):
+        torch.manual_seed(4)
+        x = fm_posterior_members(model, batch, 3, 5, FMPosterior(guidance_weight=w, gamma=0.0,
+                                                                 r_norm=1.0),
+                                 tau0=0.5, mean_estimate=start)
+        misfit[w] = float(((x - batch.obs) ** 2)[:, batch.obs_mask].mean())
+    assert misfit[1.0] < misfit[0.0]
+
+
+def test_perturbed_obs_starts_differ_per_member_and_only_through_the_obs():
+    from data.qg_neural import QGBatch
+    from evaluation.run_qg_specwind_neural import perturbed_obs_starts
+    _, batch = _sda_prior_and_batch(days=4)
+    b, t, d = batch.obs.shape
+    qb = QGBatch(torch.zeros(b, t, d), batch.obs, batch.obs_mask, torch.zeros(b, t, 16, 16),
+                 torch.zeros(b, t, d), torch.full((b,), 1.5e4))
+
+    class ObsEcho(torch.nn.Module):
+        T = 4
+
+        def forward(self, bt):
+            return bt.obs
+
+    cfg = QGConfig(nx=16)
+    starts = perturbed_obs_starts((ObsEcho(), "direct_unet_tchannels", None), qb, cfg, None, 3, 0.1, 2)
+    assert starts.shape == (b, t, d, 3)
+    assert not torch.allclose(starts[..., 0], starts[..., 1])
+    unobserved = ~batch.obs_mask
+    assert torch.equal(starts[..., 0][unobserved], batch.obs[unobserved])
