@@ -5,7 +5,7 @@ Every row is scored window by window in physical units with
 ``evaluation.posterior_scores``; the output JSON keeps the per-window scores,
 the run configuration and the aggregate (never member arrays).
 
-Methods are registered by name in ``METHODS`` (``@register("NAME", **defaults)``);
+Methods are registered by name in ``METHODS`` (``@register("NAME", **defaults)``, B1-B5 and M1/M1b/M1bI/M1c);
 a method maps one window (a batch of size 1, normalised obs) to an ensemble
 ``(M, T, D)`` in normalised units and its NFE per member. Method arguments are
 passed as ``--args key=value,key=value``.
@@ -23,6 +23,9 @@ Validation sets (100 windows, seeds 1057/1067, disjoint from train/val/test)::
 writes ``experiments/l96_valset_regular_w100.pt`` and
 ``experiments/l96_valset_rlayout_n10-100_k4-16_w100.pt``.
 
+Several rows can share one process (the imports alone take minutes on a cold ``/Odyssey``):
+``--argv-file F`` runs each line of ``F`` as a full argument list, continuing past failed rows.
+
 Examples::
 
   python eval_fdv_fm_posterior_l96.py --method B3 --args tau0=0.5,gw=2 \\
@@ -36,8 +39,11 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
+import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -45,9 +51,11 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from data.normalization import denormalize, load_norm_stats
+from evaluation.fm_posterior_sampler import fm_posterior_sample
 from evaluation.neural_inference import BatchDict, load_checkpoint, load_model, prepare_dataset
 from evaluation.posterior_scores import aggregate, inflate, window_scores
 from evaluation.sda_sampler import sda_guided_sample
+from models.fourdvarnet import _prior_cost
 
 SHARED = "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments"
 FDV_MASK = "/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-fdv-mask/experiments"
@@ -75,6 +83,8 @@ class Context:
     n_members: int
     member_chunk: int
     seed: int
+    data_key: str = ""
+    state: dict = field(default_factory=dict)
     _models: dict = field(default_factory=dict)
 
     @property
@@ -98,14 +108,16 @@ class MethodSpec:
     fn: Method
     defaults: dict
     tune_inflation: bool = False
+    prepare: Callable[[Context, list[tuple[int, dict]], dict], None] | None = None
 
 
 METHODS: dict[str, MethodSpec] = {}
 
 
-def register(name: str, tune_inflation: bool = False, **defaults) -> Callable[[Method], Method]:
+def register(name: str, tune_inflation: bool = False, prepare: Callable | None = None,
+             **defaults) -> Callable[[Method], Method]:
     def deco(fn: Method) -> Method:
-        METHODS[name] = MethodSpec(fn, defaults, tune_inflation)
+        METHODS[name] = MethodSpec(fn, defaults, tune_inflation, prepare)
         return fn
     return deco
 
@@ -119,10 +131,19 @@ def replicate(batch: dict, n: int) -> dict:
     return {k: (v.expand(n, *v.shape[1:]).contiguous() if torch.is_tensor(v) else v) for k, v in batch.items()}
 
 
+MEAN_CACHE: dict[tuple, torch.Tensor] = {}
+
+
 @torch.no_grad()
 def fdv_mean(ctx: Context, batch: dict, window: int, n_iter: int) -> torch.Tensor:
+    key = (ctx.data_key, ctx.fdv_run, ctx.seed, window, n_iter)
+    if ctx.data_key and key in MEAN_CACHE:
+        return MEAN_CACHE[key]
     torch.manual_seed(window_seed(ctx.seed, window, "mean"))
-    return ctx.model("fdv").sample(BatchDict(batch), N_outer=n_iter)
+    mean = ctx.model("fdv").sample(BatchDict(batch), N_outer=n_iter)
+    if ctx.data_key:
+        MEAN_CACHE[key] = mean
+    return mean
 
 
 def chunks(ctx: Context) -> list[tuple[int, int]]:
@@ -157,7 +178,8 @@ def b2_perturbed_obs(ctx: Context, batch: dict, window: int, args: dict) -> tupl
         b = replicate(batch, stop - start)
         torch.manual_seed(window_seed(ctx.seed, window, f"members/{start}"))
         finite = torch.isfinite(b["obs"])
-        b["obs"] = torch.where(finite, b["obs"] + torch.randn_like(b["obs"]) * ctx.obs_std_norm, b["obs"])
+        noise = torch.randn_like(b["obs"]) * ctx.obs_std_norm * float(args.get("obs_pert", 1.0))
+        b["obs"] = torch.where(finite, b["obs"] + noise, b["obs"])
         out.append(ctx.model("fdv").sample(BatchDict(b), N_outer=int(args["n_iter"])))
     return torch.cat(out, 0), int(args["n_iter"])
 
@@ -179,6 +201,92 @@ def b5_hybrid_inflated(ctx: Context, batch: dict, window: int, args: dict) -> tu
     return b3_hybrid(ctx, batch, window, args)
 
 
+FM_DEFAULTS = dict(tau0=0.5, gamma=0.0, guidance="pigdm", gw=1.0, n_steps=10, step_power=1.0, n_correctors=0,
+                   corrector_snr=0.1, pigdm_cov="tweedie", probes=4, r_units="norm", n_iter=10)
+PERTURBED_DEFAULTS = dict(FM_DEFAULTS, obs_pert=1.0)
+
+
+def r_norm(ctx: Context, units: str) -> float | torch.Tensor:
+    if units == "raw":
+        return R_VAR
+    if units != "norm":
+        raise ValueError(f"r_units must be 'norm' or 'raw', got {units!r}")
+    return R_VAR / ctx.norm_stats["std"].to(ctx.device) ** 2
+
+
+def fm_members(ctx: Context, batch: dict, window: int, args: dict, starts: Callable[[int, int], torch.Tensor],
+               tau0: float, role: str = "members") -> tuple[torch.Tensor, int]:
+    out, nfe = [], 0
+    R = r_norm(ctx, str(args["r_units"]))
+    for start, stop in chunks(ctx):
+        n = stop - start
+        x_start = starts(start, stop)
+        torch.manual_seed(window_seed(ctx.seed, window, f"{role}/{start}"))
+        x, nfe = fm_posterior_sample(
+            ctx.model("sda"), BatchDict(replicate(batch, n)), x_start=x_start, tau0=tau0,
+            gamma=float(args["gamma"]), guidance=str(args["guidance"]), guidance_weight=float(args["gw"]),
+            R_norm=R, n_steps=int(args["n_steps"]), step_power=float(args["step_power"]),
+            n_correctors=int(args["n_correctors"]), corrector_snr=float(args["corrector_snr"]), n_members=1,
+            pigdm_cov=str(args["pigdm_cov"]), hutchinson_probes=int(args["probes"]))
+        out.append(x[..., 0].detach())
+    return torch.cat(out, 0), nfe
+
+
+@register("M1", **FM_DEFAULTS)
+def m1_fm_posterior(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
+    mean = fdv_mean(ctx, batch, window, int(args["n_iter"]))
+    x, nfe = fm_members(ctx, batch, window, args, lambda a, b: mean.expand(b - a, *mean.shape[1:]).contiguous(),
+                        float(args["tau0"]))
+    return x, nfe + int(args["n_iter"])
+
+
+@register("M1b", **PERTURBED_DEFAULTS)
+def m1b_fm_from_perturbed_obs(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
+    starts, _ = b2_perturbed_obs(ctx, batch, window, args)
+    x, nfe = fm_members(ctx, batch, window, args, lambda a, b: starts[a:b], float(args["tau0"]), role="sampler")
+    return x, nfe + int(args["n_iter"])
+
+
+@register("M1bI", tune_inflation=True, **PERTURBED_DEFAULTS, inflation=None, inflation_from=None)
+def m1b_inflated(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
+    return m1b_fm_from_perturbed_obs(ctx, batch, window, args)
+
+
+@torch.no_grad()
+def j_prior(ctx: Context, x: torch.Tensor) -> float:
+    model = ctx.model("fdv")
+    return _prior_cost(model.prior_unet, x, residual=getattr(model, "prior_residual", False)).item() / x.numel()
+
+
+def m1c_prepare(ctx: Context, items: list[tuple[int, dict]], args: dict) -> None:
+    ref = None
+    if args.get("jprior_ref"):
+        with open(str(args["jprior_ref"])) as f:
+            ref = torch.tensor(sorted(json.load(f)["config"]["j_prior"].values()))
+    j = {w: j_prior(ctx, fdv_mean(ctx, b, w, int(args["n_iter"]))) for w, b in items}
+    vals = torch.tensor(list(j.values()))
+    ref = vals.sort().values if ref is None else ref
+    rank = torch.searchsorted(ref, vals, right=True).float() / len(ref)
+    tau0 = (float(args["a"]) - float(args["b"]) * rank).clamp(float(args["tau0_min"]), float(args["tau0_max"]))
+    ctx.state["j_prior"] = j
+    ctx.state["tau0_w"] = dict(zip(j, tau0.tolist()))
+
+
+@register("M1c", prepare=m1c_prepare, **{k: v for k, v in PERTURBED_DEFAULTS.items() if k != "tau0"}, a=0.7,
+          b=0.6, tau0_min=0.05, tau0_max=0.9, jprior_ref=None, starts="mean")
+def m1c_fm_per_window_tau0(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
+    tau0 = ctx.state["tau0_w"][window]
+    if args["starts"] == "perturbed":
+        starts, _ = b2_perturbed_obs(ctx, batch, window, args)
+        x, nfe = fm_members(ctx, batch, window, args, lambda a, b: starts[a:b], tau0, role="sampler")
+        return x, nfe + int(args["n_iter"])
+    if args["starts"] != "mean":
+        raise ValueError(f"starts must be 'mean' or 'perturbed', got {args['starts']!r}")
+    mean = fdv_mean(ctx, batch, window, int(args["n_iter"]))
+    x, nfe = fm_members(ctx, batch, window, args, lambda a, b: mean.expand(b - a, *mean.shape[1:]).contiguous(), tau0)
+    return x, nfe + int(args["n_iter"])
+
+
 def parse_args_kv(text: str | None, defaults: dict) -> dict:
     out = dict(defaults)
     for item in filter(None, (text or "").split(",")):
@@ -187,7 +295,7 @@ def parse_args_kv(text: str | None, defaults: dict) -> dict:
             raise ValueError(f"unknown method argument {k!r}; expected one of {sorted(defaults)}")
         out[k] = v
     for k, v in out.items():
-        if isinstance(v, str) and k != "inflation_from":
+        if isinstance(v, str) and k not in ("inflation_from", "jprior_ref"):
             try:
                 out[k] = float(v) if any(c in v for c in ".e") else int(v)
             except ValueError:
@@ -263,12 +371,16 @@ def run(opts: argparse.Namespace) -> dict:
     ctx = Context(device, ns, opts.fdv_run or FDV_RUNS[opts.fdv_seed], opts.sda_run, opts.n_members,
                   opts.member_chunk, opts.seed)
     dataset_path = opts.dataset or DATASETS[(opts.split, opts.layout)]
+    ctx.data_key = f"{os.path.abspath(dataset_path)}|{opts.case}|{device}"
     _, fdv_cfg = load_checkpoint(f"{ctx.fdv_run}/checkpoints/stage1_best.ckpt", f"{ctx.fdv_run}/resolved_config.yaml")
     _, dls, ovi = prepare_dataset(fdv_cfg, dataset_path, 200, 100, obs_j=2, norm_stats=ns, batch_size=1)
     full = dls[opts.case]
     windows = parse_windows(opts.windows, len(full.dataset))
     loader = DataLoader(Subset(full.dataset, windows), batch_size=1, shuffle=False, collate_fn=full.collate_fn)
 
+    if spec.prepare is not None:
+        spec.prepare(ctx, [(w, {k: v.to(device) if torch.is_tensor(v) else v for k, v in b.items()})
+                           for w, b in zip(windows, loader)], margs)
     inflation = resolve_inflation(margs, opts) if spec.tune_inflation else None
     keep = spec.tune_inflation and inflation is None
     kept: list[tuple[torch.Tensor, torch.Tensor]] = []
@@ -299,6 +411,7 @@ def run(opts: argparse.Namespace) -> dict:
               "nfe_per_member": nfe, "wall_clock_s": wall, "git_sha": git_sha(), "device": str(device)}
     if spec.tune_inflation:
         config["inflation"] = inflation
+    config.update({k: {str(w): v for w, v in d.items()} for k, d in ctx.state.items()})
     return {"config": config, "windows": windows, "per_window": per_window, "aggregate": aggregate(per_window)}
 
 
@@ -324,8 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main() -> None:
-    opts = build_parser().parse_args()
+def run_and_save(opts: argparse.Namespace) -> None:
     res = run(opts)
     os.makedirs(os.path.dirname(os.path.abspath(opts.out)), exist_ok=True)
     with open(opts.out, "w") as f:
@@ -335,6 +447,24 @@ def main() -> None:
           f"fdv_seed={opts.fdv_seed} W={a['n_windows']} M={a['n_members']}: rmse {a['rmse']:.4f} "
           f"crps {a['crps']:.4f} ssr {a['ssr']:.3f} rel {a['reliability']:.3f} cov90 {a['cov90']:.3f} "
           f"es {a['energy_score']:.4f} ({res['config']['wall_clock_s']:.0f}s)")
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if argv[:1] != ["--argv-file"]:
+        run_and_save(build_parser().parse_args(argv))
+        return
+    with open(argv[1]) as f:
+        rows = [shlex.split(line) for line in f if line.strip()]
+    failed = 0
+    for row in rows:
+        try:
+            run_and_save(build_parser().parse_args(row))
+        except Exception:
+            failed += 1
+            traceback.print_exc()
+    if failed:
+        sys.exit(f"{failed}/{len(rows)} rows failed")
 
 
 if __name__ == "__main__":
