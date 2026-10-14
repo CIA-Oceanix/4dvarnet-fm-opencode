@@ -27,6 +27,7 @@
 # RELAX=rtps|rtpp ALPHA=a: relaxation inflation of the ETKF/EnKF analysis anomalies (docs/results/qg_specwind_relax_inflation.md).
 # NOISE sets the observation noise (fraction of the psi1 std; default 0.05) and tags the run "_n<NOISE>" when not 0.05.
 # RSCALE multiplies the filter's observation-error variance (S1-tuned value 6: docs/results/qg_specwind_s1_tuning.md).
+# FMCLIM=<json of per-field climatological mean/std> adds the psi flow-matching scores.
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -44,4 +45,4 @@ mkdir -p "$(dirname "$OUT")"
   --method "$METHOD" --cols-per-day "$COLS" --obs-noise-frac "$NOISE" --N "$ENS" --loc-radius "$LOC" --etkf-ridge "$RIDGE" \
   --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" --etkf-loc-mode "$LOCMODE" --r-scale "$RSCALE" --fourdvar-b "$VARB" --b-var-scale "$BSCALE" --q-var-scale "$QSCALE" --da-window-steps "$WIN" --fourdvar-max-iter "$ITER" --relax "$RELAX" --relax-alpha "$ALPHA" $([ "$METHOD" = enks ] && echo "--enks-lag $ENKSLAG" || true) $([ "$METHOD" = enks ] && echo "--enks-taper-days $ENKSTAPER" || true) \
   --s1-preset "$PRESET" --s1-variant "$VARIANT" \
-  --out "$OUT" --device cuda
+  ${FMCLIM:+--fm-clim "$FMCLIM"} --out "$OUT" --device cuda
