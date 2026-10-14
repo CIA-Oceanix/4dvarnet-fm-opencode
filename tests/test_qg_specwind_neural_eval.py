@@ -178,3 +178,21 @@ def test_renorm_inverts_denorm():
     norm = {"mean": torch.tensor([1.0, -2.0]), "std": torch.tensor([3.0, 0.5])}
     x = torch.randn(2, 4, 2 * 16 * 16)
     assert torch.allclose(renorm_psi(denorm_psi(x, cfg, norm), cfg, norm), x, atol=1e-5)
+
+
+def test_guidance_schedules():
+    from evaluation.run_qg_specwind_neural import guidance_schedule
+    assert guidance_schedule(5.0) == 5.0
+    decay = guidance_schedule(5.0, "linear-decay")
+    assert decay(0.0) == 10.0 and decay(1.0) == 0.0 and decay(0.5) == 5.0
+    with pytest.raises(ValueError):
+        guidance_schedule(5.0, "cosine")
+
+
+def test_sda_members_accept_a_scheduled_guidance_weight():
+    from evaluation.run_qg_specwind_neural import guidance_schedule, sda_members
+    model, batch = _sda_prior_and_batch()
+    torch.manual_seed(3)
+    x = sda_members(model, batch, n_members=2, guidance_weight=guidance_schedule(5.0, "linear-decay"),
+                    n_steps=4)
+    assert x.shape == (2, *batch.obs.shape) and torch.isfinite(x).all()
