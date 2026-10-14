@@ -122,7 +122,7 @@ def test_metric_stat_ssr_matches_aggregate():
 
 def test_harness_registry_and_argument_parsing():
     harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
-    assert {"B1", "B2", "B3", "B4", "B5"} <= set(harness.METHODS)
+    assert {"B1", "B2", "B3", "B4", "B5", "M1", "M1b", "M1bI", "M1c"} <= set(harness.METHODS)
     a = harness.parse_args_kv("tau0=0.5,gw=2", harness.METHODS["B3"].defaults)
     assert a["tau0"] == 0.5 and a["gw"] == 2 and a["n_steps"] == 10
     with pytest.raises(ValueError):
@@ -171,6 +171,100 @@ def test_resolve_inflation_from_b3_inverts_ssr_and_rejects_mismatched_runs(tmp_p
         with pytest.raises(ValueError):
             harness.resolve_inflation(harness.parse_args_kv(f"inflation_from={bad}",
                                                             harness.METHODS["B5"].defaults), opts)
+
+
+class _ToyPrior(torch.nn.Module):
+    state_dim, sigma_prior = 4, 0.5
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lin = torch.nn.Linear(4, 4)
+
+    def forward(self, x: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(self.lin(x)) * (1.0 + tau.view(-1, 1, 1)) - x
+
+
+class _ToyFDV(torch.nn.Module):
+    prior_residual = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prior_unet = lambda x, tau=None: 0.5 * x
+
+    def sample(self, batch, N_outer: int = 10) -> torch.Tensor:
+        return torch.nan_to_num(batch.obs, nan=0.0) * 0.9 + 0.01 * torch.randn_like(batch.obs)
+
+
+def _toy_context(harness, n_members: int = 6, member_chunk: int = 0):
+    torch.manual_seed(0)
+    ns = {"mean": torch.zeros(4), "std": torch.tensor([1.9, 1.9, 1.7, 1.7])}
+    ctx = harness.Context(torch.device("cpu"), ns, "fdv", "sda", n_members, member_chunk, 0)
+    ctx._models.update(fdv=_ToyFDV(), sda=_ToyPrior())
+    obs = torch.randn(1, 8, 4)
+    obs[:, 1::2] = float("nan")
+    mask = torch.zeros(1, 8, dtype=torch.bool)
+    mask[:, ::2] = True
+    return ctx, {"obs": obs, "obs_mask": mask, "true_state": torch.randn(1, 8, 4)}
+
+
+@pytest.mark.parametrize("member_chunk", [0, 4])
+def test_m1_deterministic_normalized_raw_r_equals_b3(member_chunk):
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    ctx, batch = _toy_context(harness, member_chunk=member_chunk)
+    b3, nfe_b3 = harness.METHODS["B3"].fn(ctx, batch, 3, harness.parse_args_kv(
+        "tau0=0.5,gw=2.0,n_steps=10", harness.METHODS["B3"].defaults))
+    m1, nfe_m1 = harness.METHODS["M1"].fn(ctx, batch, 3, harness.parse_args_kv(
+        "tau0=0.5,gamma=0,guidance=normalized,gw=2.0,n_steps=5,r_units=raw", harness.METHODS["M1"].defaults))
+    assert torch.allclose(b3, m1, atol=1e-5) and nfe_b3 == nfe_m1
+    m1n, _ = harness.METHODS["M1"].fn(ctx, batch, 3, harness.parse_args_kv(
+        "tau0=0.5,gamma=0,guidance=normalized,gw=2.0,n_steps=5", harness.METHODS["M1"].defaults))
+    assert not torch.allclose(b3, m1n, atol=1e-5)
+
+
+def test_m1_stochastic_pigdm_adds_spread_and_m1b_m1c_run():
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    ctx, batch = _toy_context(harness, n_members=8)
+    d = harness.METHODS["M1"].defaults
+    det, _ = harness.METHODS["M1"].fn(ctx, batch, 0, harness.parse_args_kv("gamma=0,guidance=pigdm", d))
+    sto, nfe = harness.METHODS["M1"].fn(ctx, batch, 0, harness.parse_args_kv(
+        "gamma=0.5,guidance=pigdm,n_correctors=1", d))
+    assert sto.shape == det.shape == (8, 8, 4) and nfe == 10 * 2 + 10
+    assert sto.std(0).mean() > det.std(0).mean()
+    m1b, _ = harness.METHODS["M1b"].fn(ctx, batch, 0, harness.parse_args_kv("gamma=0.25", d))
+    assert m1b.shape == (8, 8, 4) and torch.isfinite(m1b).all()
+    spec = harness.METHODS["M1c"]
+    margs = harness.parse_args_kv("a=0.7,b=0.6", spec.defaults)
+    items = [(w, {**batch, "obs": batch["obs"] * (1 + w)}) for w in range(3)]
+    spec.prepare(ctx, items, margs)
+    tau0 = ctx.state["tau0_w"]
+    assert set(tau0) == {0, 1, 2} and tau0[0] > tau0[2] and all(0.05 <= t <= 0.9 for t in tau0.values())
+    x, _ = spec.fn(ctx, batch, 1, margs)
+    assert x.shape == (8, 8, 4)
+    xp, _ = spec.fn(ctx, batch, 1, harness.parse_args_kv("a=0.7,b=0.6,starts=perturbed", spec.defaults))
+    assert xp.shape == (8, 8, 4) and not torch.allclose(xp, x)
+
+
+def test_obs_pert_scales_the_perturbed_obs_spread():
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    ctx, batch = _toy_context(harness, n_members=8)
+    d = harness.METHODS["M1b"].defaults
+    base, _ = harness.b2_perturbed_obs(ctx, batch, 0, harness.parse_args_kv("", d))
+    same, _ = harness.b2_perturbed_obs(ctx, batch, 0, harness.parse_args_kv("obs_pert=1.0", d))
+    wide, _ = harness.b2_perturbed_obs(ctx, batch, 0, harness.parse_args_kv("obs_pert=2.0", d))
+    assert torch.equal(base, same) and wide.std(0).mean() > base.std(0).mean()
+    assert harness.METHODS["M1bI"].tune_inflation and "obs_pert" in harness.METHODS["M1bI"].defaults
+
+
+def test_fdv_mean_cache_is_keyed_by_data_and_reused_across_rows():
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    ctx, batch = _toy_context(harness)
+    first = harness.fdv_mean(ctx, batch, 5, 10)
+    assert torch.equal(first, harness.fdv_mean(ctx, batch, 5, 10)) and not harness.MEAN_CACHE
+    ctx.data_key = "toy|s0|cpu"
+    cached = harness.fdv_mean(ctx, batch, 5, 10)
+    assert harness.fdv_mean(ctx, batch, 5, 10) is cached and torch.equal(cached, first)
+    assert harness.fdv_mean(ctx, batch, 6, 10) is not cached and len(harness.MEAN_CACHE) == 2
+    harness.MEAN_CACHE.clear()
 
 
 PROBE_JSON = ("/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/4dvarnet-fm-l96-fdv-mask/experiments/"
