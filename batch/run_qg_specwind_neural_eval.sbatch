@@ -25,6 +25,7 @@
 # pure noise (GAMMA, NCORR Langevin steps, LMC_TAU; OBS_SIGMA defaults to the obs noise fraction).
 # FMPOST=1 samples with evaluation/fm_posterior_sampler.py (FMG guidance, FMW weight, FMGAMMA EM noise,
 # R_NORM obs-error variance in normalized units, OBS_PERT perturbed-obs starts, INFL inflation).
+# SHARD/N_SHARDS (default 0/1) score one shard of the windows (shard_<SHARD>_of_<N_SHARDS>, like the DA rows).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -33,11 +34,12 @@ export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NOD
 : "${RUN_DIR:?set RUN_DIR}" "${TAG:?set TAG}"
 SPEC="${SPEC:-qg_specwind_gyrostat_v1}"; SPLIT="${SPLIT:-test}"; N="${N:-30}"; INTERP="${INTERP:-cubic}"
 COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; GW="${GW:-100}"; SDA_STEPS="${SDA_STEPS:-10}"; S1="${S1:-0}"
+SHARD="${SHARD:-0}"; N_SHARDS="${N_SHARDS:-1}"
 ROOT="${ROOT:-/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/qg_datasets}"
-OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/neural_${TAG}_c${COLS}_${INTERP}_N${N}$([ "$S1" = 1 ] && echo "_k1_rbase" || true)/shard_0_of_1.json"
+OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/neural_${TAG}_c${COLS}_${INTERP}_N${N}$([ "$S1" = 1 ] && echo "_k1_rbase" || true)/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_neural --run-dir "$RUN_DIR" --spec "$SPEC" --root "$ROOT" \
-  --split "$SPLIT" --n-windows "$N_WINDOWS" --cols-per-day "$COLS" --n-members "$N" \
+  --split "$SPLIT" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" --cols-per-day "$COLS" --n-members "$N" \
   --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" --guidance-schedule "${GSCHED:-constant}" \
   $([ "${PUBLISHED:-0}" = 1 ] && echo "--sda-published --gamma ${GAMMA:-0.1} --n-corrector ${NCORR:-1} --lmc-tau ${LMC_TAU:-0.1}" || true) ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} \
   $([ "${FMPOST:-0}" = 1 ] && echo "--fm-posterior --fm-guidance ${FMG:-dps} --fm-weight ${FMW:-1} --fm-gamma ${FMGAMMA:-0.5} --obs-pert ${OBS_PERT:-0} --inflation ${INFL:-1}" || true) ${R_NORM:+--r-norm "$R_NORM"} $([ "$S1" = 1 ] && echo "--s1" || true) \
