@@ -1,6 +1,6 @@
 # L96 FDV2 × score-based flow matching: a calibrated posterior at least as accurate as the FDV2→SDA hybrid
 
-**Status:** CLOSED (2026-10-14) after Phases 0–1; Phase 2 (M2, M3) not run. Outcome in `docs/results/l96_fdv2_fm_posterior.md`: the training-free M1bI (perturbed-obs FDV2 starts + DPS-guided stochastic FM sampler + validation-tuned inflation) beats the hybrid and B5 on CRPS by 4–7% and is calibrated in every test cell, but misses S-acc RMSE on the regular layout by +0.6–0.8%. Plan v1 (2026-10-12) Supersedes `docs/plans/analysis/l96_fdv2_score_prior.md` (whose evidence, sections 1.1–1.5, it reuses) and fixes the issues found in that plan's review (section 7 below).
+**Status:** CLOSED (2026-10-14) after Phases 0–1; Phase 2 (M2, M3) not run. Outcome in `docs/results/l96_fdv2_fm_posterior.md`: the training-free M1bI (perturbed-obs FDV2 starts + DPS-guided stochastic FM sampler + validation-tuned inflation) beats the hybrid and B5 on CRPS by 4–7% and is calibrated in every test cell, but misses S-acc RMSE on the regular layout by +0.6–0.8%. An S1 test of the frozen configurations (2026-10-15, results note section 4) keeps the CRPS lead and SSR ≈ 1, but fails reliability on the random layout. Plan v1 (2026-10-12) Supersedes `docs/plans/analysis/l96_fdv2_score_prior.md` (whose evidence, sections 1.1–1.5, it reuses) and fixes the issues found in that plan's review (section 7 below).
 
 ## 0. Goal and success criteria
 
