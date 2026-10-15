@@ -18,7 +18,8 @@
 # one window's normalized state), SDA_STEPS = guided Euler steps; put the GW in TAG.
 # S1=1 scores on the realistic-S1 observations (the DA S1 rows' exact altimetry-error draws).
 # WARM=<DirectUNet run dir> warm-starts the SDA members from that run's estimate at flow time
-# TAU0 (default 0.5); put both in TAG. FULL=1 runs a length-agnostic (3D) prior on the whole
+# TAU0 (default 0.5); put both in TAG. WARM_FULL=1 runs a length-agnostic warm-start network (G1-3D)
+# on the whole window instead of stitching it over its training window. FULL=1 runs a length-agnostic (3D) prior on the whole
 # window instead of composing it over its training window. GSCHED=linear-decay makes the SDA
 # guidance weight 2 GW (1 - tau) instead of constant. PUBLISHED=1 uses the SDA paper's guidance from
 # pure noise (GAMMA, NCORR Langevin steps, LMC_TAU; OBS_SIGMA defaults to the obs noise fraction).
@@ -40,5 +41,5 @@ mkdir -p "$(dirname "$OUT")"
   --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" --guidance-schedule "${GSCHED:-constant}" \
   $([ "${PUBLISHED:-0}" = 1 ] && echo "--sda-published --gamma ${GAMMA:-0.1} --n-corrector ${NCORR:-1} --lmc-tau ${LMC_TAU:-0.1}" || true) ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} \
   $([ "${FMPOST:-0}" = 1 ] && echo "--fm-posterior --fm-guidance ${FMG:-dps} --fm-weight ${FMW:-1} --fm-gamma ${FMGAMMA:-0.5} --obs-pert ${OBS_PERT:-0} --inflation ${INFL:-1}" || true) ${R_NORM:+--r-norm "$R_NORM"} $([ "$S1" = 1 ] && echo "--s1" || true) \
-  ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
+  ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${WARM_FULL:-0}" = 1 ] && echo "--warm-full-window" || true) $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
   --out "$OUT" --device cuda
