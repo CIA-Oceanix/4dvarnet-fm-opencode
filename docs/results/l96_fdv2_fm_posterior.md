@@ -1,8 +1,8 @@
 # L96 FDV2 × score-based flow matching: training-free posterior sampling vs the FDV2→SDA hybrid
 
-**Status:** RESULTS (2026-10-14). Phases 0–1 of `docs/plans/analysis/l96_fdv2_fm_posterior.md` (validation sweeps and held-out test), S0, both observing layouts, FDV2 seeds 1 and 2. No training. Phase 2 (M2, M3) was not run.
+**Status:** RESULTS (2026-10-14; S1 check added 2026-10-15). Phases 0–1 of `docs/plans/analysis/l96_fdv2_fm_posterior.md` (validation sweeps and held-out test), S0, both observing layouts, FDV2 seeds 1 and 2, plus an S1 test of the frozen S0 configurations (section 4). No training. Phase 2 (M2, M3) was not run.
 
-**Numbers:** inline. Per-window JSON outputs (scores only; no member arrays kept) are under `experiments/l96_fdv2_fm_posterior/{val,test}/` of the main checkout (not checked in), produced by `eval_fdv_fm_posterior_l96.py` at commit 2fa1f10 (code identical to #344) with `batch/run_l96_fdv2_fm_posterior.sbatch`. The row lists and the job IDs are in that directory too (`rows_*.txt`, `submitted_jobs.txt`).
+**Numbers:** inline. Per-window JSON outputs (scores only; no member arrays kept) are under `experiments/l96_fdv2_fm_posterior/{val,test}/` of the main checkout (not checked in), produced by `eval_fdv_fm_posterior_l96.py` at commit 2fa1f10 (code identical to #344) with `batch/run_l96_fdv2_fm_posterior.sbatch`. The row lists and the job IDs are in that directory too (`rows_*.txt`, `submitted_jobs.txt`). The S1 rows (section 4) are under `s1/{val,test}/` of the same directory (row lists `rows_s1_{val,test}.txt`), run at commit aaada67 (the L96 harness code is unchanged since 2fa1f10).
 
 ## Question and answer
 
@@ -19,6 +19,8 @@ Measured on 200 held-out test windows per cell, paired against the hybrid on the
 3. **RMSE ties the hybrid's best-RMSE setting on the random layout (−0.4%, −0.0%) but misses it on the regular layout (+0.8%, +0.6%; intervals exclude 0).** So the pre-registered criterion S-acc fails on 2 of 4 cells, by under 1%.
 
 The remaining gap is a trade-off inside the method, set by the perturbation strength. At 0.5× observation noise, RMSE and CRPS pass in all four cells, but the inflated ensemble is over-dispersed in the tails (reliability 0.15–0.27) and S-cal fails everywhere.
+
+**On S1 (model error, section 4)**, the same frozen configuration keeps its CRPS lead (−4.7…−7.2% against the hybrid, −4.5…−7.0% against B5) and SSR ≈ 1.04. RMSE passes in 3 of 4 cells. Reliability passes on the regular layout but not on the random layout (0.12–0.17 against a target of about 0.10), although it stays below the hybrid's and B5's.
 
 ## Setup
 
@@ -108,15 +110,66 @@ Reference rows:
 | beats B5 | yes: CRPS everywhere; reliability on the random layout | yes on CRPS; no on reliability |
 | S-robust (both seeds) | consistent | consistent |
 
-S1 was not run.
+S1: section 4.
 
 **Validation was a fair guide.** The test differences sit within about 1 point of the validation estimates on windows 0–39, and the frozen inflation factors give SSR 0.90–0.99 on test.
 
 **Cost.** Each member takes 20 network evaluations: 10 FDV2 iterations and 10 DPS steps, each with a vector–Jacobian product. That is 2.8 s per window for 30 members on an A40, against 1.4 s for B3.
 
-## 4. Reading
+## 4. S1: the frozen configurations under model error
+
+**Protocol.** S1 is the model-error case of the L96 benchmark: the `test_s1` split of the same validation and test files, whose windows come from a perturbed-parameter L96, while FDV2 and the SDA1-M prior were trained on S0 only.
+- Nothing was re-selected on S1. The hybrid's τ0 = 0.5 / 0.1 and both M1bI configurations are the S0 choices.
+- Only the inflation factors were re-tuned, on the S1 validation windows, the same way as on S0: B5 on 100 windows, M1bI on windows 0–39.
+- Test: 200 windows per cell, same scores and paired bootstrap as section 3. The plan reports S1 without gating it.
+
+Reference rows (S1):
+
+| cell | B3 τ0 = 0.5 RMSE | B3 τ0 = 0.1 RMSE / CRPS / SSR / rel | B5 CRPS / SSR / cov90 / rel |
+|---|---|---|---|
+| regular, seed 1 | 0.2270 | 0.2365 / 0.1116 / 0.82 / 0.147 | 0.1113 / 1.02 / 0.915 / 0.056 |
+| regular, seed 2 | 0.2184 | 0.2326 / 0.1102 / 0.83 / 0.148 | 0.1099 / 1.01 / 0.909 / 0.036 |
+| random, seed 1 | 0.2724 | 0.2810 / 0.1319 / 0.63 / 0.205 | 0.1326 / 1.05 / 0.954 / 0.256 |
+| random, seed 2 | 0.2617 | 0.2741 / 0.1287 / 0.64 / 0.194 | 0.1295 / 1.04 / 0.952 / 0.249 |
+
+**M1bI, DPS, γ = 0.5, τ0 = 0.7, p = 0.75** (S1). Inflation from S1 val is 1.69–2.04 (S0: 1.65–1.86).
+
+| cell | RMSE | ΔRMSE vs B3 τ0 = 0.5 | CRPS | ΔCRPS vs B3 τ0 = 0.1 | ΔCRPS vs B5 | SSR | cov90 | rel (target) |
+|---|---|---|---|---|---|---|---|---|
+| regular, seed 1 | 0.2284 | +0.6% [+0.2, +1.1] ✗ | **0.1063** | **−4.7%** [−5.4, −4.0] | −4.5% | 1.04 | 0.915 | **0.066** (≤ 0.073) |
+| regular, seed 2 | 0.2186 | +0.1% [−0.3, +0.5] | **0.1023** | **−7.2%** [−7.9, −6.5] | −6.9% | 1.05 | 0.908 | **0.050** (≤ 0.074) |
+| random, seed 1 | 0.2738 | +0.5% [−0.1, +1.1] | **0.1255** | **−4.8%** [−6.0, −3.8] | −5.4% | 1.04 | 0.938 | 0.165 (≤ 0.103) ✗ |
+| random, seed 2 | 0.2622 | +0.2% [−0.5, +0.9] | **0.1204** | **−6.5%** [−7.6, −5.3] | −7.0% | 1.04 | 0.928 | 0.119 (≤ 0.097) ✗ |
+
+**M1bI, DPS, γ = 0.5, τ0 = 0.5, p = 0.5** (S1). Inflation from S1 val is 2.10–2.47.
+
+| cell | ΔRMSE vs B3 τ0 = 0.5 | ΔCRPS vs B3 τ0 = 0.1 | ΔCRPS vs B5 | SSR | cov90 | rel |
+|---|---|---|---|---|---|---|
+| regular, seed 1 | −0.3% [−0.7, +0.1] | −4.9% [−5.5, −4.3] | −4.6% | 1.05 | 0.949 | 0.218 ✗ |
+| regular, seed 2 | −0.6% [−0.9, −0.2] | −7.2% [−7.8, −6.6] | −6.9% | 1.04 | 0.948 | 0.210 ✗ |
+| random, seed 1 | +0.0% [−0.6, +0.7] | −3.9% [−4.8, −2.9] | −4.4% | 1.02 | 0.962 | 0.309 ✗ |
+| random, seed 2 | −0.3% [−0.8, +0.3] | −5.5% [−6.4, −4.5] | −6.1% | 1.06 | 0.962 | 0.308 ✗ |
+
+**Against the plan's criteria on S1:**
+
+| criterion | p = 0.75, τ0 = 0.7 | p = 0.5, τ0 = 0.5 |
+|---|---|---|
+| S-acc, CRPS | passes, 4 of 4 cells | passes, 4 of 4 cells |
+| S-acc, RMSE | passes in 3 of 4 cells (fails regular seed 1; random seed 1 is at the +0.5% margin) | passes, 4 of 4 cells |
+| S-cal | passes on the regular layout; fails reliability on the random layout | fails, 4 of 4 cells |
+| beats B5 | yes: CRPS everywhere; reliability on the random layout | yes on CRPS; no on reliability |
+| S-robust (both seeds) | consistent | consistent |
+
+**What changes from S0:**
+- **The ordering holds.** M1bI beats the hybrid and B5 on CRPS by the same margins as on S0, in every cell and for both seeds.
+- **RMSE is unchanged in size.** The gap to the hybrid's best-RMSE setting is −0.4…+0.8% on S0 and +0.1…+0.6% on S1; only the cells that fail differ.
+- **The spread needs more inflation, and the frozen factor slightly over-disperses.** Inflation rises to 1.69–2.04, and test SSR is 1.04–1.05 (0.90–0.99 on S0).
+- **The rank histogram on the random layout is no longer flat enough.** Reliability is 0.12–0.17, against 0.03–0.09 on S0. It is still below the hybrid's 0.19–0.21 and B5's 0.25–0.26; both M1bI and B5 lose 0.05–0.09 from S0. One global inflation factor does not fix the shape of the spread under model error, which strengthens the case for the inflation-free variant (section 5).
+
+## 5. Reading
 
 - **One configuration does the hybrid's two jobs.** M1bI (p = 0.75) is as accurate as the hybrid's best-RMSE setting to within 1% and beats its best-CRPS setting by 4–7%. The hybrid needs two τ0 values for those two optima, and neither of them is calibrated.
 - **The gain is not just calibration.** At equal SSR ≈ 1, M1bI beats B5 on CRPS by 4–7%, and on the random layout it also beats B5 on rank-histogram reliability.
 - **The remaining RMSE gap comes from the ensemble mean.** Perturbed starts move the mean slightly off the FDV2 iterate, and inflation does not change the mean. Phase 2 (M2, a score-prior FDV2 with an iterate-error-matched noise level) targets this directly. It is the natural next step if the 0.6–0.8% regular-layout gap matters.
-- **Open:** S1, and an inflation-free variant (stochasticity calibrated by the sampler alone). γ did not achieve that here.
+- **S1 confirms the accuracy result but weakens the calibration result** (section 4): CRPS gains of 4–7% and SSR ≈ 1 carry over, but the rank histogram on the random layout fails the target.
+- **Open:** an inflation-free variant (stochasticity calibrated by the sampler alone). γ did not achieve that here.
