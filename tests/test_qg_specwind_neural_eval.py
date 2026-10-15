@@ -285,3 +285,39 @@ def test_perturbed_obs_starts_differ_per_member_and_only_through_the_obs():
     assert not torch.allclose(starts[..., 0], starts[..., 1])
     unobserved = ~batch.obs_mask
     assert torch.equal(starts[..., 0][unobserved], batch.obs[unobserved])
+
+
+def test_warm_full_window_runs_a_length_agnostic_warm_start_once_on_the_whole_window():
+    from data.qg_neural import QGBatch
+    from evaluation.run_qg_specwind_neural import perturbed_obs_starts, warm_window_days
+    _, batch = _sda_prior_and_batch(days=4)
+    b, t, d = batch.obs.shape
+    qb = QGBatch(torch.zeros(b, t, d), batch.obs, batch.obs_mask, torch.zeros(b, t, 16, 16),
+                 torch.zeros(b, t, d), torch.full((b,), 1.5e4))
+
+    class RecordingEcho(torch.nn.Module):
+        T = 2
+        any_length = True
+
+        def __init__(self):
+            super().__init__()
+            self.days_seen = []
+
+        def forward(self, bt):
+            self.days_seen.append(bt.obs.shape[1])
+            return bt.obs
+
+    net = RecordingEcho()
+    perturbed_obs_starts((net, "direct_unet_3d", None), qb, QGConfig(nx=16), None, 2, 0.1, 1,
+                         warm_full_window=True)
+    assert net.days_seen == [t, t]
+    net.days_seen.clear()
+    perturbed_obs_starts((net, "direct_unet_3d", None), qb, QGConfig(nx=16), None, 1, 0.1, 1)
+    assert set(net.days_seen) == {2}
+    assert warm_window_days(net, t, False) == 2
+
+    class FixedLength(torch.nn.Module):
+        T = 2
+
+    with pytest.raises(ValueError, match="any window length"):
+        warm_window_days(FixedLength(), t, True)

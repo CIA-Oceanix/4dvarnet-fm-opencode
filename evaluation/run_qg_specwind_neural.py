@@ -309,8 +309,17 @@ def fm_posterior_members(model: torch.nn.Module, batch, n_members: int, n_steps:
     return members
 
 
+def warm_window_days(w_model: torch.nn.Module, n_days: int, full_window: bool) -> int:
+    """Days per warm-start sub-window: the whole window with `full_window` (a length-agnostic
+    network, `any_length`), else the network's training window."""
+    if full_window and not getattr(w_model, "any_length", False):
+        raise ValueError("a full-window warm start needs a network that accepts any window length")
+    return n_days if full_window else getattr(w_model, "T", n_days)
+
+
 def perturbed_obs_starts(warm_start, batch, cfg: QGConfig, norm: dict | None, n_members: int,
-                         scale: float, window_stride: int) -> torch.Tensor:
+                         scale: float, window_stride: int,
+                         warm_full_window: bool = False) -> torch.Tensor:
     """(B, days, D, n_members) warm starts, one per member: the warm-start network on the
     observations plus N(0, scale^2) noise on the observed cells (normalized units)."""
     w_model, w_type, w_norm = warm_start
@@ -321,7 +330,7 @@ def perturbed_obs_starts(warm_start, batch, cfg: QGConfig, norm: dict | None, n_
                         batch.obs_mask, batch.forcing, batch.states_q, batch.rd,
                         params=batch.params, ic=batch.ic)
         est = windowed_estimate(lambda b: estimate_members(w_model, w_type, b, 1)[0], noisy,
-                                getattr(w_model, "T", noisy.T), window_stride)
+                                warm_window_days(w_model, noisy.T, warm_full_window), window_stride)
         starts.append(renorm_psi(denorm_psi(est, cfg, w_norm), cfg, norm))
     return torch.stack(starts, dim=-1)
 
@@ -385,13 +394,15 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
              sda_steps: int = 10, window_stride: int = 5, warm_start=None,
              tau0: float = 0.5, full_window: bool = False,
              published: PublishedSDA | None = None,
-             fm_posterior: FMPosterior | None = None) -> list[dict]:
+             fm_posterior: FMPosterior | None = None,
+             warm_full_window: bool = False) -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
     overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
     estimates (`windowed_estimate`), a flow blends its velocity at every step
     (`ComposedFlow`), so each member stays one coherent trajectory. `warm_start`
     `(model, model_type, norm)` -- a deterministic run -- gives the SDA members their
-    starting estimate at flow time `tau0`. `full_window` runs a network that accepts any
+    starting estimate at flow time `tau0`, on the whole window with `warm_full_window` (a
+    length-agnostic network such as G1-3D). `full_window` runs a network that accepts any
     window length (`any_length`, the 3D prior) on the whole window instead."""
     if full_window and not getattr(model, "any_length", False):
         raise ValueError("full_window needs a network that accepts any window length")
@@ -405,7 +416,8 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
         if warm_start is not None:
             w_model, w_type, w_norm = warm_start
             w_est = windowed_estimate(lambda b: estimate_members(w_model, w_type, b, 1)[0], batch,
-                                      getattr(w_model, "T", batch.T), window_stride)
+                                      warm_window_days(w_model, batch.T, warm_full_window),
+                                      window_stride)
             mean_estimate = renorm_psi(denorm_psi(w_est, cfg, w_norm), cfg, norm)
         if model_type in DIRECT_TYPES:
             members = windowed_estimate(
@@ -421,7 +433,7 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
                     raise ValueError("perturbed-obs starts need a warm start")
                 starts = perturbed_obs_starts(warm_start, batch, cfg, norm, n_members,
                                               fm_posterior.obs_pert * fm_posterior.r_norm ** 0.5,
-                                              window_stride)
+                                              window_stride, warm_full_window)
             members = fm_posterior_members(flow, batch, n_members, sda_steps, fm_posterior, tau0,
                                            None if starts is not None else mean_estimate, starts)
         else:
@@ -466,6 +478,9 @@ def main() -> None:
                    help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
                         "at flow time --tau0 instead of pure noise")
     p.add_argument("--tau0", type=float, default=0.5, help="SDA warm start: starting flow time")
+    p.add_argument("--warm-full-window", action="store_true",
+                   help="SDA warm start: run a length-agnostic warm-start network (G1-3D) on the "
+                        "whole window instead of stitching it over its training window")
     p.add_argument("--sda-published", action="store_true",
                    help="SDA: guidance as in Rozet & Louppe 2023 (noise-aware likelihood variance, "
                         "Langevin corrector), from pure noise; see --obs-sigma/--gamma/--n-corrector")
@@ -538,7 +553,8 @@ def main() -> None:
                           guidance_schedule(args.guidance_weight, args.guidance_schedule),
                           args.sda_steps,
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
-                          full_window=args.full_window, published=published, fm_posterior=fmpost)
+                          full_window=args.full_window, published=published, fm_posterior=fmpost,
+                          warm_full_window=args.warm_full_window)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
@@ -553,7 +569,8 @@ def main() -> None:
                      "fm_posterior": dataclasses.asdict(fmpost) if fmpost else None,
                      "warm_start_run": (os.path.abspath(args.warm_start_run)
                                         if args.warm_start_run else None),
-                     "tau0": args.tau0 if args.warm_start_run else None}
+                     "tau0": args.tau0 if args.warm_start_run else None,
+                     "warm_full_window": bool(args.warm_start_run and args.warm_full_window)}
                     if model_type in SDA_TYPES else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,

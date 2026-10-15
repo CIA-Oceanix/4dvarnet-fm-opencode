@@ -1,0 +1,6 @@
+## 2026-10-15: G1-L-3D config + SDA warm start from a full-window 3D network
+
+**Summary:** Adds `config/experiment/G1L_direct_unet_3d_specwind_b16_w15_kpow.yaml`, the 3D DirectUNet (G1-3D) at twice the width ([64, 128, 256, 256], 67.3 M parameters, size-matched to the 2D G1-L). Adds `--warm-full-window` (sbatch `WARM_FULL=1`) so the SDA warm-start network runs on the whole window rather than being stitched over its training window.
+**Files modified:** `config/experiment/G1L_direct_unet_3d_specwind_b16_w15_kpow.yaml` — new L-tier 3D config; `evaluation/run_qg_specwind_neural.py` — `warm_window_days`, `--warm-full-window` (also for perturbed-obs starts), recorded in the meta; `batch/run_qg_specwind_neural_eval.sbatch` — `WARM_FULL`; `tests/test_qg_specwind_neural_eval.py`, `tests/test_qg_direct_unet_3d.py` — full-window warm start and L-tier parameter count.
+**Rationale:** G1-3D (16.8 M) beats the 2D G1-L (58 M) on test (S0 0.875 full window vs 0.859), and is best on the whole window, so (1) its width scaling is worth testing and (2) it should start the SDA members in its best mode.
+**Verification:** `pytest -m "not slow" tests/test_qg_specwind_neural_eval.py tests/test_qg_sda_prior_3d.py tests/test_qg_direct_unet_3d.py` pass; `ruff check` clean on touched files. L-tier speed benchmarked on an RTX 8000 (3.21 s/step, 19 GB peak at batch 16).
