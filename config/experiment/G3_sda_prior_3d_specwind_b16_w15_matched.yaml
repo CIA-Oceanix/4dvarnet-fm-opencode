@@ -1,0 +1,51 @@
+# G3-3D at G1-3D's widths (2026-10-16): G3_sda_prior_3d_specwind_b16_w15.yaml with hidden_channels
+# [32, 64, 128, 128] (4 levels, 16.83 M) instead of [32, 64, 128] (3 levels, 10.0 M), so the SDA prior
+# matches G1_direct_unet_3d_specwind_b16_w15_kpow (16.83 M) up to its inputs/conditioning: same
+# backbone, depth, widths and training protocol. Everything else unchanged.
+#
+#   EXP_ID=G3_sda_prior_3d_specwind_b16_w15_matched sbatch --cpus-per-task=12 --mem=80G #     batch/run_qg_specwind_neural_train.sbatch
+#
+# G3-3D SDA prior (2026-10-12): G3_sda_prior_tchannels_specwind_b16_w15.yaml (same protocol: batch
+# 16, 1200 epochs, 15-day crops, peak LR 3e-4, 40-epoch warm-up, q term scale 3) on a 3D U-Net
+# over (time, ny, nx) instead of the days stacked as channels of a 2D U-Net: narrow widths
+# [32, 64, 128], ~10.0 M parameters (2D M: 14.4 M), convolutions periodic in space and
+# zero-padded in time, weights shared across days. The same network runs on any window
+# length: scored both composed over 15-day sub-windows and on the full 30-day window (FULL=1).
+# Benchmark (RTX 8000, batch 16): 0.86 s/step, 9.9 GB, about the data pipeline's own pace.
+#
+#   EXP_ID=G3_sda_prior_3d_specwind_b16_w15 sbatch --cpus-per-task=12 --mem=80G \
+#     batch/run_qg_specwind_neural_train.sbatch
+
+experiment_id: G3_sda_prior_3d_specwind_b16_w15_matched
+entry_point: train_qg_neural.py
+system: qg
+model_type: sda_prior_3d
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [32, 64, 128, 128]
+  num_res_blocks: 2
+  use_obs_mask: false
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 1200
+  lr: 0.0003
+  warmup_epochs: 40
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily) on the endpoint estimate x1_hat, as for G1/G2.
+  q_loss_weight_scale: 3.0
+data:
+  normalize: true
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  train_window_days: 15
+  window_stride: 5
