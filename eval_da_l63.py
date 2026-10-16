@@ -15,6 +15,7 @@ from models.lorenz63_dynamics import Lorenz63Dynamics
 BASE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE, "experiments", "l63_da_table2")
 DT = 0.01
+DEFAULT_OBS_INTERVAL = 10
 WINDOW_STEPS = 300
 CASES = {"s0": 1.6, "s1": 1.0}
 ENS_METHODS = ("ETKF", "EnKF", "ETKS")
@@ -23,7 +24,7 @@ INFLATION_GRID = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
 Q_GRID = [0.003, 0.01, 0.03, 0.1, 0.3, 1.0]
 
 
-def make_dataset(case, seed, num_windows, obs_interval=20):
+def make_dataset(case, seed, num_windows, obs_interval=DEFAULT_OBS_INTERVAL):
     cfg = Lorenz63Config(case=1, seed=seed, num_windows=num_windows, T_max=3.0, obs_interval=obs_interval,
                          param_bias=0.0 if case == "s0" else 0.15,
                          forcing_state_bias=0.0 if case == "s0" else 0.1)
@@ -150,15 +151,14 @@ def main():
     p.add_argument("--num-val", type=int, default=50)
     p.add_argument("--n-members", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=50)
-    p.add_argument("--obs-interval", type=int, default=20)
+    p.add_argument("--obs-interval", type=int, default=DEFAULT_OBS_INTERVAL)
     p.add_argument("--no-tune", action="store_true")
     p.add_argument("--out", default=OUT_DIR)
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(args.out, exist_ok=True)
-    suffix = "" if args.obs_interval == 20 else f"_obs{args.obs_interval}"
-    results_path = os.path.join(args.out, f"table2_l63_da{suffix}.json")
+    results_path = os.path.join(args.out, f"table2_l63_da_obs{args.obs_interval}.json")
     results = json.load(open(results_path)) if os.path.exists(results_path) else {}
 
     for case in args.cases:

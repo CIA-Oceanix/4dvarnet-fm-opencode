@@ -7,7 +7,7 @@ from multiprocessing import Pool
 import numpy as np
 import torch
 
-from eval_da_l63 import CASES, DT, Q_GRID, climatology, force_key, make_dataset, score
+from eval_da_l63 import CASES, DEFAULT_OBS_INTERVAL, DT, Q_GRID, climatology, force_key, make_dataset, score
 from evaluation.baselines import L96Weak4DVar, ObsOperator
 from models.lorenz63_dynamics import Lorenz63Dynamics
 
@@ -62,7 +62,7 @@ def val_rmse(res):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--cases", nargs="+", default=["s0", "s1"])
-    p.add_argument("--obs-interval", type=int, default=10)
+    p.add_argument("--obs-interval", type=int, default=DEFAULT_OBS_INTERVAL)
     p.add_argument("--num-test", type=int, default=200)
     p.add_argument("--num-val", type=int, default=50)
     p.add_argument("--procs", type=int, default=56)
