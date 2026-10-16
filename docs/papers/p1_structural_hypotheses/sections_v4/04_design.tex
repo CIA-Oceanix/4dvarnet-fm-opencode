@@ -1,184 +1,334 @@
 \section{Experimental design}\label{sec:design}
 
 \subsection{Three case studies}\label{sec:testbeds}
-The three systems are not a repeated benchmark: each carries the part of the
-argument the others cannot (Table~\ref{tab:coverage}).
-\begin{description}[leftmargin=1.5em,style=nextline]
-  \item[Lorenz-63 --- the model-error axis.]
-    A stochastic Lorenz-63 system \todo{cite Lorenz 1963} augmented with a
-    wind-forcing variable. It is small enough to sweep the model error ---
+
+As experimental testbed, we rely on three dynamical systems of increasing complexity. 
+Each case-study involves forced or coupled dynamics as follows:
+\begin{itemize}
+  \item {\bf Lorenz-63 dynamics.} We consider a stochastic Lorenz-63 system \cite{chapron_largescale_2017} augmented with a wind-forcing variable. 
+    It is small enough to sweep the model error ---
     bias levels, stated uncertainty, a structural error --- and to run
-    weak-constraint 4D-Var and the full ensemble range on every cell. It is
-    where the conversion of misspecification back into restriction
-    (Sect.~\ref{sec:q2-represent}) is mapped as a function of the bias.
-  \item[Lorenz-96 --- the main testbed.]
-    The two-scale Lorenz-96 system is the only one that carries the full scheme
-    matrix, classical and learned, on two observing systems. Every cross-class
-    statement of Sect.~\ref{sec:results} is made here. Its protocol is
-    given below.
-  \item[Quasi-geostrophic ocean --- realism.]
-    A two-layer quasi-geostrophic ocean on a $64 \times 64$ grid (1000\,km, time
-    step 2\,h), forced by the wind-stress curl of a low-order atmosphere with
-    regime changes. Only the upper-layer streamfunction is observed, on three
-    random meridional columns per day (4.7\,\% of the grid). Its model-error case
-    is realistic rather than parametric: a biased and noisy wind, misplaced
-    storms, wrong deformation radius and bottom drag, correlated altimetry
-    errors, and a DA model on a coarser grid. It tests whether the budgets of
-    Lorenz-96 survive a spatially extended system with unobserved layers.
-\end{description}
-
-\begin{table}[t]
-\centering\small
-\caption{Scheme coverage per case study. Cross-class claims are made on Lorenz-96; Lorenz-63 carries the model-error sweep, QG the transfer to a realistic system.}
-\label{tab:coverage}
-\begin{tabular}{@{}lccccc@{}}
-\toprule
- & filters & smoother & 4D-Var (strong / weak) & DirectUNet, CFM & SDA, hybrid \\
-\midrule
-Lorenz-63 & ETKF, EnKF$^\dagger$ & --- & \checkmark{} / \checkmark$^\dagger$ & DirectUNet, CFM$^\dagger$ & --- \\
-Lorenz-96 & ETKF, EnKF & ETKS & \checkmark{} / \checkmark & \checkmark & \checkmark \\
-QG ocean & ETKF, EnKF & EnKS & \checkmark{} / \checkmark & DirectUNet, CFM$^\ddagger$ & SDA$^\ddagger$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-$^\dagger$\,\needsrun{Lorenz-63 rerun: its results predate a fix of the observation-noise
-sampling (2026-09-18).} $^\ddagger$\,\needsrun{QG learned schemes: first training round in progress.}
-
-\subsection{The Lorenz-96 protocol}
-We use the two-scale Lorenz-96 system \todo{cite Lorenz 1996} with 8 slow and 32
-fast variables, integrated with $\Delta = 0.001$ over windows of 3000 steps.
-Every window draws its own parameters $\thv$ (forcing and coupling coefficients,
-$\pm$20\,\% around their nominal values) and a stochastic forcing $\zv$. The
-observed space has 24 channels: the 8 slow variables and 16 of the 32 fast ones,
-with observation-error variance $\mathbf{R} = 0.5\,I$. All schemes are scored on
-the same 200 test windows.
-
-\paragraph{Two cases.}
-In \Sz{} (perfect model) every model-based scheme assimilates with the window's
-true parameters and forcing. In \So{} (model error) it is told biased parameters
-$\thv_{\mathrm{da}}$ (+10\,\%) and a corrupted forcing, while the truth is
-unchanged. \So{} therefore prices model error only for schemes that consume
-model information. \needsrun{A sweep of the bias $\delta \in \{0, 5, 10, 20,
-40\,\%\}$ crossed with a stated uncertainty $\sigma \in \{0, 20\,\%\}$, plus one
-structural error (a modified coupling), run on Lorenz-63 for the full grid and on
-Lorenz-96 at three levels.}
-
-\paragraph{Two observing systems.}
-The \emph{regular} system observes all 24 channels at 30 equally spaced times per
-window. The \emph{random} system re-observes the same 200 windows with 10 to 100
-observation times at stratified random positions (the first step always
-observed, at least one observation per DA sub-window) and 4 to 16 observed fast
-channels per window. Every scheme, classical or learned, assimilates exactly the
-same observations. For the density analysis (Sect.~\ref{sec:q1-density}) we add
-a factorial of observation counts $\times$ observed fast channels and a few
-out-of-range probes, on 20 windows $\times$ 3 layout draws each.
-
-\subsection{Schemes}
-Table~\ref{tab:schemes} lists the schemes. The classical ones are an ensemble
-transform Kalman filter (ETKF), a stochastic EnKF, an ensemble transform Kalman
-smoother (ETKS) built on the same ETKF, and strong- and weak-constraint 4D-Var.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Ensembles.} The ETKF, EnKF and ETKS use 30 members and no
-    localisation, with one multiplicative inflation per case. The ETKS smooths
-    over the full window with retrospective inflation. We also run a 100-member
-    ETKS as a sensitivity row.
-  \item \textbf{4D-Var.} It is cycled over six sub-windows of 500 steps and
-    minimised with L-BFGS. The weak-constraint version adds a whitened
-    model-error control at every step, of scale $q$ times the climatological
-    spread~\cite{tremolet2006weak}.
+    weak-constraint 4D-Var and the full ensemble range on every cell. The considered observation configurations account for a regular or random time sampling, the three Lorenz-63 variables being observed. 
+  \item {\bf Lorenz-96 dynamics.} We consider the two-scale Lorenz-96 system \cite{lorenz_predictability_1996}, in the formulation of \cite{fatkullin_computational_2004} with a time-scale ratio $\epsilon = 0.1$, with 8 slow and 32 fast variables, augmented with a slow stochastic forcing acting on the slow variables. We assume that only the 8 slow variables and half of the fast ones are observed, meaning that 16 fast variables are never observed.
+  \item {\bf Quasi-geostrophic ocean dynamics.} We consider a two-layer quasi-geostrophic ocean \cite{vallis_atmospheric_2017} on a $64\times64$ doubly periodic grid (1000,km, time step 2,h), in the configuration of the pyqg model \cite{abernathey_pyqg_2022,ross_benchmarking_2023}, forced by the wind-stress curl of a low-order chaotic atmosphere built from coupled gyrostats \cite{gluhovsky_structure_1999}, which induces regime changes. Only the upper-layer streamfunction is observed according to randomly-sampled meridional columns mimicking satellite altimetry configurations \cite{febvre_training_2023,ballarotta_resolutions_2019}.
 \end{itemize}
-The learned schemes are:
-\begin{itemize}[leftmargin=*]
-  \item a deterministic network mapping the observations to the state
-    (DirectUNet);
-  \item two conditional flow-matching models (CFM), VanillaCFM and
-    PredictStateCFM, which differ in their training target (velocity vs
-    endpoint);
-  \item score-based DA (SDA)~\cite{rozet2023sda}: a learned prior on the window,
-    unconditional (SDA1) or conditioned on $\thv$ with clean (SDA2) or noisy
-    (SDA3-fix) training parameters, combined with the likelihood by guided
-    sampling;
-  \item a hybrid that starts the SDA3-fix guided sampler from the DirectUNet
-    estimate.
+
+For each case-study, we follow the same experimental framework and design two state reconstruction problems, namely a perfect-model experiment (\Sz{}) and a imperfect-model one (\So{}):
+\begin{itemize}
+    \item {\bf Perfect-model experiment (\Sz{})}: The model-based schemes assimilate the observations with the same model that generated the truth, including each window's true parameters and stochastic forcing. Their error therefore has only restriction and approximation terms; misspecification is zero by construction;
+    \item {\bf Imperfect-model experiment (\So{})}: The truth is unchanged, but the model-based schemes are given an imperfect model: biased parameters, a corrupted forcing and, for L96, a truncated state space (see below). This model error, partly parametric and partly structural, switches on the misspecification term of the chain. The learned schemes are still trained on simulations of the true system, so at S1 they are a reference bound rather than a matched competitor.
 \end{itemize}
-All learned schemes share one backbone and size (a 1-D U-Net, 5.9\,M parameters)
-and one training recipe:
+We refer the reader to Appendix~\ref{app:casestudies} for the details of each case study, including its observing systems. For L96, the tables and budget figures use the regular observing system, and the random one is analysed in Sect.~\ref{sec:q1-density}.
+
+
+
+For L96, the \So{} DA model differs from the true one in three ways:
 \begin{itemize}[leftmargin=*,nosep]
-  \item 1000 training windows;
-  \item a random observing system redrawn with fresh noise at every batch (10--300
-    observation times, 4--16 fast channels);
-  \item 1200 epochs, cosine-annealed learning rate;
-  \item 3 seeds.
+  \item \textbf{Biased parameters:} $F$, $c_1$, $h_x$, $\epsilon$ and the fast coupling
+    weights are all increased by 10\,\% in every window ($h$ is unchanged);
+  \item \textbf{Corrupted forcing:} the DA model receives the true forcing plus a
+    state-dependent term $0.1\,X_1$ and an Ornstein--Uhlenbeck noise (standard deviation
+    0.71, time scale 5);
+  \item \textbf{Truncated state:} the DA model only keeps the 24 observed variables. The
+    16 unobserved fast variables are removed, so that each slow variable is coupled to its
+    two observed fast variables only, and the fast dynamics run on two variables per slow
+    variable instead of four.
 \end{itemize}
-The flows are scored with 30 members and 20 Euler steps, SDA with 30 members and
-10 guided steps.
+The truncation dominates the resulting model error. Integrated from the true state over
+one observation interval (100 steps), the \So{} DA model has a forecast RMSE of 0.22 on
+the slow variables and 2.03 on the observed fast ones, against an observation-error
+standard deviation of 0.71 and climatological standard deviations of 1.91 and 1.66. With
+the full 40-variable model, the parametric and forcing errors alone give 0.08 and 0.24.
+\So{} thus combines a moderate parametric error with a strong structural error on the
+fast scales. To separate the two, we also report a variant in which the DA schemes use the
+full 40-variable model with the same biased parameters and forcing (\So-full).
+\So{} prices model error only for the schemes that consume model information.
+\needsrun{Lorenz-63 only: a sweep of the bias $\delta \in \{0, 5, 10, 20, 40\,\%\}$
+crossed with a stated uncertainty $\sigma \in \{0, 20\,\%\}$, plus one structural
+error.}
 
-\begin{table}[t]
-\centering\small
-\caption{Schemes, their design labels (Appendix~\ref{app:matrix}) and the hyper-parameters tuned on the validation windows.}
-\label{tab:schemes}
-\begin{tabular}{L{3.4cm}L{1.2cm}L{2.2cm}L{1.3cm}L{2.0cm}L{3.6cm}}
-\toprule
-scheme & H, R explicit & dynamics & sequential & model uncertainty & tuned (\Sz{} / \So) \\
-\midrule
-ETKF / EnKF & yes & one-step $\Mop$ & yes & inflation & $\lambda$ 1.15 / 2.5;\ 1.2 / 3.0 \\
-ETKS & yes & one-step $\Mop$ & smoother & inflation & $\lambda$ 1.15 / 2.5 \\
-Strong-4DVar & yes & $\Mop$ (hard) & cycled & none & --- \\
-Weak-4DVar & yes & $\Mop$ + $\mathbf{Q}$ & cycled & $\mathbf{Q}$ & $q$ 0.03 / 0.3; 40 L-BFGS iterations \\
-DirectUNet & no & none & window & training spread & --- \\
-VanillaCFM, PredictStateCFM & no & none & window & training spread & --- \\
-SDA1 / SDA2 / SDA3-fix & yes & learned window & window & spread / $\thv$ / noisy $\thv$ & guidance weight 25 \\
-hybrid & yes & learned window & window & noisy $\thv$ & $\tau_0$ 0.1, guidance 2 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsection{Model-based DA Schemes}
 
-\subsection{Matched information and tuning parity}
-\paragraph{Matched information.}
-Every main arm sees the same observations. The model-based arms receive the \Sz{}
-or \So{} model. The learned arms are trained on simulations of the true system,
-so at \So{} they are a \emph{reference bound}, not a matched competitor: they
-were never given the biased model. We call this the oracle confound and report
-the learned \So{} rows with that label. \needsrun{Learned arms trained on the
-biased model, with stated parameter uncertainty $\sigma = 0$ and 20\,\%,
-measure the value of true-system data (Sect.~\ref{sec:q2-oracle}).}
+\paragraph{Considered model-based DA baselines.}
+We report numerical experiments with both ensemble Kalman approaches and 4DVar schemes \cite{carrassi_data_2018}:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Ensembles Kalman schemes.} We consider two ensemble filters, namely 
+  an Ensemble Transform Kalman Filter (ETKF) \cite{bishop_adaptive_2001,hunt_efficient_2007} and an Enesemble Kalman Filter (EnKF) \cite{evensen_data_2009}, and one ensemble smoother, the smoother version of the ETKF \cite{bishop_adaptive_2001,hunt_efficient_2007}. As a default configuration, we run all ensemble schemes use 30 members. We also run a 100-member ETKS as a sensitivity row.
+  \item \textbf{4D-Var schemes.} we consider both weak-constraint and strong-constraint 4DVar schemes, referred to respectively as Strong-4DVar and Weak-4DVar. They use L-BFGS optimizer and are cycled over sub-windows. The weak-constraint version adds a whitened model-error control at every step, of scale $q$ times the climatological
+  spread~\cite{tremolet_accounting_2006}.
+\end{itemize}
 
-\paragraph{Tuning parity.}
-Every inference hyper-parameter is tuned on 50 validation windows disjoint from
-the test windows, with one value per case (Appendix~\ref{app:tuning}):
+\paragraph{Tuning model-based DA hyper-parameters.} All DA hyper-parameters are selected on 50 validation windows, drawn with seeds
+disjoint from the training and test sets, by sweeping each parameter and
+retaining the value that minimises the RMSE. For each hyper-parameter, we select
+a single value per experiment (\Sz{} and \So{}), shared by the regular and random
+observing systems. When the two observing systems favour different values, we
+keep the one with the smallest worst-case RMSE increase relative to the optimum
+of each observing system:
 \begin{itemize}[leftmargin=*,nosep]
-  \item ETKF / EnKF / ETKS inflation (re-selected for the 100-member rows);
-  \item the Weak-4DVar model-error scale and L-BFGS budget;
-  \item the SDA guidance weight;
-  \item the hybrid's start time and guidance.
+  \item Regarding Ensemble Kalman schemes, the multiplicative inflation $\lambda$ of
+    the analysis anomalies is swept over $\lambda \in [1, 5]$ (13 to 17 values).
+    The selected values are $\lambda = 1.15$ (\Sz) and $2.5$ (\So) for the ETKF,
+    and $\lambda = 1.2$ and $3.0$ for the EnKF. These choices cost at most 4.5\,\%
+    in RMSE relative to the optimum of each observing system. The ETKS uses the
+    inflation of its ETKF filter pass; a separate sweep for the smoother
+    ($\lambda \in [1, 3]$) selects nearly the same values ($1.1$ and $2.5$).
+    For the 100-member ETKS, the inflation is re-selected with the same
+    protocol ($\lambda = 1.05$ and $2.5$).
+  \item  Regarding  4D-Var schemes, the L-BFGS budget is first increased from 10 to
+    40 iterations per sub-window, the smallest budget at which the
+    strong-constraint solution converges (validation RMSE 0.721 at 10 iterations
+    vs 0.545 at 40 at \Sz). For Weak-4DVar, the model-error scale is then swept
+    over $q \in \{0.003, 0.01, 0.03, 0.1, 0.3, 1\}$ at 40 iterations, giving
+    $q = 0.03$ at \Sz{} and $q = 0.3$ at \So{}.
+\end{itemize}
+These sweeps also characterise how the schemes respond to model error.
+At \Sz{}, the optimal inflation is close to one and the optimal model-error scale
+is small: Weak-4DVar then performs on par with Strong-4DVar.
+At \So{}, both increase by an order of magnitude ($\lambda$ from about 1.2 up to 2.5--4,
+$q$ from 0.03 to 0.3). On the regular observing system, the RMSE-optimal ETKF
+inflation at \So{} even yields an over-dispersed ensemble (spread--skill ratio
+1.17): in that regime, inflation lowers the RMSE by increasing the weight given to
+the observations rather than by representing the model error. 
+
+
+\subsection{Neural Schemes}\label{sec:neural}
+
+\paragraph{Shared backbone.}
+All learned schemes rely on the same neural architecture, a one-dimensional
+U-Net~\cite{ronneberger_u-net_2015} along the time axis of the assimilation
+window, built from the diffusion U-Net of the MONAI library~\cite{cardoso_monai_2022}.
+The 24 observed channels of the state are the input channels, and the network
+processes the full 3000-step window. The encoder has three resolution levels with
+64, 128 and 256 channels and two residual blocks per level, with group
+normalisation (32 groups), dropout 0.1 and no attention layers, for 5.9\,M
+parameters. The observations, with zeros at unobserved times and channels, are
+concatenated to the input as additional channels, together with the
+window's parameters $\thv$ and forcing for the schemes that use them. The
+flow time $\tau$ enters every residual block through a sinusoidal embedding;
+D-Unet uses it with $\tau = 0$ and a zero state input.
+Using one backbone at a fixed size for all schemes ensures that the differences
+between learned schemes come from what they learn (a state, a posterior, a prior)
+and from how they are sampled, not from the network capacity.
+
+\paragraph{Benchmarked neural schemes.} We consider the following neural schemes in our experiments:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Deterministic UNet (D-Unet).} A deterministic Unet mapping the  observations to the state over the window, trained by regression on the true states, with a mean-squared    loss plus $0.1\times$ the mean-squared error of the time increments. It estimates  the conditional mean and returns no uncertainty.
+  \item \textbf{Conditional flow matching (CFM).} CFM learns the posterior
+    $p(\xv_1 \mid \yv)$ along the linear path~\eqref{eq:path}, with source
+    $\xv_0 \sim \mathcal{N}(0, 0.5^2 I)$, by regressing the velocity
+    $\xv_1 - \xv_0$ \cite{lipman_flow_2023,albergo_stochastic_2025}. The
+    observations enter only as a conditioning input.
+  \item \textbf{Score-based DA (SDA).} Following~\cite{rozet_score-based_2023}, SDA
+    learns a prior on the window states and combines it with an explicit Gaussian
+    likelihood ($\mathbf{R} = 0.5\,I$) at sampling time. The prior is learned by flow
+    matching with the same backbone. We consider three versions of the prior: an unconditional prior (SDA1), a prior conditioned by model parmaters and forcings trained with only true model parameters and forcings (SDA2), the same architecture trained with noisy model parameters and forcings (SDA3). At inference time, SDA comes to leverage the available observations at each integration time step through a correction term of the prior score  by the gradient of the observation misfit of the predicted endpoint, scaled by a guidance weight  \cite{chung_diffusion_2022}.
+  \item \textbf{Hybrid (D-Unet+SDA).} The hybrid scheme combines the amortised mean of a D-Unet with the explicit likelihood and prior of an SDA guided sampler. We start the SDA sampling from a noised version of the D-Unet estimate with a given $\tau$ value (e.g., $\tau_0 = 0.1$), instead of from pure noise. On QG, the guided sampler started from pure noise does not reach a competitive estimate (validation score 0.32, against 0.85 for D-Unet), so that SDA is only reported in this composed form there. 
 \end{itemize}
 
-\subsection{Estimating the terms of the chain}
-There is no true posterior, so each term is measured by a contrast that moves
-one link of the chain at a time (Table~\ref{tab:estimators}).
+\paragraph{Training setup.}
+All learned schemes are trained with the same procedure, on simulations of the
+true system (Sect.~\ref{sec:testbeds}):
+\begin{itemize}[leftmargin=*,nosep]
+  \item 1000 training and 100 validation windows of 3000 steps, each with its own
+    parameters $\thv$ (20\,\% spread around nominal) and stochastic forcing;
+  \item a random observing system redrawn with fresh observation noise at every batch:
+    observations at stratified random positions covering the test observing systems;
+  \item per-channel standardisation of the states;
+  \item Adam, learning rate $10^{-3}$ with cosine annealing, batch size 16,
+    gradient clipping at 10, 1200 epochs;
+  %\item 3 seeds per scheme, whose results are averaged per test window.
+\end{itemize}
 
-\begin{table}[t]
-\centering\small
-\caption{How each term of~\eqref{eq:chain0} and~\eqref{eq:chaintau} is estimated.}
-\label{tab:estimators}
-\begin{tabular}{L{3.4cm}L{10.4cm}}
-\toprule
-term & estimator \\
-\midrule
-irreducible & upper-bounded by the best scheme at each $\tau$; no lower bound \\
-restriction (filtering) & filter vs smoother on one ensemble realisation, with the identity of Sect.~\ref{sec:fms} \\
-restriction (context) & SDA1 vs SDA2 / SDA3-fix ($\thv$); \needsrun{SDA $\pm$ forcing; DirectUNet $\pm (\thv, \zv)$} \\
-approximation & ensemble size (30 vs 100); L-BFGS iterations (10 vs 40); training budget (400 vs 1200 epochs) and data (1000 vs 3000 windows) \\
-misspecification & \Sz{} vs \So{} at a fixed scheme; \needsrun{$\delta$ sweep}; model-uncertainty arms (Weak-4DVar $\mathbf{Q}$, SDA3-fix, \needsrun{perturbed-parameter ETKF}) \\
-\bottomrule
-\end{tabular}
-\end{table}
+\paragraph{Inference.}
+CFM draws 30 members per window by integrating the flow ODE with
+10 Euler steps from independent draws of $\xv_0$. SDA and D-Unet+SDA
+draw 30 members with 10 guided steps. D-Unet is evaluated with a single
+forward pass. For schemes truely using model parameters and forcings at inference time, 
+they receive are true model parameters and forcings at \Sz{} and noisy ones at
+\So{}, as the model-based schemes do.
 
-\subsection{Scores}
-We report the per-window RMSE on the 24 observed channels (the channel-averaged
-RMSE over time, averaged over windows) and the pooled spread/skill. We also report
-$\FMS_\tau$ at $\tau \in \{0, 0.25, 0.5, 0.75\}$ and its uniform-$d\tau$
-integral, in the Gaussian form for every scheme and a kernel-density form for the
-sample-based ones. $\FMS$ is averaged over four draws of $\xv_0$ with common
-random numbers across schemes. Uncertainties are 95\,\% window-bootstrap intervals
-and paired tests; seed-to-seed spreads are given separately.
+\paragraph{Tuning.}
+The training settings are fixed, and only the inference hyper-parameters of the
+guided schemes are tuned, on 50 validation windows distinct from the test windows,
+with the same RMSE criterion as for the DA schemes. The SDA guidance weight is
+set to \todo{20/25}, which is worth about 8\,\% in RMSE over the untuned value.
+For D-Unet+SDA, the start time and the guidance weight are set to $\tau_0 = 0.1$
+and 2. D-Unet and CFM have no inference hyper-parameter.
+
+
+\subsection{Evaluation metrics}\label{sec:scores}
+To compare schemes across the three case studies, whose variables have different
+units and variability, we report normalised skill scores. Each score $S$ is
+compared with that of a climatological reference forecast, which issues the
+climatological distribution of each variable --- mean $\mu_c$, variance
+$\sigma_c^2$ --- whatever the observations, and is rescaled as
+\begin{equation}\label{eq:skill}
+  \mathrm{Skill}(S) = 1 - \frac{S(q)}{S(\text{clim})},
+\end{equation}
+so that $1$ is a perfect estimate, $0$ is no better than climatology and negative
+values are worse than climatology. Skill scores are computed per variable and then
+averaged:
+\begin{itemize}[leftmargin=*,nosep]
+  \item L63: the three variables;
+  \item L96: the 24 observed channels (8 slow, 16 fast);
+  \item QG: the two streamfunction layers $\psi_1$ and $\psi_2$ (``mean $\psi$'').
+\end{itemize}
+Scores are computed at every time step $t = 1, \dots, T$ of the $W$ test windows
+$w = 1, \dots, W$ ($W = 200$ for L63 and L96, $100$ for QG), for every observing system.
+We denote by $\xv^\star_w(t) \in \mathbb{R}^n$ the true state at time $t$ of window $w$,
+restricted to the $n$ evaluated variables ($n = 3$ for L63, $24$ for L96, the two $\psi$
+layers on the $64 \times 64$ grid for QG), by $\hat\xv_w(t)$ the estimate of a scheme ---
+the ensemble mean for sample-based schemes, the analysis trajectory for deterministic
+ones (Strong- and Weak-4DVar, D-Unet) --- and by $\xv^{(i)}_w(t)$, $i = 1, \dots, N$,
+the members of an ensemble. Subscript $j = 1, \dots, n$ denotes a component, e.g.
+$x^\star_{w,j}(t)$, and $\mu_{c,j}$, $\sigma_{c,j}^2$ are the climatological mean and
+variance of component $j$. For QG, the average over the $n$ components is taken within
+each layer and then over the two layers. Three skill scores are reported: the explained
+variance (EV) for the mean, the CRPS skill score (CRPSS) for the marginal
+distributions, and the flow-matching skill score (FMSS$_\tau$) for the posterior at
+every $\tau$.
+
+\paragraph{Mean component: explained variance.}
+The accuracy of the state estimate is measured by the explained variance, the
+skill score~\eqref{eq:skill} of the mean-squared error with the climatological mean
+as reference,
+\begin{equation}\label{eq:ev}
+  \mathrm{EV} = \frac{1}{n}\sum_{j=1}^{n}
+  \Big(1 - \frac{1}{\sigma_{c,j}^2}\,\frac{1}{WT}\sum_{w=1}^{W}\sum_{t=1}^{T}
+  \big(\hat x_{w,j}(t) - x^\star_{w,j}(t)\big)^2\Big).
+\end{equation}
+$\mathrm{EV} = \mathrm{FMSS}_0$ (property (i) of Sect.~\ref{sec:fms}). For L96, we also
+give the per-window RMSE in physical units,
+$\mathrm{RMSE} = \frac{1}{W}\sum_{w=1}^{W}\frac{1}{n}\sum_{j=1}^{n}
+\big(\frac{1}{T}\sum_{t=1}^{T} (\hat x_{w,j}(t) - x^\star_{w,j}(t))^2\big)^{1/2}$,
+which the sensitivity analyses of the appendix use.
+
+\paragraph{Spread--skill ratio.}
+For schemes that report an uncertainty, we use the pooled ratio
+\begin{equation}\label{eq:ss}
+  \mathrm{SS} = \bigg(\frac{\sum_{w,t,j} v_{w,j}(t)}
+  {\sum_{w,t,j} \big(\hat x_{w,j}(t) - x^\star_{w,j}(t)\big)^2}\bigg)^{1/2},
+\end{equation}
+with $v_{w,j}(t)$ the ensemble variance of component $j$ (unbiased estimate over the $N$
+members, or the reported analysis variance)
+\cite{leutbecher_ensemble_2008,fortin_why_2014}. A calibrated $N$-member ensemble has
+$\mathrm{SS} = \sqrt{N/(N+1)} \approx 0.98$ for $N = 30$; $\mathrm{SS} < 1$ flags
+over-confidence. As shown in Sect.~\ref{sec:fms}, $\mathrm{SS}$ is the
+homogeneous-spread, small-$\tau$ limit of the spread-calibration
+diagnostic~\eqref{eq:calib_loss}.
+
+\paragraph{Marginal distributions: CRPS skill score.}
+As a marginal check on the uncertainty, we use the continuous ranked probability
+score of the members for each component \cite{gneiting_strictly_2007},
+\begin{equation}\label{eq:crps}
+  \mathrm{CRPS}_{w,j}(t) = \frac{1}{N}\sum_{i=1}^{N} \big|x^{(i)}_{w,j}(t) - x^\star_{w,j}(t)\big|
+  - \frac{1}{2N^2}\sum_{i,k=1}^{N} \big|x^{(i)}_{w,j}(t) - x^{(k)}_{w,j}(t)\big| ,
+\end{equation}
+and its skill score~\eqref{eq:skill},
+\begin{equation}\label{eq:crpss}
+  \mathrm{CRPSS} = \frac{1}{n}\sum_{j=1}^{n}
+  \Big(1 - \frac{1}{\mathrm{CRPS}_{c,j}}\,\frac{1}{WT}\sum_{w=1}^{W}\sum_{t=1}^{T}
+  \mathrm{CRPS}_{w,j}(t)\Big).
+\end{equation}
+The reference is the expected CRPS of the climatological distribution of component $j$,
+$\mathrm{CRPS}_{c,j} = \tfrac12\,\E|X_j - X'_j|$ with $X_j, X'_j$ independent
+climatological draws ($\sigma_{c,j}/\sqrt{\pi}$ for a Gaussian climatology), estimated
+from the test truths. The CRPS is strictly proper for the
+marginal distributions only. It reduces to the mean absolute error for a deterministic
+estimate, whose CRPSS is therefore an MAE skill score, reported in parentheses and not
+ranked against the ensembles.
+\needsrun{CRPS of the ETKF and ETKS from re-runs that store the members; the
+benchmark files keep only the mean and variance.}
+
+\paragraph{Posterior: flow-matching skill score.}
+We report $\FMS_\tau$~\eqref{eq:fms} at $\tau \in \{0, 0.25, 0.5, 0.75\}$, computed in
+standardised units (per-variable $z$-scores with the climatological mean and standard
+deviation), and its skill score
+\begin{equation}\label{eq:fmss}
+  \mathrm{FMSS}_\tau = \frac{1}{n}\sum_{j=1}^{n}
+  \Big(1 - \frac{\FMS_{\tau,j}(q)}{\FMS_{\tau,j}^{\mathrm{clim}}}\Big),
+  \qquad
+  \FMS_{\tau,j}^{\mathrm{clim}} = \frac{\sigma_{c,j}^2}{1+\alpha_\tau\,\sigma_{c,j}^2},
+\end{equation}
+with $\FMS_{\tau,j}$ the contribution of component $j$ to the score, averaged over
+windows and times; in standardised units, $\FMS_{\tau,j}^{\mathrm{clim}} = 1/(1+\alpha_\tau)$.
+The reference is the Gaussian form~\eqref{eq:fms_gauss_eig} of the climatological
+forecast, with mean $\mu_{c,j}$ and variance $\sigma_{c,j}^2$: since
+$\E(\mu_{c,j} - x^\star_{w,j}(t))^2 = \sigma_{c,j}^2$, it holds whatever the distribution
+of the truth. $\mathrm{FMSS}_0 = \mathrm{EV}$, so that
+$\mathrm{FMSS}_\tau$ extends the explained variance of the mean to the reported
+uncertainty on the same scale; for $\tau > 0$ its maximum is below $1$, set by the
+irreducible term $\mathrm{mmse}_p(\tau)$. Larger values of $\tau$ are dominated by the
+scheme-independent floor of order $1/\alpha_\tau$, so that $\tau \in [0.25, 0.75]$ is
+the informative range. Two forms are computed:
+\begin{itemize}[leftmargin=*,nosep]
+  \item the Gaussian form~\eqref{eq:fms_gauss_eig} with diagonal covariance, for
+    every scheme: from the reported mean and variance for the ETKF, EnKF and ETKS,
+    from the member mean and variance for the sample-based schemes, and with
+    $v = 0$ for deterministic schemes, whose score is their mean-squared error at
+    every $\tau$ (property (iv));
+  \item the ensemble form~\eqref{eq:fms_mix}, with the Silverman bandwidth
+    of~\eqref{eq:shape_gain}, for the schemes that output members ($N = 30$).
+\end{itemize}
+Unless stated, the score is evaluated per element and pooled over windows, times and
+channels, with four draws of $\xv_0$ per element. As a check of the dependence
+structure, the sliced version uses 64 random directions per 24-channel snapshot and per
+space--time patch (24 channels $\times$ 5 times, 25 steps apart, one patch every 100
+steps), on times sub-sampled every 10 steps. For a projection $\mathbf{u}^\top\xv_1$, the climatological
+variance in~\eqref{eq:fmss} is $\mathbf{u}^\top\boldsymbol{\Sigma}_c\mathbf{u}$, with
+$\boldsymbol{\Sigma}_c$ the climatological covariance of the patch. The draws of $\xv_0$ and of the directions
+are common random numbers: they are seeded by the test item and shared by all schemes.
+The degeneracy of the weights in~\eqref{eq:fms_mix} is monitored by the effective sample
+size $\mathrm{ESS} = 1/\sum_i w_i^2$. For the
+filter--smoother pair, the restriction identity~\eqref{eq:restriction_identity} at
+$\tau = 0$ is tested by comparing the gap of mean-squared errors with the gap of
+reported variances, $\frac{1}{WTn}\sum_{w,t,j}\big(v^{q'}_{w,j}(t) - v^{q}_{w,j}(t)\big)$,
+and with the mean shift
+$\frac{1}{WTn}\sum_{w,t,j}\big(\hat x^{q}_{w,j}(t) - \hat x^{q'}_{w,j}(t)\big)^2$, both
+computed on the same ensemble realisation.
+
+\paragraph{Posterior diagnostics: calibration and shape.}
+Two diagnostics introduced in Sect.~\ref{sec:fms} complement $\mathrm{FMSS}_\tau$ for the
+schemes that report an uncertainty. Both are ratios of a scheme's own scores, computed
+in standardised units and pooled over windows, times and variables before the ratio is
+taken. They are therefore dimensionless and comparable across case studies, but they are
+shares of the scheme's own score, not skill scores with respect to climatology, and we
+report them in percent.
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{$\tau$-resolved spread--skill ratio.} From the optimal inflation factor
+    $c^\star(\tau)$ of~\eqref{eq:calib_loss}, we define
+    $\mathrm{SS}_\tau = 1/\sqrt{c^\star(\tau)}$: 1 for a calibrated scheme, below 1 for an
+    over-confident one and above 1 for an under-confident one. By the small-$\tau$
+    expansion~\eqref{eq:cstar_small_tau}, it tends to the pooled spread--skill ratio as
+    $\tau \to 0$ for a homogeneous spread, so that the $\tau = 0$ value of the curve is
+    $\mathrm{SS}$~\eqref{eq:ss}. $\mathrm{SS}_\tau = 1$ means that no uniform rescaling of
+    the reported variance improves the score, not that the scheme is calibrated everywhere.
+  \item \textbf{Calibration loss.} $L_\tau$~\eqref{eq:calib_loss} is the
+    share of the Gaussian score that the best scalar rescaling $c\,\boldsymbol{\Sigma}_q$
+    of the reported (diagonal) covariance would remove. A single factor $c$ is used for
+    all windows, times and variables of a scheme, searched over log-spaced values (41 in
+    $[1/8, 8]$ for L96, 49 in $[1/16, 16]$ for QG); the optimum $c^\star(\tau)$ is the inflation ($c^\star > 1$, over-confident)
+    or deflation ($c^\star < 1$) that would calibrate the scheme. When $c^\star$ reaches
+    the edge of the grid, $L_\tau$ is a lower bound. $L_0 = 0$ by construction, and the
+    pooled spread--skill ratio is the small-$\tau$ limit of $c^\star$
+    (Sect.~\ref{sec:fms}).
+  \item \textbf{Non-Gaussian shape diagnostic.} $G_\tau$~\eqref{eq:shape_gain} compares
+    the ensemble form of the score, with the Silverman kernel density of the members, to
+    the Gaussian form with the same mean and the same variance $v + h^2$. $G_\tau > 0$
+    when the shape of the members carries information on the truth beyond their mean and
+    variance, $G_\tau < 0$ when it is misleading. It requires members, so it is not
+    available for the schemes that only store a mean and a variance. $G_0 = 0$ by
+    construction.
+\end{itemize}
+We report $\mathrm{SS}_\tau$ and $G_\tau$ along $\tau$ (Figs.~\ref{fig:ss-tau}
+and~\ref{fig:g-tau}); $L_\tau$ quantifies the corresponding loss of score.
+
+\paragraph{Uncertainty of the estimates.}
+Every metric is stored per window. Learned schemes are trained with three seeds; their
+scores are averaged over seeds per window, and the seed-to-seed range is given
+separately. We report 95\,\% intervals from a 2000-replicate window bootstrap.
+Differences between schemes are paired, by bootstrapping the per-window differences,
+since all schemes are scored on the same windows, observations and draws. The DA
+ensembles are not seeded: two realisations of the L96 ETKS differ by about 2\,\% in RMSE at
+\Sz{}, a realisation noise that the window bootstrap does not include.
