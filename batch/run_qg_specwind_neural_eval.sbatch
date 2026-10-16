@@ -15,14 +15,16 @@
 #     sbatch batch/run_qg_specwind_neural_eval.sbatch
 # Output: experiments/qg_specwind_da/<SPEC>/<SPLIT>/neural_<TAG>_<INTERP>_N<N>/shard_0_of_1_meta.json,
 # where the gyrostat DA report reads its rows. SDA priors (G3): GW = guidance weight (L2 step over
-# one window's normalized state), SDA_STEPS = guided Euler steps; put the GW in TAG.
+# one window's normalized state), SDA_STEPS = guided Euler steps (default 100 published, 10
+# normalized); put the GW in TAG. SDA_SAMPLER (default auto) picks the SDA sampler: SDA as published
+# (Rozet & Louppe 2023: GAMMA default 0.01, NCORR Langevin steps, LMC_TAU; OBS_SIGMA defaults to the obs
+# noise fraction) from pure noise, the normalized-guidance one (GW) with WARM; PUBLISHED=1/0 forces it.
 # S1=1 scores on the realistic-S1 observations (the DA S1 rows' exact altimetry-error draws).
 # WARM=<DirectUNet run dir> warm-starts the SDA members from that run's estimate at flow time
 # TAU0 (default 0.5); put both in TAG. WARM_FULL=1 runs a length-agnostic warm-start network (G1-3D)
 # on the whole window instead of stitching it over its training window. FULL=1 runs a length-agnostic (3D) prior on the whole
 # window instead of composing it over its training window. GSCHED=linear-decay makes the SDA
-# guidance weight 2 GW (1 - tau) instead of constant. PUBLISHED=1 uses the SDA paper's guidance from
-# pure noise (GAMMA, NCORR Langevin steps, LMC_TAU; OBS_SIGMA defaults to the obs noise fraction).
+# guidance weight 2 GW (1 - tau) instead of constant.
 # FMPOST=1 samples with evaluation/fm_posterior_sampler.py (FMG guidance, FMW weight, FMGAMMA EM noise,
 # R_NORM obs-error variance in normalized units, OBS_PERT perturbed-obs starts, INFL inflation).
 # SHARD/N_SHARDS (default 0/1) score one shard of the windows (shard_<SHARD>_of_<N_SHARDS>, like the DA rows).
@@ -33,15 +35,16 @@ NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}"; mkdir -p "$NODE_TMP" 2>/dev
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
 : "${RUN_DIR:?set RUN_DIR}" "${TAG:?set TAG}"
 SPEC="${SPEC:-qg_specwind_gyrostat_v1}"; SPLIT="${SPLIT:-test}"; N="${N:-30}"; INTERP="${INTERP:-cubic}"
-COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; GW="${GW:-100}"; SDA_STEPS="${SDA_STEPS:-10}"; S1="${S1:-0}"
+COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; GW="${GW:-100}"; S1="${S1:-0}"
+case "${PUBLISHED:-}" in 1) SDA_SAMPLER=published ;; 0) SDA_SAMPLER=normalized ;; *) SDA_SAMPLER="${SDA_SAMPLER:-auto}" ;; esac
 SHARD="${SHARD:-0}"; N_SHARDS="${N_SHARDS:-1}"
 ROOT="${ROOT:-/Odyssey/private/rfablet/Python/4dvarnet-fm-opencode/experiments/qg_datasets}"
 OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/neural_${TAG}_c${COLS}_${INTERP}_N${N}$([ "$S1" = 1 ] && echo "_k1_rbase" || true)/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_neural --run-dir "$RUN_DIR" --spec "$SPEC" --root "$ROOT" \
   --split "$SPLIT" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" --cols-per-day "$COLS" --n-members "$N" \
-  --interp "$INTERP" --guidance-weight "$GW" --sda-steps "$SDA_STEPS" --guidance-schedule "${GSCHED:-constant}" \
-  $([ "${PUBLISHED:-0}" = 1 ] && echo "--sda-published --gamma ${GAMMA:-0.1} --n-corrector ${NCORR:-1} --lmc-tau ${LMC_TAU:-0.1}" || true) ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} \
+  --interp "$INTERP" --guidance-weight "$GW" ${SDA_STEPS:+--sda-steps "$SDA_STEPS"} --guidance-schedule "${GSCHED:-constant}" \
+  --sda-sampler "$SDA_SAMPLER" --gamma "${GAMMA:-0.01}" --n-corrector "${NCORR:-1}" --lmc-tau "${LMC_TAU:-0.1}" ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} \
   $([ "${FMPOST:-0}" = 1 ] && echo "--fm-posterior --fm-guidance ${FMG:-dps} --fm-weight ${FMW:-1} --fm-gamma ${FMGAMMA:-0.5} --obs-pert ${OBS_PERT:-0} --inflation ${INFL:-1}" || true) ${R_NORM:+--r-norm "$R_NORM"} $([ "$S1" = 1 ] && echo "--s1" || true) \
   ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${WARM_FULL:-0}" = 1 ] && echo "--warm-full-window" || true) $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
   --out "$OUT" --device cuda

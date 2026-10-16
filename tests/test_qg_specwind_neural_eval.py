@@ -232,6 +232,24 @@ def test_published_sda_refuses_a_warm_start():
                          mean_estimate=torch.zeros(batch.obs.shape), published=PublishedSDA())
 
 
+def test_sda_sampler_auto_is_published_from_noise_and_normalized_with_a_warm_start():
+    from evaluation.run_qg_specwind_neural import SDA_DEFAULT_STEPS, resolve_sda_sampler
+    assert resolve_sda_sampler("auto", warm_start=False, fm_posterior=False) == "published"
+    assert resolve_sda_sampler("auto", warm_start=True, fm_posterior=False) == "normalized"
+    assert resolve_sda_sampler("auto", warm_start=False, fm_posterior=True) == "normalized"
+    assert resolve_sda_sampler("normalized", warm_start=False, fm_posterior=False) == "normalized"
+    with pytest.raises(ValueError):
+        resolve_sda_sampler("published", warm_start=True, fm_posterior=False)
+    with pytest.raises(ValueError):
+        resolve_sda_sampler("bogus", warm_start=False, fm_posterior=False)
+    assert SDA_DEFAULT_STEPS == {"published": 100, "normalized": 10}
+
+
+def test_published_sda_defaults_are_the_validated_qg_setting():
+    from evaluation.run_qg_specwind_neural import PublishedSDA
+    assert (PublishedSDA().gamma, PublishedSDA().n_corrector, PublishedSDA().lmc_tau) == (0.01, 1, 0.1)
+
+
 def test_fm_posterior_members_on_a_composed_prior_and_inflation():
     from evaluation.run_qg_specwind_neural import ComposedFlow, FMPosterior, fm_posterior_members
     from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime

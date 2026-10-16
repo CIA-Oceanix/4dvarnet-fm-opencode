@@ -1,0 +1,12 @@
+## 2026-10-16: SDA as published — shared sampler, QG default, L96 harness method
+
+**Summary:** The SDA-as-published sampler (Rozet & Louppe 2023: noise-aware likelihood variance R + γ((1−τ)σ_p/τ)², Langevin corrector, from pure noise) moves out of the QG evaluation into `evaluation/published_sda.py`, now shared by QG and L96. On QG it becomes the default SDA sampler from noise (`--sda-sampler auto`: published from noise, the normalized-guidance sampler with a warm start), with the validated setting γ 0.01, 100 steps, 1 corrector (the old `--gamma` default 0.1 diverged). On L96 it is an opt-in harness method `PUB` (γ 3e-4, 100 steps, 1 corrector; validation γ 1e-3 and 3e-4 tie); the L96 SDA benchmark rows are unchanged.
+**Files modified:**
+- `evaluation/published_sda.py` — new: `published_sda_sample` (element-wise obs mask, NaN obs ignored, scalar or per-channel obs-error variance), `nfe_per_member`
+- `evaluation/run_qg_specwind_neural.py` — `published_sda_members` delegates to it (same arithmetic, bit-identical for QG); `PublishedSDA.gamma` 0.1 → 0.01; `--sda-published` replaced by `--sda-sampler {auto,published,normalized}` (default auto) via `resolve_sda_sampler`; `--sda-steps` defaults to 100 published / 10 normalized; the run meta records `sda.sampler`
+- `batch/run_qg_specwind_neural_eval.sbatch` — `SDA_SAMPLER` (default auto; `PUBLISHED=1/0` forces published/normalized), `GAMMA` default 0.01, `SDA_STEPS` default from the sampler
+- `eval_fdv_fm_posterior_l96.py` — method `PUB`
+- `tests/test_published_sda.py` (new), `tests/test_qg_specwind_neural_eval.py`, `tests/test_posterior_scores.py`
+**Rationale:** The normalized-guidance sampler is not SDA as published, and from noise it scores far below it (QG S0 test 0.36 → 0.881; L96 regular S0 val RMSE 0.469 → 0.302, spread/error 0.58 → 0.94), so it made the SDA benchmark row a strawman. Warm-start rows keep the normalized sampler they were tuned with (published guidance in warm starts is a separate experiment). The NaN handling fixes a scratch L96 port that read missing random-layout channels at observed times as zero observations.
+**Behaviour change:** a QG SDA prior evaluated without `--warm-start-run` or `--fm-posterior` now samples with the published sampler and 100 steps; pass `--sda-sampler normalized` (sbatch `PUBLISHED=0`) for the old rows.
+**Verification:** `pytest -m "not slow" tests/test_published_sda.py tests/test_qg_specwind_neural_eval.py tests/test_posterior_scores.py` — 50 passed; `ruff check` on touched files clean.
