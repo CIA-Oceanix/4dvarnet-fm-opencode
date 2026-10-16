@@ -12,7 +12,8 @@
 # on both test sets (scores only):
 #  - guided SDA as B4_sda1_monaiM_ep1200_l96 (batch/run_l96_sda_ep1200.sbatch: ens30, 10
 #    steps, gw 25, r_var 0.5);
-#  - the DirectUNet hybrid at the 1D validation-selected tau0 0.1 / gw 2, with
+#  - the DirectUNet hybrid at tau0 0.1 / gw 1 (validation-selected for the DU2D-M mean) and gw 2
+#    (the 1D-mean default), with
 #    L96B_directunet2d_monaiM_seed1 (experiments/l96) as the mean.
 # Runs from the submitting worktree; resumes from checkpoints/stage1_last.ckpt if
 # resubmitted. CONFIG (default the M tier), SEED (default 1).
@@ -41,13 +42,14 @@ for TS in regular canonical; do
       --n-members 30 --n-outer 10 --r-var 0.5 --guidance-weight 25 \
       --normalize-stats $NORM --members-file scores --output "$OUT/sda_eval.json"
   fi
-  OUT=$E/hybrid_DU2dMs1_${NAME}/tau0.1_gw2
-  if [ ! -f "$OUT/hybrid_eval.json" ]; then mkdir -p "$OUT"
+  for GW in 1 2; do
+    OUT=$E/hybrid_DU2dMs1_${NAME}/tau0.1_gw$GW
+    [ -f "$OUT/hybrid_eval.json" ] && continue; mkdir -p "$OUT"
     python eval_sda_directunet_hybrid_l96.py \
       --mean-checkpoint $DU/checkpoints/stage1_best.ckpt --mean-config $DU/resolved_config.yaml \
       --sda-checkpoint $CKPT --sda-config $CFG --dataset "$DS" --num-windows 200 --batch-size 25 \
-      --n-members 30 --n-outer 10 --tau0 0.1 --guidance-weight 2 \
+      --n-members 30 --n-outer 10 --tau0 0.1 --guidance-weight $GW \
       --normalize-stats $NORM --members-file scores --output "$OUT/hybrid_eval.json"
-  fi
+  done
 done
 echo "Done: ${NAME} at $(date)"
