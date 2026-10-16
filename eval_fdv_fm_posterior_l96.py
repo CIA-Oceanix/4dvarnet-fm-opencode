@@ -5,7 +5,8 @@ Every row is scored window by window in physical units with
 ``evaluation.posterior_scores``; the output JSON keeps the per-window scores,
 the run configuration and the aggregate (never member arrays).
 
-Methods are registered by name in ``METHODS`` (``@register("NAME", **defaults)``, B1-B5 and M1/M1b/M1bI/M1c);
+Methods are registered by name in ``METHODS`` (``@register("NAME", **defaults)``, B1-B5, PUB (SDA as
+published, Rozet & Louppe 2023, from pure noise; gamma 3e-4 from the validation sets) and M1/M1b/M1bI/M1c);
 a method maps one window (a batch of size 1, normalised obs) to an ensemble
 ``(M, T, D)`` in normalised units and its NFE per member. Method arguments are
 passed as ``--args key=value,key=value``.
@@ -54,6 +55,7 @@ from data.normalization import denormalize, load_norm_stats
 from evaluation.fm_posterior_sampler import fm_posterior_sample
 from evaluation.neural_inference import BatchDict, load_checkpoint, load_model, prepare_dataset
 from evaluation.posterior_scores import aggregate, inflate, window_scores
+from evaluation.published_sda import nfe_per_member, published_sda_sample
 from evaluation.sda_sampler import sda_guided_sample
 from models.fourdvarnet import _prior_cost
 
@@ -199,6 +201,20 @@ def b4_sda(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Te
 @register("B5", tune_inflation=True, tau0=0.1, gw=2.0, n_steps=10, n_iter=10, inflation=None, inflation_from=None)
 def b5_hybrid_inflated(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
     return b3_hybrid(ctx, batch, window, args)
+
+
+@register("PUB", gamma=3e-4, n_steps=100, n_correctors=1, lmc_tau=0.1)
+def pub_sda(ctx: Context, batch: dict, window: int, args: dict) -> tuple[torch.Tensor, int]:
+    r_vec = R_VAR / ctx.norm_stats["std"].to(ctx.device) ** 2
+    out = []
+    for start, stop in chunks(ctx):
+        b = BatchDict(replicate(batch, stop - start))
+        torch.manual_seed(window_seed(ctx.seed, window, f"members/{start}"))
+        x = published_sda_sample(ctx.model("sda"), b, b.obs, b.obs_mask.unsqueeze(-1), r_vec, 1,
+                                 int(args["n_steps"]), gamma=float(args["gamma"]),
+                                 n_corrector=int(args["n_correctors"]), lmc_tau=float(args["lmc_tau"]))
+        out.append(x[0])
+    return torch.cat(out, 0), nfe_per_member(int(args["n_steps"]), int(args["n_correctors"]))
 
 
 FM_DEFAULTS = dict(tau0=0.5, gamma=0.0, guidance="pigdm", gw=1.0, n_steps=10, step_power=1.0, n_correctors=0,

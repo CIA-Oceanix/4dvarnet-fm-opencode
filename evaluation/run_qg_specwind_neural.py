@@ -213,58 +213,43 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
 
 @dataclasses.dataclass(frozen=True)
 class PublishedSDA:
-    """Guidance as in SDA (Rozet & Louppe 2023), on our linear flow x_tau = (1 - tau) x0 + tau x1,
-    x0 ~ N(0, sigma_p^2): the likelihood p(y | x_tau) ~ N(y | H x1_hat, obs_sigma^2 + gamma
-    (sigma_tau / mu_tau)^2) with sigma_tau / mu_tau = (1 - tau) sigma_p / tau, so the guidance
-    fades where x1_hat is still mostly noise; its score is added to the prior's, i.e. the
-    velocity gets + (1 - tau) sigma_p^2 / tau * grad log p(y | x_tau); `n_corrector` Langevin
-    steps (step lmc_tau / mean(score^2)) follow every Euler step. `obs_sigma` is the
-    observation-error std in the normalized psi units."""
+    """SDA as published (`evaluation.published_sda`, Rozet & Louppe 2023) from pure noise.
+    `obs_sigma` is the observation-error std in the normalized psi units; `gamma` 0.01 with 100
+    steps and one corrector is the QG setting (gamma 0.1 / 1 diverge, 30 steps are too few)."""
 
     obs_sigma: float = 0.05
-    gamma: float = 0.1
+    gamma: float = 0.01
     n_corrector: int = 1
     lmc_tau: float = 0.1
+
+
+SDA_SAMPLERS = ("auto", "published", "normalized")
+SDA_DEFAULT_STEPS = {"published": 100, "normalized": 10}
+
+
+def resolve_sda_sampler(choice: str, warm_start: bool, fm_posterior: bool) -> str:
+    """`auto`: SDA as published from pure noise, the normalized-guidance sampler (the only one
+    with a warm start) when members start from a warm-start estimate; `normalized` when the FM
+    posterior sampler is used instead (the choice is then unused)."""
+    if choice not in SDA_SAMPLERS:
+        raise ValueError(f"sda sampler must be one of {SDA_SAMPLERS}, got {choice!r}")
+    if choice == "auto":
+        return "normalized" if (warm_start or fm_posterior) else "published"
+    if choice == "published" and (warm_start or fm_posterior):
+        raise ValueError("the published-SDA sampler starts from pure noise (no warm start, no "
+                         "FM posterior)")
+    return choice
 
 
 def published_sda_members(model: torch.nn.Module, batch, n_members: int, n_steps: int,
                           opts: PublishedSDA, tau_floor: float = 1e-3) -> torch.Tensor:
     """(n_members, B, days, D) samples of the prior guided as in the SDA paper (`PublishedSDA`),
     started from pure noise."""
-    mask = batch.obs_mask.to(batch.obs.dtype)
-    sigma_p = float(model.sigma_prior)
-    dt = 1.0 / n_steps
-
-    def velocity_and_loglik_grad(x, tau):
-        with torch.enable_grad():
-            x = x.detach().requires_grad_(True)
-            t = torch.full((x.shape[0],), tau, device=x.device)
-            v = model(x, batch, t)
-            x1_hat = x + (1.0 - tau) * v
-            ratio = (1.0 - tau) * sigma_p / max(tau, tau_floor)
-            var = opts.obs_sigma ** 2 + opts.gamma * ratio ** 2
-            loglik = -0.5 * ((x1_hat - batch.obs) ** 2 * mask).sum() / var
-            grad = torch.autograd.grad(loglik, x)[0]
-        return v.detach(), grad
-
-    def one_member():
-        x = torch.randn_like(batch.obs) * sigma_p
-        for k in range(n_steps):
-            tau = k * dt
-            v, g = velocity_and_loglik_grad(x, tau)
-            x = x + dt * (v + (1.0 - tau) * sigma_p ** 2 / max(tau, tau_floor) * g)
-            tau_next = (k + 1) * dt
-            if tau_next >= 1.0:
-                continue
-            for _ in range(opts.n_corrector):
-                v, g = velocity_and_loglik_grad(x, tau_next)
-                score = -(x - tau_next * v) / ((1.0 - tau_next) * sigma_p ** 2) + g
-                delta = opts.lmc_tau / score.flatten(1).square().mean(1).clamp_min(1e-12)
-                delta = delta.view(-1, *([1] * (x.dim() - 1)))
-                x = x + delta * score + (2.0 * delta).sqrt() * torch.randn_like(x)
-        return x.detach()
-
-    return torch.stack([one_member() for _ in range(n_members)])
+    from evaluation.published_sda import published_sda_sample
+    return published_sda_sample(model, batch, batch.obs, batch.obs_mask, opts.obs_sigma ** 2,
+                                n_members, n_steps, gamma=opts.gamma,
+                                n_corrector=opts.n_corrector, lmc_tau=opts.lmc_tau,
+                                tau_floor=tau_floor)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -471,7 +456,8 @@ def main() -> None:
     p.add_argument("--s1-variant", default=REALISTIC_SELECTED, choices=sorted(REALISTIC_VARIANTS))
     p.add_argument("--guidance-weight", type=float, default=100.0,
                    help="SDA: L2 guidance step per Euler step over one window's normalized state")
-    p.add_argument("--sda-steps", type=int, default=10, help="SDA: guided Euler steps")
+    p.add_argument("--sda-steps", type=int, default=None,
+                   help="SDA: guided Euler steps (default 100 published, 10 normalized)")
     p.add_argument("--guidance-schedule", default="constant", choices=GUIDANCE_SCHEDULES,
                    help="SDA: guidance weight along the flow (linear-decay: 2 w (1 - tau))")
     p.add_argument("--warm-start-run", default=None,
@@ -481,13 +467,16 @@ def main() -> None:
     p.add_argument("--warm-full-window", action="store_true",
                    help="SDA warm start: run a length-agnostic warm-start network (G1-3D) on the "
                         "whole window instead of stitching it over its training window")
-    p.add_argument("--sda-published", action="store_true",
-                   help="SDA: guidance as in Rozet & Louppe 2023 (noise-aware likelihood variance, "
-                        "Langevin corrector), from pure noise; see --obs-sigma/--gamma/--n-corrector")
+    p.add_argument("--sda-sampler", default="auto", choices=SDA_SAMPLERS,
+                   help="SDA prior sampler: 'published' = Rozet & Louppe 2023 (noise-aware "
+                        "likelihood variance, Langevin corrector) from pure noise, see "
+                        "--obs-sigma/--gamma/--n-corrector; 'normalized' = fixed-length guidance "
+                        "step --guidance-weight; 'auto' = published from noise, normalized with "
+                        "--warm-start-run")
     p.add_argument("--obs-sigma", type=float, default=None,
                    help="published SDA: obs-error std in normalized psi units (default: "
                         "--obs-noise-frac)")
-    p.add_argument("--gamma", type=float, default=0.1, help="published SDA: gamma")
+    p.add_argument("--gamma", type=float, default=0.01, help="published SDA: gamma")
     p.add_argument("--n-corrector", type=int, default=1, help="published SDA: Langevin steps")
     p.add_argument("--lmc-tau", type=float, default=0.1, help="published SDA: Langevin step ratio")
     p.add_argument("--fm-posterior", action="store_true",
@@ -529,8 +518,10 @@ def main() -> None:
     t0 = time.time()
     rc = OmegaConf.load(os.path.join(args.run_dir, "resolved_config.yaml"))
     stride = args.window_stride or int(rc.data.get("window_stride", None) or 5)
+    sampler = resolve_sda_sampler(args.sda_sampler, bool(args.warm_start_run), args.fm_posterior)
+    sda_steps = args.sda_steps or SDA_DEFAULT_STEPS[sampler]
     published = None
-    if args.sda_published:
+    if model_type in SDA_TYPES and sampler == "published":
         published = PublishedSDA(obs_sigma=(args.obs_sigma if args.obs_sigma is not None
                                             else args.obs_noise_frac),
                                  gamma=args.gamma, n_corrector=args.n_corrector,
@@ -551,7 +542,7 @@ def main() -> None:
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
                           args.interp, args.batch_size,
                           guidance_schedule(args.guidance_weight, args.guidance_schedule),
-                          args.sda_steps,
+                          sda_steps,
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
                           full_window=args.full_window, published=published, fm_posterior=fmpost,
                           warm_full_window=args.warm_full_window)
@@ -563,7 +554,8 @@ def main() -> None:
             "window_stride": (stride if rc.data.get("train_window_days", None)
                               and not args.full_window else None),
             "full_window": args.full_window,
-            "sda": ({"guidance_weight": args.guidance_weight, "steps": args.sda_steps,
+            "sda": ({"sampler": "fm_posterior" if fmpost else sampler,
+                     "guidance_weight": args.guidance_weight, "steps": sda_steps,
                      "guidance_schedule": args.guidance_schedule,
                      "published": dataclasses.asdict(published) if published else None,
                      "fm_posterior": dataclasses.asdict(fmpost) if fmpost else None,
