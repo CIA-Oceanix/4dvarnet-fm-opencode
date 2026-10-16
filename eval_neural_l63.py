@@ -16,9 +16,12 @@ from evaluation.sda_sampler import sda_guided_sample
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXP = os.path.join(BASE, "experiments")
 OUT_DIR = os.path.join(EXP, "l63_da_table2")
-CKPT = {m: (os.path.join(EXP, f"L63B_{m}_monaiM", "checkpoints", "stage1_best.ckpt"),
-            os.path.join(EXP, f"L63B_{m}_monaiM", "resolved_config.yaml"))
-        for m in ("directunet", "vanillacfm", "sda2")}
+def checkpoints(prefix):
+    return {m: (os.path.join(EXP, f"{prefix}_{m}_monaiM", "checkpoints", "stage1_best.ckpt"),
+                os.path.join(EXP, f"{prefix}_{m}_monaiM", "resolved_config.yaml"))
+            for m in ("directunet", "vanillacfm", "sda2")}
+
+
 NORM_STATS = os.path.join(EXP, "l63_norm_stats.pt")
 METHODS = ("D-Unet", "CFM", "SDA2", "D-Unet+SDA2")
 GW_GRID = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 40.0]
@@ -82,12 +85,13 @@ def main():
     p.add_argument("--num-val", type=int, default=50)
     p.add_argument("--n-members", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=50)
+    p.add_argument("--exp-prefix", default=None, help="experiment prefix (default L63B, or L63B20 for obs interval 20)")
     p.add_argument("--out", default=OUT_DIR)
     a = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats = load_norm_stats(NORM_STATS)
-    models = {k: load_model(c, cfg, device=device)[0] for k, (c, cfg) in CKPT.items()}
+    models = {k: load_model(c, cfg, device=device)[0] for k, (c, cfg) in checkpoints(a.exp_prefix or ("L63B" if a.obs_interval == 10 else f"L63B{a.obs_interval}")).items()}
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, f"table2_l63_neural_obs{a.obs_interval}.json")
     results = json.load(open(path)) if os.path.exists(path) else {}
