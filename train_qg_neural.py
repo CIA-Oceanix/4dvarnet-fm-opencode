@@ -116,7 +116,9 @@ DEFAULT_NUM_RES_BLOCKS = 2
 # spectral-wind round 1, docs/plans/analysis/qg_specwind_neural.md): the loss is
 # the CFM velocity MSE, and the q term is applied to the endpoint estimate
 # x1_hat = x_tau + (1 - tau) v.
-FLOW_TYPES = ("vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d")
+FLOW_TYPES = ("vanilla_cfm_tchannels", "vanilla_cfm_3d", "sda_prior_tchannels", "sda_prior_3d")
+# Obs-conditioned flows: sampled from noise with the obs as network input, no guidance.
+CFM_TYPES = ("vanilla_cfm_tchannels", "vanilla_cfm_3d")
 # Unconditional priors for SDA: no obs-only estimate, scored by the guided sampler.
 SDA_TYPES = ("sda_prior_tchannels", "sda_prior_3d")
 DIRECT_TYPES = ("direct_unet", "direct_unet_tchannels", "direct_unet_3d")
@@ -183,6 +185,13 @@ def build_model(model_type: str, cfg: QGConfig, param_dim: int = 0,
                                             hidden_channels=tier, num_res_blocks=num_res_blocks,
                                             use_obs_mask=use_obs_mask, N_outer=20,
                                             sigma_prior=0.5, norm_num_groups=4)
+    if model_type == "vanilla_cfm_3d":
+        # G2-3D: the same flow on the 3D (time, ny, nx) backbone of G1-3D/G3-3D, weights shared
+        # across days; x_tau, obs and obs mask per layer are the 6 input channels.
+        from models.monai_unet_qg2d import MonaiVanillaCFM3DQG
+        return MonaiVanillaCFM3DQG(ny=cfg.ny, nx=cfg.nx, T=num_days(cfg), nlayers=2,
+                                   hidden_channels=tier, num_res_blocks=num_res_blocks,
+                                   N_outer=20, sigma_prior=0.5, norm_num_groups=8)
     if model_type == "sda_prior_tchannels":
         # G3: unconditional prior for SDA (obs enter only through guidance at
         # sampling time), same backbone and capacity.
@@ -593,7 +602,7 @@ def estimate_windows(model, windows, cfg, model_type, device, norm=None, n_membe
             batch = batch.to(device)
             if model_type in DIRECT_TYPES:
                 pred = windowed_estimate(model, batch, getattr(model, "T", batch.T), window_stride)
-            elif model_type == "vanilla_cfm_tchannels":
+            elif model_type in CFM_TYPES:
                 # Ensemble mean of n_members flow samples (one sample if 1);
                 # the benchmark ensembles (CRPS, spread) are scored by the
                 # evaluation driver, not here.
@@ -752,7 +761,7 @@ def main():
     ap.add_argument("--model-type",
                     choices=["direct_unet", "vanilla_cfm", "fourdvarnet", "direct_unet_tchannels",
                              "vanilla_cfm_tchannels", "sda_prior_tchannels", "sda_prior_3d",
-                             "direct_unet_3d"],
+                             "direct_unet_3d", "vanilla_cfm_3d"],
                     default="direct_unet")
     ap.add_argument("--exp-dir", default=None)
     ap.add_argument("--epochs", type=int, default=None)

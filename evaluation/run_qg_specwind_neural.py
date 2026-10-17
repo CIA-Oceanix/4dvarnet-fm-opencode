@@ -67,7 +67,7 @@ from evaluation.run_qg_specwind_da import (
     s0_windows,
     window_metrics,
 )
-from train_qg_neural import DIRECT_TYPES, SDA_TYPES, build_model
+from train_qg_neural import CFM_TYPES, DIRECT_TYPES, SDA_TYPES, build_model
 
 INTERP_KINDS = ("cubic", "linear")
 GUIDANCE_SCHEDULES = ("constant", "linear-decay")
@@ -114,7 +114,7 @@ def load_run(run_dir: str, cfg: QGConfig, device: torch.device) -> tuple[torch.n
     rc = OmegaConf.load(os.path.join(run_dir, "resolved_config.yaml"))
     m = rc.model
     model_type = str(m.model_type)
-    if model_type not in (*DIRECT_TYPES, "vanilla_cfm_tchannels", *SDA_TYPES):
+    if model_type not in (*DIRECT_TYPES, *CFM_TYPES, *SDA_TYPES):
         raise ValueError(f"{model_type!r} is not scored by this driver")
     days = rc.data.get("train_window_days", None)
     model_cfg = dataclasses.replace(cfg, window_days=float(days)) if days is not None else cfg
