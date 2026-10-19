@@ -187,7 +187,7 @@ def renorm_psi(psi_phys: torch.Tensor, cfg: QGConfig, norm: dict | None) -> torc
 
 def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: GuidanceWeight,
                 n_steps: int = 10, mean_estimate: torch.Tensor | None = None,
-                tau0: float = 0.0) -> torch.Tensor:
+                tau0: float = 0.0, member_starts: torch.Tensor | None = None) -> torch.Tensor:
     """(n_members, B, days, D) SDA1 samples: the unconditional prior's Euler ODE nudged by the
     normalized gradient of the observation misfit at x_hat_1 (`evaluation.sda_sampler`).
 
@@ -198,7 +198,7 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
     `guidance_weight` (an L2 step over one window's whole normalized state) matters.
     `mean_estimate` (normalized like the prior's state) warm-starts every member at flow time
     `tau0` from the interpolant between noise and that estimate (SDEdit), the remaining
-    steps guided as usual.
+    steps guided as usual; `member_starts` (B, days, D, n_members) gives each member its own.
     """
     from evaluation.sda_sampler import sda_guided_sample
     b, t, _ = batch.obs.shape
@@ -207,7 +207,7 @@ def sda_members(model: torch.nn.Module, batch, n_members: int, guidance_weight: 
     out, _ = sda_guided_sample(model, shim, R_var=1.0, N_outer=n_steps,
                                guidance_weight=guidance_weight, n_members=n_members,
                                obs_channel_mask=batch.obs_mask, mean_estimate=mean_estimate,
-                               tau0=tau0)
+                               tau0=tau0, member_starts=member_starts)
     return out[None] if n_members == 1 else out.permute(3, 0, 1, 2)
 
 
@@ -224,6 +224,7 @@ class PublishedSDA:
 
 
 SDA_SAMPLERS = ("auto", "published", "normalized")
+CFM_WARM_STARTS = ("member", "mean")
 SDA_DEFAULT_STEPS = {"published": 100, "normalized": 10}
 
 
@@ -321,20 +322,33 @@ def perturbed_obs_starts(warm_start, batch, cfg: QGConfig, norm: dict | None, n_
 
 
 @torch.no_grad()
+def cfm_warm_starts(warm_start, batch, cfg: QGConfig, norm: dict | None, n_members: int,
+                    window_stride: int, warm_full_window: bool = False) -> torch.Tensor:
+    """(B, days, D, n_members) warm starts sampled from an obs-conditioned flow (G2), composed
+    over its training window (`ComposedFlow`) unless `warm_full_window`, renormalized to `norm`."""
+    w_model, w_type, w_norm = warm_start
+    days = warm_window_days(w_model, batch.T, warm_full_window)
+    flow = w_model if days >= batch.T else ComposedFlow(w_model, batch.T, window_stride)
+    members = estimate_members(flow, w_type, batch, n_members)
+    return renorm_psi(denorm_psi(members, cfg, w_norm), cfg, norm).permute(1, 2, 3, 0)
+
+
+@torch.no_grad()
 def estimate_members(model: torch.nn.Module, model_type: str, batch, n_members: int,
                      guidance_weight: GuidanceWeight = 100.0, sda_steps: int = 10,
                      mean_estimate: torch.Tensor | None = None, tau0: float = 0.0,
-                     published: PublishedSDA | None = None) -> torch.Tensor:
+                     published: PublishedSDA | None = None,
+                     member_starts: torch.Tensor | None = None) -> torch.Tensor:
     """(n_members, B, days, D) normalized daily psi; one member for a DirectUNet."""
     if model_type in DIRECT_TYPES:
         return model(batch)[None]
     if model_type in SDA_TYPES and published is not None:
-        if mean_estimate is not None:
+        if mean_estimate is not None or member_starts is not None:
             raise ValueError("the published-SDA sampler starts from pure noise (no warm start)")
         return published_sda_members(model, batch, n_members, sda_steps, published)
     if model_type in SDA_TYPES:
         return sda_members(model, batch, n_members, guidance_weight, sda_steps, mean_estimate,
-                           tau0)
+                           tau0, member_starts)
     return torch.stack([model.sample(batch) for _ in range(n_members)])
 
 
@@ -380,14 +394,16 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
              tau0: float = 0.5, full_window: bool = False,
              published: PublishedSDA | None = None,
              fm_posterior: FMPosterior | None = None,
-             warm_full_window: bool = False) -> list[dict]:
+             warm_full_window: bool = False, cfm_warm_start: str = "member") -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
     overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
     estimates (`windowed_estimate`), a flow blends its velocity at every step
     (`ComposedFlow`), so each member stays one coherent trajectory. `warm_start`
     `(model, model_type, norm)` -- a deterministic run -- gives the SDA members their
     starting estimate at flow time `tau0`, on the whole window with `warm_full_window` (a
-    length-agnostic network such as G1-3D). `full_window` runs a network that accepts any
+    length-agnostic network such as G1-3D). An obs-conditioned flow (G2) as warm start draws
+    `n_members` samples: each member starts from its own (`cfm_warm_start` "member") or all
+    from their mean ("mean"). `full_window` runs a network that accepts any
     window length (`any_length`, the 3D prior) on the whole window instead."""
     if full_window and not getattr(model, "any_length", False):
         raise ValueError("full_window needs a network that accepts any window length")
@@ -397,8 +413,13 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
         idx = list(range(start, min(start + batch_size, len(windows))))
         batch = qg_collate([ds[i] for i in idx]).to(device)
         t_model = batch.T if full_window else getattr(model, "T", batch.T)
-        mean_estimate = None
-        if warm_start is not None:
+        mean_estimate = member_starts = None
+        if warm_start is not None and warm_start[1] in CFM_TYPES:
+            member_starts = cfm_warm_starts(warm_start, batch, cfg, norm, n_members, window_stride,
+                                            warm_full_window)
+            if cfm_warm_start == "mean":
+                mean_estimate, member_starts = member_starts.mean(-1), None
+        elif warm_start is not None:
             w_model, w_type, w_norm = warm_start
             w_est = windowed_estimate(lambda b: estimate_members(w_model, w_type, b, 1)[0], batch,
                                       warm_window_days(w_model, batch.T, warm_full_window),
@@ -412,10 +433,10 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
             if model_type not in SDA_TYPES:
                 raise ValueError("the FM posterior sampler needs an unconditional SDA prior")
             flow = model if t_model == batch.T else ComposedFlow(model, batch.T, window_stride)
-            starts = None
+            starts = member_starts
             if fm_posterior.obs_pert > 0:
-                if warm_start is None:
-                    raise ValueError("perturbed-obs starts need a warm start")
+                if warm_start is None or warm_start[1] in CFM_TYPES:
+                    raise ValueError("perturbed-obs starts need a deterministic warm start")
                 starts = perturbed_obs_starts(warm_start, batch, cfg, norm, n_members,
                                               fm_posterior.obs_pert * fm_posterior.r_norm ** 0.5,
                                               window_stride, warm_full_window)
@@ -424,7 +445,7 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
         else:
             flow = model if t_model == batch.T else ComposedFlow(model, batch.T, window_stride)
             members = estimate_members(flow, model_type, batch, n_members, guidance_weight,
-                                       sda_steps, mean_estimate, tau0, published)
+                                       sda_steps, mean_estimate, tau0, published, member_starts)
         members = members.cpu()
         for b, i in enumerate(idx):
             w = windows[i]
@@ -461,8 +482,12 @@ def main() -> None:
     p.add_argument("--guidance-schedule", default="constant", choices=GUIDANCE_SCHEDULES,
                    help="SDA: guidance weight along the flow (linear-decay: 2 w (1 - tau))")
     p.add_argument("--warm-start-run", default=None,
-                   help="SDA: a deterministic run (DirectUNet) whose estimate starts every member "
-                        "at flow time --tau0 instead of pure noise")
+                   help="SDA: a DirectUNet run whose estimate starts every member at flow time "
+                        "--tau0 instead of pure noise, or an obs-conditioned flow run (G2) whose "
+                        "samples do (--cfm-warm-start)")
+    p.add_argument("--cfm-warm-start", default="member", choices=CFM_WARM_STARTS,
+                   help="SDA warm start from a flow: each member from its own flow sample, or "
+                        "all members from the mean of n-members flow samples")
     p.add_argument("--tau0", type=float, default=0.5, help="SDA warm start: starting flow time")
     p.add_argument("--warm-full-window", action="store_true",
                    help="SDA warm start: run a length-agnostic warm-start network (G1-3D) on the "
@@ -537,15 +562,16 @@ def main() -> None:
     warm = None
     if args.warm_start_run:
         warm = load_run(args.warm_start_run, cfg, device)
-        if warm[1] not in DIRECT_TYPES:
-            raise ValueError(f"--warm-start-run must be a DirectUNet run, got {warm[1]!r}")
+        if warm[1] not in (*DIRECT_TYPES, *CFM_TYPES):
+            raise ValueError(f"--warm-start-run must be a DirectUNet or CFM run, got {warm[1]!r}")
     per_window = evaluate(model, model_type, norm, windows, cfg, device, args.n_members,
                           args.interp, args.batch_size,
                           guidance_schedule(args.guidance_weight, args.guidance_schedule),
                           sda_steps,
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
                           full_window=args.full_window, published=published, fm_posterior=fmpost,
-                          warm_full_window=args.warm_full_window)
+                          warm_full_window=args.warm_full_window,
+                          cfm_warm_start=args.cfm_warm_start)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,
@@ -562,7 +588,9 @@ def main() -> None:
                      "warm_start_run": (os.path.abspath(args.warm_start_run)
                                         if args.warm_start_run else None),
                      "tau0": args.tau0 if args.warm_start_run else None,
-                     "warm_full_window": bool(args.warm_start_run and args.warm_full_window)}
+                     "warm_full_window": bool(args.warm_start_run and args.warm_full_window),
+                     "cfm_warm_start": (args.cfm_warm_start
+                                        if warm is not None and warm[1] in CFM_TYPES else None)}
                     if model_type in SDA_TYPES else None),
             "load": report, "load_seconds": round(load_s, 1),
             "eval_seconds": round(time.time() - t0, 1), "obs_seed": OBS_SEED,
