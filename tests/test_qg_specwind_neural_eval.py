@@ -339,3 +339,35 @@ def test_warm_full_window_runs_a_length_agnostic_warm_start_once_on_the_whole_wi
 
     with pytest.raises(ValueError, match="any window length"):
         warm_window_days(FixedLength(), t, True)
+
+
+def test_member_warm_starts_at_tau0_one_return_each_members_own_start():
+    from evaluation.run_qg_specwind_neural import sda_members
+    model, batch = _sda_prior_and_batch()
+    starts = torch.randn(*batch.obs.shape, 3)
+    x = sda_members(model, batch, n_members=3, guidance_weight=5.0, n_steps=5, tau0=1.0,
+                    member_starts=starts)
+    assert torch.allclose(x, starts.permute(3, 0, 1, 2), atol=1e-6)
+    with pytest.raises(ValueError, match="members"):
+        sda_members(model, batch, n_members=2, guidance_weight=5.0, n_steps=5, tau0=1.0,
+                    member_starts=starts)
+
+
+@pytest.mark.parametrize("full_window", [False, True])
+def test_cfm_warm_starts_sample_one_start_per_member(full_window):
+    from data.qg_neural import QGBatch
+    from evaluation.run_qg_specwind_neural import cfm_warm_starts
+    from models.monai_unet_qg2d import MonaiVanillaCFM3DQG
+    torch.manual_seed(0)
+    flow = MonaiVanillaCFM3DQG(ny=16, nx=16, T=4, hidden_channels=[8, 16, 32, 32], dropout=0.0).eval()
+    flow.N_outer = 2
+    _, sb = _sda_prior_and_batch(days=6, b=1)
+    b, t, d = sb.obs.shape
+    batch = QGBatch(torch.zeros(b, t, d), sb.obs, sb.obs_mask, torch.zeros(b, t, 16, 16),
+                    torch.zeros(b, t, d), torch.full((b,), 1.5e4))
+    norm = {"mean": torch.tensor([0.5, -0.5]), "std": torch.tensor([2.0, 1.0])}
+    with torch.backends.mkldnn.flags(enabled=False):
+        starts = cfm_warm_starts((flow, "vanilla_cfm_3d", norm), batch, QGConfig(nx=16), norm, 3, 2,
+                                 warm_full_window=full_window)
+    assert starts.shape == (b, t, d, 3) and torch.isfinite(starts).all()
+    assert not torch.allclose(starts[..., 0], starts[..., 1])
