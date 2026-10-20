@@ -1,305 +1,506 @@
 \section{Results}\label{sec:results}
 
-Sections~\ref{sec:q1} and~\ref{sec:q2} give the error budget of the mean with a perfect model (Q1) and under model
-error (Q2). Sections~\ref{sec:q1-uncertainty} and~\ref{sec:q1-density} cross both cases with the uncertainty the
-schemes report and with the observing system. Section~\ref{sec:q3} addresses the structure of the prior (Q3).
-Unless stated, numbers are Lorenz-96 RMSE on the regular observing system.
-
-\subsection{Overview}\label{sec:overview}
-Table~\ref{tab:overview} gives the RMSE of every scheme in both cases and on both
-observing systems. With a perfect model, the learned schemes lead by 30 to
-45\,\%:
-\begin{itemize}[leftmargin=*,nosep]
-  \item DirectUNet 0.340 and PredictStateCFM 0.341 on the regular grid;
-  \item the best DA scheme, the ETKS, 0.497;
-  \item Strong-4DVar, which assimilates with the true equations, 0.703.
-\end{itemize}
-The following subsections ask where the DA deficit comes from, with a perfect model and then under model
-error, and whether the form of the prior matters.
+This section reports the experiments conducted on the three case studies, namely Lorenz-63, Lorenz-96 and QG ocean dynamics, introduced in Section~\ref{sec:testbeds}.
+Section~\ref{sec:q1} gives the error budget with a perfect model,
+and Sect.~\ref{sec:q2} its change under model error. Section~\ref{sec:q1-uncertainty}
+focuses on uncertainty quantification with the flow-matching score introduced in Section~\ref{sec:fms}. We further analyse the sensitivity to the structure of the prior and to the observing system in Sections~\ref{sec:q3} and~\ref{sec:q1-density}.
 
 \begin{table}[t]
 \centering\small
-\caption{RMSE on the 24 observed channels, 200 test windows; learned rows: 1200 epochs, 3 seeds pooled per window. The italic row is a sensitivity row. Sources: \texttt{reports/l96/outputs/p1\_l96\_benchmark.md}, \texttt{docs/results/l96\_weak4dvar.md}.}
-\label{tab:overview}
-\begin{tabular}{lcccc}
+\setlength{\tabcolsep}{4pt}
+\caption{\textbf{Perfect-model experiment (\Sz).} Explained variance (EV) and CRPS skill score
+(CRPSS) against climatology (Sect.~\ref{sec:scores}; $1$ is perfect, $0$ is
+climatology). L96: 24 observed channels, regular observing system, 200 test windows;
+learned rows averaged over 3 seeds. QG: mean over $\psi_1, \psi_2$, 3 altimetry columns
+per day, 100 test windows; DA ensembles with $N = 80$ members, learned D-Unet (G1-L)
+and D-Unet+SDA (SDA warm-started from G1-L). SS: pooled spread--skill ratio~\eqref{eq:ss} (about 0.98 for a calibrated 30-member
+ensemble; below 1, over-confident). Values in parentheses are MAE skill scores of
+deterministic schemes, not ranked against the ensembles; $^\dagger$ estimated from the
+RMSE assuming Gaussian errors (a lower bound by up to 0.04). Empty cells: not available. SDA denotes score-based DA with a prior conditioned on the model parameters
+$\thv$ and the forcing, trained with the true parameters and forcing (SDA2 in
+Sect.~\ref{sec:neural}). For L96, D-Unet+SDA uses the SDA3 prior, trained with noisy
+parameters and forcing.
+Best per column in bold, second best in italics.}
+\label{tab:s0}
+\begin{tabular}{lccccccccc}
 \toprule
- & \multicolumn{2}{c}{\Sz{} (perfect model)} & \multicolumn{2}{c}{\So{} (model error)} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-scheme & regular & random & regular & random \\
+ & \multicolumn{3}{c}{L63} & \multicolumn{3}{c}{L96} & \multicolumn{3}{c}{QG} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+scheme & EV & CRPSS & SS & EV & CRPSS & SS & EV & CRPSS & SS \\
 \midrule
-ETKF & 0.610 & 0.679 & 1.409 & 1.407 \\
-EnKF & 0.641 & 0.706 & 1.416 & 1.484 \\
-ETKS & 0.497 & 0.572 & 1.338 & 1.347 \\
-Strong-4DVar & 0.703 & 0.742 & 1.436 & 1.444 \\
-Weak-4DVar & 0.695 & \needsrun{} & 1.064 & \needsrun{} \\
-\emph{ETKS, 100 members} & \emph{0.393} & \emph{0.463} & \emph{1.338} & \emph{1.335} \\
+ETKF            & & &  & 0.815 & 0.710 & 0.76 & 0.934 & 0.867 &  \\
+EnKF            & & &  & 0.801 & 0.693 & 0.85 & 0.923 & 0.857 &  \\
+ETKS            & & &  & 0.866 & 0.744 & 0.48 & 0.963 & \textit{0.898} &  \\
+Strong-4DVar    & & & --- & 0.741 & (0.523) &  - & \textbf{0.980} & (0.885)$^\dagger$ & -- \\
+Weak-4DVar      & & & -- & 0.757 & (0.520) & -- & & & -- \\
 \midrule
-DirectUNet & 0.340 & 0.450 & 0.339 & 0.444 \\
-PredictStateCFM & 0.341 & 0.443 & 0.338 & 0.447 \\
-VanillaCFM & 0.351 & 0.462 & 0.349 & 0.468 \\
-SDA1 & 0.464 & 0.572 & 0.462 & 0.585 \\
-SDA2 & 0.453 & 0.550 & 0.465 & 0.575 \\
-SDA3-fix & 0.455 & 0.562 & 0.455 & 0.573 \\
-hybrid DirectUNet $\to$ SDA3-fix & \textbf{0.293} & \textbf{0.367} & \textbf{0.289} & \textbf{0.367} \\
+D-Unet      & & & -- & \textit{0.950} & (0.774) & -- & 0.975 & (0.888) & -- \\
+CFM             & & &  & 0.942 & \textit{0.838} & 0.93 & & &  \\
+SDA             & & &  & 0.910 & 0.772 & 0.81 & & &  \\
+D-Unet+SDA & & &  & \textbf{0.961} & \textbf{0.853} & 0.56 & \textit{0.977} & \textbf{0.912} &  \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Error budget with a perfect model}\label{sec:q1}\label{sec:q1-budget}
-\paragraph{Irreducible.}
-The best scheme, the hybrid, reaches 0.293 on the regular grid: the irreducible
-error is at most this. We have no lower bound, so every share below is a share of
-the excess over an upper bound, not over the true $\mathrm{mmse}$.
+\paragraph{Overall performance.}
+Table~\ref{tab:s0} reports the performance of all schemes with a perfect model. On L96,
+the learned schemes outperform model-based DA. D-Unet+SDA is best for both the mean and
+the distribution (EV 0.961, CRPSS 0.853), followed by D-Unet (EV 0.950) and CFM (EV
+0.942, CRPSS 0.838). The best DA scheme, the ETKS (EV 0.866, CRPSS 0.744), is behind
+every learned scheme, including SDA (EV 0.910, CRPSS 0.772), and the 4D-Var schemes rank
+last (EV 0.74--0.76), behind the ensemble filters (0.80--0.82). These differences come
+almost entirely from the fast variables. On the 8 slow variables, all schemes reach an
+EV of 0.96--0.99, and the ETKS (0.988) is within 0.01 of the best scheme (0.995). On the
+16 observed fast variables, the DA schemes reach 0.63--0.80, against 0.87--0.94 for the
+learned schemes. On
+QG, the schemes are much closer. Strong-4DVar has the best mean (EV 0.980), on par with
+D-Unet+SDA (0.977) and D-Unet (0.975), and the ETKS remains the best DA ensemble (EV
+0.963). For the distribution, D-Unet+SDA again leads (CRPSS 0.912), ahead of the ETKS
+(0.898) and the filters (0.86--0.87). In both case studies, smoothing improves on
+filtering, and the ETKF slightly outperforms the EnKF. The spread--skill ratios qualify
+these rankings on L96: CFM is nearly calibrated (SS 0.93), whereas the DA ensembles are
+over-confident, the more so as they are more accurate (EnKF 0.85, ETKF 0.76, ETKS 0.48).
+SDA is moderately over-confident (0.81), and D-Unet+SDA, despite the best mean and CRPSS,
+markedly so (0.56), a consequence of its tempered guidance (Sect.~\ref{sec:q3}).
+\todo{QG spread--skill ratios.} The following paragraphs analyse
+where the gaps to the best scheme come from.
 
-\paragraph{Restriction: filtering.}
-The ETKS removes 16 to 19\,\% of the ETKF's RMSE (0.610 $\to$ 0.497 regular,
-0.679 $\to$ 0.572 random). To check that this gain is a restriction, we run the
-filter and the smoother on the same ensemble realisation and evaluate both sides
-of the identity
-$\mathrm{MSE}_F - \mathrm{MSE}_S = \mathrm{var}_F - \mathrm{var}_S = \E\|m_F - m_S\|^2$.
-It holds approximately with 100 members --- an MSE gap of 0.162 against a
-variance gap of 0.176 and a mean shift of 0.233 --- and less well with 30
-(0.159, 0.227, 0.296). The deviation shrinks as the ensemble grows, as it should
-if it is an approximation error of the ensemble.
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_budget_s0.pdf}
+\caption{\textbf{Error budget in the perfect-model experiment (\Sz).} Normalised
+mean-squared error ($1 - \mathrm{EV}$, Table~\ref{tab:s0}) of each scheme, split along
+the error chain~\eqref{eq:chain0}. Grey: the best \Sz{} scheme of each case study, an
+upper bound on the irreducible term. Blue: restriction due to filtering, measured as the
+gap between the ETKF and the ETKS with large ensembles (100 members for L96, 320 for
+QG). Green: approximation due to the ensemble size (30 vs 100 members for L96, 80 vs 320
+for QG). Orange: excess over the floor not attributed to a term by a contrast; it can contain
+restriction, approximation and, through the posterior family of the scheme (e.g.
+Gaussian updates, mode instead of mean), misspecification, even with a perfect
+dynamical model.}
+\label{fig:budget-s0}
+\end{figure}
 
-\paragraph{Approximation: finite ensemble.}
-With 100 members and a re-selected inflation, the ETKS goes from 0.497 to 0.393
-(regular) and from 0.572 to 0.463 (random): 38\,\% of its mean-squared error was
-finite-ensemble approximation. Against the best learned scheme, the DA deficit
-falls from $1.46\times$ to $1.16\times$.
 
-\paragraph{Approximation: optimisation and training.}
+
+
+
+
+\paragraph{Irreducible component.}
+The best scheme sets the floor of each case study: D-Unet+SDA on L96 (normalised
+mean-squared error $1-\mathrm{EV} = 0.039$) and Strong-4DVar on QG (0.020). It is only
+an upper bound on the irreducible term $\mathrm{mmse}$ in~\eqref{eq:chain0}: we have no lower bound, so every component below is a share of the excess over this floor, not over the true
+irreducible error.
+
+\paragraph{Restriction component in filtering schemes.}
+A filter conditions each state on past observations only, a smoother on the whole
+window. Measured with large ensembles, so that the ensemble size does not contaminate
+it, filtering costs 0.057 of normalised MSE on L96 (ETKF 0.138 against ETKS 0.081,
+100 members) and 0.026 on QG (0.055 against 0.029, 320 members). It is the largest
+identified term of the DA ensembles in both case studies. To check that this gain is a
+restriction, we run the filter and the smoother on the same L96 ensemble realisation
+and evaluate both sides of the identity
+$\mathrm{MSE}_F - \mathrm{MSE}_S = \mathrm{var}_F - \mathrm{var}_S = \E\|m_F - m_S\|^2$
+(physical units). It holds approximately with 100 members --- an MSE gap of 0.162
+against a variance gap of 0.176 and a mean shift of 0.233 --- and less well with 30
+(0.159, 0.227, 0.296). The deviation shrinks as the ensemble grows, as expected if it
+is an approximation error of the ensemble.
+
+\paragraph{Approximation components.} We can partly assess the approximation components of the different schemes:
 \begin{itemize}[leftmargin=*,nosep]
-  \item \textbf{4D-Var.} At the benchmark's 10 L-BFGS iterations per sub-window,
-    the hard-constraint 4D-Var is far from its own optimum: 0.721 against 0.545
-    on the validation windows with 40 iterations.
-  \item \textbf{DirectUNet.} Training it for 1200 instead of 400 epochs takes it
-    from 0.380 to 0.340, and three times more training windows add only 0.006
-    (0.334). The learned approximation term is close to saturation at our
-    budget.
+  \item \textbf{Ensemble size in ensemble DA approaches.} Going from 30 to 100 members reduces the normalised MSE
+    of the L96 ETKS from 0.134 to 0.081 (40\,\%) and that of the ETKF from 0.185 to
+    0.138. On QG, going from 80 to 320 members (with a re-tuned localisation radius)
+    reduces it from 0.037 to 0.029 for the ETKS and from 0.066 to 0.055 for the ETKF.
+  \item \textbf{Optimisation in 4DVar schemes.} With 10 L-BFGS iterations per sub-window,
+    Strong-4DVar is far from its own optimum (validation RMSE 0.721 against 0.545 with
+    40 iterations). The benchmark uses 40 iterations, at which the solution has
+    converged, so the remaining excess of 4D-Var is not an optimisation error.
+  \item \textbf{Training setup and architecture design in neural schemes.} Training D-Unet 
+  for 1200 instead of 400 epochs reduces its L96 RMSE from 0.380 to 0.340, and three times more training windows only to 0.334: the approximation term of the learned schemes is close to saturation at our budget.
+  Complementary experiments with three tiers of the shared U-Net backbone, under an
+  earlier protocol (fixed observing system, 400 epochs, one seed;
+  Appendix~\ref{app:tiers}), support that network capacity is not the limiting
+  approximation term: a larger tier (23.5\,M parameters) brings no gain, while a
+  smaller one with four times fewer parameters (1.5\,M) increases the RMSE by 4 to
+  24\,\% (e.g. 0.490 vs 0.470 for D-Unet and 0.410 vs 0.341 for CFM on L96).
 \end{itemize}
 
-\paragraph{Restriction: context.}
-The unconditional SDA prior (SDA1, 0.464) ignores $\thv$. Conditioning it on
-$\thv$ gains 2\,\% (SDA2 0.453, SDA3-fix 0.455). \needsrun{The forcing $\zv$ as a
-conditioning input of SDA, and $(\thv, \zv)$ as inputs of DirectUNet, complete
-this row.}
+\paragraph{Unattributed component.}
+The excess left after these contrasts is therefore unattributed: it can contain restriction, approximation and structural misspecification. On L96, it is 0.042 for the 100-member ETKS, and it makes
+up almost all of the excess of the 4D-Var schemes (0.20 to 0.22), although they use the
+exact model and have converged. Their candidates are structural: the mode instead of
+the mean, a hard constraint, a Gaussian background, and the restriction of cycling over
+sub-windows. The EnKF exceeds the ETKF (0.199 against 0.185), consistent with the
+sampling noise of its perturbed observations. For the neural schemes, the unattributed
+term is smaller: 0.011 for D-Unet, 0.019 for CFM and 0.051 for SDA, whose guided sampler
+approximates the likelihood. On QG, the same holds for the ensembles and the neural
+schemes, at a smaller scale: the unattributed term is 0.009 for the 320-member ETKS, the
+EnKF again exceeds the ETKF (0.077 against 0.066), and the neural schemes lie within
+0.005 of the floor. The variational scheme is the exception: Strong-4DVar sets the QG
+floor itself, so the structural costs that dominate its L96 budget do not appear on the
+streamfunction. They are not absent, however: on the potential vorticity, which is
+smaller-scale and unobserved, D-Unet and D-Unet+SDA outperform it (EV 0.743 and 0.751
+against 0.700).
 
-\paragraph{Structural misspecification.}
-What remains of the DA excess after these contrasts is structural: the mode
-instead of the mean, a hard constraint and Gaussian updates. It is largest for
-Strong-4DVar.
-\todo{Table~5: the budget in pooled MSE per scheme class, both observing
-systems, with the contrast named in each cell.}
+\paragraph{Synthesis.}
+Figure~\ref{fig:budget-s0} summarises the budget per scheme family. For the ensemble
+DA schemes, the excess over the floor splits into comparable shares of restriction,
+approximation and unattributed error on L96 (ETKF: 0.057, 0.047 and 0.042), while the
+restriction due to filtering dominates on QG (ETKF: 0.026, 0.011 and 0.009). For the
+variational schemes, the excess is almost entirely unattributed on L96, while
+Strong-4DVar is the best scheme on QG. By contrast, the end-to-end neural schemes,
+D-Unet and CFM, lie just above the floor in both case studies (excess 0.011 and 0.019
+on L96, 0.005 for D-Unet on QG). SDA, which combines a learned prior with an explicit
+likelihood, has a larger excess on L96 (0.051), in the same range as the unattributed
+term of the 100-member ETKS (0.042). This points to a misspecification of the
+posterior induced by the approximate likelihood of the guided sampler, even though the
+observation operator and the error statistics are exact. On QG, SDA alone does not
+reach a competitive estimate; started from the D-Unet estimate, it stays within 0.003
+of the floor (D-Unet+SDA). Overall, even with a perfect dynamical model, the error
+budget of the DA schemes involves significant approximation and misspecification
+components, beyond the restriction due to their conditioning. These components prevent
+the schemes from extracting the full information that the observations carry about
+the state. As a consequence, these findings suggest that the skill of end-to-end neural schemes deliver 
+a better and more robust indicator of the reconstruction skill that a given observing system actually allows:
+assessments of observing systems based on DA alone, such as observing system
+simulation experiments, may underestimate the information content of the
+observations. 
 
-\paragraph{Reading.}
-With a perfect model, the deficit of classical DA is mostly \emph{honest}. It is
-made of a restriction (filtering) and an approximation (30 members, a short
-optimisation), and it shrinks with smoothing, with members and with iterations.
-None of it requires a better model.
-
-\paragraph{QG ocean.}\label{sec:q1-qg}
-On the QG case study (score = mean explained variance of the two
-streamfunction and two potential-vorticity layers, higher is better; 100 test
-windows of 30 days, forced dataset) the perfect-model ordering of the DA schemes
-is the same as on Lorenz-96. Smoothing gains over filtering (EnKS 0.812 against
-ETKF 0.774 and EnKF 0.761), and the variational scheme, which uses the whole
-window, is best (strong-constraint 4D-Var 0.840). With a perfect model the
-restriction of filtering is again the main reducible term among the DA schemes.
-\needsrun{QG learned schemes (round 1) for the cross-class comparison.}
 
 \subsection{Error budget under model error}\label{sec:q2}
-Under model error the DA errors grow $2.0$--$2.7\times$ in RMSE: ETKF 1.409, EnKF
-1.416, ETKS 1.338, Strong-4DVar 1.436. For the ETKS the mean-squared error is about seven
-times its \Sz{} value. The contrasts that explained the \Sz{} deficit no longer
-help.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Ensemble size.} 100 members change nothing (1.338 $\to$ 1.338).
-  \item \textbf{Smoothing.} It gains only 5\,\%.
-  \item \textbf{The filter/smoother identity fails.} The MSE gap is 0.237, against
-    a variance gap of 0.534 and a mean shift of 0.913.
-\end{itemize}
-The excess is misspecification. The learned rows are flat (DirectUNet 0.339,
-hybrid 0.289), but they are an oracle bound: they never saw the biased model
-(Sect.~\ref{sec:design}).
-
-\paragraph{Representing model uncertainty.}\label{sec:q2-represent}
-If misspecification is the problem, representing the uncertainty of the model
-should convert part of it back into a restriction.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Weak-4DVar.} We tune its model-error scale per case on the
-    validation windows. At \Sz{} it gains nothing over the hard constraint
-    (0.695 vs 0.703), as it should with a perfect model. At \So{} it removes
-    26\,\% of the error (1.064 vs 1.436) and becomes the best DA scheme, ahead of
-    the ETKS (1.338). It still remains three times the learned bound: an
-    additive per-step error with a scalar scale cannot absorb a parametric bias.
-  \item \textbf{Learned priors.} SDA2, trained with clean parameters, leaks the
-    \So{} bias into its prior, and the hybrid built on it degrades
-    (0.310 $\to$ 0.333 with 400-epoch priors). SDA3-fix, trained with noisy
-    parameters, stays flat (0.312 $\to$ 0.307).
-  \item \needsrun{A perturbed-parameter ETKF, and the $\delta$ sweep: the
-    conversion should succeed while the bias stays within the stated
-    uncertainty ($\delta \le \sigma$) and fail beyond.}
-\end{itemize}
-
-\figplaceholder{Fig.~7}{RMSE and calibration loss vs bias $\delta$, per model-uncertainty arm.}
-
-\paragraph{QG ocean.}
-Under its realistic model error the QG case study repeats the Lorenz-96 pattern (score as in Sect.~\ref{sec:q1}).
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Hard constraint.} Strong-constraint 4D-Var, best at \Sz{}
-    (0.840), becomes the worst scheme at \So{} with its \Sz{} settings (0.516).
-  \item \textbf{Ensembles.} The ensemble schemes keep more (ETKF 0.579, EnKF
-    0.596, EnKS 0.612).
-  \item \textbf{Representing model uncertainty.} Re-tuning for \So{} --- a weak
-    constraint for 4D-Var, an inflated observation error for the ensembles ---
-    recovers part of the loss: 4D-Var 0.612, ETKF 0.633, EnKF 0.634, EnKS 0.665.
-\end{itemize}
-The smoother is the most robust scheme under model error on both systems, and
-the hard constraint the least. Misspecification turns the best perfect-model
-scheme into the worst.
-
-\paragraph{Value of true-system data.}\label{sec:q2-oracle}
-\needsrun{Learned schemes trained on simulations of the biased model, with
-$\sigma = 0$ and 20\,\%; their gap to the learned-on-truth rows measures what
-training on reanalyses or true-system data implicitly spends.}
-
-\subsection{Reported uncertainty}\label{sec:q1-uncertainty}\label{sec:q2-uncertainty}
-\paragraph{Perfect model.}
-Table~\ref{tab:fms-s0} gives $\FMS_\tau$ for the main schemes at \Sz{} on the regular grid.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{The smoother buys its mean with an over-confident ensemble.} It
-    beats the filter at $\tau = 0$ (0.129 vs 0.187) and still at $\tau = 0.5$,
-    but loses at $\tau = 0.75$ (0.059 vs 0.050). Its calibration loss there is
-    34\,\% against 14\,\%.
-  \item \textbf{The flows are nearly calibrated} (calibration loss 0--3\,\%,
-    pooled spread/skill 0.84--0.94).
-  \item \textbf{The SDA samplers are under-dispersed} (7--18\,\%), as expected
-    from their tempered likelihood.
-\end{itemize}
-\needsrun{The filter/smoother identity along $\tau$ (score of the ETKS's own
-filter pass) and the 100-member rows of this table.}
-
 \begin{table}[t]
 \centering\small
-\caption{$\FMS_\tau$ (standardised units, Gaussian form) and calibration loss at $\tau = 0.75$, \Sz, regular grid. Source: \texttt{docs/results/l96\_p1\_fm\_score.md}.}
-\label{tab:fms-s0}
-\begin{tabular}{lcccc}
+\setlength{\tabcolsep}{4pt}
+\caption{\textbf{Imperfect-model experiment (\So).} Same metrics, test sets and
+conventions as Table~\ref{tab:s0}. The DA hyper-parameters are tuned for \So{}
+(Sect.~\ref{sec:design}): inflation and model-error scale for L96; for QG, the
+observation-error variance multiplied by 6 for the ensembles and the weak constraint for
+Weak-4DVar, while Strong-4DVar keeps its \Sz{} setting. The learned schemes are trained
+on simulations of the true system: at \So{} they are an oracle bound, not a matched
+competitor. SDA and D-Unet+SDA receive the biased parameters and forcing given to the
+model-based schemes. For L96, the \So{} DA model is also truncated to the 24 observed
+variables (Sect.~\ref{sec:testbeds}). $^\dagger$ estimated from the RMSE assuming Gaussian errors (a lower
+bound by up to 0.04). Best per column in bold, second best in italics.}
+\label{tab:s1}
+\begin{tabular}{lccccccccc}
 \toprule
-scheme & $\tau = 0$ & $\tau = 0.5$ & $\tau = 0.75$ & calibration loss \\
+ & \multicolumn{3}{c}{L63} & \multicolumn{3}{c}{L96} & \multicolumn{3}{c}{QG} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+scheme & EV & CRPSS & SS & EV & CRPSS & SS & EV & CRPSS & SS \\
 \midrule
-ETKF & 0.187 & 0.125 & 0.050 & 14\,\% \\
-ETKS & 0.129 & 0.107 & 0.059 & 34\,\% \\
-PredictStateCFM & 0.054 & 0.040 & \textbf{0.0195} & 2\,\% \\
-VanillaCFM & 0.057 & 0.042 & 0.0196 & 0\,\% \\
-SDA3-fix & 0.088 & 0.067 & 0.034 & 14\,\% \\
-hybrid & \textbf{0.039} & \textbf{0.034} & 0.0200 & 16\,\% \\
+ETKF            & & &  & 0.272 & 0.201 & 0.59 & 0.828 & 0.787 &  \\
+EnKF            & & &  & 0.266 & 0.196 & 0.72 & 0.829 & 0.783 &  \\
+ETKS            & & &  & 0.358 & 0.191 & 0.34 & 0.838 & \textit{0.819} &  \\
+Strong-4DVar    & & & -- & 0.239 & ($-0.042$) & -- & 0.779 & (0.709)$^\dagger$ & -- \\
+Weak-4DVar      & & & -- & 0.561 & (0.225) & -- & 0.847 & (0.764)$^\dagger$ & -- \\
+\midrule
+D-Unet          & & & -- & \textit{0.950} & (0.774) & -- & \textit{0.964} & (0.846) & -- \\
+CFM             & & &  & 0.943 & \textit{0.838} & 0.94 & & &  \\
+SDA             & & &  & 0.905 & 0.766 & 0.95 & & &  \\
+D-Unet+SDA      & & &  & \textbf{0.961} & \textbf{0.854} & 0.58 & \textbf{0.965} & \textbf{0.871} &  \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\figplaceholder{Fig.~3}{$\FMS_\tau$ curves per scheme, \Sz, regular and random observing systems, with window-bootstrap intervals.}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_budget_s1.pdf}
+\caption{\textbf{Error budget under model error (\So).} The \Sz{} budget of
+Fig.~\ref{fig:budget-s0}, extended by the increase of the normalised mean-squared error
+from \Sz{} to \So{} (hatched red), i.e. misspecification plus the cross term
+of~\eqref{eq:chain0} (Sect.~\ref{sec:chain}). Learned schemes are trained on the true
+system and are an oracle bound at \So{}. For L96, the \So{} DA model is also truncated to
+the 24 observed variables (Sect.~\ref{sec:testbeds}). QG Weak-4DVar is run at \So{} only
+(outline).}
+\label{fig:budget-s1}
+\end{figure}
 
-\paragraph{Model error.}
-The large-$\tau$ score shows misspecification even where the RMSE does not
-single it out (Fig.~5).
-\begin{itemize}[leftmargin=*]
-  \item \textbf{DA calibration loss grows from \Sz{} to \So.} At $\tau = 0.75$
-    it goes from 34 to 63\,\% for the ETKS, with an optimal variance rescaling
-    $c^\star \ge 8$. For the ETKF it goes from 14 to 23\,\% on the regular grid
-    and from 3 to 14\,\% on the random one.
-  \item \textbf{The DA ensembles become short-tailed.} A kernel density of the
-    members scores 17 to 30\,\% worse than a Gaussian of the same variance:
-    the truth falls outside the ensemble more often than its spread allows.
-  \item \textbf{The learned rows are invariant}, with one exception: SDA2,
-    trained with clean parameters and conditioned on the biased ones, loses less
-    at \So{} (7 $\to$ 3\,\%) because the bias accidentally widens its samples.
-  \item \textbf{Aggregate calibration is not calibration.} On the random system
-    at \So, the ETKF's pooled spread/skill is 0.99 --- nominally calibrated ---
-    yet it loses 12\,\% at $\tau = 0.75$. A scalar inflation can match the total
-    error, but not where the error occurs.
-\end{itemize}
+\paragraph{Overall performance.}
+Table~\ref{tab:s1} reports the performance under model error. On L96, model-based DA
+degrades strongly: the EV of the ETKF, EnKF, ETKS and Strong-4DVar falls to 0.24--0.36,
+and the CRPSS of the DA ensembles to about 0.2. Weak-4DVar is the best DA scheme (EV
+0.561). The degradation is again much larger on the fast variables: the slow variables
+keep an EV of 0.61--0.67 (0.86 for Weak-4DVar), while the fast ones fall to 0.03--0.23
+(0.41 for Weak-4DVar). The DA ensembles also become more over-confident: their
+spread--skill ratio drops to 0.59 for the ETKF, 0.72 for the EnKF and 0.34 for the ETKS,
+while the learned schemes keep their \Sz{} values (CFM 0.94, SDA 0.95, D-Unet+SDA 0.58).
+\todo{QG spread--skill ratios.}
+On QG, the DA schemes keep an EV of 0.78--0.85, with Weak-4DVar best for the mean
+(0.847) and the ETKS best for the distribution (CRPSS 0.819). The learned schemes are
+almost unaffected (L96 EV 0.905--0.961, QG 0.964--0.965), with D-Unet+SDA again best
+(CRPSS 0.854 on L96, 0.871 on QG). For L63 and L96, the \So{} test data remain
+within the training distribution of the neural schemes, since only the model given to
+DA changes. For QG, the \So{} observation errors (15\,\% white and 15\,\% correlated
+per pass) lie at the upper edge of the noise range used to train D-Unet (5--15\,\%
+white, 0--15\,\% correlated), while the SDA prior does not see the observations, which
+enter only through its likelihood. The QG experiments thus also test the robustness of
+the neural schemes to observation errors at the limit of their training distribution.
 
-\figplaceholder{Fig.~5}{$\FMS_\tau$ at \Sz{} and \So{} per scheme; calibration loss vs $\tau$.}
+\paragraph{Impacts of misspecification.}\label{sec:q2-represent}
+The increase of the normalised MSE from \Sz{} to \So{} measures misspecification plus
+the cross term of the chain (Fig.~\ref{fig:budget-s1}, hatched red), and its effect
+differs between scheme families. For the ensemble DA schemes, the increase is
+0.50--0.54 on L96, i.e. about three times the \Sz{} error of the ETKF and EnKF and nearly
+four times that of the ETKS, and 0.09--0.13 on QG. The contrasts that reduced their
+\Sz{} excess no longer help: 100 members leave the L96 ETKS unchanged (EV 0.358 with 30
+and 100 members), 320 members barely improve the QG ETKS (0.838 to 0.844), and smoothing
+gains only 12\,\% of normalised MSE over filtering on L96 (0.642 against 0.728) and
+6\,\% on QG (0.162 against 0.172). The filter/smoother identity also fails: on L96, the
+MSE gap is 0.237, against a variance gap of 0.534 and a mean shift of 0.913. Re-tuning
+the inflation (L96) or the observation-error variance (QG) for \So{} recovers only part
+of the loss, e.g. from EV 0.809 to 0.838 for the QG ETKS. For the variational schemes,
+the hard constraint is the least robust: the increase is 0.50 on L96 and 0.20 on QG,
+where Strong-4DVar goes from the best scheme with a perfect model to the worst DA scheme
+under model error. A weak constraint, with its model-error scale tuned per case, gains
+little at \Sz{} (EV 0.757 against 0.741 on L96), as expected, but reduces the normalised
+MSE of Strong-4DVar by 42\,\% on L96 (0.439 against 0.761) and 31\,\% on QG (0.153
+against 0.221) at \So{}, making Weak-4DVar the best DA scheme for the mean. It remains,
+however, about ten times the learned bound on L96: an additive per-step model error with
+a scalar scale cannot absorb a parametric bias. By contrast, the neural schemes are
+barely affected. D-Unet, CFM and D-Unet+SDA are flat on L96, and SDA loses only 0.005,
+as its prior, trained with the true parameters, receives the biased ones
+(Sect.~\ref{sec:q3}). On QG, they lose about 0.01 of normalised MSE, the effect of the
+\So{} observation errors, the only part of \So{} they see.
 
-\subsection{Observing system and marginal value of observations}\label{sec:q1-density}\label{sec:q2-mvo}
-\paragraph{Dependence on the observing system.}
-Figure~4 shows how the schemes depend on the number of observations.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Crossover.} DA is best when a window has at most about ten
-    observation times; the learned schemes win from about twenty.
-  \item \textbf{Transfer between observing systems.} The ratio of random to
-    regular RMSE is 1.06 for Strong-4DVar, 1.15 for the ETKS, 1.21--1.24 for
-    SDA and 1.30--1.32 for the CFMs and DirectUNet. Keeping $\Hop$ and $\mathbf{R}$
-    explicit buys robustness to the observing system.
-  \item \textbf{Beyond the training range} (from 300 to 1000 observations),
-    DirectUNet degrades from 0.17 to 0.34, while SDA, whose likelihood is
-    explicit, keeps improving from 0.30 to 0.25.
-\end{itemize}
-In the language of the chain, an amortised map is misspecified once the
-observing system leaves its training distribution; a factorised scheme is not.
+\paragraph{Synthesis.}\label{sec:q2-oracle}
+Under model error, misspecification dominates the budget of every model-based scheme,
+and the restriction and approximation terms of \Sz{} become secondary
+(Fig.~\ref{fig:budget-s1}). The observations still bring information to the
+model-based schemes: on QG, a free run of the biased model has a negative EV on the
+streamfunction ($-0.40$), against 0.78--0.85 after assimilation. But misspecification
+caps what they can extract, and the explicit representations of model uncertainty
+available to DA (a weak constraint, inflation, an inflated observation error) recover
+only part of it. The neural schemes, which do not run a dynamical model at inference
+time, are insensitive to the misspecification of the model given to DA: on L96 they
+reach an EV above 0.9 from the same observations, against at most 0.56 for DA. This gap
+is, however, an upper bound on what the observations allow under model error: the
+neural schemes are trained on simulations of the true system, so the gap also contains
+the value of that training data. \needsrun{Neural schemes trained on simulations of the
+biased model, with $\sigma = 0$ and 20\,\%; their gap to the rows trained on the true
+system measures what training on reanalyses or true-system data implicitly brings.}
+Under model error, the skill of a DA scheme therefore reflects the fidelity of its
+model as much as the information content of the observations, which further limits
+its use to assess an observing system.
 
-\figplaceholder{Fig.~4}{RMSE vs number of observation times and of observed fast channels, \Sz, all schemes.}
+\subsection{\texorpdfstring{$\tau$}{Tau}-resolved evaluation of the reported uncertainty}\label{sec:q1-uncertainty}\label{sec:q2-uncertainty}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_fmss.pdf}
+\caption{\textbf{Skill of the reported posterior along the flow time.} Flow-matching
+skill score $\mathrm{FMSS}_\tau$~\eqref{eq:fmss} (Gaussian form) at
+$\tau \in \{0, 0.25, 0.5, 0.75\}$, perfect-model (top) and imperfect-model (bottom)
+experiments; $\mathrm{FMSS}_0$ is the explained variance. Deterministic schemes (grey)
+score their mean-squared error at every $\tau$. Learned rows averaged over 3 seeds.
+\todo{L63 and QG panels.}}
+\label{fig:fmss}
+\end{figure}
 
-\paragraph{Marginal value of observations.}
-The clearest symptom is what additional observations buy (Fig.~6).
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Strong-4DVar.} Going from 15 to 30 observations per window, its
-    RMSE gain collapses $7.0\times$ under model error. It then stays on a floor
-    set by the model: 1.43 at 30 observations, 1.38 at 1000.
-  \item \textbf{Filters.} They keep most of the value of observations: under
-    model error their gain from the same doubling shrinks only $1.8$--$1.9\times$,
-    against $7.0\times$ for Strong-4DVar.
-  \item \needsrun{Weak-4DVar and the learned schemes on the same curve.}
-\end{itemize}
-A hard constraint turns model error into a misspecification that no amount of
-data repairs.
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_ss_tau.pdf}
+\caption{\textbf{Calibration of the reported spread along the flow time.} $\tau$-resolved
+spread--skill ratio $\mathrm{SS}_\tau = 1/\sqrt{c^\star(\tau)}$ (1: calibrated; below 1:
+over-confident); its value at $\tau = 0$ is the pooled spread--skill ratio. Open markers:
+optimal inflation at the edge of the search grid, so that $\mathrm{SS}_\tau$ is an upper
+bound. \todo{L63 and QG panels.}}
+\label{fig:ss-tau}
+\end{figure}
 
-\figplaceholder{Fig.~6}{RMSE vs number of observation times, \Sz{} and \So, per scheme.}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_g_tau.pdf}
+\caption{\textbf{Information carried by the shape of the reported distribution.}
+Non-Gaussian shape diagnostic $G_\tau$~\eqref{eq:shape_gain}, in percent (0: no gain
+over a Gaussian of the same variance; positive: informative shape; negative: misleading
+shape). It requires members, so the EnKF is not shown. \todo{L63 and QG panels.}}
+\label{fig:g-tau}
+\end{figure}
+
+\paragraph{Skill of the reported posterior.}
+Figure~\ref{fig:fmss} extends the explained variance of Tables~\ref{tab:s0}
+and~\ref{tab:s1} ($\tau = 0$) to the reported distribution ($\tau > 0$). With a perfect
+model, all schemes lose skill as $\tau$ grows, but at different rates. The DA ensembles
+fall from 0.80--0.87 to 0.41--0.50 at $\tau = 0.75$, and their ranking reverses: the ETKS,
+best for the mean, still leads at $\tau = 0.5$ (0.79 against 0.75 for the ETKF) but ends
+below both filters (0.41 against 0.50 and 0.49). CFM keeps most of its skill (0.94 to
+0.80) and reaches the level of D-Unet+SDA (0.80) at $\tau = 0.75$, although its mean is
+less accurate. Reporting no uncertainty is penalised: D-Unet, as accurate as the best
+learned schemes for the mean, falls to 0.55, and Strong-4DVar to $-1.6$. Under model
+error, the decay of the DA schemes becomes much steeper: their FMSS crosses zero, i.e.
+the climatological forecast, as soon as $\tau \approx 0.5$, and reaches $-1.56$ for the
+ETKS at $\tau = 0.75$. The learned schemes keep their \Sz{} curves. Misspecification
+thus degrades the reported distribution even more than the mean. \todo{QG and L63.}
+
+\paragraph{Calibration and shape.}
+The $\tau$-resolved spread--skill ratio (Fig.~\ref{fig:ss-tau}) and the shape diagnostic (Fig.~\ref{fig:g-tau}) explain these differences. CFM is calibrated at every $\tau$ and in both experiments
+    ($\mathrm{SS}_\tau$ 0.92--0.95). The DA ensembles are over-confident, and the more so
+    the more accurate their mean: at \Sz{}, $\mathrm{SS}_{0.75}$ is 0.56 for the ETKF,
+    0.59 for the EnKF and 0.39 for the ETKS, and at \So{} it drops to 0.54, 0.63 and at
+    most 0.35. The smoother thus buys its better mean with an over-confident ensemble, and
+    model error worsens it. D-Unet+SDA is uniformly over-confident ($\mathrm{SS}_\tau
+    \approx 0.56$), the cost of its tempered guidance, while SDA is close to calibrated at
+    small $\tau$ and over-confident at large $\tau$ (0.64 at \Sz). A calibrated pooled
+    spread does not imply a calibrated distribution: on the random observing system at
+    \So, the ETKF has a pooled spread--skill ratio of 0.99, yet a scalar rescaling still
+    removes 12\,\% of its score at $\tau = 0.75$, as its spread does not match its error
+    where the error occurs. Regarding the shape of the distribution, the diagnostic has a
+    small negative floor: on synthetic Gaussian posteriors, 30 members drawn from the true
+    distribution give $G_{0.75}$ between $0$ and $-1.4\,\%$, and over-confident Gaussian
+    members down to $-4\,\%$, with no shape effect at all. Within this floor, the shape
+    of the DA ensembles at \Sz{} ($-4.5\,\%$ for the ETKF, $-5.2\,\%$ for the ETKS) cannot
+    be distinguished from the effect of their over-confidence. Under model error, by
+    contrast, their shape is clearly misleading ($-22\,\%$ for the ETKS, $-28\,\%$ for the
+    ETKF): their members are short-tailed with respect to their errors, so that the truth
+    falls outside the ensemble more often than its spread allows. The nearly calibrated
+    neural ensembles show a small but genuine gain ($G_{0.75}$ of $+2$ to $+3\,\%$ for CFM
+    and SDA): their shape carries some information beyond their mean and variance.
+\todo{QG and L63.}
+
+\paragraph{Synthesis.}
+The $\tau$-resolved scores separate what the mean-based metrics of Sects.~\ref{sec:q1}
+and~\ref{sec:q2} conflate. With a perfect model, the DA ensembles lose more skill from
+the mean to the distribution than the learned schemes, because they are over-confident,
+and the more so as their mean improves; smoothing and larger ensembles reduce the error
+of the mean, not the miscalibration. Under model error, misspecification affects the
+reported distribution even more than the mean: the DA ensembles become more
+over-confident and, beyond the noise floor of the shape diagnostic, short-tailed, and their score at large $\tau$ falls below that of
+climatology. The learned schemes, by contrast, report a distribution whose skill,
+calibration and shape are unchanged from \Sz{} to \So{}, with CFM the best calibrated.
+Their advantage over DA is therefore larger for the distribution than for the mean.
+These conclusions hold when the score is evaluated on random projections of space--time
+patches rather than per element (Appendix~\ref{app:fms}), which accounts for the
+dependence between variables. \needsrun{The filter/smoother identity along $\tau$ (score
+of the ETKS's own filter pass).}
 
 \subsection{Sensitivity to the structure of the prior}\label{sec:q3}\label{sec:composition}
 The posterior~\eqref{eq:posterior} is a likelihood times a prior. Model-based DA
-derives the prior from the equations; SDA learns it from data and keeps the same
-explicit likelihood. Comparing them isolates the form of the prior.
+derives the prior from the equations, whereas SDA learns it from data and keeps the same
+explicit likelihood. Comparing them isolates the role of the prior.
+Table~\ref{tab:prior} gathers the L96 schemes that share this likelihood, grouped by the
+origin of their prior.
+
+\begin{table}[t]
+\centering\small
+\caption{\textbf{Prior structure at matched likelihood (L96).} Explained variance (EV),
+flow-matching skill score at $\tau = 0.75$ and pooled spread--skill ratio (SS) in the
+perfect-model (\Sz) and imperfect-model (\So) experiments, regular observing system.
+All schemes use the same explicit observation operator and error covariance. Learned rows
+averaged over 3 seeds. The italic row is a sensitivity row.}
+\label{tab:prior}
+\begin{tabular}{llcccccc}
+\toprule
+ & & \multicolumn{2}{c}{EV} & \multicolumn{2}{c}{$\mathrm{FMSS}_{0.75}$} & \multicolumn{2}{c}{SS} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+prior & scheme & \Sz & \So & \Sz & \So & \Sz & \So \\
+\midrule
+model, hard constraint & Strong-4DVar & 0.741 & 0.239 & $-1.56$ & $-6.48$ & -- & -- \\
+model + model error & Weak-4DVar & 0.757 & 0.561 & $-1.40$ & $-3.32$ & -- & -- \\
+model, 30-member ensemble & ETKS & 0.866 & 0.358 & 0.41 & $-1.56$ & 0.48 & 0.34 \\
+\emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.919} & \emph{0.358} & & & & \\
+\midrule
+learned, unconditional & SDA1 & 0.908 & 0.908 & 0.62 & 0.62 & 0.61 & 0.61 \\
+learned, $\thv$ + forcing (true training) & SDA2 & 0.910 & 0.905 & 0.69 & 0.68 & 0.81 & 0.95 \\
+learned, $\thv$ + forcing (noisy training) & SDA3 & 0.911 & 0.911 & 0.66 & 0.66 & 0.67 & 0.69 \\
+learned + amortised mean & D-Unet+SDA & 0.961 & 0.961 & 0.80 & 0.80 & 0.56 & 0.58 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \paragraph{Same likelihood, two priors.}
-At \Sz{} the learned joint-window prior (SDA, 0.453--0.464 on the regular grid)
-beats the true-model hard constraint (Strong-4DVar, 0.703) and the 30-member
-smoother (ETKS, 0.497). It does not beat the 100-member smoother (0.393). The
-ordering is therefore set by the approximation term of the model-based scheme,
-not by the fidelity of its prior --- which, at \Sz, is exact. Along $\tau$, the
-learned prior also gives the better-calibrated posterior: calibration loss 7 to
-18\,\% for SDA against 34\,\% for the 30-member smoother (Table~\ref{tab:fms-s0}).
-
-\figplaceholder{Fig.~8}{Model-derived vs learned priors at matched likelihood: RMSE and $\FMS_\tau$, \Sz{} and \So.}
+With a perfect model, the learned joint-window prior (SDA, EV 0.908--0.911) outperforms
+the model-derived priors of the hard constraint (Strong-4DVar, 0.741) and of the
+30-member smoother (ETKS, 0.866), although these use the exact equations. It does not
+outperform the 100-member smoother (0.919): the ordering is set by the approximation term
+of the model-based scheme, not by the fidelity of its prior, which is exact at \Sz{}. The
+learned prior also gives the better reported distribution ($\mathrm{FMSS}_{0.75}$ of
+0.62--0.69 against 0.41 for the ETKS), as it is less over-confident (SS 0.61--0.81
+against 0.48).
 
 \paragraph{A better prior is not a better estimate.}
-Two observations make the point.
-\begin{itemize}[leftmargin=*]
-  \item Training the SDA prior three times longer (400 to 1200 epochs) improves the
-    estimate by 7 to 9\,\%.
-  \item The true equations, used as a hard prior, give the worst DA scheme at
-    \Sz.
-\end{itemize}
-What matters is how much of the prior the scheme can actually use within its
-approximation budget. This reading also resolves the controlled result that
-motivated us~\cite{fablet4dvarnet}: a learned prior can beat the true model
-because of the approximation and restriction terms of the scheme that uses the
-true model, not because the learned prior is better.
+Two observations make the point. Training the SDA prior three times longer (400 to 1200
+epochs) improves the estimate by 7 to 9\,\% in RMSE, and the true equations, used as a hard
+prior, give the worst DA scheme at \Sz. What matters is how much of the prior the scheme
+can actually use within its approximation budget. This reading also resolves the
+controlled result that motivated us~\cite{fablet_learning_2021}: a learned prior can beat
+the true model because of the approximation and restriction terms of the scheme that uses
+the true model, not because the learned prior is better.
 
 \paragraph{Conditioning the prior.}
-Conditioning the learned prior on the parameters is a restriction term at \Sz{}:
-SDA1 0.464 vs SDA2 0.453 and SDA3-fix 0.455. Under model error it becomes a
-misspecification channel for SDA2, which was trained with clean parameters and
-degrades by 3\,\%, but not for SDA3-fix, trained with noisy ones.
-\needsrun{Conditioning on the forcing $\zv$.}
+Conditioning the learned prior on the window parameters $\thv$ and forcing brings little
+with a perfect model: SDA1, which ignores them, reaches an EV of 0.908, against 0.910 and
+0.911 for SDA2 and SDA3, i.e. 2--3\,\% of normalised MSE. Under model error, this
+conditioning becomes a misspecification channel when the prior was trained with exact
+parameters: SDA2, given the biased parameters, loses 0.005 of EV and leaks the bias into
+the D-Unet+SDA scheme built on it (RMSE 0.310 to 0.333 with 400-epoch priors), whereas SDA3,
+trained with noisy parameters, is unaffected. \needsrun{Value of the conditioning
+information for DA and SDA: the same test windows with nominal parameters and/or no forcing
+given to the schemes (ETKF, EnKF, ETKS, Strong-4DVar with the full model; SDA2, SDA3).}
 
 \paragraph{Composing a mean and an uncertainty.}
-In the operator language of Sect.~\ref{sec:fms}, the hybrid composes DirectUNet's
-mean with the anomaly of SDA3-fix's guided sampler. It has the best mean
-everywhere (0.293 regular, 0.367 random, flat at \So) but not the best
-distribution: the flows overtake it at $\tau = 0.75$ (0.0195 vs 0.0200 on the
-regular grid, 0.025 vs 0.029 on the random one, standardised units). The score
-separates the two components the hybrid composes: an amortised mean, accurate in
-distribution, and an explicit-likelihood sampler whose tempered guidance makes it
-over-confident.
+In the operator language of Sect.~\ref{sec:fms}, D-Unet+SDA composes D-Unet's mean with
+the anomaly of SDA3's guided sampler. It has the best mean in both experiments (EV 0.961),
+but not the best distribution: CFM reaches the same $\mathrm{FMSS}_{0.75}$ (0.80) with a
+less accurate mean, because D-Unet+SDA is over-confident (SS 0.56), a consequence of the
+tempered guidance of its sampler. The score thus separates the two components D-Unet+SDA
+composes: an amortised mean, accurate, and an explicit-likelihood sampler whose
+uncertainty is too narrow. The composition matters even more on QG: there, the learned
+prior alone, guided by the observations from pure noise, does not reach a competitive
+estimate, whereas started from the D-Unet estimate it gives the best QG scheme for both
+the mean and the distribution (Table~\ref{tab:s0}). \todo{L63.}
+
+\subsection{Observing system and marginal value of observations}\label{sec:q1-density}\label{sec:q2-mvo}
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_obs_system.pdf}
+\caption{\textbf{Response to the observing system, inside and outside the training range
+(L96).} RMSE on the observed variables against (a) the number of observation times per
+window (16 observed fast variables), (b) the number of observed fast variables (30
+observation times) and (c) the observation-error variance (30 times, 16 fast variables),
+in the perfect-model (top) and imperfect-model (bottom) experiments; 20 windows $\times$ 3
+draws of the observing system per point. Shaded: range seen by the neural schemes during
+training. \todo{Preliminary version from existing runs: D-Unet and CFM at 400 epochs, SDA1
+at 1200 epochs, seed 1; ETKF and EnKF only. To be replaced by the benchmark schemes
+(1200 epochs, SDA, D-Unet+SDA, ETKS, Strong-4DVar) and by EV.}}
+\label{fig:obs}
+\end{figure}
+
+\paragraph{Generalisation beyond the training observing systems.}
+Figure~\ref{fig:obs} shows how the schemes respond to the observing system. Within the
+range seen in training, the neural schemes follow the same trends as DA and outperform
+it as soon as a window holds about twenty observation times; with ten or fewer, DA is
+better (RMSE 0.90 for the ETKF against 0.96--1.23 for the neural schemes at ten times,
+\Sz). Outside this range, their behaviour depends on how they use the observations. With
+fewer observations than in training (6 times), all neural schemes are worse than DA (1.28
+to 1.44 against 1.04). With more (1000 times), D-Unet degrades (0.17 at 300 times, 0.34 at
+1000) and CFM to a lesser extent (0.17 to 0.25), whereas SDA, whose likelihood is explicit,
+keeps improving (0.30 to 0.25), like DA. With fewer observed fast variables than in
+training (0 or 2), all schemes degrade smoothly and the neural ones keep their advantage.
+When the observation-error variance departs from its training value, all schemes respond
+in the expected direction, including D-Unet, which is not told the variance (0.36 at 0.25,
+0.40 at 0.5, 0.48 at 1.0). Across observing systems, keeping the observation operator and
+error covariance explicit also buys robustness: the ratio of random to regular RMSE is 1.06
+for Strong-4DVar, 1.15 for the ETKS and 1.21--1.24 for SDA, against 1.32 for CFM and D-Unet.
+In the language of the chain, an amortised map becomes misspecified once the observing
+system leaves its training distribution, whereas a scheme with an explicit likelihood does
+not.
+
+\paragraph{Marginal value of observations.}
+The slope of the curves of Fig.~\ref{fig:obs}a measures what additional observations
+bring to each scheme. With a perfect model, going from 10 to 100 observation times divides
+the RMSE by 2.6 for the ETKF (0.90 to 0.35) and by 3 to 6 for the neural schemes. Under model
+error, the neural schemes keep the same curves, whereas the DA schemes start from a much
+higher error and gain far less: the ETKF goes from 1.69 to 1.05 over the same range, and
+needs about 1000 observation times (0.61) to approach the error that the neural schemes
+reach with 30 (0.38--0.46). The DA error also becomes almost insensitive to the accuracy of
+the observations (1.40 to 1.46 for observation-error variances from 0.25 to 1.0, against
+0.54 to 0.71 at \Sz), as model error, not observation error, dominates it. The filters
+still extract some value from additional observations, whereas the hard constraint does
+not: the RMSE gain of Strong-4DVar from doubling the observations collapses
+$7.0\times$ under model error, against $1.8$--$1.9\times$ for the filters, and its error
+stays on a floor set by the model (1.43 at 30 observations, 1.38 at 1000). Misspecification
+thus hides most of the information that the observations carry about the state, which
+supports the statement of Sect.~\ref{sec:q1} that DA-based assessments of an observing
+system can underestimate its value, all the more under model error.
+

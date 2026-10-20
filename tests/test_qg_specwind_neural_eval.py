@@ -232,6 +232,24 @@ def test_published_sda_refuses_a_warm_start():
                          mean_estimate=torch.zeros(batch.obs.shape), published=PublishedSDA())
 
 
+def test_sda_sampler_auto_is_published_from_noise_and_normalized_with_a_warm_start():
+    from evaluation.run_qg_specwind_neural import SDA_DEFAULT_STEPS, resolve_sda_sampler
+    assert resolve_sda_sampler("auto", warm_start=False, fm_posterior=False) == "published"
+    assert resolve_sda_sampler("auto", warm_start=True, fm_posterior=False) == "normalized"
+    assert resolve_sda_sampler("auto", warm_start=False, fm_posterior=True) == "normalized"
+    assert resolve_sda_sampler("normalized", warm_start=False, fm_posterior=False) == "normalized"
+    with pytest.raises(ValueError):
+        resolve_sda_sampler("published", warm_start=True, fm_posterior=False)
+    with pytest.raises(ValueError):
+        resolve_sda_sampler("bogus", warm_start=False, fm_posterior=False)
+    assert SDA_DEFAULT_STEPS == {"published": 100, "normalized": 10}
+
+
+def test_published_sda_defaults_are_the_validated_qg_setting():
+    from evaluation.run_qg_specwind_neural import PublishedSDA
+    assert (PublishedSDA().gamma, PublishedSDA().n_corrector, PublishedSDA().lmc_tau) == (0.01, 1, 0.1)
+
+
 def test_fm_posterior_members_on_a_composed_prior_and_inflation():
     from evaluation.run_qg_specwind_neural import ComposedFlow, FMPosterior, fm_posterior_members
     from models.monai_unet_qg2d import MonaiSDAPriorQGChannelTime
@@ -285,3 +303,71 @@ def test_perturbed_obs_starts_differ_per_member_and_only_through_the_obs():
     assert not torch.allclose(starts[..., 0], starts[..., 1])
     unobserved = ~batch.obs_mask
     assert torch.equal(starts[..., 0][unobserved], batch.obs[unobserved])
+
+
+def test_warm_full_window_runs_a_length_agnostic_warm_start_once_on_the_whole_window():
+    from data.qg_neural import QGBatch
+    from evaluation.run_qg_specwind_neural import perturbed_obs_starts, warm_window_days
+    _, batch = _sda_prior_and_batch(days=4)
+    b, t, d = batch.obs.shape
+    qb = QGBatch(torch.zeros(b, t, d), batch.obs, batch.obs_mask, torch.zeros(b, t, 16, 16),
+                 torch.zeros(b, t, d), torch.full((b,), 1.5e4))
+
+    class RecordingEcho(torch.nn.Module):
+        T = 2
+        any_length = True
+
+        def __init__(self):
+            super().__init__()
+            self.days_seen = []
+
+        def forward(self, bt):
+            self.days_seen.append(bt.obs.shape[1])
+            return bt.obs
+
+    net = RecordingEcho()
+    perturbed_obs_starts((net, "direct_unet_3d", None), qb, QGConfig(nx=16), None, 2, 0.1, 1,
+                         warm_full_window=True)
+    assert net.days_seen == [t, t]
+    net.days_seen.clear()
+    perturbed_obs_starts((net, "direct_unet_3d", None), qb, QGConfig(nx=16), None, 1, 0.1, 1)
+    assert set(net.days_seen) == {2}
+    assert warm_window_days(net, t, False) == 2
+
+    class FixedLength(torch.nn.Module):
+        T = 2
+
+    with pytest.raises(ValueError, match="any window length"):
+        warm_window_days(FixedLength(), t, True)
+
+
+def test_member_warm_starts_at_tau0_one_return_each_members_own_start():
+    from evaluation.run_qg_specwind_neural import sda_members
+    model, batch = _sda_prior_and_batch()
+    starts = torch.randn(*batch.obs.shape, 3)
+    x = sda_members(model, batch, n_members=3, guidance_weight=5.0, n_steps=5, tau0=1.0,
+                    member_starts=starts)
+    assert torch.allclose(x, starts.permute(3, 0, 1, 2), atol=1e-6)
+    with pytest.raises(ValueError, match="members"):
+        sda_members(model, batch, n_members=2, guidance_weight=5.0, n_steps=5, tau0=1.0,
+                    member_starts=starts)
+
+
+@pytest.mark.parametrize("full_window", [False, True])
+def test_cfm_warm_starts_sample_one_start_per_member(full_window):
+    from data.qg_neural import QGBatch
+    from evaluation.run_qg_specwind_neural import cfm_warm_starts
+    from models.monai_unet_qg2d import MonaiVanillaCFM3DQG
+    torch.manual_seed(0)
+    flow = MonaiVanillaCFM3DQG(ny=16, nx=16, T=4, hidden_channels=[8, 16, 32, 32], dropout=0.0).eval()
+    flow.N_outer = 2
+    _, sb = _sda_prior_and_batch(days=6, b=1)
+    b, t, d = sb.obs.shape
+    batch = QGBatch(torch.zeros(b, t, d), sb.obs, sb.obs_mask, torch.zeros(b, t, 16, 16),
+                    torch.zeros(b, t, d), torch.full((b,), 1.5e4))
+    norm = {"mean": torch.tensor([0.5, -0.5]), "std": torch.tensor([2.0, 1.0])}
+    with torch.backends.mkldnn.flags(enabled=False):
+        starts = cfm_warm_starts((flow, "vanilla_cfm_3d", norm), batch, QGConfig(nx=16), norm, 3, 2,
+                                 warm_full_window=full_window)
+    assert starts.shape == (b, t, d, 3) and torch.isfinite(starts).all()
+    assert not torch.allclose(starts[..., 0], starts[..., 1])

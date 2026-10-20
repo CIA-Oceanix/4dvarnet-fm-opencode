@@ -1,41 +1,38 @@
 \begin{abstract}
-Model-based data assimilation (DA) often loses to estimators that use less
-physics. Observation-only products can beat ocean reanalyses, learned priors can
-beat the true dynamical model, and neural schemes are routinely reported to beat
-classical ones. The usual explanations --- a wrong model, a lossy algorithm, a
-poor tuning --- are seldom separated.
+Model-based data assimilation (DA) is often outperformed by estimators that use
+less physics: observation-only products can beat ocean reanalyses, learned
+priors can beat the true dynamical model, and neural schemes are increasingly
+reported to beat classical ones. The usual explanations (a wrong model, a lossy
+algorithm, a poor tuning) are seldom separated.
 %
-We treat every DA scheme, classical or learned, as an estimator of the
-conditional distribution of the state given its context. We decompose its error
-along a chain of idealisations. The \emph{irreducible} term is what no scheme can
-beat. A \emph{restriction} is the error of using less information than is
-available. A \emph{misspecification} is the error of believing a wrong model. An
-\emph{approximation} is the error of computing one's own target inexactly.
+We cast every DA scheme, classical or learned, as an estimator of the conditional
+expectation of the state given its context, and represent posteriors with flow
+matching. The estimation error then decomposes along a chain of idealisations.
+The \emph{irreducible} term is what no scheme can beat. A \emph{restriction} is
+the cost of using less information than is available. A \emph{misspecification}
+is the cost of believing a wrong model. An \emph{approximation} is the cost of
+computing one's own target inexactly. Extending the chain to the full posterior
+yields a proper scoring rule that evaluates both the mean estimate and the
+uncertainty a scheme reports.
 %
-We extend the chain from the mean to the reported uncertainty with a
-flow-matching score, $\FMS_\tau$. It equals the mean-squared error at
-$\tau = 0$, is strictly proper for $\tau \in (0, 1)$, and splits exactly into an
-irreducible part, a restriction part and a remainder at every $\tau$.
+On three case studies (a Lorenz-63 system, a two-scale Lorenz-96 system and a
+two-layer quasi-geostrophic ocean), we compare DA estimation errors and
+uncertainties along three axes: model-based versus neural DA schemes, perfect-model versus model-error
+settings, and model-based versus neural priors of the dynamics.
 %
-On three case studies --- a two-scale Lorenz-96 system carrying the full
-scheme matrix, a Lorenz-63 system for the model-error axis and a
-quasi-geostrophic ocean for realism --- with a perfect model and with model
-error, under matched information and tuning parity, three results stand out.
-\begin{itemize}[leftmargin=*,nosep]
-  \item With a perfect model, the deficit of classical DA is mostly restriction
-    and approximation. Smoothing removes 16--19\,\% of the filter's RMSE, and
-    going from 30 to 100 ensemble members removes 38\,\% of the smoother's
-    mean-squared error.
-  \item Under model error, misspecification dominates. It shows in the
-    large-$\tau$ score before it shows in the RMSE: the smoother's calibration
-    loss grows from 34\,\% to 63\,\%. The marginal value of observations for
-    strong-constraint 4D-Var collapses sevenfold, and on the quasi-geostrophic
-    ocean the best perfect-model scheme, strong-constraint 4D-Var, becomes the
-    worst.
-  \item A learned prior beats the true-model hard constraint and the 30-member
-    smoother, but not the 100-member one. The ordering is set by approximation,
-    not by the fidelity of the prior.
-\end{itemize}
-A restriction costs variance honestly and preserves calibration; a
-misspecification costs bias silently and destroys it.
+Within a perfect-model setting, the apparent edge of neural schemes
+(30--45\,\% lower RMSE) is largely a restriction and approximation deficit of
+classical DA, and it shrinks with smoothing, larger ensembles and more
+optimisation iterations. Under model error, misspecification dominates: it
+appears in the low-noise score before it appears in the RMSE, it degrades
+calibration, and it makes the best perfect-model scheme (strong-constraint
+4D-Var) the worst. Finally, a learned prior competes with the true-model hard
+constraint in perfect-model setting, but results in a much greater robustness to parameter tuning and forcing errors. 
+%
+For sparsely observed systems with significant model error, such as ocean
+reanalyses, our findings suggest that neural DA schemes can better reveal the
+information actually gained from a given observation configuration, and that
+progress lies less in more observations or a more faithful hard-constrained
+model than in representing model error explicitly and in assessing reanalyses
+with scores that resolve their reported uncertainty, not RMSE alone.
 \end{abstract}

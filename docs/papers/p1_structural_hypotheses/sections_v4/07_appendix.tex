@@ -1,5 +1,84 @@
 \appendix
 
+\section{Case studies}\label{app:casestudies}
+
+\subsection{Lorenz-63}
+\todo{Lorenz-63 setup (stochastic Lorenz-63 with wind forcing, parameter randomisation,
+window length, regular and random observing systems, \Sz{}/\So{} model errors), to be
+completed with the hand-ported L63 runs.}
+
+\subsection{Lorenz-96}
+\paragraph{Dynamics.}
+The two-scale system has $K = 8$ slow variables $X_k$ and $J = 4$ fast variables
+$Y_{j,k}$ per slow variable,
+\begin{align*}
+  \dot X_k &= X_{k-1}(X_{k+1} - X_{k-2}) - X_k + F - h \textstyle\sum_{j} w_j Y_{j,k} + c_1 W(t),\\
+  \dot Y_{j,k} &= \big[Y_{j+1,k}(Y_{j-1,k} - Y_{j-2,k}) - Y_{j,k} + h_x X_k\big] / \epsilon ,
+\end{align*}
+with periodic indices, nominal values $F = 8$, $h = h_x = c_1 = 1$, $\epsilon = 0.1$ and
+coupling weights $w = (1, 1, 0.1, 0.1)$, and a slow external forcing $W(t)$ (an AR(1)
+process plus a sinusoid). Each window draws its own parameters: $F$, $c_1$, $h_x$,
+$\epsilon$ and $w$ are drawn uniformly within $\pm 20\,\%$ of their nominal values
+($h$ is fixed).
+The system is integrated with a fourth-order Runge--Kutta scheme, $\Delta t = 0.001$,
+over windows of 3000 steps.
+
+\paragraph{Observations.}
+The observed state has 24 variables: the 8 slow variables and the first two fast
+variables of each slow variable; the 16 other fast variables are never observed. The
+observation-error variance is $\mathbf{R} = 0.5\,I$. Two observing systems are used:
+\begin{itemize}[leftmargin=*,nosep]
+  \item \textbf{Regular:} all 24 variables observed at 30 equally spaced times per window
+    (every 100 steps, first step included);
+  \item \textbf{Random:} the same windows observed at 10 to 100 times at stratified
+    random positions (first step always observed, at least one observation per DA
+    sub-window), with 4 to 16 of the 16 observable fast variables observed per window.
+\end{itemize}
+Tables~\ref{tab:s0} and~\ref{tab:s1} and Figs.~\ref{fig:budget-s0}
+and~\ref{fig:budget-s1} use the regular observing system; the random one is analysed in
+Sect.~\ref{sec:q1-density}. All schemes assimilate exactly the same observations.
+
+\paragraph{Data sets.}
+The test set has 200 windows. The neural schemes are trained on 1000 windows and
+validated on 100, with a random observing system redrawn at every batch (10 to 300
+observation times, 4 to 16 observed fast variables) and fresh observation noise. The DA
+hyper-parameters are selected on 50 separate validation windows.
+
+\paragraph{Model error.}
+\Sz{} and \So{} are described in Sect.~\ref{sec:testbeds}. At \So{}, the DA model has
+its parameters biased by $+10\,\%$, receives a corrupted forcing and is truncated to the
+24 observed variables; in the \So-full variant, it keeps the 40 variables.
+
+\subsection{QG ocean}
+\paragraph{Dynamics.}
+The two-layer quasi-geostrophic ocean is solved on a $64 \times 64$ doubly periodic grid
+over 1000\,km, with a 2\,h time step, $\beta = 1.5 \times 10^{-11}$\,m$^{-1}$\,s$^{-1}$
+and a layer-depth ratio $\delta = 0.25$. Each window draws its deformation radius
+(12.75--17.25\,km), upper-layer mean flow (0.0425--0.0575\,m\,s$^{-1}$) and bottom drag.
+The ocean is forced by the wind-stress curl of a low-order chaotic atmosphere of coupled
+gyrostats, projected on 12 Fourier modes ($|k| \le 2$), whose regime changes drive the
+large-scale circulation; about one test window in five is calm.
+
+\paragraph{Observations.}
+Only the upper-layer streamfunction $\psi_1$ is observed, on 3 randomly drawn meridional
+columns per day (4.7\,\% of the grid), each once per day, with a 5\,\% observation
+error, mimicking along-track satellite altimetry. Scores are computed on 100 test
+windows of 30 days, as the mean over the two streamfunction layers $\psi_1, \psi_2$.
+
+\paragraph{Model error.}
+At \So{}, the wind given to the DA model has a $+15\,\%$ amplitude bias, a random error of
+25\,\% of each mode's standard deviation and a 50\,km position error; the deformation
+radius is biased by $-10\,\%$ and the bottom drag by $-50\,\%$; the observation errors
+grow to 15\,\% white plus 15\,\% correlated per pass; and the DA model runs on a
+$32 \times 32$ grid, which does not resolve the deformation radius.
+
+\paragraph{Data sets.}
+The neural schemes are trained on 5000 windows drawn from the same distribution, with
+observation-noise augmentation (5--15\,\% white, 0--15\,\% correlated per pass) and a
+random number of observed columns per day. \todo{QG training details for D-Unet and SDA
+(window length, density draw).}
+
+
 \section{Operators and proofs}\label{app:proofs}
 
 \paragraph{Gaussian operator.}
@@ -37,18 +116,19 @@ Every scheme's row.}
 \todo{Inflation sweeps of the ETKF, EnKF and ETKS (30 and 100 members) on the
 validation windows, with the selection rule; Weak-4DVar model-error scale
 $\times$ L-BFGS budget (Table from \texttt{docs/results/l96\_weak4dvar.md}); SDA
-guidance weight; hybrid start time and guidance.}
+guidance weight; D-Unet+SDA start time and guidance.}
 
 \section{Sensitivities}
 \todo{Ensemble size; L-BFGS iterations; training budget and data; flow sampler
 steps; the 400-epoch rows.}
 
-\section{The fixed-observing-system protocol and network size}
+\section{The fixed-observing-system protocol and network size}\label{app:tiers}
 \todo{From \texttt{p1\_l96\_benchmark.md} annex A: S+ / M / L tiers, VanillaCFM vs
 PredictStateCFM, $\tau = 0$ heads, SDA conditioning, under the earlier
 fixed-observing-system protocol; not comparable with the main tables.}
 
-\section{Estimating \texorpdfstring{$\FMS_\tau$}{FMS}}
+\section{Estimating \texorpdfstring{$\FMS_\tau$}{FMS}}\label{app:fms}
+\todo{Sliced vs per-element evaluation on L96 (snapshot and space--time random projections, 64 directions): same rankings and S0/S1 conclusions; the advantage of SDA over the ETKS at \Sz{} shrinks to 5--8\,\% on space--time patches.}
 \todo{Monte Carlo over $\xv_0$ with common random numbers; kernel bandwidth;
 24-channel snapshot blocks and their effective-sample-size degeneration at
 $\tau = 0.75$; window bootstrap.}

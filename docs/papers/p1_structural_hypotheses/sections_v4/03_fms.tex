@@ -1,121 +1,111 @@
-\section{Scoring the uncertainty: the error chain along \texorpdfstring{$\tau$}{tau}}\label{sec:fms}
+\section{Scoring the uncertainty using flow matching}\label{sec:fms}
 
-The chain~\eqref{eq:chain0} scores the mean of a scheme. A DA scheme also reports
-an uncertainty --- an ensemble spread, a Gaussian covariance, a set of samples ---
-and the paper's subtitle asks whether that uncertainty is right. We score it with
-a single proper score that reduces to the MSE at one end of its range, so that the
-same chain applies.
+We extend the chain~\eqref{eq:chain0} scores for the mean or deterministic state estimate of a scheme to the uncertainty component -- an ensemble spread, a Gaussian covariance, a set of samples -- report by probabislitic DA schemes. We exploit a flow-matching representation of any posterior and introduce a family of strictly proper scores, indexed by $\tau \in (0,1)$, each of which characterizes the posterior uniquely and splits along the restriction--misspecification--approximation chain; at $\tau = 0$ it reduces to the mean-squared error of the mean.
 
-\subsection{The operator of a scheme}
-Work in per-channel standardised units, and let $\xv_1$ denote a target state
-(a draw from the scheme's output, or the truth $\xv_1^\star$). On the linear path
+\subsection{Flow matching representation of a posterior}
+
+Let us consider the classic notations used in the flow matching literature \cite{lipman_flow_2023,albergo_stochastic_2025} where $\xv_1$ denotes a centered and standardized target state (a draw from the scheme's output, or the truth $\xv_1^\star$). Flow matching methods consider a linear path between the target space and a Gaussian space:
 \begin{equation}
+\label{eq:path}
   \xv_\tau = \tau\, \xv_1 + (1-\tau)\, \xv_0, \qquad \xv_0 \sim \mathcal{N}(0, I),\quad \tau \in [0, 1),
 \end{equation}
-any output distribution $q$ of a scheme defines the operator
+Any  distribution $q(\xv_1 \mid C)$ of a scheme uniquely defines the operator
 \begin{equation}\label{eq:psi}
-  \Psi_q(\xv_\tau, \tau) \;=\; \E_q[\xv_1 \mid \xv_\tau] \;=\; \Psi_{\mathrm{mean}} + \Psi_{\mathrm{anom}},
+  \Psi_q(\xv_\tau, C, \tau) \;=\; \E_q[\xv_1 \mid \xv_\tau, C] 
 \end{equation}
-the denoiser of $q$ at noise level $\tau$, split into the scheme's mean
-$\Psi_{\mathrm{mean}} = \Psi_q(\cdot, 0)$ and an anomaly part that carries its
-uncertainty. Table~\ref{tab:psi} gives $\Psi_q$ for the three kinds of output we
-meet. A point estimate is a degenerate flow. A Gaussian has a closed form. An
-ensemble, a learned sampler or a kernel density of members gives a
-posterior-weighted average of its samples. Conditional flow matching learns
-$\Psi$ directly~\todo{cite Lipman et al.\ 2023}; the general representation of
-DA algorithms as flows is beyond this paper.
+such that integrating the ODE
+$\dot{\xv}_\tau = (\Psi(\xv_\tau, \tau, C) - \xv_\tau)/(1-\tau)$ between $\tau=0$ to $\tau=1$ from Gaussian states $\xv_0$ generates samples according to posterior $q(\xv_1 \mid C)$. 
 
-\begin{table}[t]
-\centering\small
-\caption{The operator $\Psi_q$ of each kind of scheme output ($\snr = \tau^2/(1-\tau)^2$; per element for the Gaussian form).}
-\label{tab:psi}
-\begin{tabular}{lll}
-\toprule
-schemes & output $q$ & $\Psi_q(\xv_\tau,\tau)$ \\
-\midrule
-Strong/Weak-4DVar, DirectUNet & point mass at $\hat m$ & $\hat m$ \quad ($\Psi_{\mathrm{anom}} \equiv 0$) \\
-EnKF, ETKF, ETKS (Gaussian form) & $\mathcal{N}(m, v)$ & $m + \dfrac{\snr\, v}{1 + \snr\, v}\,(\xv_\tau/\tau - m)$ \\
-CFM, SDA, ensemble (KDE) & samples $\{\xv_1^{(i)}\}$ & $\sum_i w_i(\xv_\tau)\, \xv_1^{(i)}$, \ $w_i \propto \mathcal{N}(\xv_\tau; \tau \xv_1^{(i)}, (1-\tau)^2 I)$ \\
-hybrid DirectUNet $\to$ SDA3-fix & composition & $\Psi_{\mathrm{mean}}$ from DirectUNet, $\Psi_{\mathrm{anom}}$ from SDA \\
-\bottomrule
-\end{tabular}
-\end{table}
+\iffalse
+Let us assume the scheme provides an ensemble $\{\xv_1^{(i)}\}_{i=1}^{N}$ of draws from $q(\xv_1 \mid C)$, and denote by
+$\hat q(\xv_1 \mid C) = \frac1N \sum_{i=1}^{N} \delta_{\xv_1^{(i)}}(\xv_1)$
+the associated empirical distribution. The ensemble approximation of the operator is given by
+\begin{equation}\label{eq:psi_ens}
+  \hat\Psi_q(\xv_\tau, C, \tau) = \sum_{i=1}^{N} w_i(\xv_\tau, \tau)\, \xv_1^{(i)} .
+\end{equation}
+with weights $w_i(\xv_\tau, \tau) \propto
+ \exp(-\|\xv_\tau - \tau\,\xv_1^{(i)}\|^2/{2(1-\tau)^2})$ summing to one.
+\fi
 
-\subsection{The score}
-The flow-matching score of a scheme is the error of its operator against the
-truth,
+\subsection{The flow-matching score and the chain at every \texorpdfstring{$\tau$}{τ}}
+
+We define the flow-matching score of a scheme, characterized by its flow $\Psi_q$  as the expectation of the quadratic error of its operator against the reference distribution $p$ for any $\tau \in (0,1)$ 
 \begin{equation}\label{eq:fms}
-  \FMS_\tau(q) \;=\; \E\big\|\Psi_q(\xv_\tau^\star, \tau) - \xv_1^\star\big\|^2,
-  \qquad \xv_\tau^\star = \tau\, \xv_1^\star + (1-\tau)\, \xv_0 .
+  FMS_\tau(p \,\|\, q) \;=\; \E\big\|\Psi_q(\xv_\tau, \tau) - \xv_1)\big\|^2,
+  %D_\tau(p \,\|\, q) \;=\; \E\big\|\Psi_q(\xv_\tau, \tau) - \Psi_p(\xv_\tau, \tau)\big\|^2,  
+  \qquad \xv_\tau = \tau\, \xv_1 + (1-\tau)\, \xv_0 . \ \xv_1 \sim p, \ \xv_0 \sim \mathcal{N}(0, I)
 \end{equation}
-It has six properties we use (proofs in Appendix~\ref{app:proofs}).
+The score is related to the divergence between the operators of $q$ and  $p$,
+\begin{equation}\label{eq:div}
+  D_\tau(p\,\|\,q) = \E\big\|\Psi_q(\xv_\tau, C, \tau) - \Psi_p(\xv_\tau, C, \tau)\big\|^2 ,
+\end{equation}
+through the exact decomposition
+\begin{equation}\label{eq:fms_div}
+  \FMS_\tau(q) = D_\tau(p\,\|\,q) + \mathrm{mmse}_p(\tau),
+  \qquad
+  \mathrm{mmse}_p(\tau) = \E\big\|\Psi_p(\xv_\tau, C, \tau) - \xv_1^\star\big\|^2 ,
+\end{equation}
+which holds because $\Psi_p = \E[\xv_1^\star \mid \xv_\tau, C]$, so that
+$\xv_1^\star - \Psi_p$ is orthogonal to any function of $(\xv_\tau, C)$. The term
+$\mathrm{mmse}_p(\tau)$ is the irreducible error on $\xv_1$ given $\xv_\tau$ and $C$. It does not depend on $q$. By Tweedie's formula \cite{efron_tweedies_2011,robbins_empirical_1992},
+$\tau\,\Psi_\rho(\xv_\tau, C, \tau) = \xv_\tau + (1-\tau)^2\,\nabla \log \rho_\tau(\xv_\tau \mid C)$
+for any distribution $\rho$, where $\rho_\tau$ is the law of $\xv_\tau$ when
+$\xv_1 \sim \rho(\cdot \mid C)$. Hence, the considered divergence is a scaled Fisher divergence between the noised posteriors $p_\tau$ and $q_\tau$, the denoising form of score matching \cite{hyvarinen_estimation_2005,vincent_connection_2011}.
+\begin{equation}\label{eq:fisher}
+  D_\tau(p\,\|\,q) = \frac{(1-\tau)^4}{\tau^2}\;
+  \E_{C}\,\E_{\xv_\tau \sim p_\tau(\cdot \mid C)}
+  \big\|\nabla \log p_\tau(\xv_\tau \mid C) - \nabla \log q_\tau(\xv_\tau \mid C)\big\|^2 ,
+\end{equation}
+
+The considered score has the following properties:
 \begin{enumerate}[label=(\roman*),leftmargin=*,nosep]
   \item At $\tau = 0$ it is the mean-squared error of the scheme's mean.
-  \item For $\tau \in (0,1)$ it is strictly proper: its expectation is minimised
-    only by the true conditional distribution, because Gaussian smoothing is
-    injective.
+  \item For $\tau \in (0,1)$ it is strictly proper~\cite{gneiting_strictly_2007}: its  expectation is minimised only by the true conditional distribution,  $q(\cdot \mid C) = p(\cdot \mid C)$ for almost every context. In practice, as  detailed for the ensemble form of the score (see below), the score is computed on one-dimensional slices $\mathbf{u}^\top\xv_1$ of the state --- the
+  coordinate axes for the per-element evaluation, random directions for the sliced  one. The computed score is then strictly proper for the distributions of the slices considered, i.e.\ for the marginal distributions in the per-element case; with directions drawn at random over a patch, its expectation over directions is strictly proper for the joint distribution of the patch (Cramér--Wold theorem).
   \item For a Gaussian $\mathcal{N}(m, v)$ with error $e$, $\FMS_\tau = (e^2 +
-    \snr\, v^2)/(1 + \snr\, v)^2$, minimised at $v = \E e^2$ for every $\tau$:
+    \alpha_\tau\, v^2)/(1 + \alpha_\tau\, v)^2$, minimised at $v = \E e^2$ for every $\tau$:
     the spread--skill identity.
-  \item As $\tau \to 1$ it tends to a universal floor $1/\snr$ plus a term
-    proportional to the Hyvärinen score.
-  \item Integrated with weight $d\snr$ it gives the log score up to a constant
-    (mismatched estimation) \todo{cite Verdú 2010}.
-  \item A point estimate scores its MSE at every $\tau$.
+  \item A purely-deterministic estimate leads to a constant score at every $\tau$ given by the mean-square error of the deterministic estimate.
 \end{enumerate}
-Small $\tau$ reads the mean; large $\tau$ reads the uncertainty, and in particular
-penalises a confident ensemble whose truth falls outside it.
+Besides the decomposition between the mean at $\tau =0$ and the distribution of the anomaly characterized by $\tau >0$, the score at small $\tau$ characterize the space-time scale with the largest energy, in general large-scale patterns, and large $\tau$ reads the lower-energy components, in general fine-scale patterns \cite{rissanen_generative_2022,kadkhodaie_generalization_2024}.
 
-\subsection{The chain at every \texorpdfstring{$\tau$}{tau}}
-Let $\Psi_p$ and $\Psi_{p_S}$ be the operators of the true conditional
-distributions given $C$ and given $S$. Under the condition
+As the considered score relies on conditional expectations of the state, we can derive a decomposition similar to \eqref{eq:chain0} for conditioning variables $(\xv_\tau, C)$ instead of $C$ only. Under the condition
 of~\eqref{eq:chain0}, for every $\tau$,
 \begin{equation}\label{eq:chaintau}
-  \FMS_\tau(q) \;=\;
+  \FMS_\tau( q) \;=\;
   \underbrace{\mathrm{mmse}_p(\tau)}_{\text{irreducible}}
-  \;+\; \underbrace{\E\|\Psi_p - \Psi_{p_S}\|^2}_{R_\tau(S):\ \text{restriction}}
-  \;+\; \underbrace{\E\|\Psi_q - \Psi_{p_S}\|^2}_{D_\tau(q \,\|\, p_S):\ \text{misspecification + approximation}} ,
+  \;+\; \underbrace{D_\tau(p \,\|\, p_S)}_{ \text{restriction}}
+  \;+\; \underbrace{D_\tau(p_S \,\|\, q)}_{\text{misspecification+approximation}} ,
+%  \underbrace{\mathrm{mmse}_p(\tau)}_{\text{irreducible}}
+%  \;+\; \underbrace{\E\|\Psi_p(\xv_\tau, \tau) - \Psi_{p_S}(\xv_\tau, \tau)\|^2}_{D_\tau(p \,\|\, p_S):\ \text{restriction}}
+%  \;+\; \underbrace{\E\|\Psi_{p_S}(\xv_\tau, \tau) - \Psi_{\tilde p}(\xv_\tau, \tau)\|^2}_{D_\tau(p_S \,\|\, \tilde p):\ \text{misspecification}} ,
+%  \;+\; \underbrace{\E\|\Psi_q(\xv_\tau, \tau) - \Psi_{\tilde p}(\xv_\tau, \tau)\|^2}_{D_\tau(\tilde p \,\|\, q):\ \text{approximation}} ,
 \end{equation}
-with $\mathrm{mmse}_p(\tau) = \E\|\Psi_p - \xv_1^\star\|^2$. The proof repeats
-the tower-property argument of~\eqref{eq:chain0} conditioning on $(\xv_\tau, S)$
-instead of $S$: $\Psi_{p_S} = \E[\Psi_p \mid \xv_\tau, S]$, and $\Psi_q - \Psi_{p_S}$
-is a function of $(\xv_\tau, S)$ and of independent randomness. $D_\tau \ge 0$,
-with equality if and only if $q = p_S$. At $\tau = 0$, \eqref{eq:chaintau}
+%with $\mathrm{mmse}_p(\tau) = \E\|\Psi_p(\xv_\tau, \tau) - \xv_1^\star\|^2$. $\forall \tau, p, q, \ D_\tau (p \,\|\, q) \ge 0$,
+with equality if and only if $q = p$. At $\tau = 0$, \eqref{eq:chaintau}
 reduces to~\eqref{eq:chain0}. Three consequences follow.
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Differences are exact.} $\mathrm{mmse}_p(\tau)$ is unknown but
-    common to all schemes, so differences of $\FMS_\tau$ between schemes are
-    exact differences of operator divergences.
-  \item \textbf{A filter/smoother identity along $\tau$.} If a filter and a smoother computed on the same ensemble were both exact,
-    their score gap would equal $\E\|\Psi_F - \Psi_S\|^2$ at every $\tau$. A gap
-    that does not match flags a misspecification. At $\tau = 0$ this is the
-    identity $\mathrm{MSE}_F - \mathrm{MSE}_S = \mathrm{var}_F - \mathrm{var}_S =
-    \E\|m_F - m_S\|^2$ that we test in Sect.~\ref{sec:q1}.
-  \item \textbf{Restriction vs misspecification, by eye.} A restriction raises the
-    whole $\FMS_\tau$ curve, and the scheme stays calibrated for its information. A
-    misspecification makes the scheme confident about the wrong thing, and bends
-    the curve upward at large $\tau$.
+\begin{itemize}
+  \item \textbf{Differences are exact.} The irreductible component $\mathrm{mmse}_p(\tau)$ is unknown but common to all schemes, so score differences  between schemes are exact differences of operator divergences. This also means that the lowest score among different schemes deliver an upper bound for the irreductible term;
+  \item \textbf{A restriction identity along $\tau$.} Consider two schemes using nested information $S' \subseteq S \subseteq C$, for instance a filter ($S'$, observations up to the current time) and the smoother computed on the same ensemble ($S$, all observations of the window). If both were exact, $q' = p_{S'}$ and $q = p_S$, the chain~\eqref{eq:chaintau} would give, at every $\tau$,
+  \begin{equation}\label{eq:restriction_identity}
+    \FMS_\tau(q') - \FMS_\tau(q) = D_\tau(p_S\,\|\,p_{S'})
+    = \E\big\|\Psi_{q}(\xv_\tau, C, \tau) - \Psi_{q'}(\xv_\tau, C, \tau)\big\|^2 \;\ge\; 0 :
+  \end{equation}
+  the score gap equals the distance between the two operators, which is computable  without the truth. A gap that does not match this distance flags misspecification or  approximation. At $\tau = 0$ the identity reads
+  \begin{equation}
+    \E\|\mathbf{m}_{q'} - \xv_1^\star\|^2 - \E\|\mathbf{m}_{q} - \xv_1^\star\|^2
+    = \E\operatorname{tr}\Cov_{q'}(\xv_1 \mid S') - \E\operatorname{tr}\Cov_{q}(\xv_1 \mid S)
+    = \E\|\mathbf{m}_{q} - \mathbf{m}_{q'}\|^2 ,
+  \end{equation}
+  relating the MSE gap, the gap of reported variances and the mean shift between the  two schemes, which we test in Section~\ref{sec:q1}.
+  \item \textbf{Restriction vs. misspecification and approximation.} For exact schemes  with nested information, the score gap~\eqref{eq:restriction_identity} is  non-negative at every $\tau$: a pure restriction raises the score curve uniformly in sign, and the less informed scheme stays calibrated for its own information. A gap that changes sign along $\tau$ therefore reveals misspecification or approximation, with a scale-dependent signature; for schemes with non-nested information, sign
+  changes can also arise from restriction alone.
 \end{itemize}
 
-\subsection{Derived diagnostics}
-\begin{itemize}[leftmargin=*]
-  \item \textbf{Calibration loss}: the share of $\FMS_\tau$ removed by the best
-    scalar rescaling $c\,v$ of the reported variance, with its optimum
-    $c^\star(\tau)$. A scheme can be calibrated in aggregate and still lose at
-    large $\tau$, if its spread is right on average but in the wrong place.
-  \item \textbf{Shape gain}: the score of a kernel density of the members against a
-    Gaussian of the same variance; it reads non-Gaussian structure.
-  \item \textbf{Pooled spread/skill} $\sqrt{\E v / \E e^2}$ ($\approx 0.984$ for a
-    calibrated 30-member ensemble). The ratio of per-window mean spread to
-    per-window mean RMSE is biased low and is not used as a calibration measure.
-\end{itemize}
-
-\paragraph{Relation to CRPS and the log score.}
 The chain decomposition is not unique to $\FMS$: the expected log score splits
 the same way, through Kullback--Leibler divergences, and calibration--resolution
-decompositions exist for every proper score \todo{cite Bröcker 2009; Gneiting \&
-Raftery 2007}. We use $\FMS_\tau$ for three reasons:
-\begin{itemize}[leftmargin=*,nosep]
+decompositions exist for every proper score \cite{brocker_reliability_2009,gneiting_strictly_2007}. We use $\FMS_\tau$ for three reasons:
+\begin{itemize}
   \item it is computable for samples, Gaussians and point estimates alike, where
     the log score is undefined for ensembles and point masses;
   \item it is resolved over $\tau$, which separates the mean from the uncertainty;
@@ -123,4 +113,103 @@ Raftery 2007}. We use $\FMS_\tau$ for three reasons:
 \end{itemize}
 The CRPS remains a useful marginal check and is reported alongside.
 
-\figplaceholder{Fig.~2 -- the chain along $\tau$}{Synthetic Gaussian example: $\FMS_\tau$ of the true posterior, of a restricted one (curve raised, same shape) and of a misspecified one (bent upward at large $\tau$); the three terms of~\eqref{eq:chaintau} shaded.}
+
+\subsection{Derived diagnostics}
+All diagnostics are computed per element (window, time step, observed channel) in
+standardised units and then averaged; $m$ and $v$ denote the mean and variance
+reported by the scheme, and $\overline{\,\cdot\,}$ the average over windows, times,
+channels and draws of $\xv_0$.
+
+\paragraph{Ensemble form of the score.} When considering an ensemble $\{\xv_1^{(i)}\}_{i=1}^N$ smoothed by a Gaussian kernel of variance $h^2$ (with $h^2 = 0$ for the empirical ensemble) to represent posterior $q(\xv_1|C)$, the associated flow matching operator $\tilde\Psi_q$ is given by
+\begin{equation}\label{eq:fms_mix}
+  \tilde\Psi_q(\xv_\tau,C,\tau) = \sum_{i=1}^N w_i\Big[\xv_1^{(i)} + \frac{\tau h^2}{c^2}\big(\xv_\tau - \tau\xv_1^{(i)}\big)\Big],
+  \mbox{ with } w_i \propto \exp\!\Big(-\frac{\|\xv_\tau - \tau\xv_1^{(i)}\|^2}{2c^2}\Big),
+\end{equation}
+with $c^2 = \tau^2 h^2 + (1-\tau)^2$.
+The ensemble form of the score, denoted $\tilde \FMS_\tau$, is the empirical average of $\|\tilde \Psi(\xv_\tau,C,\tau) - \xv_1\|^2$ over draws of $\xv_1\sim p$ and $\xv_0 \sim \mathcal{N}(0, I)$. At $\tau=0$, we retrieve the squared error of the ensemble mean. when $\tau\rightarrow 1$, the score  converges to the squared error of the closest ensemble member  for $h=0$ and to 0 otherwise.
+
+We exploit this ensemble form of the score as a diagnostic to intercompare different schemes and assess the underlying error budget decomposition. To retain the dependence between components without the degeneration of the joint ensemble operator, we evaluate the score on one-dimensional random projections $\mathbf{u}^\top\xv_1$ of space–time patches, with $\mathbf{u}$ uniform on the unit sphere in standardised units, in the spirit of sliced comparisons of distributions \cite{rabin_wasserstein_2012,bonneel_sliced_2015}.
+Since $\mathbf{u}^\top\xv_0 \sim \mathcal{N}(0,1)$, each projection defines a valid one-dimensional score, and by the Cramér--Wold theorem \cite{cramer_theorems_1936} the expected score over directions is strictly proper for the joint distribution of the patch. Directions and noise draws are common random numbers: they are drawn per test item from a seed fixed by the item, and shared by all schemes, so that score differences between schemes are evaluated on identical draws.
+
+\paragraph{Gaussian form of the score.}
+Many DA schemes report, for each context $C$, a Gaussian approximation of the
+posterior,
+\begin{equation}\label{eq:gauss_q}
+  q(\xv_1 \mid C) = \mathcal{N}\big(\mathbf{m}_q(C),\, \boldsymbol{\Sigma}_q(C)\big),
+\end{equation}
+where the mean $\mathbf{m}_q(C)$ and the covariance $\boldsymbol{\Sigma}_q(C)$ are context-dependent: they are computed from the information $S \subseteq C$ that the scheme uses (observations, and for model-based schemes parameters and forcing), for instance as the mean and covariance of an analysis ensemble. On the
+path~\eqref{eq:path}, $(\xv_1, \xv_\tau)$ is jointly Gaussian given $C$, and the
+operator~\eqref{eq:psi} is linear in $\xv_\tau$,
+\begin{equation}\label{eq:psi_gauss}
+  \Psi_q(\xv_\tau, C, \tau) = \mathbf{m}_q(C)
+  + \mathbf{K}_\tau(C)\Big(\frac{\xv_\tau}{\tau} - \mathbf{m}_q(C)\Big),
+  \qquad
+  \mathbf{K}_\tau(C) = \alpha_\tau\,\boldsymbol{\Sigma}_q(C)\big(\mathbf{I} + \alpha_\tau\,\boldsymbol{\Sigma}_q(C)\big)^{-1},
+\end{equation} 
+with $\alpha_\tau = \tau^2/(1-\tau)^2$. Writing $\mathbf{e}(C) = \mathbf{m}_q(C) - \xv_1^\star$
+for the error w.r.t. the reported mean the resulting score in closed form is
+\begin{equation}\label{eq:fms_gauss_full}
+  \FMS_\tau^{\mathcal{G}}(\mathbf{m}_q,\boldsymbol{\Sigma}_q) = \E\Big[\,
+    \mathbf{e}(C)^\top \big(\mathbf{I} + \alpha_\tau\,\boldsymbol{\Sigma}_q(C)\big)^{-2}\,\mathbf{e}(C)
+    \;+\; \alpha_\tau\, \operatorname{tr}\!\Big(\boldsymbol{\Sigma}_q^2(C)\,\big(\mathbf{I} +
+    \alpha_\tau\,\boldsymbol{\Sigma}_q(C)\big)^{-2}\Big)
+  \Big],
+\end{equation}
+where the expectation runs over contexts and truths.  Considering the eigendecomposition of the covariance matrix, {\em i.e.} $\boldsymbol{\Sigma}_q(C) =  \mathbf{U}(C)\,\boldsymbol{\Lambda}(C)\,\mathbf{U}(C)^\top$, with $\boldsymbol{\Lambda}= \operatorname{diag}(\{\lambda_1,\ldots,\lambda_n\})$ and $\tilde{\mathbf{e}} (C) = \mathbf{U}^\top \mathbf{e}(C)$, the score is a sum of univariate terms in the eigenbasis,
+\begin{equation}\label{eq:fms_gauss_eig}
+  \FMS_\tau^{\mathcal{G}}(q) = \E\Big[\sum_{k=1}^{n}
+    \frac{\tilde e_k^2 + \alpha_\tau \,\lambda_k^2}{(1 + \alpha_\tau \,\lambda_k)^2}\Big].
+\end{equation}
+At $\tau = 0$ this reads as expected as the squared error of the reported mean. 
+In this paper, we compute the Gaussian form of the score for diagonal covariances $\boldsymbol{\Sigma}_q(C) = \operatorname{diag}\big(v_1(C), \dots, v_n(C)\big)$, one variance per channel and time step: the eigenbabasis and
+\eqref{eq:fms_gauss_eig} reduces to a sum over elements of
+$(e_j^2 + \alpha_\tau \, v_j^2)/(1 + \alpha_\tau \, v_j)^2$. 
+
+Since $\xv_\tau/\tau = \xv_1 + \xv_0/\sqrt{\alpha_\tau}$, the noised state carries information on $\xv_1$ only in the directions whose variance exceeds $1/\alpha_\tau$. In the eigenbasis of the reported covariance, each mode contributes $(\tilde e_k^2 + \alpha_\tau\lambda_k^2)/(1+\alpha_\tau\lambda_k)^2$ to the Gaussian score: the error of its mean, $\tilde e_k^2$, as long as $\alpha_\tau\lambda_k \ll 1$, and a calibration term comparing $\tilde e_k^2$ with $\lambda_k$ once $\alpha_\tau\lambda_k \gg 1$. As $\tau$ increases from $0$, where only the conditional mean is scored, the uncertainty of the highest-variance modes enters the score first, and that of the lowest-variance modes last. The $\tau$-resolved analysis is therefore a scale analysis ordered by variance: without informative observations the variance follows the energy spectrum, so that, given the spectral decay of geophysical flows, the uncertainty of large scales is evaluated from small $\tau$ and that of fine scales only at large $\tau$; with observations, the variance of the large scales is reduced, and the first modes evaluated are those that remain the most uncertain, typically around the effective resolution of the observing system. This reading applies to the joint and sliced versions of the score, not to the per-element one.
+
+We exploit this Gaussian form of the score to assess the calibration of the spread of the ensemble as well as its non-Gaussianity through the two diagnostics detailed below.
+
+\paragraph{$\tau$-resolved spread-calibration diagnostic.} We exploit the Gaussian form of the score to assess
+over- or under-confidence in the spread of a scheme's posterior. Given the
+context-dependent mean $\mathbf{m}_q(C)$ and covariance $\boldsymbol{\Sigma}_q(C)$ of
+$q$, we define the spread-calibration diagnostic at $\tau$
+\begin{equation}\label{eq:calib_loss}
+  L_\tau = 1 - \frac{\FMS^{\mathcal{G}}_\tau\big(\mathbf{m}_q,\, c^\star(\tau)\,\boldsymbol{\Sigma}_q\big)}
+                    {\FMS^{\mathcal{G}}_\tau\big(\mathbf{m}_q,\, \boldsymbol{\Sigma}_q\big)},
+  \qquad
+  c^\star(\tau) = \arg\min_{c>0} \FMS^{\mathcal{G}}_\tau\big(\mathbf{m}_q,\, c\,\boldsymbol{\Sigma}_q\big).
+\end{equation}
+$L_\tau \ge 0$ is the share of the score at $\tau$ that a uniform inflation (or
+deflation) of the reported covariance by the scalar $c^\star(\tau)$ would remove;
+$c^\star(\tau) > 1$ flags over-confidence and $c^\star(\tau) < 1$ under-confidence. Because the score is computed with the realised errors, $L_\tau$ measures the agreement of the reported spread with the scheme's own error, bias included, rather than with the true posterior variance. Since the denominator contains the irreducible term $\mathrm{mmse}_p(\tau)$, $L_\tau$ is a lower bound on the corresponding share of the divergence $D_\tau(p\,\|\,q)$.
+
+For small $\tau$, the operator of any $q$ with finite covariance expands as
+$\Psi_q = \mathbf{m}_q + \tau\,\boldsymbol{\Sigma}_q\,\xv_0 + O(\tau^2)$, so that, with $\mathbf{e} = \mathbf{m}_q - \xv_1^\star$,
+\begin{equation}\label{eq:fms_small_tau}
+  \FMS_\tau(q) = \E\|\mathbf{e}\|^2
+  + \tau^2\,\E\big[\operatorname{tr}(\boldsymbol{\Sigma}_q^2) - 2\,\mathbf{e}^\top\boldsymbol{\Sigma}_q\,\mathbf{e}\big]
+  + O(\tau^3).
+\end{equation}
+The value at $\tau = 0$ scores the mean component alone; the curvature scores the
+agreement between the reported covariance and the error of that mean. Minimising the curvature over a scalar inflation $c\,\boldsymbol{\Sigma}_q$ gives the small-$\tau$ limit of~\eqref{eq:calib_loss},
+\begin{equation}\label{eq:cstar_small_tau}
+  c^\star(\tau \to 0) =
+  \frac{\E\big[\mathbf{e}^\top\boldsymbol{\Sigma}_q\,\mathbf{e}\big]}
+       {\E\big[\operatorname{tr}(\boldsymbol{\Sigma}_q^2)\big]} .
+\end{equation}
+For a homogeneous isotropic spread, $\boldsymbol{\Sigma}_q = v\,\mathbf{I}$ with $v$ the same for every element and context, \eqref{eq:cstar_small_tau} reduces to
+$c^\star = \E\|\mathbf{e}\|^2 / (n\,v) = 1/\mathrm{SS}^2$, where
+$\mathrm{SS} = \sqrt{\overline{v}\,/\,\overline{e^2}}$ is the conventional pooled
+spread--skill ratio \cite{leutbecher_ensemble_2008,fortin_why_2014}. The pooled spread--skill ratio is thus the homogeneous-spread limit of the curvature of the score at $\tau = 0$, and $c^\star(\tau)$ generalises it to every scale. Away from $\tau = 0$ the score weights the elements where the reported spread is small relative to the error, so that $c^\star(\tau)$ departs from $1/\mathrm{SS}^2$ when errors concentrate where the scheme is confident: a scheme can be calibrated in aggregate, $\mathrm{SS} \approx 1$, and still have $L_\tau > 0$ at large $\tau$.
+
+\paragraph{$\tau$-resolved non-Gaussian shape diagnostic.} We assess the gain from the non-Gaussian shape of the members, at equal variance, according to
+\begin{equation}\label{eq:shape_gain}
+  G_\tau = 1-\frac{\FMS_\tau(\text{KDE})}{\FMS_\tau(m, v + h^2)} ,
+  \qquad h^2 = \big(1.06\, s\, N^{-1/5}\big)^2 ,
+\end{equation}
+with $s$ the member standard deviation and the denominator the
+Gaussian score with the same variance as the kernel density. 
+A significantly positive $G_\tau$ therefore detects non-Gaussian
+features of the marginals --- skewness, heavy tails, multimodality --- that are
+consistent with the truth; a negative $G_\tau$ detects a misleading shape, such as members that are short-tailed relative to the error; and $G_\tau \approx 0$ is
+inconclusive, the true marginals being close to Gaussian or their non-Gaussianity not being captured by the scheme. By construction $G_0 = 0$, the detection being carried by $\tau > 0$, and the per-element score only sees the marginal distributions.

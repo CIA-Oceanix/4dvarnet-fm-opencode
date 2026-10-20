@@ -1,0 +1,58 @@
+# G2-3D: the obs-conditioned flow (VanillaCFM) on the 3D U-Net of G1-3D / G3-3D (2026-10-17), so the
+# three families compare at matched capacity: G1_direct_unet_3d_specwind_b16_w15_kpow.yaml with
+# model_type vanilla_cfm_3d -- same 4 levels [32, 64, 128, 128], 2 residual blocks, periodic in
+# space / zero-padded in time, and the same protocol (batch 16, 1200 epochs, 15-day crops, peak LR
+# 3e-4, 40-epoch warm-up, K**-1.5 density draw, obs-error augmentation, q term scale 3 on the
+# endpoint estimate x1_hat). Inputs x_tau + obs + mask per layer (6 channels): 16.83 M parameters.
+# Sampled with 20 early-fine Euler steps from noise; scored stitched over 15-day sub-windows
+# (ComposedFlow) or on the full 30-day window (FULL=1).
+#
+#   EXP_ID=G2_vanilla_cfm_3d_specwind_b16_w15_kpow sbatch --cpus-per-task=12 --mem=80G \
+#     batch/run_qg_specwind_neural_train.sbatch
+
+experiment_id: G2_vanilla_cfm_3d_specwind_b16_w15_kpow
+entry_point: train_qg_neural.py
+system: qg
+model_type: vanilla_cfm_3d
+qg:
+  nx: 64
+  state_dim: 8192
+  obs_geometry: random_columns
+  obs_field: psi
+model:
+  hidden_channels: [32, 64, 128, 128]
+  num_res_blocks: 2
+  use_obs_mask: true
+  param_dim: 0
+  cond_extra_dim: 0
+training:
+  epochs: 1200
+  lr: 0.0003
+  warmup_epochs: 40
+  batch_size: 16
+  num_workers: 10
+  gradient_clip_val: 1.0
+  # lambda_q = scale / Var(q_daily), Var measured on the first regeneration draw;
+  # scale 3 as for G1, on the flow's endpoint estimate x1_hat.
+  q_loss_weight_scale: 3.0
+data:
+  normalize: true
+  # Test/val observing system = the gyrostat DA rows (S0 = S1 obs):
+  # 3 psi1 columns per day, sequential sampler, 5% white noise.
+  cols_per_day: 3
+  obs_noise_std_frac: 0.05
+  init_lag_days: 5.0
+  cond_mode: none
+  regen_every: 30
+  train_window_days: 15
+  window_stride: 5
+  # Train split only: a fresh draw per sample, 3-30 distinct (step, column)
+  # slots per day, uniform over the 12 x 64 slots of a day (plan section 4.3).
+  cols_per_day_min: 3
+  cols_per_day_max: 30
+  train_cols_sampling: uniform_slots
+  cols_per_day_power: 1.5
+  # Train split only (2026-10-05, S1 keeps its altimetry error): each draw gets a total white
+  # error ~ U[5%, 15%] and a per-pass correlated error (offset + tilt) ~ U[0, 15%] of the
+  # window's psi1 std -- from the S0 obs model to the S1 one (evaluation/qg_specwind_s1.py).
+  obs_error_aug: [0.05, 0.15, 0.15]

@@ -122,7 +122,7 @@ def test_metric_stat_ssr_matches_aggregate():
 
 def test_harness_registry_and_argument_parsing():
     harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
-    assert {"B1", "B2", "B3", "B4", "B5", "M1", "M1b", "M1bI", "M1c"} <= set(harness.METHODS)
+    assert {"B1", "B2", "B3", "B4", "B5", "PUB", "M1", "M1b", "M1bI", "M1c"} <= set(harness.METHODS)
     a = harness.parse_args_kv("tau0=0.5,gw=2", harness.METHODS["B3"].defaults)
     assert a["tau0"] == 0.5 and a["gw"] == 2 and a["n_steps"] == 10
     with pytest.raises(ValueError):
@@ -242,6 +242,20 @@ def test_m1_stochastic_pigdm_adds_spread_and_m1b_m1c_run():
     assert x.shape == (8, 8, 4)
     xp, _ = spec.fn(ctx, batch, 1, harness.parse_args_kv("a=0.7,b=0.6,starts=perturbed", spec.defaults))
     assert xp.shape == (8, 8, 4) and not torch.allclose(xp, x)
+
+
+def test_pub_runs_on_nan_obs_and_member_chunks_reproduce_the_seeded_members():
+    harness = pytest.importorskip("eval_fdv_fm_posterior_l96")
+    d = harness.METHODS["PUB"].defaults
+    margs = harness.parse_args_kv("n_steps=5", d)
+    out = {}
+    for chunk in (0, 3):
+        ctx, batch = _toy_context(harness, n_members=6, member_chunk=chunk)
+        batch["obs"][:, 0, 1] = float("nan")
+        out[chunk], nfe = harness.METHODS["PUB"].fn(ctx, batch, 2, margs)
+        assert out[chunk].shape == (6, 8, 4) and torch.isfinite(out[chunk]).all() and nfe == 9
+    assert d["gamma"] == 3e-4 and d["n_steps"] == 100 and d["n_correctors"] == 1
+    assert out[0].std(0).mean() > 0
 
 
 def test_obs_pert_scales_the_perturbed_obs_spread():
