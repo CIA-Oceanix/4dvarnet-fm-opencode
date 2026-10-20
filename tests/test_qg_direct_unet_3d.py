@@ -88,6 +88,15 @@ def test_size_matched_3d_direct_unet_has_about_g1_m_parameters():
     assert 16.7e6 < sum(p.numel() for p in model.parameters()) < 16.9e6
 
 
+def test_l_tier_3d_config_has_about_g1_l_parameters():
+    from omegaconf import OmegaConf
+    from train_qg_neural import build_model
+    cfg = OmegaConf.load("config/experiment/G1L_direct_unet_3d_specwind_b16_w15_kpow.yaml")
+    model = build_model(cfg.model_type, QGConfig(nx=64, window_days=15.0),
+                        hidden_channels=list(cfg.model.hidden_channels))
+    assert 67.2e6 < sum(p.numel() for p in model.parameters()) < 67.4e6
+
+
 def test_activation_monitor_finds_the_decoder_of_every_monai_backbone():
     from models.monai_unet_qg2d import MonaiSDAPrior3DQG
     from train_qg_neural import build_model, decoder_output_module

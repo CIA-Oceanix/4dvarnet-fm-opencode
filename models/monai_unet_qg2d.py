@@ -489,6 +489,63 @@ class MonaiSDAPrior3DQG(VanillaCFM):
         return v.permute(0, 2, 1, 3, 4).reshape(b, t, self.state_dim)
 
 
+class MonaiVanillaCFM3DQG(VanillaCFM):
+    """Generative obs-conditioned flow (G2-3D) on the 3D backbone of `MonaiDirectUNet3DQG` /
+    `MonaiSDAPrior3DQG`: MONAI's `DiffusionModelUNet` with `spatial_dims=3` over (time, ny, nx),
+    whose 6 input channels are the interpolated state `x_tau`, the zero-filled obs and the obs
+    mask of both layers, and whose output is the 2-layer velocity; tau goes to the backbone's
+    time embedding. Periodic in space, zero-padded in time and shared across days, so it runs
+    on any window length (`any_length`); `T` is the training window. Time is zero-padded at
+    the end to a multiple of the downsampling factor, padded days dropped.
+    `compute_cfm_loss`/`sample` are `VanillaCFM`'s (linear interpolant, early-fine Euler grid);
+    `forward(x_tau, batch, tau) -> (B, T, D)`.
+    """
+
+    any_length = True
+
+    def __init__(self, ny: int, nx: int, T: int, nlayers: int = 2,
+                 hidden_channels: list[int] | None = None, N_outer: int = 20,
+                 sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 8):
+        nn.Module.__init__(self)
+        _patch_conv2d_circular()
+        from monai.networks.nets import DiffusionModelUNet
+        from monai.networks.nets import diffusion_model_unet as _dmu
+
+        hidden_channels = list(hidden_channels or [32, 64, 128, 128])
+        self.ny, self.nx, self.T, self.nlayers = ny, nx, T, nlayers
+        self.state_dim = nlayers * ny * nx
+        self.param_dim = 0
+        self.cond_extra_dim = 0
+        self.time_multiple = 2 ** (len(hidden_channels) - 1)
+        self.backbone = DiffusionModelUNet(
+            spatial_dims=3, in_channels=3 * nlayers, out_channels=nlayers,
+            channels=tuple(hidden_channels),
+            attention_levels=tuple(False for _ in hidden_channels),
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups)
+        if dropout > 0:
+            for module in self.backbone.modules():
+                if isinstance(module, _dmu.DiffusionUNetResnetBlock):
+                    module.dropout = nn.Dropout(dropout)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.train_tau_0_only = False
+
+    def forward(self, x_t: torch.Tensor, batch, tau: torch.Tensor) -> torch.Tensor:
+        b, t, _ = x_t.shape
+        grid = (b, t, self.nlayers, self.ny, self.nx)
+        x = torch.cat([x_t.reshape(grid),
+                       torch.nan_to_num(batch.obs, nan=0.0).reshape(grid),
+                       batch.obs_mask.to(x_t.dtype).reshape(grid)], dim=2)
+        x = x.permute(0, 2, 1, 3, 4)
+        pad = -t % self.time_multiple
+        if pad:
+            x = F.pad(x, (0, 0, 0, 0, 0, pad))
+        v = self.backbone(x, tau)[:, :, :t]
+        return v.permute(0, 2, 1, 3, 4).reshape(b, t, self.state_dim)
+
+
 class MonaiDirectUNet3DQG(nn.Module):
     """DirectUNet (single-pass regression, the G1 role) on a 3D backbone: MONAI's
     `DiffusionModelUNet` with `spatial_dims=3` over (time, ny, nx), the per-cell obs and obs

@@ -59,7 +59,8 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
                        guidance_weight=1.0, n_members: int = 1,
                        interpolant: LinearInterpolant = None, obs_indices=None,
                        mean_estimate=None, tau0: float = 0.0,
-                       obs_channel_mask: torch.Tensor | None = None):
+                       obs_channel_mask: torch.Tensor | None = None,
+                       member_starts: torch.Tensor | None = None):
     """DPS/Pi-GDM-style guided sampling from an unconditional prior.
 
     At each Euler step, nudges the prior's ODE update by the *normalized*
@@ -113,7 +114,8 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
     default) reproduces the pre-existing behavior exactly (``step0=0``,
     ``x`` starts at pure noise) -- this is the key regression invariant for
     this extension, checked in ``tests/test_sda_sampler.py`` alongside the
-    ``guidance_weight==0`` one above.
+    ``guidance_weight==0`` one above. ``member_starts`` ``(B, T, D, n_members)`` warm-starts
+    each member from its own estimate instead (e.g. one sample of an obs-conditioned flow).
 
     Runs under ``torch.enable_grad()`` internally so it also works when the
     caller wraps the surrounding eval loop in ``torch.no_grad()`` (as
@@ -134,12 +136,16 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
     B, T, _ = obs.shape
     device = obs.device
     dt = 1.0 / N_outer
-    step0 = int(round(tau0 * N_outer)) if mean_estimate is not None else 0
+    if member_starts is not None and member_starts.shape[-1] != n_members:
+        raise ValueError(f"member_starts has {member_starts.shape[-1]} members, need {n_members}")
+    warm = mean_estimate is not None or member_starts is not None
+    step0 = int(round(tau0 * N_outer)) if warm else 0
 
-    def _run_one():
+    def _run_one(k: int):
         noise = torch.randn(B, T, model.state_dim, device=device) * model.sigma_prior
         if step0 > 0:
-            x = interpolant.mix(noise, mean_estimate, torch.full((B,), step0 / N_outer, device=device))
+            start = member_starts[..., k] if member_starts is not None else mean_estimate
+            x = interpolant.mix(noise, start, torch.full((B,), step0 / N_outer, device=device))
         else:
             x = noise
         for step in range(step0, N_outer):
@@ -165,6 +171,6 @@ def sda_guided_sample(model, batch, R_var: float, N_outer: int = 10,
 
     n_forward = N_outer - step0
     if n_members == 1:
-        return _run_one(), n_forward
-    samples = [_run_one() for _ in range(n_members)]
+        return _run_one(0), n_forward
+    samples = [_run_one(k) for k in range(n_members)]
     return torch.stack(samples, dim=-1), n_forward
