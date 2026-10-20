@@ -57,7 +57,7 @@ def sample(method, models, batch, n_members, gw=None, tau0=None):
 
 def run(method, models, ds, device, stats, n_members, batch_size, gw=None, tau0=None, seed=0):
     torch.manual_seed(seed)
-    trajs, members, truths = [], [], []
+    members, truths = [], []
     for i in range(0, len(ds), batch_size):
         windows = [ds[j] for j in range(i, min(i + batch_size, len(ds)))]
         batch = make_batch(windows, device, stats)

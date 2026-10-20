@@ -62,7 +62,8 @@ def run_method(method, ds, case, device, batch_size):
     trajs, members, vars_ = [], [], []
     for i in range(0, len(ds), batch_size):
         batch = [ds[j] for j in range(i, min(i + batch_size, len(ds)))]
-        stack = lambda k: torch.stack([w[k].to(device) for w in batch])
+        def stack(k):
+            return torch.stack([w[k].to(device) for w in batch])
         results = method.assimilate_batch(
             stack("obs"), stack("obs_mask"), stack(force_key(case)),
             torch.stack([w["true_state"] for w in batch]),

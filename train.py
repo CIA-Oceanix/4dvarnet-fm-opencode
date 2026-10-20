@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval  # noqa: E402
 from data.random_param_dataset import RandomParamLorenz63Dataset  # noqa: E402
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm, make_collate_fm  # noqa: E402
+from data.dataloader import FlowMatchingDataset, ConcatFMDataset, make_collate_fm  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from models.solver import TweedieSolver  # noqa: E402
 from models.direct_unet import DirectUNet  # noqa: E402
