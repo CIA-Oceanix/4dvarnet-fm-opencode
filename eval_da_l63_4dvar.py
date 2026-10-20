@@ -71,38 +71,37 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, f"table2_l63_4dvar_obs{a.obs_interval}.json")
     results = {}
-    if True:
-        for case in a.cases:
-            print(f"== {case.upper()} obs_interval={a.obs_interval}", flush=True)
-            val_ds = make_dataset(case, 99, a.num_val, a.obs_interval)
-            test_ds = make_dataset(case, 123 if case == "s0" else 131, a.num_test, a.obs_interval)
-            clim_var, clim_crps = climatology(np.stack([w["true_state"].numpy() for w in test_ds.windows]))
-            out = results.setdefault(case, {})
-            trace = {}
-            for sw in SUBWINDOW_GRID:
-                trace[sw] = val_rmse(run(a.procs, val_ds, case, "strong", sw, 0.0))
-                print(f"    tune Strong sub-window={sw}: val RMSE {trace[sw]:.4f}", flush=True)
-            sw_s = min(trace, key=trace.get)
-            hp_s = {"subwindow": sw_s, "max_iter": 40, "val_rmse": trace}
-            qtrace = {}
-            for sw in SUBWINDOW_GRID:
-                for q in Q_GRID:
-                    qtrace[f"{sw}/{q}"] = val_rmse(run(a.procs, val_ds, case, "weak", sw, q))
-                    print(f"    tune Weak sub-window={sw} q={q}: val RMSE {qtrace[f'{sw}/{q}']:.4f}", flush=True)
-            best = min(qtrace, key=qtrace.get)
-            sw_w, q_w = int(best.split("/")[0]), float(best.split("/")[1])
-            hp_w = {"subwindow": sw_w, "q_var": q_w, "max_iter": 40, "val_rmse": qtrace}
-            for name, mode, sw, q, hp in (("Strong-4DVar", "strong", sw_s, 0.0, hp_s),
-                                          ("Weak-4DVar", "weak", sw_w, q_w, hp_w)):
-                t0 = time.time()
-                row = score(run(a.procs, test_ds, case, mode, sw, q), clim_var, clim_crps)
-                row["hyperparameters"] = hp
-                row["obs_interval"] = a.obs_interval
-                row["seconds"] = time.time() - t0
-                out[name] = row
-                print(f"  {case.upper()} {name:<13} RMSE {row['rmse']:.3f} EV {row['ev']:.3f} "
-                      f"MAEskill {row['mae_skill']:.3f}", flush=True)
-                json.dump(results, open(path, "w"), indent=2)
+    for case in a.cases:
+        print(f"== {case.upper()} obs_interval={a.obs_interval}", flush=True)
+        val_ds = make_dataset(case, 99, a.num_val, a.obs_interval)
+        test_ds = make_dataset(case, 123 if case == "s0" else 131, a.num_test, a.obs_interval)
+        clim_var, clim_crps = climatology(np.stack([w["true_state"].numpy() for w in test_ds.windows]))
+        out = results.setdefault(case, {})
+        trace = {}
+        for sw in SUBWINDOW_GRID:
+            trace[sw] = val_rmse(run(a.procs, val_ds, case, "strong", sw, 0.0))
+            print(f"    tune Strong sub-window={sw}: val RMSE {trace[sw]:.4f}", flush=True)
+        sw_s = min(trace, key=trace.get)
+        hp_s = {"subwindow": sw_s, "max_iter": 40, "val_rmse": trace}
+        qtrace = {}
+        for sw in SUBWINDOW_GRID:
+            for q in Q_GRID:
+                qtrace[f"{sw}/{q}"] = val_rmse(run(a.procs, val_ds, case, "weak", sw, q))
+                print(f"    tune Weak sub-window={sw} q={q}: val RMSE {qtrace[f'{sw}/{q}']:.4f}", flush=True)
+        best = min(qtrace, key=qtrace.get)
+        sw_w, q_w = int(best.split("/")[0]), float(best.split("/")[1])
+        hp_w = {"subwindow": sw_w, "q_var": q_w, "max_iter": 40, "val_rmse": qtrace}
+        for name, mode, sw, q, hp in (("Strong-4DVar", "strong", sw_s, 0.0, hp_s),
+                                      ("Weak-4DVar", "weak", sw_w, q_w, hp_w)):
+            t0 = time.time()
+            row = score(run(a.procs, test_ds, case, mode, sw, q), clim_var, clim_crps)
+            row["hyperparameters"] = hp
+            row["obs_interval"] = a.obs_interval
+            row["seconds"] = time.time() - t0
+            out[name] = row
+            print(f"  {case.upper()} {name:<13} RMSE {row['rmse']:.3f} EV {row['ev']:.3f} "
+                  f"MAEskill {row['mae_skill']:.3f}", flush=True)
+            json.dump(results, open(path, "w"), indent=2)
     print(f"saved {path}")
 
 
