@@ -3,7 +3,8 @@
 # circular backbone of L96B_sda1_monai2dM_ep1200 ([40, 80, 160], GroupNorm 8, per-sector
 # time-axial bottleneck attention); the forcing and the 8 parameters enter every sector as
 # extra input channels (models.monai_unet_l96_2d.MonaiConditionalPriorCFM2D). Everything else
-# -- training data (generated with data seed 42, its own normalization), 1200 epochs, the
+# -- training data (generated with data seed 42), normalization (experiments/l96_norm_stats_obsj2.pt,
+# which the batch script passes explicitly), 1200 epochs, the
 # conditioning -- is A3_sda2_monaiM_ep1200_l96, so the backbone is the only change.
 defaults:
   - /experiment/A3_sda2_monaiM_ep1200_l96

@@ -10,7 +10,7 @@
 #SBATCH --output=sbatch_logs/l96b_sda23_2d_%A_%a.out
 #SBATCH --error=sbatch_logs/l96b_sda23_2d_%A_%a.err
 # SDA2 / SDA3-fix priors with the 2D (time x sector) circular backbone (L96B_sda{2,3fix}_monai2dM_ep1200:
-# the 1D A3_*_ep1200_l96 recipe -- data generated with seed 42 and its own normalization, 1200 epochs --
+# the 1D A3_*_ep1200_l96 recipe -- data generated with seed 42, the shared obsj2 normalization, 1200 epochs --
 # with the backbone swapped), seeds 1-3, then as batch/run_l96_sda_ep1200.sbatch on both test sets
 # (scores only): guided SDA (ens30, 10 steps, gw 25, r_var 0.5). For prior seed 1 only, the
 # DirectUNet-2D hybrid (tau0 0.1, gw 1 and 2) from L96B_directunet2d_monaiM seeds 1-3, the benchmark's
@@ -29,7 +29,8 @@ i=$SLURM_ARRAY_TASK_ID
 CONFIG=${CONFIGS[$((i / 3))]}; SEED=$((i % 3 + 1)); NAME=${CONFIG}_seed${SEED}
 echo "===== ${NAME} | commit $(git rev-parse --short HEAD) | $(hostname) | $(date) ====="
 [ -f experiments/${NAME}/results.json ] || \
-  python train.py --config-name experiment/$CONFIG hydra.run.dir=. hydra.output_subdir=null ++training.seed=$SEED
+  python train.py --config-name experiment/$CONFIG hydra.run.dir=. hydra.output_subdir=null ++training.seed=$SEED \
+    ++data.norm_stats_path=$NORM
 CKPT=experiments/${NAME}/checkpoints/stage1_best.ckpt; CFG=experiments/${NAME}/resolved_config.yaml
 for TS in regular canonical; do
   if [ "$TS" = regular ]; then DS=$R/experiments/l96_datasets_obsj2_int100_nwin200.pt; E=experiments/eval_regular;
