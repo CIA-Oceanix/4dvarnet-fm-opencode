@@ -1,0 +1,18 @@
+# @package _global_
+# SDA2-M (prior conditioned on the window's true sigma, rho, beta, c1) on L63 -- same data/budget
+# as L63B_directunet_monaiM. The prior only sees states; observations enter at sampling time
+# (guided), so evaluate with a guided sampler, never an unguided one.
+defaults:
+  - /experiment/L63B_directunet_monaiM
+  - _self_
+model:
+  model_type: monai_sda_prior_cond
+  state_dim: 3
+  param_dim: 4
+  monai_sda_prior:
+    hidden_channels: [64, 128, 256]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 32
