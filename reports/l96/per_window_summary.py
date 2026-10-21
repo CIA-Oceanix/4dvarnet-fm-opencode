@@ -96,10 +96,15 @@ def _da_random(traj: Path | None, per_window: Path, method: str, truth: dict) ->
     return out
 
 
-def rows() -> list[tuple[str, str, dict | None, dict | None]]:
-    """(family, scheme, regular, random) for the current benchmark rows."""
+def _truth() -> dict:
     d = torch.load(REG_TEST, weights_only=False)
-    truth = {c: np.stack([w["true_state"].numpy()[:, IDX] for w in d[f"test_{c}"]]).astype(np.float64) for c in CASES}
+    return {c: np.stack([w["true_state"].numpy()[:, IDX] for w in d[f"test_{c}"]]).astype(np.float64) for c in CASES}
+
+
+def rows(backbone: str = "1d") -> list[tuple[str, str, dict | None, dict | None]]:
+    """(family, scheme, regular, random) for the current benchmark rows; ``backbone="2d"`` swaps every
+    U-Net row for its 2D (time x sector) counterpart, the DA rows unchanged."""
+    truth = _truth()
     reg_da = DANEW / f"l96_baselines_trajectories_dws500_s0c_crps{NEWINF}_obsj2_int100_fw_dafw.npz"
     can_da = DANEW / f"l96_baselines_trajectories_dws500_rlayout_n10-100_k4-16_w200_d1{NEWINF}_obsj2_fw_dafw.npz"
     can_da_pw = DANEW / "l96_da_random_layout" / f"per_window_rlayout_n10-100_k4-16_w200_d1{NEWINF}.npz"
@@ -112,6 +117,8 @@ def rows() -> list[tuple[str, str, dict | None, dict | None]]:
            ("DA", "EnKF (inflation 1.2 / 3.0)", _da_regular(reg_da, "EnKF", truth), _da_random(can_da, can_da_pw, "EnKF", truth)),
            ("DA", "ETKS (inflation 1.15 / 2.5)", _da_regular(reg_etks, "ETKS", truth), _da_random(can_etks, can_etks_pw, "ETKS", truth)),
            ("DA", "Strong-4DVar", _da_regular(reg_strong, "Strong-4DVar", truth), _da_random(None, can_strong_pw, "Strong-4DVar", truth))]
+    if backbone == "2d":
+        return out + _rows_2d(truth)
     for lab, name in (("SDA1-M", "B4_sda1_monaiM_ep1200_l96"), ("SDA2-M", "A3_sda2_monaiM_ep1200_l96"),
                       ("SDA3-fix-M", "A3_sda3fix_monaiM_ep1200_l96")):
         out.append(("SDA (gw 25, 1200 ep)", lab, _learned([REGE / f"{name}_seed{s}" / "ens30_gw25" for s in SEEDS], truth),
@@ -129,20 +136,51 @@ def rows() -> list[tuple[str, str, dict | None, dict | None]]:
     return out
 
 
+ROWS_2D = (("SDA 2D (gw 25, 1200 ep)", "SDA1-2D-M", REGE, "L96B_sda1_monai2dM_ep1200_seed{s}", "ens30_gw25"),
+           ("SDA 2D (gw 25, 1200 ep)", "SDA2-2D-M", REGE, "L96B_sda2_monai2dM_ep1200_seed{s}", "ens30_gw25"),
+           ("SDA 2D (gw 25, 1200 ep)", "SDA3-fix-2D-M", REGE, "L96B_sda3fix_monai2dM_ep1200_seed{s}", "ens30_gw25"),
+           ("DirectUNet 2D (1200 ep)", "DirectUNet-2D-M", HERE, "L96B_directunet2d_monaiM_seed{s}", "ens1_no1"),
+           ("CFM 2D (1200 ep)", "PredictStateCFM-2D-M", HERE, "L96B_predictstatecfm_monai2dM_ep1200_seed{s}", "ens30_no20"),
+           ("CFM 2D (1200 ep)", "VanillaCFM-2D-M", HERE, "L96B_vanillacfm_monai2dM_ep1200_seed{s}", "ens30_no20"),
+           ("Hybrid 2D (tau0 0.1, gw 1)", "DirectUNet-2D-M -> SDA3-fix-2D-M", REGE,
+            "hybrid_DU2dMs{s}_L96B_sda3fix_monai2dM_ep1200_seed1", "tau0.1_gw1"),
+           ("Hybrid 2D (tau0 0.1, gw 1)", "DirectUNet-2D-M -> SDA1-2D-M", REGE,
+            "hybrid_DU2dMs{s}_L96B_sda1_monai2dM_ep1200_seed1", "tau0.1_gw1"),
+           ("*interim*", "*DirectUNet-2D-M -> SDA3-fix-M (1D prior)*", REGE,
+            "hybrid_DU2dMs{s}_A3_sda3fix_monaiM_ep1200_l96", "tau0.1_gw1"))
+
+
+def _rows_2d(truth: dict) -> list[tuple[str, str, dict | None, dict | None]]:
+    out = []
+    for fam, lab, base, run, sub in ROWS_2D:
+        out.append((fam, lab, _learned([base / run.format(s=s) / sub for s in SEEDS], truth),
+                    _learned([CAN / run.format(s=s) / sub for s in SEEDS], truth)))
+    return out
+
+
 def _ranks(values: list[float | None], higher: bool) -> dict[int, str]:
     ok = [(v, i) for i, v in enumerate(values) if v is not None]
     ok.sort(reverse=higher)
     return {i: mark for (_, i), mark in zip(ok[:2], ("**", "*"))}
 
 
-def section(heading: str = "##") -> list[str]:
+INTRO_1D = ("Generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the "
+            "#295 inflation (#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA "
+            "retrained in #307; the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.\n")
+INTRO_2D = ("Generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py` (`backbone=\"2d\"`): "
+            "the DA rows of the 1D summary, every U-Net row replaced by its 2D (time x sector) circular-backbone "
+            "counterpart at the benchmark recipe (1200 epochs, M tier). `seeds` = finished seeds of the 3 planned; a row "
+            "with `—` everywhere is not trained yet. The hybrids use tau0 0.1, gw 1 (validated for the DirectUNet-2D "
+            "mean); the *interim* row starts the 1D SDA3-fix prior from the 2D DirectUNet and is the only 3-seed hybrid "
+            "until SDA3-fix-2D is trained.\n")
+
+
+def section(heading: str = "##", backbone: str = "1d") -> list[str]:
     """Markdown lines of the per-window RMSE / EV / CRPS section."""
-    R = rows()
-    A = [f"{heading} Per-window RMSE / EV / CRPS summary (current benchmark)\n",
-         "Common to `l96_benchmark_extended.md` and `p1_l96_benchmark.md`, and generated from "
-         "the `benchmark_extended` inputs by `reports/l96/per_window_summary.py`. The DA rows use the #295 inflation "
-         "(#298), the ETKS is the #299 row, and DirectUNet / CFM / the SDA priors are at 1200 epochs (SDA retrained in #307; "
-         "the hybrid uses the 1200-epoch SDA3-fix prior, seed 1). The hybrid is shown for reference.\n",
+    R = rows(backbone)
+    title = "current benchmark" if backbone == "1d" else "2D backbone"
+    A = [f"{heading} Per-window RMSE / EV / CRPS summary ({title})\n",
+         INTRO_1D if backbone == "1d" else INTRO_2D,
          "Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; "
          "**EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled "
          "EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is "

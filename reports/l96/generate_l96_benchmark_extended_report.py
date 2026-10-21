@@ -133,6 +133,49 @@ def rows() -> list[tuple]:
     for lab, name, sub in (("DirectUNet-M", "P1_directunet_monaiM_noaug_l96", D), ("PredictStateCFM-M", "A2_predictstatecfm_monaiM_l96", FL),
                            ("VanillaCFM-M", "A1_vanillacfm_monaiM_l96", FL)):
         R.append(("P1 fixed obs (reference)", lab, [P1 / name / sub], [(CAN if sub == D else N20) / name / sub]))
+    return R + rows_2d()
+
+
+G2D = "2D backbone, 1200 ep"
+G2D_SDA = "2D SDA, 1200 ep, gw 25"
+G2D_HYB = "2D hybrid (tau0 0.1, gw 1)"
+G2D_TIER = "2D tiers, 1200 ep (seed 1)"
+G2D_FDV = "2D 4DVarNet (P2 schemes, seed 1)"
+
+
+def rows_2d() -> list[tuple]:
+    """The 2D (time x sector) circular backbone at the benchmark recipe: M-tier rows planned with 3 seeds
+    (`n/3` shows what has finished; 0/3 = not trained yet), seed-1 tier and 4DVarNet rows."""
+    D, FL, GW = "ens1_no1", FLOW_SUB, "ens30_gw25"
+    one = (1,)
+    R = [(G2D, "DirectUNet-2D-M", seeds("L96B_directunet2d_monaiM_seed{s}", HERE, D), seeds("L96B_directunet2d_monaiM_seed{s}", CAN, D)),
+         (G2D, "PredictStateCFM-2D-M", seeds("L96B_predictstatecfm_monai2dM_ep1200_seed{s}", HERE, FL),
+          seeds("L96B_predictstatecfm_monai2dM_ep1200_seed{s}", CAN, FL)),
+         (G2D, "VanillaCFM-2D-M", seeds("L96B_vanillacfm_monai2dM_ep1200_seed{s}", HERE, FL), seeds("L96B_vanillacfm_monai2dM_ep1200_seed{s}", CAN, FL))]
+    for lab, name in (("SDA1-2D-M", "L96B_sda1_monai2dM_ep1200"), ("SDA2-2D-M", "L96B_sda2_monai2dM_ep1200"),
+                      ("SDA3-fix-2D-M", "L96B_sda3fix_monai2dM_ep1200")):
+        R.append((G2D_SDA, lab, seeds(f"{name}_seed{{s}}", REGE, GW), seeds(f"{name}_seed{{s}}", CAN, GW)))
+    for lab, name in (("DirectUNet-2D-M -> SDA3-fix-2D-M", "hybrid_DU2dMs{s}_L96B_sda3fix_monai2dM_ep1200_seed1"),
+                      ("DirectUNet-2D-M -> SDA1-2D-M", "hybrid_DU2dMs{s}_L96B_sda1_monai2dM_ep1200_seed1"),
+                      ("DirectUNet-2D-M -> SDA3-fix-M (1D prior)", "hybrid_DU2dMs{s}_A3_sda3fix_monaiM_ep1200_l96")):
+        R.append((G2D_HYB, lab, seeds(name, REGE, "tau0.1_gw1"), seeds(name, CAN, "tau0.1_gw1")))
+    for t in "SL":
+        R.append((G2D_TIER, f"DirectUNet-2D-{t}", seeds(f"L96B_directunet2d_monai{t}_seed{{s}}", HERE, D, one),
+                  seeds(f"L96B_directunet2d_monai{t}_seed{{s}}", CAN, D, one)))
+        R.append((G2D_TIER, f"VanillaCFM-2D-{t}", seeds(f"L96B_vanillacfm_monai2d{t}_ep1200_seed{{s}}", HERE, FL, one),
+                  seeds(f"L96B_vanillacfm_monai2d{t}_ep1200_seed{{s}}", CAN, FL, one)))
+        R.append((G2D_TIER, f"SDA1-2D-{t}", seeds(f"L96B_sda1_monai2d{t}_ep1200_seed{{s}}", REGE, GW, one),
+                  seeds(f"L96B_sda1_monai2d{t}_ep1200_seed{{s}}", CAN, GW, one)))
+    R.append((G2D_TIER, "DirectUNet-2D-M -> SDA1-2D-L", seeds("hybrid_DU2dMs{s}_L96B_sda1_monai2dL_ep1200_seed1", REGE, "tau0.1_gw1", one),
+              seeds("hybrid_DU2dMs{s}_L96B_sda1_monai2dL_ep1200_seed1", CAN, "tau0.1_gw1", one)))
+    fdv = (("FDV1-2D-M", "L96B_fdv1_monai2dM_seed1", "FDV1_2dMs1"),
+           ("FDV2-2D-M", "L96B_fdvsubgradmask_monai2dM_aux01det_frozen_philr01_seed1", "FDV2_2dMs1"))
+    for lab, name, _ in fdv:
+        R.append((G2D_FDV, lab, [HERE / name / "ens1_no10"], [CAN / name / "ens1_no10"]))
+    for lab, _, tag in fdv:
+        for t in "ML":
+            name = f"hybrid_{tag}_L96B_sda1_monai2d{t}_ep1200_seed1"
+            R.append((G2D_FDV, f"{lab} -> SDA1-2D-{t}", [REGE / name / "tau0.1_gw1"], [CAN / name / "tau0.1_gw1"]))
     return R
 
 
@@ -747,8 +790,33 @@ def findings(da, learned) -> list[str]:
              "hard constraint's misspecification. At S1 it is "
              + ("the best DA row, ahead of the ETKS" if dm(w, 'reg', 's1') < dm(dr['ETKS'], 'reg', 's1') else "behind the ETKS")
              + f" ({dm(dr['ETKS'], 'reg', 's1'):.3f}), and still {dm(w, 'reg', 's1') / dm(best, 'reg', 's1'):.1f}x the best "
-             "learned scheme's RMSE. Regular grid only (`docs/results/l96_weak4dvar.md`).\n")
+             "learned scheme's RMSE. Regular grid only (`docs/results/l96_weak4dvar.md`).")
+    A += finding_2d(row, m)
     return A
+
+
+def finding_2d(row: dict, m) -> list[str]:
+    """Finding 11: the 2D (time x sector) circular backbone against its 1D counterpart, per family."""
+    b, s25 = "Benchmark default (1200 ep)", "SDA, 1200 ep, gw 25"
+    pairs = (("DirectUNet", (b, "DirectUNet-M"), (G2D, "DirectUNet-2D-M")),
+             ("VanillaCFM", (b, "VanillaCFM-M"), (G2D, "VanillaCFM-2D-M")),
+             ("SDA1 (gw 25)", (s25, "SDA1-M"), (G2D_SDA, "SDA1-2D-M")),
+             ("hybrid", ("Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2)", "DirectUNet-M(1200 ep) -> SDA3-fix-M"),
+              (G2D_HYB, "DirectUNet-2D-M -> SDA1-2D-M")))
+    parts = []
+    for name, k1, k2 in pairs:
+        if m(*k2, "reg") is None or m(*k2, "can") is None:
+            continue
+        n = row[k2]["n_reg"]
+        parts.append(f"{name} {fmt(m(*k1, 'reg'))} -> {fmt(m(*k2, 'reg'))} regular, {fmt(m(*k1, 'can'))} -> "
+                     f"{fmt(m(*k2, 'can'))} random ({n} seed{'s' if n > 1 else ''})")
+    fdv = [(lab, m(G2D_FDV, lab, "reg"), m(G2D_FDV, lab, "can")) for lab in ("FDV2-2D-M", "FDV2-2D-M -> SDA1-2D-L")]
+    fdv_txt = "; ".join(f"{lab} {fmt(r)} / {fmt(c)}" for lab, r, c in fdv if r is not None and c is not None)
+    return ["11. **2D (time x sector) circular backbone** (S0 per-window RMSE, 1D -> 2D, M tier, benchmark recipe): "
+            + "; ".join(parts) + ". The 2D backbone shares its weights across the 8 sectors and is exactly equivariant "
+            "to cyclic sector shifts, where the 1D U-Net learns separate weights per sector. Single-seed 2D rows are flagged by their `n/3`; "
+            "SDA2 / SDA3-fix / PredictStateCFM in 2D are not trained yet (`0/3`). The unrolled 4DVarNet schemes of P2 "
+            f"gain as much in 2D (regular / random S0: {fdv_txt}; seed 1, group `{G2D_FDV}`).\n"]
 
 
 def main() -> None:
@@ -809,7 +877,13 @@ def main() -> None:
          "rows (configs `*_ep1200_l96`, identical to the 400-epoch ones apart from the epoch count); the validation "
          "re-tune at 1200 epochs kept the guidance weight at 25 and the hybrid at tau0 0.1 / gw 2. The SDA1-M columns of the "
          "observation-count / fast-channel / probe tables are the 1200-epoch prior as well. The `SDA, 400 ep`, "
-         "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows and the section-6 sweeps use the 400-epoch priors.\n"]
+         "`SDA, gw 20` (S+/L) and `Hybrid, 400-ep SDA prior` rows and the section-6 sweeps use the 400-epoch priors.\n",
+         "**2D backbone (2026-10-21)**: the `2D ...` groups replace the 1D U-Net along time by a 2D (time x sector) U-Net "
+         "with circular padding over the 8 L96 sectors (sector k carries X_k and its observed Y_k,j as channels; the sector "
+         "axis is never downsampled), mid-level attention along time, the same S / M / L widths as the 1D tiers; same recipe (1200 epochs, random observing "
+         "system), same samplers (flows `ens30_no20`, SDA gw 25, 10 steps), same test sets. Hybrids start at tau0 0.1 "
+         "with gw 1 (validation-selected for the DirectUNet-2D mean). The P1 paper table (`p1_l96_benchmark.md`) is "
+         "built from these rows.\n"]
     A += protocol_section(manifest)
     A += findings(da, learned)
     A += main_tables(da, learned)
@@ -821,13 +895,17 @@ def main() -> None:
     A += tuning_section(cache)
     A += marginal_section()
     A += [""] + per_window_summary.section()
+    A += [""] + per_window_summary.section(backbone="2d")
     A += ["\n## Caveats\n",
           "- Single-seed rows: P1 references, SDA1-S+/L, the 3000-window run, all probes and the factorial SDA columns.",
           "- The SDA1-M columns of the observation-count, fast-channel and probe tables are the 1200-epoch prior (seed 1 on the factorial and probe cells, 3 seeds on the binned random set); the section-6 tuning sweeps are the 400-epoch priors.",
           "- The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean "
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
-          "- Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps)."]
+          "- Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps).",
+          "- 2D rows: DirectUNet-2D-M and the interim DirectUNet-2D-M -> SDA3-fix-M (1D prior) hybrid have 3 seeds; every other "
+          "2D row is seed 1 (`1/3`, or `1/1` for the tier and 4DVarNet groups). The 2D hybrids use gw 1, validated on the "
+          "DirectUNet-2D mean (the 1D hybrid keeps gw 2). Sections 2-7 are 1D only."]
     (OUT / "l96_benchmark_extended.md").write_text("\n".join(A) + "\n")
     print(f"wrote {OUT / 'l96_benchmark_extended.md'}")
 

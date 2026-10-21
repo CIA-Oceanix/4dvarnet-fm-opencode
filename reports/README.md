@@ -94,7 +94,7 @@ A note after the status says which cells it qualifies.
 
 | case | cite for current numbers |
 |---|---|
-| L96 | `reports/l96/outputs/l96_benchmark_extended.md` (the benchmark-default report it followed up is frozen as `l96_benchmark_default.old.md`). `p1_l96_benchmark.md` is the P1 paper's table, on the same benchmark framework, with the P1-protocol tier study as its annex. |
+| L96 | `reports/l96/outputs/l96_benchmark_extended.md` (the benchmark-default report it followed up is frozen as `l96_benchmark_default.old.md`). `p1_l96_benchmark.md` is the P1 paper's table, on the same benchmark framework, with every U-Net row on the 2D (time x sector) backbone and the 2D tiers as its annex. |
 | QG | `reports/qg/outputs/qg_neural_report.md` (DA and neural rows); `qg_da_report.md` for the DA configuration. |
 | QG gyrostat (spectral wind) | `reports/qg/outputs/qg_specwind_da_report.md`: DA baselines S0 + realistic S1 on the forced and coupled test sets, with the S1 error budget and reconstruction examples. |
 | L63 | none — see the L63 section. |
@@ -107,13 +107,13 @@ early-fine Euler steps (`ens30_no20`), SDA with the guided `ens30_gw20` protocol
 1.5 (S0) / 2.0 (S1) and CRPS on the analysis ensemble. The consolidated report
 uses the older protocol (`ens30_no10` uniform steps, DA inflation 2.0).
 
-The two current benchmark reports (`l96_benchmark_extended.md`, `p1_l96_benchmark.md`) end with the same section, a per-window RMSE / EV / CRPS summary of the current benchmark rows (`reports/l96/per_window_summary.py`, `benchmark_extended` inputs). The consolidated report is not updated: it uses the old protocol, and the scoping docs quote its digits.
+Both current benchmark reports carry a per-window RMSE / EV / CRPS summary (`reports/l96/per_window_summary.py`, `benchmark_extended` inputs): `l96_benchmark_extended.md` for the 1D and the 2D U-Net rows, `p1_l96_benchmark.md` for the 2D rows only, plus the pooled EV / CRPSS of the paper tables (`reports/l96/p1_skill.py`). The consolidated report is not updated: it uses the old protocol, and the scoping docs quote its digits.
 
 | report | question | status | protocol | generator |
 |---|---|---|---|---|
 | `l96_benchmark_default.old.md` | DA vs learned schemes under the benchmark-default training recipe (400 epochs), on the regular and the random observing system | **FROZEN** (2026-10-02) — superseded by `l96_benchmark_extended.md`, which carries its protocol and every row at the current settings (DA before #291/#295, no ETKS, SDA gw 20) | 400-epoch, pre-#291 DA | `reports/l96/generate_l96_benchmark_default_report.py` |
-| `l96_benchmark_extended.md` | The L96 benchmark: DA vs learned schemes on the regular and the random observing system, plus training budget, observing-system dependence, SDA and hybrids, DA CRPS and ensemble size, marginal value of observations | **CURRENT** — SDA S1 rows re-evaluated in #265 | current (SDA gw 25) | `reports/l96/generate_l96_benchmark_extended_report.py` |
-| `p1_l96_benchmark.md` | P1 paper table: DA vs deterministic, flow-matching and SDA under the benchmark-default framework (regular + random test sets, 1200 epochs, 3 seeds); annex A = the P1 protocol (fixed observing system, 400 epochs) for the S+/M/L tier, CFM-parameterization and SDA-conditioning comparisons | **CURRENT** — sections 1-4 moved to the benchmark framework 2026-10-02 | current | `reports/l96/generate_p1_l96_benchmark.py` |
+| `l96_benchmark_extended.md` | The L96 benchmark: DA vs learned schemes on the regular and the random observing system, plus training budget, observing-system dependence, SDA and hybrids, DA CRPS and ensemble size, marginal value of observations; 1D and 2D (time x sector) U-Net rows | **CURRENT** — 2D backbone rows added 2026-10-21 | current (SDA gw 25) | `reports/l96/generate_l96_benchmark_extended_report.py` |
+| `p1_l96_benchmark.md` | P1 paper table: DA vs deterministic, flow-matching and SDA under the benchmark-default framework (regular + random test sets, 1200 epochs, 3 seeds planned), every U-Net row on the 2D (time x sector) backbone, pooled EV / CRPSS of `tab:s0` / `tab:s1`; annex A = the 2D S / M / L tiers | **CURRENT** — moved to the 2D backbone 2026-10-21 (single-seed and not-yet-trained rows flagged; FMS_τ pending for 2D) | current | `reports/l96/generate_p1_l96_benchmark.py` |
 | `l96_da_random_layout.md` | ETKF/EnKF/4D-Var under the random observing system | **CURRENT** | current DA | `reports/l96/generate_l96_da_random_layout_report.py` |
 | `l96_da_obs_count_dafw.md` | ETKF/EnKF RMSE vs number of observation times per window | **CURRENT** | current DA | `reports/l96/generate_l96_da_obs_count_report.py` |
 | `l96_consolidated_benchmark.md` | Earlier full benchmark: DA baselines vs every neural family, reproducibility-audited | **SUPERSEDED** as the headline by `l96_benchmark_extended.md`; still the report the paper-scoping docs quote by digit | old (`ens30_no10`, inflation 2.0) | `reports/l96/generate_l96_consolidated_report.py` |
