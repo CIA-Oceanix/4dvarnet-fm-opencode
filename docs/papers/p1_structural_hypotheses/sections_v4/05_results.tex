@@ -4,6 +4,7 @@ This section reports the experiments conducted on the three case studies, namely
 Section~\ref{sec:q1} gives the error budget with a perfect model,
 and Sect.~\ref{sec:q2} its change under model error. Section~\ref{sec:q1-uncertainty}
 focuses on uncertainty quantification with the flow-matching score introduced in Section~\ref{sec:fms}. We further analyse the sensitivity to the structure of the prior and to the observing system in Sections~\ref{sec:q3} and~\ref{sec:q1-density}.
+\todo{L96 learned rows now use the 2D (time $\times$ sector) U-Net (Tables~\ref{tab:s0}, \ref{tab:s1}, \ref{tab:prior}); the prose, the budget/FMSS/observing-system figures and the method description below still quote the 1D backbone and must be rewritten once the 2D seeds 2--3, SDA2/SDA3-2D and the FMS re-runs are in.}
 
 \begin{table}[t]
 \centering\small
@@ -11,7 +12,10 @@ focuses on uncertainty quantification with the flow-matching score introduced in
 \caption{\textbf{Perfect-model experiment (\Sz).} Explained variance (EV) and CRPS skill score
 (CRPSS) against climatology (Sect.~\ref{sec:scores}; $1$ is perfect, $0$ is
 climatology). L96: 24 observed channels, regular observing system, 200 test windows;
-learned rows averaged over 3 seeds. QG: mean over $\psi_1, \psi_2$, 3 altimetry columns
+learned rows use the 2D (time $\times$ sector) circular U-Net (Sect.~\ref{sec:neural}) and are
+averaged over 3 seeds, except $^\ast$ seed 1 only (seeds 2--3 not trained yet); $^\S$ the
+unconditional SDA1 prior stands in for SDA2 / SDA3, not yet trained with the 2D backbone; $\circ$
+pending (SS needs the stored ensemble variance, not yet re-run for the 2D rows). QG: mean over $\psi_1, \psi_2$, 3 altimetry columns
 per day, 100 test windows; DA ensembles with $N = 80$ members, learned D-Unet (G1-L)
 and D-Unet+SDA (SDA warm-started from G1-L). SS: pooled spread--skill ratio~\eqref{eq:ss} (about 0.98 for a calibrated 30-member
 ensemble; below 1, over-confident). Values in parentheses are MAE skill scores of
@@ -34,10 +38,10 @@ ETKS            & & &  & 0.866 & 0.744 & 0.48 & 0.963 & \textit{0.898} &  \\
 Strong-4DVar    & & & --- & 0.741 & (0.523) &  - & \textbf{0.980} & (0.885)$^\dagger$ & -- \\
 Weak-4DVar      & & & -- & 0.757 & (0.520) & -- & & & -- \\
 \midrule
-D-Unet      & & & -- & \textit{0.950} & (0.774) & -- & 0.975 & (0.888) & -- \\
-CFM             & & &  & 0.942 & \textit{0.838} & 0.93 & & &  \\
-SDA             & & &  & 0.910 & 0.772 & 0.81 & & &  \\
-D-Unet+SDA & & &  & \textbf{0.961} & \textbf{0.853} & 0.56 & \textit{0.977} & \textbf{0.912} &  \\
+D-Unet      & & & -- & 0.972 & (0.840) & -- & 0.975 & (0.888) & -- \\
+CFM$^\ast$             & & &  & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
+SDA$^{\ast\S}$             & & &  & 0.923 & 0.790 & $\circ$ & & &  \\
+D-Unet+SDA$^{\ast\S}$ & & &  & \textbf{0.981} & \textbf{0.908} & $\circ$ & \textit{0.977} & \textbf{0.912} &  \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -182,7 +186,8 @@ on simulations of the true system: at \So{} they are an oracle bound, not a matc
 competitor. SDA and D-Unet+SDA receive the biased parameters and forcing given to the
 model-based schemes. For L96, the \So{} DA model is also truncated to the 24 observed
 variables (Sect.~\ref{sec:testbeds}). $^\dagger$ estimated from the RMSE assuming Gaussian errors (a lower
-bound by up to 0.04). Best per column in bold, second best in italics.}
+bound by up to 0.04). L96 learned rows: 2D backbone, with $^\ast$, $^\S$ and $\circ$ as in
+Table~\ref{tab:s0}. Best per column in bold, second best in italics.}
 \label{tab:s1}
 \begin{tabular}{lccccccccc}
 \toprule
@@ -196,10 +201,10 @@ ETKS            & & &  & 0.358 & 0.191 & 0.34 & 0.838 & \textit{0.819} &  \\
 Strong-4DVar    & & & -- & 0.239 & ($-0.042$) & -- & 0.779 & (0.709)$^\dagger$ & -- \\
 Weak-4DVar      & & & -- & 0.561 & (0.225) & -- & 0.847 & (0.764)$^\dagger$ & -- \\
 \midrule
-D-Unet          & & & -- & \textit{0.950} & (0.774) & -- & \textit{0.964} & (0.846) & -- \\
-CFM             & & &  & 0.943 & \textit{0.838} & 0.94 & & &  \\
-SDA             & & &  & 0.905 & 0.766 & 0.95 & & &  \\
-D-Unet+SDA      & & &  & \textbf{0.961} & \textbf{0.854} & 0.58 & \textbf{0.965} & \textbf{0.871} &  \\
+D-Unet          & & & -- & 0.973 & (0.841) & -- & \textit{0.964} & (0.846) & -- \\
+CFM$^\ast$             & & &  & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
+SDA$^{\ast\S}$             & & &  & 0.924 & 0.790 & $\circ$ & & &  \\
+D-Unet+SDA$^{\ast\S}$      & & &  & \textbf{0.982} & \textbf{0.909} & $\circ$ & \textbf{0.965} & \textbf{0.871} &  \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -386,8 +391,11 @@ origin of their prior.
 \caption{\textbf{Prior structure at matched likelihood (L96).} Explained variance (EV),
 flow-matching skill score at $\tau = 0.75$ and pooled spread--skill ratio (SS) in the
 perfect-model (\Sz) and imperfect-model (\So) experiments, regular observing system.
-All schemes use the same explicit observation operator and error covariance. Learned rows
-averaged over 3 seeds. The italic row is a sensitivity row.}
+All schemes use the same explicit observation operator and error covariance. Learned rows:
+2D (time $\times$ sector) circular U-Net, seed 1 ($^\ast$; seeds 2--3 not trained yet); $\circ$
+pending (SDA2 / SDA3 not yet trained with the 2D backbone; FMSS and SS need the 2D ensembles
+re-run with their variance stored). D-Unet+SDA uses the SDA1 prior until SDA3 is trained.
+The italic row is a sensitivity row.}
 \label{tab:prior}
 \begin{tabular}{llcccccc}
 \toprule
@@ -400,10 +408,10 @@ model + model error & Weak-4DVar & 0.757 & 0.561 & $-1.40$ & $-3.32$ & -- & -- \
 model, 30-member ensemble & ETKS & 0.866 & 0.358 & 0.41 & $-1.56$ & 0.48 & 0.34 \\
 \emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.919} & \emph{0.358} & & & & \\
 \midrule
-learned, unconditional & SDA1 & 0.908 & 0.908 & 0.62 & 0.62 & 0.61 & 0.61 \\
-learned, $\thv$ + forcing (true training) & SDA2 & 0.910 & 0.905 & 0.69 & 0.68 & 0.81 & 0.95 \\
-learned, $\thv$ + forcing (noisy training) & SDA3 & 0.911 & 0.911 & 0.66 & 0.66 & 0.67 & 0.69 \\
-learned + amortised mean & D-Unet+SDA & 0.961 & 0.961 & 0.80 & 0.80 & 0.56 & 0.58 \\
+learned, unconditional & SDA1$^\ast$ & 0.923 & 0.924 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
+learned, $\thv$ + forcing (true training) & SDA2 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
+learned, $\thv$ + forcing (noisy training) & SDA3 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
+learned + amortised mean & D-Unet+SDA$^\ast$ & 0.981 & 0.982 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
 \bottomrule
 \end{tabular}
 \end{table}

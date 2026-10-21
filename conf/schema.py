@@ -331,6 +331,9 @@ class FourDVarNetConfig:
     # project_l96_monai_unet_complexity_tiers memory / _build_backbone_unet's
     # docstring for the full tier ladder.
     monai_num_res_blocks: int = 2
+    # Bottleneck attention of unet_backbone="monai_sector2d" (L96 2D time x
+    # sector backbone): "time" (per sector, along time), "full" or "none".
+    monai_mid_attention: str = "time"
     # None (default) = prior_unet shares hidden_channels with the main solver
     # unet, i.e. today's behavior. Set to a narrower tier (e.g. [32,64,128],
     # the S+ tier) to give the solver more relative capacity than the prior,

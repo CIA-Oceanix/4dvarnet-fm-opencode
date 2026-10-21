@@ -29,7 +29,10 @@ import torch.nn.functional as F
 from monai.networks.nets import DiffusionModelUNet
 from monai.networks.nets import diffusion_model_unet as _dmu
 
+from models.interpolant import LinearInterpolant
 from models.monai_unet_adapter import MonaiDirectUNet, _patch_resblock_for_1d
+from models.sda import UnconditionalPriorCFM
+from models.vanilla_cfm import VanillaCFM
 
 
 class SectorCircularConv2d(nn.Conv2d):
@@ -186,3 +189,127 @@ class MonaiDirectUNet2D(MonaiDirectUNet):
         tau = torch.zeros(obs.shape[0], device=obs.device)
         out = self.unet2d(to_sector_grid(obs, self.NO), tau=tau)
         return from_sector_grid(out)
+
+
+class MonaiUNet2DSectorSolver(nn.Module):
+    """2D (time x sector) backbone for `models.fourdvarnet.FourDVarNetSolver`
+    (`unet_backbone="monai_sector2d"`), drop-in for `MonaiUNet1D` at every
+    FDV call site: `forward(x, tau=...)` maps `(B, C, T)` to `(B, C_out, T)`.
+
+    FDV concatenates `C // block_dim` state-sized blocks along channels (e.g.
+    `[(y - x) * m, x - Phi(x), x, m]` for "subgrad+mask+state"); each
+    `block_dim`-sized block is laid out on the sector grid by
+    `to_sector_grid`, so sector k of the backbone sees `C // block_dim`
+    blocks of `[X_k, Y_k0, ..., Y_k(J_obs-1)]` and the network stays exactly
+    equivariant to cyclic sector shifts. `output_init_std` mirrors
+    `MonaiUNet1D` (only used for a residual prior)."""
+
+    def __init__(self, state_dim: int, block_dim: int, NO: int = 8,
+                 hidden_channels: list[int] | None = None,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 output_dim: int | None = None, dropout: float = 0.1,
+                 use_flash_attention: bool = True, mid_attention: str = "time",
+                 output_init_std: float = 0.0):
+        super().__init__()
+        output_dim = output_dim if output_dim is not None else state_dim
+        for name, dim in (("state_dim", state_dim), ("output_dim", output_dim)):
+            if dim % block_dim != 0:
+                raise ValueError(f"{name}={dim} is not a multiple of block_dim={block_dim}")
+        self.block_dim = block_dim
+        self.NO, self.channels_per_sector = l96_sector_layout(NO, block_dim)
+        self.in_blocks = state_dim // block_dim
+        self.out_blocks = output_dim // block_dim
+        self.unet2d = MonaiUNet2DSector(
+            in_channels=self.in_blocks * self.channels_per_sector,
+            out_channels=self.out_blocks * self.channels_per_sector,
+            hidden_channels=hidden_channels, num_res_blocks=num_res_blocks,
+            norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        if output_init_std > 0:
+            final_conv = self.unet2d.backbone.out[-1]
+            conv = final_conv.conv if hasattr(final_conv, "conv") else final_conv
+            nn.init.normal_(conv.weight, mean=0.0, std=output_init_std)
+            if conv.bias is not None:
+                nn.init.zeros_(conv.bias)
+
+    def _to_grid(self, x: torch.Tensor, n_blocks: int) -> torch.Tensor:
+        B, _, T = x.shape
+        v = x.reshape(B, n_blocks, self.block_dim, T).permute(0, 1, 3, 2)
+        g = to_sector_grid(v.reshape(B * n_blocks, T, self.block_dim), self.NO)
+        return g.reshape(B, n_blocks * self.channels_per_sector, T, self.NO)
+
+    def _from_grid(self, g: torch.Tensor, n_blocks: int) -> torch.Tensor:
+        B, _, T, NO = g.shape
+        v = from_sector_grid(g.reshape(B * n_blocks, self.channels_per_sector, T, NO))
+        return v.reshape(B, n_blocks, T, self.block_dim).permute(0, 1, 3, 2).reshape(
+            B, n_blocks * self.block_dim, T)
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor = None,
+                tau: torch.Tensor = None) -> torch.Tensor:
+        out = self.unet2d(self._to_grid(x, self.in_blocks), tau=tau)
+        return self._from_grid(out, self.out_blocks)
+
+
+class SectorObsConditionedUNet(nn.Module):
+    """`(x, obs, tau)` -> velocity on the sector grid: `[x, obs]` enter as two
+    state-sized blocks of `MonaiUNet2DSectorSolver`, matching the
+    `UNet1D`/`MonaiUNet1D` `use_obs=True` call signature used by the CFMs."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, **backbone_kwargs):
+        super().__init__()
+        self.backbone = MonaiUNet2DSectorSolver(state_dim=2 * state_dim, block_dim=state_dim,
+                                                NO=NO, output_dim=state_dim, **backbone_kwargs)
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor, tau: torch.Tensor = None) -> torch.Tensor:
+        return self.backbone(torch.cat([x, obs], dim=1), tau=tau)
+
+
+class MonaiVanillaCFM2D(VanillaCFM):
+    """`MonaiVanillaCFM` with the 2D (time x sector) circular backbone: the
+    same CFM loss and sampler (inherited), the velocity network replaced by
+    `SectorObsConditionedUNet`. Subclassing keeps the `isinstance(model,
+    VanillaCFM)` eval dispatch. Observation-only conditioning, as for
+    `MonaiDirectUNet2D`."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, hidden_channels=None,
+                 N_outer: int = 10, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 train_tau_0_only: bool = False, param_dim: int = 0, cond_extra_dim: int = 0,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 use_flash_attention: bool = True, mid_attention: str = "time"):
+        nn.Module.__init__(self)
+        if cond_extra_dim:
+            raise ValueError(f"MonaiVanillaCFM2D supports obs-only conditioning (got cond_extra_dim={cond_extra_dim})")
+        self.cond_extra_dim = 0
+        self.param_dim = param_dim
+        self.unet = SectorObsConditionedUNet(
+            state_dim=state_dim, NO=NO, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = train_tau_0_only
+
+
+class MonaiUnconditionalPriorCFM2D(UnconditionalPriorCFM):
+    """SDA1 unconditional prior p(x_1) with the 2D (time x sector) circular
+    backbone: `MonaiUNet2DSectorSolver` on the state alone (one block, no
+    observation input). Subclassing keeps the `isinstance(model,
+    UnconditionalPriorCFM)` dispatch of the guided sampler and the hybrid
+    eval unchanged."""
+
+    def __init__(self, state_dim: int = 24, NO: int = 8, hidden_channels=None,
+                 N_outer: int = 10, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 use_flash_attention: bool = True, mid_attention: str = "time"):
+        nn.Module.__init__(self)
+        self.unet = MonaiUNet2DSectorSolver(
+            state_dim=state_dim, block_dim=state_dim, NO=NO, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = False

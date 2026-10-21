@@ -1,0 +1,21 @@
+# @package _global_
+# VanillaCFM with the 2D (time x sector) circular backbone of L96B_directunet2d_monaiM
+# ([40, 80, 160], GroupNorm 8, per-sector time-axial bottleneck attention; [x_tau, obs]
+# enter as two blocks per sector), otherwise as L96B_vanillacfm_monaiM_ep1200 (benchmark
+# default, 1200 epochs, generative flow).
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: monai_vanilla_cfm_2d
+  monai_vanilla_cfm_2d:
+    hidden_channels: [40, 80, 160]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    train_tau_0_only: false
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 8
+    mid_attention: time
+    use_flash_attention: true

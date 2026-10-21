@@ -1,5 +1,4 @@
 """Rendering of the P1 report's benchmark-framework sections (reports/l96/p1_benchmark_sections.py)."""
-import json
 import sys
 from pathlib import Path
 
@@ -30,18 +29,25 @@ def test_pending_rows_render_without_metrics():
     assert any("pending" in ln for ln in p1s.table("det", [r]))
 
 
-def test_tau0_rows_average_seeds_per_family(tmp_path, monkeypatch):
-    monkeypatch.setattr(p1s, "TAU0", tmp_path)
-    for _, name in p1s.TAU0_SETS:
-        for c in p1s.CASES:
-            rows = [{"label": f"PredictStateCFM M seed{s}", "rmse": {"mean": 0.4 + s / 100, "std": 0.1},
-                     "crps_mae": {"mean": 0.3}, "draw_dispersion": 0.05} for s in (1, 2, 3)]
-            (tmp_path / f"tau0_{name}_{c}.json").write_text(json.dumps({"rows": rows}))
-    out = p1s.tau0_rows()
-    assert [r["label"] for r in out] == ["PredictStateCFM-M (tau=0)"]
-    assert np.isclose(np.mean(out[0]["rmse"][("reg", "s0")]), 0.42)
+def test_tau0_table_is_pending_for_the_2d_flows():
+    lines = p1s.tau0_table(None, [])
+    assert any("pending" in ln for ln in lines)
 
 
-def test_tau0_rows_pending_when_a_file_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(p1s, "TAU0", tmp_path)
-    assert p1s.tau0_rows() is None
+def test_note_column_carries_the_seed_note():
+    r = _row("A", 0.4)
+    r["seeds"], r["note"] = "1/3", p1s.SEED1
+    line = next(ln for ln in p1s.table("fm", [r]) if ln.startswith("| A "))
+    assert line.endswith(f"| {p1s.SEED1} |")
+
+
+def test_reading_skips_pending_rows_and_names_seed_counts():
+    one = _row("VanillaCFM-2D-M", 0.30)
+    one["seeds"] = "1/3"
+    pending = {**_row("Hybrid pending", 0.2, flag="ref"), "reg": None, "can": None}
+    rows = {"da": [_row("ETKS", 0.50), _row("ETKS, 100 members", 0.45, flag="ensemble size")],
+            "det": [_row("DirectUNet-2D-M", 0.35)], "fm": [one],
+            "sda": [_row("SDA1-2D-M", 0.40), pending, _row("Hybrid DU -> SDA", 0.25, flag="ref")]}
+    text = "\n".join(p1s.reading(rows))
+    assert "VanillaCFM-2D-M" in text and "(1 seed)" in text and "(3 seeds)" in text
+    assert "Hybrid pending" not in text and "Hybrid DU -> SDA" in text
