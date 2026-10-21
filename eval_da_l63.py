@@ -20,7 +20,7 @@ WINDOW_STEPS = 300
 CASES = {"s0": 1.6, "s1": 1.0}
 ENS_METHODS = ("ETKF", "EnKF", "ETKS")
 VAR_METHODS = ("Strong-4DVar", "Weak-4DVar")
-INFLATION_GRID = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+INFLATION_GRID = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0, 30.0]
 Q_GRID = [0.003, 0.01, 0.03, 0.1, 0.3, 1.0]
 
 

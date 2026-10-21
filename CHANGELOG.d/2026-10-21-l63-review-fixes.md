@@ -1,0 +1,7 @@
+## 2026-10-21: L63 review fixes (consistent CFM rows, per-case neural tuning, wider inflation grid)
+
+**Summary:** CFM/D-Unet rows of `table2_l63_neural_obs10.json` regenerated so headline ev/crpss equal the mean of their `_per_var` lists. SDA2 `gw` and hybrid `tau0`/`gw` are now tuned per case on the ensemble-mean RMSE with the test-time member count (30). `INFLATION_GRID` extended to 30; S1 ETKF/EnKF optimum moved from the grid edge (5.0) to 7.0 (ETKF). Notebook outputs stripped, `train.py` continuation lines re-indented, normalize round-trip test added.
+**Files modified:** `eval_neural_l63.py` — per-case ensemble tuning; `eval_da_l63.py` — wider `INFLATION_GRID`; `l63_reconstructions.py` — falls back to committed `l63_results/` tables; `train.py` — indentation; `tests/test_l63_eval_normalization.py` — new; `scripts/archive_l63_artifacts.sh` — packs checkpoints/configs/norm stats; `l63_results/table2_l63_{da,neural}_obs10.json` — regenerated; `notebooks/l63_reconstruction_examples.ipynb` — outputs cleared.
+**Rationale:** review feedback. Hybrid SS stays ~0.6 after per-case tuning. SDA2 on S0 worsens on test (gw 1.0 vs 2.0 tied on a 50-window validation set). S1 ETKF/EnKF are over-dispersed (SS 2.9 / 2.0) at the RMSE-optimal inflation.
+**Artifacts archive:** TODO — path pending (`scripts/archive_l63_artifacts.sh <dest>`).
+**Verification:** `pytest tests/test_l63_eval_normalization.py` — 3 passed.

@@ -1034,7 +1034,7 @@ def main(cfg: DictConfig):
                                   obs_var_indices=obs_var_indices,
                                   use_biased_params=(model_type in ("param_head", "param_head_unet")),
                                   with_true_forcing=eval_with_true_forcing,
-                                         norm_stats=eval_norm_stats)
+                                  norm_stats=eval_norm_stats)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -1048,7 +1048,7 @@ def main(cfg: DictConfig):
                               obs_var_indices=obs_var_indices,
                               use_biased_params=(model_type in ("param_head", "param_head_unet")),
                               with_true_forcing=eval_with_true_forcing,
-                                         norm_stats=eval_norm_stats)
+                              norm_stats=eval_norm_stats)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 

@@ -100,23 +100,23 @@ def main():
     test = {c: make_dataset(c, 123 if c == "s0" else 131, a.num_test, a.obs_interval) for c in a.cases}
     clim = {c: climatology(np.stack([w["true_state"].numpy() for w in test[c].windows])) for c in a.cases}
 
-    def tune(method, grid_keys, grids):
+    def tune(method, case, grid_keys, grids):
         trace = {}
         for combo in itertools.product(*grids):
             kw = dict(zip(grid_keys, combo))
-            r = np.mean([val_rmse(run(method, models, val[c], device, stats, 1, a.batch_size, **kw)) for c in a.cases])
-            trace[combo] = float(r)
-            print(f"    tune {method} {kw}: val RMSE {r:.4f}", flush=True)
+            r = val_rmse(run(method, models, val[case], device, stats, a.n_members, a.batch_size, **kw))
+            trace[combo] = r
+            print(f"    tune {method}/{case} {kw}: val ensemble-mean RMSE {r:.4f}", flush=True)
         best = min(trace, key=trace.get)
         return dict(zip(grid_keys, best)), {"/".join(map(str, k)): v for k, v in trace.items()}
 
     for method in a.methods:
-        hp, trace = {}, None
-        if method == "SDA2":
-            hp, trace = tune(method, ["gw"], [GW_GRID])
-        elif method == "D-Unet+SDA2":
-            hp, trace = tune(method, ["tau0", "gw"], [HYBRID_TAU0_GRID, HYBRID_GW_GRID])
         for c in a.cases:
+            hp, trace = {}, None
+            if method == "SDA2":
+                hp, trace = tune(method, c, ["gw"], [GW_GRID])
+            elif method == "D-Unet+SDA2":
+                hp, trace = tune(method, c, ["tau0", "gw"], [HYBRID_TAU0_GRID, HYBRID_GW_GRID])
             t0 = time.time()
             n = 1 if method == "D-Unet" else a.n_members
             res = run(method, models, test[c], device, stats, n, a.batch_size, **hp)

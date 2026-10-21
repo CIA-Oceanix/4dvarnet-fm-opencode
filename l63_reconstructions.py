@@ -11,12 +11,18 @@ from evaluation.neural_inference import load_model
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 TABLE_DIR = os.path.join(BASE, "experiments", "l63_da_table2")
+COMMITTED_TABLE_DIR = os.path.join(BASE, "l63_results")
 METHODS = ("ETKS", "D-Unet", "CFM", "SDA2", "D-Unet+SDA2")
 TEST_SEED = {"s0": 123, "s1": 131}
 
 
 def cache_path(case, obs_interval):
     return os.path.join(TABLE_DIR, f"reconstructions_obs{obs_interval}_{case}.npz")
+
+
+def table_path(name):
+    path = os.path.join(TABLE_DIR, name)
+    return path if os.path.exists(path) else os.path.join(COMMITTED_TABLE_DIR, name)
 
 
 def per_window_rmse(estimate, truth):
@@ -29,8 +35,8 @@ def load_or_compute(case, obs_interval=10, n_members=30, num_windows=200, batch_
         return dict(np.load(path))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ds = make_dataset(case, TEST_SEED[case], num_windows, obs_interval)
-    etks_table = json.load(open(os.path.join(TABLE_DIR, f"table2_l63_da_obs{obs_interval}.json")))
-    neural_table = json.load(open(os.path.join(TABLE_DIR, f"table2_l63_neural_obs{obs_interval}.json")))
+    etks_table = json.load(open(table_path(f"table2_l63_da_obs{obs_interval}.json")))
+    neural_table = json.load(open(table_path(f"table2_l63_neural_obs{obs_interval}.json")))
     out = {
         "truth": np.stack([ds[i]["true_state"].numpy() for i in range(len(ds))]),
         "obs": np.stack([ds[i]["obs"].numpy() for i in range(len(ds))]),
