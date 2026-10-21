@@ -169,8 +169,9 @@ The benchmark uses N = 80. At N = 320, S0 is still not converged (val: +0.022 fo
 | 1 (1.6% of columns) | 0.863 | 0.877 | 0.459 | 0.474 | 0.668 |
 | 2 (3.1% of columns) | 0.910 | 0.912 | 0.572 | 0.541 | 0.734 |
 | 3 (4.7% of columns) | 0.937 | 0.933 | 0.647 | 0.578 | 0.774 |
-| 4 (6.2% of columns) | *0.950* | *0.943* | *0.695* | *0.589* | *0.794* |
-| 6 (9.4% of columns) | **0.966** | **0.954** | **0.757** | **0.592** | **0.817** |
+| 4 (6.2% of columns) | 0.950 | 0.943 | 0.695 | *0.589* | 0.794 |
+| 6 (9.4% of columns) | *0.966* | *0.954* | *0.757* | **0.592** | *0.817* |
+| 12 (18.8% of columns) | **0.982** | **0.964** | **0.837** | 0.566 | **0.837** |
 
 ![observation density](figs/qg_specwind_da_density.png)
 
@@ -359,16 +360,16 @@ DA reference rows (italic, marked DA) are the benchmark ones from sections 2–4
 
 ## 10. Observation configurations (neural stress test)
 
-The same networks, not retrained, on denser observations (6 and 12 columns per day) and on noisier or cleaner ones (15% and 2% of the ψ₁ std) at 3 columns per day. 6 and 12 columns and 15% noise are inside the training observing system, 2% is below its error range. The SDA observation σ follows the noise level; the hybrids keep their single setting, except the G2-3D one (weight 5 everywhere but S1). DA reference rows exist only at the reference density and S1 (and the ETKF at 6 columns per day).
+The same networks, not retrained, on denser observations (6 and 12 columns per day) and on noisier or cleaner ones (15% and 2% of the ψ₁ std) at 3 columns per day. 6 and 12 columns and 15% noise are inside the training observing system, 2% is below its error range. The SDA observation σ follows the noise level; the hybrids keep their single setting, except the G2-3D one (weight 5 everywhere but S1). The DA rows (ETKF, EnKS, strong 4D-Var) keep their reference-case settings too (radius 8, 4D-Var tuned at 3 columns per day); their R follows the noise level. The N = 320 EnKS was run at the reference case and S1 only.
 
 **Score (mean EV)**
 
 | scheme | S0, 3 col/day, 5% | S1 (realistic base), 3 col/day | S0, 6 col/day, 5% | S0, 12 col/day, 5% | S0, 3 col/day, 15% | S0, 3 col/day, 2% |
 |---|---|---|---|---|---|---|
-| _ETKF (N = 80)_ (DA) | 0.774 | 0.633 | 0.817 | — | — | — |
-| _EnKS (N = 80)_ (DA) | 0.812 | 0.665 | — | — | — | — |
+| _ETKF (N = 80)_ (DA) | 0.774 | 0.633 | 0.817 | 0.837 | 0.762 | 0.774 |
+| _EnKS (N = 80)_ (DA) | 0.812 | 0.665 | 0.845 | 0.854 | 0.802 | 0.814 |
 | _EnKS (N = 320)_ (DA) | 0.841 | 0.675 | — | — | — | — |
-| _4D-Var (strong; S1: weak)_ (DA) | 0.840 | 0.612 | — | — | — | — |
+| _4D-Var (strong; S1: weak)_ (DA) | 0.840 | 0.612 | 0.911 | 0.933 | 0.785 | 0.843 |
 | G1-M-3D DirectUNet, stitched | 0.870 | 0.827 | 0.914 | 0.933 | — | — |
 | G1-M-3D DirectUNet, full window | 0.874 | 0.834 | 0.911 | 0.927 | 0.847 | 0.879 |
 | G1-L-3D DirectUNet, stitched | 0.882 | 0.837 | *0.925* | **0.943** | 0.850 | 0.888 |
@@ -382,8 +383,8 @@ The same networks, not retrained, on denser observations (6 and 12 columns per d
 
 | scheme | S0, 3 col/day, 5% | S1 (realistic base), 3 col/day | S0, 6 col/day, 5% | S0, 12 col/day, 5% | S0, 3 col/day, 15% | S0, 3 col/day, 2% |
 |---|---|---|---|---|---|---|
-| _ETKF (N = 80)_ (DA) | 5.875 | 7.364 | 4.938 | — | — | — |
-| _EnKS (N = 80)_ (DA) | 5.315 | 6.935 | — | — | — | — |
+| _ETKF (N = 80)_ (DA) | 5.875 | 7.364 | 4.938 | 4.178 | 6.176 | 5.813 |
+| _EnKS (N = 80)_ (DA) | 5.315 | 6.935 | 4.381 | 3.676 | 5.668 | 5.217 |
 | _EnKS (N = 320)_ (DA) | 4.775 | 6.811 | — | — | — | — |
 | G2-3D CFM, stitched | 4.275 | **5.112** | 3.321 | **2.756** | **4.911** | 4.174 |
 | G3-3D SDA prior, pure-noise SDA | 4.234 | 7.438 | 3.419 | 3.080 | 5.246 | **3.864** |
@@ -396,10 +397,10 @@ The same networks, not retrained, on denser observations (6 and 12 columns per d
 |---|---|---|---|---|---|
 | S0, 3 col/day, 5% | G1-L-3D DirectUNet, full window (0.890) | +0.010 [+0.009, +0.011] | -0.009 [-0.013, -0.006] | EnKS (N = 320) (0.841) | +0.060 [+0.053, +0.067] |
 | S1 (realistic base), 3 col/day | G1-L-3D DirectUNet, full window (0.849) | +0.008 [+0.007, +0.009] | -0.165 [-0.212, -0.124] | EnKS (N = 320) (0.675) | +0.182 [+0.163, +0.202] |
-| S0, 6 col/day, 5% | G1-L-3D DirectUNet, stitched (0.925) | +0.004 [+0.002, +0.005] | -0.009 [-0.013, -0.006] | ETKF (N = 80) (0.817) | +0.112 [+0.103, +0.120] |
-| S0, 12 col/day, 5% | G1-L-3D DirectUNet, stitched (0.943) | -0.002 [-0.003, -0.001] | -0.020 [-0.030, -0.013] | — | — |
-| S0, 3 col/day, 15% | G1-L-3D DirectUNet, full window (0.862) | +0.010 [+0.009, +0.011] | -0.030 [-0.036, -0.024] | — | — |
-| S0, 3 col/day, 2% | G1-L-3D DirectUNet, full window (0.896) | +0.010 [+0.009, +0.011] | -0.001 [-0.005, +0.003] | — | — |
+| S0, 6 col/day, 5% | G1-L-3D DirectUNet, stitched (0.925) | +0.004 [+0.002, +0.005] | -0.009 [-0.013, -0.006] | 4D-Var (strong; S1: weak) (0.911) | +0.018 [+0.012, +0.024] |
+| S0, 12 col/day, 5% | G1-L-3D DirectUNet, stitched (0.943) | -0.002 [-0.003, -0.001] | -0.020 [-0.030, -0.013] | 4D-Var (strong; S1: weak) (0.933) | +0.007 [+0.002, +0.013] |
+| S0, 3 col/day, 15% | G1-L-3D DirectUNet, full window (0.862) | +0.010 [+0.009, +0.011] | -0.030 [-0.036, -0.024] | EnKS (N = 80) (0.802) | +0.071 [+0.063, +0.078] |
+| S0, 3 col/day, 2% | G1-L-3D DirectUNet, full window (0.896) | +0.010 [+0.009, +0.011] | -0.001 [-0.005, +0.003] | 4D-Var (strong; S1: weak) (0.843) | +0.062 [+0.048, +0.077] |
 
 ## 11. Caveats
 
@@ -408,6 +409,7 @@ The same networks, not retrained, on denser observations (6 and 12 columns per d
 - 4D-Var is deterministic (no spread); its background error is climatological, not cycled.
 - The initial state is the lagged truth in both scenarios (optimistic against an analysis-cycled first guess).
 - Only S0 has the density curve; S1 was run at 3 columns per day.
+- The stress-test DA rows are not re-tuned: the ETKF's q₂ falls from 6 to 12 columns per day (0.592 → 0.566), a sign that radius 8 is too wide at that density, and 4D-Var's sub-window fallbacks rise at 15% and 2% noise (6 each).
 - Neural vs DA is not like for like in information: DA gets the lagged truth as its initial state and, in S0, the exact model and wind; the networks get only the observations but were trained on simulations of the true model. In S1 the networks therefore carry no model error (their S1 is the corrupted observations only), so most of the S1 gap to DA is the DA model error, not a better assimilation.
 - Neural rows: one training seed each; the hybrid with the G1-L-3D warm start mixes tiers (L-tier warm start, M-tier-size prior), and G2/G3 exist at M tier only.
 - The hybrid's ensembles are under-dispersed (spread/RMSE 0.47–0.74); pure-noise SDA is the best calibrated scheme but the weakest in score off the reference case.

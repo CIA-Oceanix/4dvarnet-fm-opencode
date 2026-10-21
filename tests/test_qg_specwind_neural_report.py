@@ -53,3 +53,12 @@ def test_paired_difference_uses_common_windows():
 def test_rank_marks_bold_best_and_italic_second():
     assert rep._mark([0.8, 0.9, None, 0.85]) == ["0.800", "**0.900**", "—", "*0.850*"]
     assert rep._mark([3.0, 2.0, 4.0], lower_better=True) == ["*3.000*", "**2.000**", "4.000"]
+
+
+def test_da_lookup_separates_noise_levels():
+    base = {"spec": rep.NEURAL_SPEC, "method": "enks", "cols": 3, "s1": rep.S0, "complete": True,
+            "r_scale": 1.0, "N": 80, "lag": None, "taper": rep.ENKS_TAPER, "mode": "-"}
+    runs = [{**base, "noise": 0.05, "dir": "ref"}, {**base, "noise": 0.15, "dir": "n15"}]
+    assert rep._find(runs, rep.NEURAL_SPEC, "enks", 3)["dir"] == "ref"
+    assert rep._find(runs, rep.NEURAL_SPEC, "enks", 3, noise=0.15)["dir"] == "n15"
+    assert rep._find(runs, rep.NEURAL_SPEC, "enks", 3, noise=0.02) is None

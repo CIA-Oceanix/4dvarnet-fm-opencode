@@ -56,7 +56,7 @@ def load_runs(root: str) -> list[dict]:
         n_shards = int(os.path.basename(files[0]).split("_of_")[1].split("_")[0])
         pw = sorted((w for m in metas for w in m["per_window"]), key=lambda w: w["index"])
         runs.append({"dir": d, "spec": m0["spec"], "method": m0["method"],
-                     "cols": m0["cols_per_day"], "kappa": m0.get("s1_kappa", 0.0) or 0.0,
+                     "cols": m0["cols_per_day"], "noise": float(m0.get("obs_noise_frac", 0.05)), "kappa": m0.get("s1_kappa", 0.0) or 0.0,
                      "s1": (f"realistic {m0['s1_variant']}" if m0.get("s1_variant")
                             else (f"κ = {m0['s1_kappa']:g}" if m0.get("s1_kappa") else S0)),
                      "loc": m0["loc_radius"], "ridge": m0.get("etkf_ridge"),
@@ -99,7 +99,8 @@ def _var_ok(r: dict) -> bool:
 
 
 def _find(runs: list[dict], spec: str, method: str, cols: int, s1: str = S0,
-          r_scale: float = 1.0) -> dict | None:
+          r_scale: float = 1.0, noise: float = 0.05) -> dict | None:
+    runs = [r for r in runs if abs(r["noise"] - noise) < 1e-9]
     if method in VAR_METHODS:
         hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == cols
                 and r["s1"] == s1 and r["complete"] and abs(r["r_scale"] - r_scale) < 1e-9 and _var_ok(r)]
@@ -217,7 +218,7 @@ LARGE_N_SETTINGS = {
 
 def _find_large(runs: list[dict], spec: str, method: str, s1: str, r_scale: float) -> dict | None:
     want = LARGE_N_SETTINGS[S0 if s1 == S0 else "S1"][method]
-    hits = [r for r in runs if r["spec"] == spec and r["method"] == method and r["cols"] == 3
+    hits = [r for r in runs if abs(r["noise"] - 0.05) < 1e-9 and r["spec"] == spec and r["method"] == method and r["cols"] == 3
             and r["s1"] == s1 and r["complete"] and r["N"] == LARGE_N
             and abs(r["r_scale"] - r_scale) < 1e-9 and abs(r["loc"] - want["loc"]) < 1e-9
             and (method != "enks" or r["taper"] == want["taper"])]
@@ -430,10 +431,11 @@ NEURAL_SCHEMES = (
 HYBRID_LABEL = NEURAL_SCHEMES[-1][0]
 END_TO_END = tuple(s[0] for s in NEURAL_SCHEMES if s[0].startswith(("G1", "G2")))
 # DA reference rows per config key: (label, method, r_scale, N, deterministic?)
-DA_REFS = (("ETKF (N = 80)", "etkf", {"c3": 1.0, "s1": S1_TUNED_R, "c6": 1.0}, 80, False),
-           ("EnKS (N = 80)", "enks", {"c3": 1.0, "s1": S1_TUNED_R}, 80, False),
+_S0_STRESS = {"c6": 1.0, "c12": 1.0, "n15": 1.0, "n02": 1.0}
+DA_REFS = (("ETKF (N = 80)", "etkf", {"c3": 1.0, "s1": S1_TUNED_R, **_S0_STRESS}, 80, False),
+           ("EnKS (N = 80)", "enks", {"c3": 1.0, "s1": S1_TUNED_R, **_S0_STRESS}, 80, False),
            ("EnKS (N = 320)", "enks", {"c3": 1.0, "s1": S1_TUNED_R}, LARGE_N, False),
-           ("4D-Var (strong; S1: weak)", "4dvar", {"c3": 1.0, "s1": 1.0}, 0, True))
+           ("4D-Var (strong; S1: weak)", "4dvar", {"c3": 1.0, "s1": 1.0, **_S0_STRESS}, 0, True))
 
 
 def load_neural(root: str) -> dict[str, dict]:
@@ -475,10 +477,11 @@ def _da_ref_run(runs: list[dict], ref: tuple, cfg: tuple, s1: str) -> dict | Non
         return None
     scen = s1 if cfg[4] else S0
     if method == "4dvar":
-        return _find(runs, NEURAL_SPEC, "weak4dvar" if cfg[4] else "strong4dvar", cfg[2], scen)
+        return _find(runs, NEURAL_SPEC, "weak4dvar" if cfg[4] else "strong4dvar", cfg[2], scen,
+                     noise=cfg[3])
     if n == LARGE_N:
         return _find_large(runs, NEURAL_SPEC, method, scen, r_scales[cfg[0]])
-    return _find(runs, NEURAL_SPEC, method, cfg[2], scen, r_scales[cfg[0]])
+    return _find(runs, NEURAL_SPEC, method, cfg[2], scen, r_scales[cfg[0]], cfg[3])
 
 
 def _score(r: dict) -> np.ndarray:
@@ -776,8 +779,9 @@ def main() -> None:
            "noisier or cleaner ones (15% and 2% of the ψ₁ std) at 3 columns per day. 6 and 12 columns "
            "and 15% noise are inside the training observing system, 2% is below its error range. The "
            "SDA observation σ follows the noise level; the hybrids keep their single setting, except "
-           "the G2-3D one (weight 5 everywhere but S1). DA reference rows exist only at the reference "
-           "density and S1 (and the ETKF at 6 columns per day).", ""]
+           "the G2-3D one (weight 5 everywhere but S1). The DA rows (ETKF, EnKS, strong 4D-Var) keep their "
+           "reference-case settings too (radius 8, 4D-Var tuned at 3 columns per day); their R follows "
+           "the noise level. The N = 320 EnKS was run at the reference case and S1 only.", ""]
     md += obs_config_tables(runs, neural, s1) + [""]
     md += ["**Paired differences** (per-window score differences over the same 100 windows; bootstrap "
            "95% CI). Best end-to-end = the best G1/G2 row in that column.", ""]
@@ -791,6 +795,9 @@ def main() -> None:
            "- The initial state is the lagged truth in both scenarios (optimistic against an "
            "analysis-cycled first guess).",
            "- Only S0 has the density curve; S1 was run at 3 columns per day.",
+           "- The stress-test DA rows are not re-tuned: the ETKF's q₂ falls from 6 to 12 columns per "
+           "day (0.592 → 0.566), a sign that radius 8 is too wide at that density, and 4D-Var's "
+           "sub-window fallbacks rise at 15% and 2% noise (6 each).",
            "- Neural vs DA is not like for like in information: DA gets the lagged truth as its initial "
            "state and, in S0, the exact model and wind; the networks get only the observations but "
            "were trained on simulations of the true model. In S1 the networks therefore carry no "
