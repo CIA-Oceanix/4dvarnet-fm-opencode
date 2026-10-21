@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from data.lorenz63 import Lorenz63Config, make_mixed_datasets, make_s0_s1_trainval  # noqa: E402
 from data.random_param_dataset import RandomParamLorenz63Dataset  # noqa: E402
-from data.dataloader import FlowMatchingDataset, ConcatFMDataset, collate_fm, make_collate_fm  # noqa: E402
+from data.dataloader import FlowMatchingDataset, ConcatFMDataset, make_collate_fm  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from models.solver import TweedieSolver  # noqa: E402
 from models.direct_unet import DirectUNet  # noqa: E402
@@ -40,8 +40,8 @@ EXP_DIR = os.path.join(BASE, "experiments")
 def make_experiment_dataloaders(datasets, batch_size=32, train_mix="cs1+cs2",
                                 num_workers=4, randomize_params=False, param_noise=0.2,
                                 base_cfg=None, num_train_windows=1000,
-                                data_setup="legacy", with_params=False):
-    kw = dict(batch_size=batch_size, collate_fn=collate_fm,
+                                data_setup="legacy", with_params=False, norm_stats=None):
+    kw = dict(batch_size=batch_size, collate_fn=make_collate_fm(norm_stats),
               num_workers=num_workers, pin_memory=True)
     if data_setup == "s0_s1":
         obs_cfg = {"obs_interval": base_cfg.obs_interval, "R_var": base_cfg.R_var} if base_cfg else {}
@@ -492,12 +492,15 @@ def model_factory(cfg: DictConfig, device: torch.device):
 
 def _make_eval_batch(w, device, param_names=("sigma", "rho", "beta", "c1"),
                      param_dim=4, use_biased_params=False, obs_var_indices=None,
-                     with_true_forcing=False):
+                     with_true_forcing=False, norm_stats=None):
     from data.dataloader import FlowMatchingBatch, _l96_biased_param_vector
     states = w["true_state"].unsqueeze(0).to(device)
     if obs_var_indices is not None and states.shape[-1] != len(obs_var_indices):
         states = states[..., obs_var_indices]
     obs = w["obs"].unsqueeze(0).to(device)
+    if norm_stats is not None:
+        from data.normalization import normalize
+        states, obs = normalize(states, norm_stats), normalize(obs, norm_stats)
     mask = w["obs_mask"].unsqueeze(0).to(device)
     forcing = w["forcing_corrupted"].unsqueeze(0).to(device)
     true_forcing = w["forcing_true"].unsqueeze(0).to(device) if with_true_forcing else None
@@ -531,7 +534,8 @@ def _eval_true_param_list(w, param_names):
 
 def evaluate_model(model, dataset, device, model_type="tweedie", return_params=False,
                    param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                   obs_var_indices=None, use_biased_params=False, with_true_forcing=False):
+                   obs_var_indices=None, use_biased_params=False, with_true_forcing=False,
+                   norm_stats=None):
     rmse_list = []
     param_list = []
     true_param_list = []
@@ -540,7 +544,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
                                  obs_var_indices=obs_var_indices,
-                                 with_true_forcing=with_true_forcing)
+                                 with_true_forcing=with_true_forcing,
+                                 norm_stats=norm_stats)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
@@ -581,6 +586,9 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        if norm_stats is not None:
+            from data.normalization import denormalize
+            pred = denormalize(pred, norm_stats)
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -608,14 +616,16 @@ def _per_group_rmse(mean_rmse, obs_var_indices, NO=8, J=4, obs_j=2):
 
 def save_trajectories(model, dataset, device, model_type, save_path,
                       param_names=("sigma", "rho", "beta", "c1"), param_dim=4,
-                      obs_var_indices=None, use_biased_params=False, with_true_forcing=False):
+                      obs_var_indices=None, use_biased_params=False, with_true_forcing=False,
+                      norm_stats=None):
     trajs, truths = [], []
     for i in range(len(dataset)):
         w = dataset[i]
         batch = _make_eval_batch(w, device, param_names=param_names, param_dim=param_dim,
                                  use_biased_params=use_biased_params,
                                  obs_var_indices=obs_var_indices,
-                                 with_true_forcing=with_true_forcing)
+                                 with_true_forcing=with_true_forcing,
+                                 norm_stats=norm_stats)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
@@ -641,6 +651,9 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
+        if norm_stats is not None:
+            from data.normalization import denormalize
+            pred = denormalize(pred, norm_stats)
         truth = w["true_state"].numpy()
         if obs_var_indices is not None and pred.shape[-1] != truth.shape[-1]:
             truth = truth[..., obs_var_indices]
@@ -694,6 +707,8 @@ def main(cfg: DictConfig):
     # Data
     dc = cfg.data
     system = dc.get("system", "lorenz63")
+    obs_var_indices = None
+    eval_norm_stats = None
     param_names = tuple(dc.get("param_names", ["sigma", "rho", "beta", "c1"]))
     if system == "lorenz96":
         from data.lorenz96 import (Lorenz96Config, make_l96_s0_s1_trainval,
@@ -885,8 +900,13 @@ def main(cfg: DictConfig):
             obs_times_cfg=obs_times_cfg,
         )
     else:
+        if dc.get("normalize", False):
+            from data.normalization import load_norm_stats
+            norm_stats_path = dc.get("norm_stats_path", os.path.join(EXP_DIR, "l63_norm_stats.pt"))
+            eval_norm_stats = load_norm_stats(norm_stats_path)
+            logger.info(f"data.normalize=True: loaded per-channel stats from {norm_stats_path}")
         loaders = make_experiment_dataloaders(
-            datasets, batch_size=cfg.training.batch_size,
+            datasets, batch_size=cfg.training.batch_size, norm_stats=eval_norm_stats,
             train_mix=train_mix, num_workers=4,
             randomize_params=randomize_params, param_noise=param_noise,
             base_cfg=base_cfg,
@@ -1004,7 +1024,8 @@ def main(cfg: DictConfig):
                                          return_params=True, param_names=param_names,
                                          param_dim=param_dim, obs_var_indices=obs_var_indices,
                                          use_biased_params=(model_type in ("param_head", "param_head_unet")),
-                                         with_true_forcing=eval_with_true_forcing)
+                                         with_true_forcing=eval_with_true_forcing,
+                                         norm_stats=eval_norm_stats)
             results_metrics[key] = (m, s)
             param_metrics[key] = prmse
         else:
@@ -1012,7 +1033,8 @@ def main(cfg: DictConfig):
                                   param_names=param_names, param_dim=param_dim,
                                   obs_var_indices=obs_var_indices,
                                   use_biased_params=(model_type in ("param_head", "param_head_unet")),
-                                  with_true_forcing=eval_with_true_forcing)
+                                  with_true_forcing=eval_with_true_forcing,
+                                  norm_stats=eval_norm_stats)
             results_metrics[key] = (m, s)
     eval_t = time.time() - t0
 
@@ -1025,7 +1047,8 @@ def main(cfg: DictConfig):
                               param_names=param_names, param_dim=param_dim,
                               obs_var_indices=obs_var_indices,
                               use_biased_params=(model_type in ("param_head", "param_head_unet")),
-                              with_true_forcing=eval_with_true_forcing)
+                              with_true_forcing=eval_with_true_forcing,
+                              norm_stats=eval_norm_stats)
 
     state_names = cfg.data.get("state_names", ["X", "Y", "Z"])
 

@@ -1,0 +1,31 @@
+# @package _global_
+# DirectUNet-M (MONAI backbone) on L63, paper protocol: S0/S1 training data, obs every 10 steps
+# (30 obs times, the setting of the L63 DA table), cosine LR, 1200 epochs. Per-channel z-score
+# normalisation of states and obs (experiments/l63_norm_stats.pt, precompute_l63_norm_stats.py).
+# No random observing system in training: the L63 branch of train.py has none.
+defaults:
+  - /lorenz63_default
+  - _self_
+model:
+  model_type: monai_direct_unet
+  monai_direct_unet:
+    hidden_channels: [64, 128, 256]
+    dropout: 0.1
+    cond_extra_dim: 0
+    num_res_blocks: 2
+    norm_num_groups: 32
+training:
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  seed: null
+  loss: {use_gradient: true, gradient_weight: 0.1}
+data:
+  data_setup: s0_s1
+  obs_interval: 10
+  bias_max: 0.2
+  normalize: true
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2
