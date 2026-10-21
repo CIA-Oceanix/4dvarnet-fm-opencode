@@ -25,6 +25,7 @@
 # 4D-Var (METHOD=strong4dvar|weak4dvar): VARB=diag|spectral background covariance, BSCALE, QSCALE,
 # WIN (sub-window, model steps; 60 = 5 days), ITER (L-BFGS iterations).
 # RELAX=rtps|rtpp ALPHA=a: relaxation inflation of the ETKF/EnKF analysis anomalies (docs/results/qg_specwind_relax_inflation.md).
+# NOISE sets the observation noise (fraction of the psi1 std; default 0.05) and tags the run "_n<NOISE>" when not 0.05.
 # RSCALE multiplies the filter's observation-error variance (S1-tuned value 6: docs/results/qg_specwind_s1_tuning.md).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
@@ -33,14 +34,14 @@ export OMP_NUM_THREADS=4
 NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP" 2>/dev/null || { NODE_TMP="/tmp/${USER}_slurm_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP"; }
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
 : "${SPEC:?set SPEC}" "${METHOD:?set METHOD}" "${N_SHARDS:?set N_SHARDS}"
-SPLIT="${SPLIT:-test}"; COLS="${COLS:-3}"; N_WINDOWS="${N_WINDOWS:-100}"; START="${START:-0}"
+SPLIT="${SPLIT:-test}"; COLS="${COLS:-3}"; NOISE="${NOISE:-0.05}"; N_WINDOWS="${N_WINDOWS:-100}"; START="${START:-0}"
 LOC="${LOC:-8.0}"; RIDGE="${RIDGE:-0.1}"; LOCMODE="${LOCMODE:-ensrf}"; ENKSLAG="${ENKSLAG:-0}"; RSCALE="${RSCALE:-1.0}"; VARB="${VARB:-diag}"; BSCALE="${BSCALE:-1.0}"; QSCALE="${QSCALE:-0.1}"; WIN="${WIN:-60}"; ITER="${ITER:-60}"; ENKSTAPER="${ENKSTAPER:-8}"; ENS="${ENS:-80}"; CROSS="${CROSS:-1.0}"; INIT="${INIT:-bred}"; DISP="${DISP:-1.0}"; KAPPA="${KAPPA:-0}"; PRESET="${PRESET:-reference}"; VARIANT="${VARIANT:-base}"; RELAX="${RELAX:-none}"; ALPHA="${ALPHA:-0}"
 SHARD="${SLURM_ARRAY_TASK_ID:-0}"
-OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)$([ "$METHOD" = enks ] && echo "_tau${ENKSTAPER}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)$([ "$ENS" != 80 ] && echo "_N${ENS}" || true)$([ "$RELAX" != none ] && echo "_${RELAX}${ALPHA}" || true)$(case "$METHOD" in *4dvar) echo "_B${VARB}${BSCALE}$([ "$METHOD" = weak4dvar ] && echo "_Q${QSCALE}")$([ "$WIN" != 60 ] && echo "_W${WIN}")$([ "$ITER" != 60 ] && echo "_I${ITER}")";; esac)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
+OUT="experiments/qg_specwind_da/${SPEC}/${SPLIT}/${METHOD}_c${COLS}$([ "$NOISE" != 0.05 ] && echo "_n${NOISE}" || true)_loc${LOC}_r${RIDGE}_x${CROSS}_${INIT}$([ "$METHOD" = etkf ] && echo "_${LOCMODE}" || true)$([ "$METHOD" = enks ] && echo "_lag${ENKSLAG}" || true)$([ "$METHOD" = enks ] && echo "_tau${ENKSTAPER}" || true)_d${DISP}_k${KAPPA}$([ "$PRESET" = realistic ] && echo "_r${VARIANT}" || true)$([ "$RSCALE" != 1.0 ] && echo "_R${RSCALE}" || true)$([ "$ENS" != 80 ] && echo "_N${ENS}" || true)$([ "$RELAX" != none ] && echo "_${RELAX}${ALPHA}" || true)$(case "$METHOD" in *4dvar) echo "_B${VARB}${BSCALE}$([ "$METHOD" = weak4dvar ] && echo "_Q${QSCALE}")$([ "$WIN" != 60 ] && echo "_W${WIN}")$([ "$ITER" != 60 ] && echo "_I${ITER}")";; esac)_s${START}_n${N_WINDOWS}/shard_${SHARD}_of_${N_SHARDS}.json"
 mkdir -p "$(dirname "$OUT")"
 "$PY" -m evaluation.run_qg_specwind_da --spec "$SPEC" --root experiments/qg_datasets \
   --split "$SPLIT" --start "$START" --n-windows "$N_WINDOWS" --shard "$SHARD" --n-shards "$N_SHARDS" \
-  --method "$METHOD" --cols-per-day "$COLS" --N "$ENS" --loc-radius "$LOC" --etkf-ridge "$RIDGE" \
+  --method "$METHOD" --cols-per-day "$COLS" --obs-noise-frac "$NOISE" --N "$ENS" --loc-radius "$LOC" --etkf-ridge "$RIDGE" \
   --loc-cross-layer "$CROSS" --init-ensemble "$INIT" --disp-frac "$DISP" --s1-kappa "$KAPPA" --etkf-loc-mode "$LOCMODE" --r-scale "$RSCALE" --fourdvar-b "$VARB" --b-var-scale "$BSCALE" --q-var-scale "$QSCALE" --da-window-steps "$WIN" --fourdvar-max-iter "$ITER" --relax "$RELAX" --relax-alpha "$ALPHA" $([ "$METHOD" = enks ] && echo "--enks-lag $ENKSLAG" || true) $([ "$METHOD" = enks ] && echo "--enks-taper-days $ENKSTAPER" || true) \
   --s1-preset "$PRESET" --s1-variant "$VARIANT" \
   --out "$OUT" --device cuda
