@@ -1,0 +1,21 @@
+# @package _global_
+# SDA1 (unconditional flow-matching prior p(x), observations only enter as the
+# guidance cost at inference) with the 2D (time x sector) circular backbone of
+# L96B_directunet2d_monaiM ([40, 80, 160], GroupNorm 8, per-sector time-axial
+# bottleneck attention; the state is the only input block). Benchmark default,
+# 1200 epochs; prior settings as B4_sda1_monaiM_ep1200_l96.
+defaults:
+  - /l96_benchmark_default
+  - _self_
+model:
+  model_type: monai_sda_prior_2d
+  param_dim: 0
+  monai_sda_prior_2d:
+    hidden_channels: [40, 80, 160]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 8
+    mid_attention: time
+    use_flash_attention: true

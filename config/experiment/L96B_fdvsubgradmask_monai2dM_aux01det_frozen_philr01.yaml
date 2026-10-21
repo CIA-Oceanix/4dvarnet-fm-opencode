@@ -1,0 +1,14 @@
+# @package _global_
+# L96B_fdvsubgradmask_monaiM_aux01det_frozen_philr01 (FDV2 + mask, Phi frozen in the solver
+# input and trained by the aux prior loss at 0.1x lr; the stable 2-seed FDV2-M recipe) with
+# the 2D (time x sector) circular backbone of L96B_directunet2d_monaiM for both the update
+# network and Phi: [40, 80, 160], GroupNorm 8, per-sector time-axial bottleneck attention.
+defaults:
+  - /experiment/L96B_fdvsubgradmask_monaiM_aux01det_frozen_philr01
+  - _self_
+model:
+  fdv:
+    hidden_channels: [40, 80, 160]
+    unet_backbone: monai_sector2d
+    monai_norm_num_groups: 8
+    monai_mid_attention: time

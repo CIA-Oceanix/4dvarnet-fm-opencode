@@ -217,6 +217,23 @@ def model_factory(cfg: DictConfig, device: torch.device):
             num_res_blocks=mvc.get("num_res_blocks", 2),
             norm_num_groups=mvc.get("norm_num_groups", 32),
         )
+    elif model_type == "monai_vanilla_cfm_2d":
+        from models.monai_unet_l96_2d import MonaiVanillaCFM2D
+        mvc = cfg.model.monai_vanilla_cfm_2d
+        model = MonaiVanillaCFM2D(
+            state_dim=cfg.model.state_dim,
+            NO=cfg.data.get("NO", 8),
+            hidden_channels=mvc.hidden_channels,
+            N_outer=mvc.N_outer,
+            sigma_prior=mvc.sigma_prior,
+            dropout=mvc.dropout,
+            train_tau_0_only=mvc.get("train_tau_0_only", False),
+            cond_extra_dim=mvc.get("cond_extra_dim", 0),
+            num_res_blocks=mvc.get("num_res_blocks", 2),
+            norm_num_groups=mvc.get("norm_num_groups", 8),
+            use_flash_attention=mvc.get("use_flash_attention", True),
+            mid_attention=mvc.get("mid_attention", "time"),
+        )
     elif model_type == "monai_predict_state_cfm":
         from models.monai_unet_adapter import MonaiPredictStateCFM
         mps = cfg.model.monai_predict_state_cfm
@@ -384,6 +401,21 @@ def model_factory(cfg: DictConfig, device: torch.device):
             num_res_blocks=sp.get("num_res_blocks", 2),
             norm_num_groups=sp.get("norm_num_groups", 32),
         )
+    elif model_type == "monai_sda_prior_2d":
+        from models.monai_unet_l96_2d import MonaiUnconditionalPriorCFM2D
+        sp = cfg.model.monai_sda_prior_2d
+        model = MonaiUnconditionalPriorCFM2D(
+            state_dim=cfg.model.state_dim,
+            NO=cfg.data.get("NO", 8),
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 8),
+            use_flash_attention=sp.get("use_flash_attention", True),
+            mid_attention=sp.get("mid_attention", "time"),
+        )
     elif model_type == "monai_sda_prior_cond":
         from models.monai_unet_adapter import MonaiConditionalPriorCFM
         sp = cfg.model.monai_sda_prior
@@ -433,6 +465,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
             unet_backbone=fdv.get("unet_backbone", "unet1d"),
             monai_norm_num_groups=fdv.get("monai_norm_num_groups", 32),
             monai_num_res_blocks=fdv.get("monai_num_res_blocks", 2),
+            l96_NO=cfg.data.get("NO", 8),
+            monai_mid_attention=fdv.get("monai_mid_attention", "time"),
             prior_hidden_channels=fdv.get("prior_hidden_channels", None),
             tbptt_n_blocks=fdv.get("tbptt_n_blocks", 1),
             tbptt_block_size=fdv.get("tbptt_block_size", None),
@@ -484,7 +518,8 @@ def model_factory(cfg: DictConfig, device: torch.device):
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     section = cfg.model.get(model_type, None) if model_type in (
-        "vanilla_cfm", "monai_vanilla_cfm", "predict_state_cfm", "monai_predict_state_cfm") else None
+        "vanilla_cfm", "monai_vanilla_cfm", "monai_vanilla_cfm_2d", "predict_state_cfm",
+        "monai_predict_state_cfm") else None
     if section is not None and section.get("step_power", None) is not None:
         model.step_power = float(section.step_power)
     return model.to(device)
@@ -545,7 +580,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm", "monai_vanilla_cfm_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred, params = model.sample(batch, return_params=True)
@@ -575,7 +610,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -620,7 +655,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model(batch.obs).detach().cpu().numpy()[0]
         elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
             pred = model(batch).detach().cpu().numpy()[0]
-        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
+        elif model_type in ("vanilla_cfm", "monai_vanilla_cfm", "monai_vanilla_cfm_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "joint_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -635,7 +670,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -1052,8 +1087,10 @@ def main(cfg: DictConfig):
               else cfg.model.get("monai_direct_unet_2d") if model_type == "monai_direct_unet_2d"
               else cfg.model.get("vanilla_cfm") if model_type in ("vanilla_cfm", "joint_cfm", "joint_cfm_coupled")
               else cfg.model.get("monai_vanilla_cfm") if model_type == "monai_vanilla_cfm"
+              else cfg.model.get("monai_vanilla_cfm_2d") if model_type == "monai_vanilla_cfm_2d"
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
               else cfg.model.get("monai_sda_prior") if model_type in ("monai_sda_prior", "monai_sda_prior_cond")
+              else cfg.model.get("monai_sda_prior_2d") if model_type == "monai_sda_prior_2d"
               else cfg.model.get("fdv") if model_type == "fourdvarnet"
               else cfg.model.get("fdv_cfm") if model_type == "fourdvarnet_cfm"
               else cfg.model)

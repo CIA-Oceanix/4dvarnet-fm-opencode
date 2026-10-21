@@ -1,0 +1,10 @@
+# @package _global_
+# L96B_vanillacfm_monai2dM_ep1200 at the L tier of the 2D DirectUNet ladder
+# (L96B_directunet2d_monaiL: hidden [80, 160, 320], GroupNorm 16).
+defaults:
+  - /experiment/L96B_vanillacfm_monai2dM_ep1200
+  - _self_
+model:
+  monai_vanilla_cfm_2d:
+    hidden_channels: [80, 160, 320]
+    norm_num_groups: 16
