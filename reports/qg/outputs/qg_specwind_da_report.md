@@ -1,6 +1,6 @@
-# QG gyrostat case study: DA baselines (S0 + realistic S1)
+# QG gyrostat case study: DA baselines and neural schemes (S0 + realistic S1)
 
-Two-layer QG ocean (64×64, 1000 km, dt 2 h) forced by the wind-stress curl of a gyrostat atmosphere (`l63ring4`, 12 Fourier modes |k| ≤ 2) plus relative-wind eddy drag. Test sets: 100 windows of 30 days of the **forced** dataset `qg_specwind_gyrostat_v1` and of the paired two-way **coupled** dataset `qg_coupled_gyrostat_v1` (κ_fb = 1). Design: `docs/plans/analysis/qg_specwind_da_s0.md`, `docs/plans/analysis/qg_specwind_da_s1.md`; written findings: `docs/results/qg_specwind_da_s0_s1_test.md`.
+Two-layer QG ocean (64×64, 1000 km, dt 2 h) forced by the wind-stress curl of a gyrostat atmosphere (`l63ring4`, 12 Fourier modes |k| ≤ 2) plus relative-wind eddy drag. Test sets: 100 windows of 30 days of the **forced** dataset `qg_specwind_gyrostat_v1` and of the paired two-way **coupled** dataset `qg_coupled_gyrostat_v1` (κ_fb = 1). Design: `docs/plans/analysis/qg_specwind_da_s0.md`, `docs/plans/analysis/qg_specwind_da_s1.md`; written findings: `docs/results/qg_specwind_da_s0_s1_test.md`. Neural schemes (DirectUNet, CFM, SDA prior and SDA hybrids) on the forced test set, and their observation-configuration stress test: sections 9–10.
 
 **Reference case (S0):** upper-layer ψ₁ observed on 3 random meridional columns per day (4.7% of the grid), each once per day, 5% noise; initial state = truth lagged about 5 days with a bred 80-member ensemble; the DA model is exact and gets the true wind.
 
@@ -14,7 +14,7 @@ Two-layer QG ocean (64×64, 1000 km, dt 2 h) forced by the wind-stress curl of a
 
 ## Benchmark overview (score, 3 columns per day, N = 80)
 
-Mean of the four EVs over 100 test windows; best per column **bolded**, second-best *italicized*. S1-tuned = ensembles with R × 6, 4D-Var with the weak constraint (strong in the other two columns). Per-field tables and intervals in sections 2–3.
+Mean of the four EVs over 100 test windows; best per column **bolded**, second-best *italicized*. S1-tuned = ensembles with R × 6, 4D-Var with the weak constraint (strong in the other two columns). Per-field tables and intervals in sections 2–3. The neural schemes and the DA reference rows side by side, across observation configurations: section 10.
 
 | method | S0 forced | S0 coupled | S1, S0-tuned forced | S1, S0-tuned coupled | S1-tuned forced | S1-tuned coupled |
 |---|---|---|---|---|---|---|
@@ -312,11 +312,103 @@ Independent samples (paired windows share seeds but not trajectories), two-sampl
 
 ![S1 (realistic base) worst window DA cycle](figs/qg_specwind_da_cycle_s1_worst.gif)
 
-## 9. Caveats
+## 9. Neural schemes (forced test set)
+
+Learned reconstructions on the same 100 forced test windows, observation draws and metrics as the DA rows (design: `docs/plans/analysis/qg_specwind_neural.md`; findings, val tuning and ablations: `docs/results/qg_specwind_neural_obs_configs.md`). The networks see only the observations: no initial state, no wind, no ocean parameters. They estimate daily means, cubic-interpolated to the 2-hour DA grid. All are 3D U-Nets (2 space + time) trained on 15-day crops of regenerated forced training windows (the true model), with a random observing system per draw: 3–30 observed (step, column) slots per day drawn with a K^-1.5 tilt towards sparse, and an observation error from the S0 model to the S1 one (white 5–15% plus a per-pass correlated 0–15% of the ψ₁ std; the end-to-end nets and the observation-conditioned flow only, the SDA prior never sees observations). They are applied to the 30-day windows either **stitched** (overlapping 15-day passes) or in one **full-window** pass. One training seed each.
+
+- **G1 DirectUNet** — deterministic end-to-end estimator; M tier (16.8 M parameters) and L tier.
+- **G2 CFM** — observation-conditioned flow (M tier, matched to G1-M-3D), 30 members.
+- **G3 SDA prior** — unconditional score-based prior (10.0 M parameters) with SDA guided posterior sampling from pure noise, as published (Rozet & Louppe: γ 0.01, 100 steps, 1 corrector, observation σ = the noise level), 30 members. The tier-matched 16.8 M retrain scores the same (within 0.002 at 3 and 12 columns and 15% noise); the S1 row uses it, the old prior was not scored at S1.
+- **Hybrid** — the G3 prior's SDA sampler started at τ₀ = 0.5 from an end-to-end estimate (SDEdit), 10 steps, fixed-length normalized guidance step (weight). The G2 warm start uses one CFM sample per member; the G1-L-3D warm start uses its full-window estimate. The G1-L-3D hybrid uses one setting everywhere (τ₀ 0.5, weight 2, selected on val).
+
+DA reference rows (italic, marked DA) are the benchmark ones from sections 2–4 (S1: the S1-tuned ensembles and weak 4D-Var). Unlike the networks, DA starts from the truth lagged about 5 days and runs the exact model (S0) with the true wind. Ranking (bold best, italic second-best) is over all rows; CRPS is ranked over the ensembles only (deterministic rows show the MAE of q); spread/RMSE (median over windows) is not ranked, 1 is calibrated.
+
+**S0, 3 col/day, 5%**
+
+| scheme | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶) | spread/RMSE q₁ / q₂ |
+|---|---|---|---|---|---|---|---|---|
+| _ETKF (N = 80)_ (DA) | 0.937 | 0.933 | 0.647 | 0.578 | 0.774 | [0.762, 0.786] | 5.875 | 0.72 / 0.90 |
+| _EnKS (N = 80)_ (DA) | 0.966 | 0.959 | 0.727 | 0.596 | 0.812 | [0.801, 0.823] | 5.315 | 0.67 / 0.82 |
+| _EnKS (N = 320)_ (DA) | 0.977 | 0.965 | 0.776 | 0.645 | 0.841 | [0.831, 0.850] | 4.775 | 0.67 / 0.84 |
+| _4D-Var (strong; S1: weak)_ (DA) | 0.978 | **0.983** | 0.752 | 0.648 | 0.840 | [0.826, 0.854] | (6.871, MAE) | — / — |
+| G1-M-3D DirectUNet, stitched | 0.984 | 0.970 | 0.837 | 0.691 | 0.870 | [0.866, 0.875] | (5.920, MAE) | — / — |
+| G1-M-3D DirectUNet, full window | 0.985 | 0.970 | 0.846 | 0.697 | 0.874 | [0.869, 0.879] | (5.792, MAE) | — / — |
+| G1-L-3D DirectUNet, stitched | 0.986 | 0.974 | 0.850 | 0.718 | 0.882 | [0.878, 0.887] | (5.667, MAE) | — / — |
+| G1-L-3D DirectUNet, full window | *0.988* | 0.977 | *0.864* | 0.733 | *0.890* | [0.885, 0.896] | (5.435, MAE) | — / — |
+| G2-3D CFM, stitched | 0.985 | 0.974 | 0.839 | 0.727 | 0.881 | [0.876, 0.886] | 4.275 | 0.79 / 0.66 |
+| G3-3D SDA prior, pure-noise SDA | 0.986 | 0.973 | 0.845 | 0.721 | 0.881 | [0.877, 0.886] | 4.234 | 0.82 / 0.82 |
+| hybrid, G2-3D warm start (weight 5; S1: 2) | 0.987 | 0.977 | 0.848 | *0.738* | 0.888 | [0.882, 0.893] | *4.196* | 0.74 / 0.68 |
+| hybrid, G1-L-3D warm start (weight 2) | **0.989** | *0.980* | **0.870** | **0.763** | **0.901** | [0.896, 0.905] | **4.089** | 0.57 / 0.52 |
+
+**S1 (realistic base), 3 col/day**
+
+| scheme | ψ₁ | ψ₂ | q₁ | q₂ | score | score 95% CI | CRPS q (×10⁻⁶) | spread/RMSE q₁ / q₂ |
+|---|---|---|---|---|---|---|---|---|
+| _ETKF (N = 80)_ (DA) | 0.865 | 0.791 | 0.473 | 0.402 | 0.633 | [0.615, 0.650] | 7.364 | 0.87 / 1.10 |
+| _EnKS (N = 80)_ (DA) | 0.894 | 0.783 | 0.547 | 0.437 | 0.665 | [0.646, 0.683] | 6.935 | 0.84 / 1.08 |
+| _EnKS (N = 320)_ (DA) | 0.897 | 0.791 | 0.557 | 0.456 | 0.675 | [0.657, 0.692] | 6.811 | 0.87 / 1.11 |
+| _4D-Var (strong; S1: weak)_ (DA) | 0.897 | 0.797 | 0.480 | 0.273 | 0.612 | [0.582, 0.639] | (10.417, MAE) | — / — |
+| G1-M-3D DirectUNet, stitched | 0.973 | 0.959 | 0.757 | 0.620 | 0.827 | [0.821, 0.834] | (7.162, MAE) | — / — |
+| G1-M-3D DirectUNet, full window | 0.975 | 0.959 | *0.772* | 0.631 | 0.834 | [0.827, 0.841] | (6.969, MAE) | — / — |
+| G1-L-3D DirectUNet, stitched | 0.975 | 0.963 | 0.769 | 0.642 | 0.837 | [0.830, 0.843] | (6.991, MAE) | — / — |
+| G1-L-3D DirectUNet, full window | *0.978* | *0.967* | **0.788** | 0.664 | *0.849* | [0.841, 0.856] | (6.713, MAE) | — / — |
+| G2-3D CFM, stitched | 0.975 | 0.965 | 0.771 | 0.664 | 0.844 | [0.836, 0.851] | **5.112** | 0.72 / 0.65 |
+| G3-3D SDA prior, pure-noise SDA | 0.962 | 0.955 | 0.465 | 0.354 | 0.684 | [0.633, 0.730] | 7.438 | 0.75 / 1.05 |
+| hybrid, G2-3D warm start (weight 5; S1: 2) | 0.975 | 0.966 | 0.768 | *0.667* | 0.844 | [0.836, 0.851] | *5.149* | 0.72 / 0.65 |
+| hybrid, G1-L-3D warm start (weight 2) | **0.979** | **0.971** | **0.788** | **0.690** | **0.857** | [0.849, 0.864] | 5.275 | 0.48 / 0.47 |
+
+## 10. Observation configurations (neural stress test)
+
+The same networks, not retrained, on denser observations (6 and 12 columns per day) and on noisier or cleaner ones (15% and 2% of the ψ₁ std) at 3 columns per day. 6 and 12 columns and 15% noise are inside the training observing system, 2% is below its error range. The SDA observation σ follows the noise level; the hybrids keep their single setting, except the G2-3D one (weight 5 everywhere but S1). DA reference rows exist only at the reference density and S1 (and the ETKF at 6 columns per day).
+
+**Score (mean EV)**
+
+| scheme | S0, 3 col/day, 5% | S1 (realistic base), 3 col/day | S0, 6 col/day, 5% | S0, 12 col/day, 5% | S0, 3 col/day, 15% | S0, 3 col/day, 2% |
+|---|---|---|---|---|---|---|
+| _ETKF (N = 80)_ (DA) | 0.774 | 0.633 | 0.817 | — | — | — |
+| _EnKS (N = 80)_ (DA) | 0.812 | 0.665 | — | — | — | — |
+| _EnKS (N = 320)_ (DA) | 0.841 | 0.675 | — | — | — | — |
+| _4D-Var (strong; S1: weak)_ (DA) | 0.840 | 0.612 | — | — | — | — |
+| G1-M-3D DirectUNet, stitched | 0.870 | 0.827 | 0.914 | 0.933 | — | — |
+| G1-M-3D DirectUNet, full window | 0.874 | 0.834 | 0.911 | 0.927 | 0.847 | 0.879 |
+| G1-L-3D DirectUNet, stitched | 0.882 | 0.837 | *0.925* | **0.943** | 0.850 | 0.888 |
+| G1-L-3D DirectUNet, full window | *0.890* | *0.849* | 0.924 | 0.939 | *0.862* | *0.896* |
+| G2-3D CFM, stitched | 0.881 | 0.844 | 0.922 | 0.939 | 0.856 | 0.884 |
+| G3-3D SDA prior, pure-noise SDA | 0.881 | 0.684 | 0.916 | 0.923 | 0.832 | 0.895 |
+| hybrid, G2-3D warm start (weight 5; S1: 2) | 0.888 | 0.844 | *0.925* | *0.940* | 0.852 | 0.894 |
+| hybrid, G1-L-3D warm start (weight 2) | **0.901** | **0.857** | **0.929** | *0.940* | **0.872** | **0.905** |
+
+**CRPS of q (×10⁻⁶, lower is better; ensembles only)**
+
+| scheme | S0, 3 col/day, 5% | S1 (realistic base), 3 col/day | S0, 6 col/day, 5% | S0, 12 col/day, 5% | S0, 3 col/day, 15% | S0, 3 col/day, 2% |
+|---|---|---|---|---|---|---|
+| _ETKF (N = 80)_ (DA) | 5.875 | 7.364 | 4.938 | — | — | — |
+| _EnKS (N = 80)_ (DA) | 5.315 | 6.935 | — | — | — | — |
+| _EnKS (N = 320)_ (DA) | 4.775 | 6.811 | — | — | — | — |
+| G2-3D CFM, stitched | 4.275 | **5.112** | 3.321 | **2.756** | **4.911** | 4.174 |
+| G3-3D SDA prior, pure-noise SDA | 4.234 | 7.438 | 3.419 | 3.080 | 5.246 | **3.864** |
+| hybrid, G2-3D warm start (weight 5; S1: 2) | *4.196* | *5.149* | *3.316* | 2.820 | 5.216 | 3.951 |
+| hybrid, G1-L-3D warm start (weight 2) | **4.089** | 5.275 | **3.227** | *2.788* | *4.969* | *3.901* |
+
+**Paired differences** (per-window score differences over the same 100 windows; bootstrap 95% CI). Best end-to-end = the best G1/G2 row in that column.
+
+| config | best end-to-end (score) | hybrid − best end-to-end [95% CI] | pure-noise SDA − best end-to-end [95% CI] | best DA reference (score) | hybrid − best DA [95% CI] |
+|---|---|---|---|---|---|
+| S0, 3 col/day, 5% | G1-L-3D DirectUNet, full window (0.890) | +0.010 [+0.009, +0.011] | -0.009 [-0.013, -0.006] | EnKS (N = 320) (0.841) | +0.060 [+0.053, +0.067] |
+| S1 (realistic base), 3 col/day | G1-L-3D DirectUNet, full window (0.849) | +0.008 [+0.007, +0.009] | -0.165 [-0.212, -0.124] | EnKS (N = 320) (0.675) | +0.182 [+0.163, +0.202] |
+| S0, 6 col/day, 5% | G1-L-3D DirectUNet, stitched (0.925) | +0.004 [+0.002, +0.005] | -0.009 [-0.013, -0.006] | ETKF (N = 80) (0.817) | +0.112 [+0.103, +0.120] |
+| S0, 12 col/day, 5% | G1-L-3D DirectUNet, stitched (0.943) | -0.002 [-0.003, -0.001] | -0.020 [-0.030, -0.013] | — | — |
+| S0, 3 col/day, 15% | G1-L-3D DirectUNet, full window (0.862) | +0.010 [+0.009, +0.011] | -0.030 [-0.036, -0.024] | — | — |
+| S0, 3 col/day, 2% | G1-L-3D DirectUNet, full window (0.896) | +0.010 [+0.009, +0.011] | -0.001 [-0.005, +0.003] | — | — |
+
+## 11. Caveats
 
 - 100 test windows per cell; strata have 21–79 windows.
 - S1 tuning is a single global R scale for the ensembles and a single model-error scale for weak 4D-Var; relaxation inflation does not beat R × 6, and scale-dependent model error was not tried.
 - 4D-Var is deterministic (no spread); its background error is climatological, not cycled.
 - The initial state is the lagged truth in both scenarios (optimistic against an analysis-cycled first guess).
 - Only S0 has the density curve; S1 was run at 3 columns per day.
+- Neural vs DA is not like for like in information: DA gets the lagged truth as its initial state and, in S0, the exact model and wind; the networks get only the observations but were trained on simulations of the true model. In S1 the networks therefore carry no model error (their S1 is the corrupted observations only), so most of the S1 gap to DA is the DA model error, not a better assimilation.
+- Neural rows: one training seed each; the hybrid with the G1-L-3D warm start mixes tiers (L-tier warm start, M-tier-size prior), and G2/G3 exist at M tier only.
+- The hybrid's ensembles are under-dispersed (spread/RMSE 0.47–0.74); pure-noise SDA is the best calibrated scheme but the weakest in score off the reference case.
 
