@@ -416,6 +416,22 @@ def model_factory(cfg: DictConfig, device: torch.device):
             use_flash_attention=sp.get("use_flash_attention", True),
             mid_attention=sp.get("mid_attention", "time"),
         )
+    elif model_type == "monai_sda_prior_cond_2d":
+        from models.monai_unet_l96_2d import MonaiConditionalPriorCFM2D
+        sp = cfg.model.monai_sda_prior_2d
+        model = MonaiConditionalPriorCFM2D(
+            state_dim=cfg.model.state_dim,
+            param_dim=cfg.model.get("param_dim", 8),
+            NO=cfg.data.get("NO", 8),
+            hidden_channels=sp.hidden_channels,
+            N_outer=sp.N_outer,
+            sigma_prior=sp.sigma_prior,
+            dropout=sp.dropout,
+            num_res_blocks=sp.get("num_res_blocks", 2),
+            norm_num_groups=sp.get("norm_num_groups", 8),
+            use_flash_attention=sp.get("use_flash_attention", True),
+            mid_attention=sp.get("mid_attention", "time"),
+        )
     elif model_type == "monai_sda_prior_cond":
         from models.monai_unet_adapter import MonaiConditionalPriorCFM
         sp = cfg.model.monai_sda_prior
@@ -615,7 +631,8 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d",
+                            "monai_sda_prior_cond_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -680,7 +697,8 @@ def save_trajectories(model, dataset, device, model_type, save_path,
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "tweedie_cfm":
             pred = model.sample(batch).detach().cpu().numpy()[0]
-        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d"):
+        elif model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond", "monai_sda_prior_2d",
+                            "monai_sda_prior_cond_2d"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
         elif model_type == "fourdvarnet":
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -920,7 +938,8 @@ def main(cfg: DictConfig):
             datasets, batch_size=cfg.training.batch_size,
             obs_interval=dc.obs_interval, R_var=dc.R_var,
             param_names=param_names,
-            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond")
+            with_params=(model_type in ("joint_cfm", "joint_cfm_coupled", "joint_direct_unet", "param_head", "param_head_unet", "sda_prior_cond", "monai_sda_prior_cond",
+                                          "monai_sda_prior_cond_2d")
                         or dc.get("with_params", False)),
             obs_var_indices=dataloader_obs_var_indices,
             use_biased_params=(model_type in ("param_head", "param_head_unet")
@@ -1113,7 +1132,7 @@ def main(cfg: DictConfig):
               else cfg.model.get("monai_vanilla_cfm_2d") if model_type == "monai_vanilla_cfm_2d"
               else cfg.model.get("sda_prior") if model_type in ("sda_prior", "sda_prior_cond")
               else cfg.model.get("monai_sda_prior") if model_type in ("monai_sda_prior", "monai_sda_prior_cond")
-              else cfg.model.get("monai_sda_prior_2d") if model_type == "monai_sda_prior_2d"
+              else cfg.model.get("monai_sda_prior_2d") if model_type in ("monai_sda_prior_2d", "monai_sda_prior_cond_2d")
               else cfg.model.get("fdv") if model_type == "fourdvarnet"
               else cfg.model.get("fdv_cfm") if model_type == "fourdvarnet_cfm"
               else cfg.model)

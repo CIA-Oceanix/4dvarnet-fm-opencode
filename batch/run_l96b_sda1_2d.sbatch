@@ -16,7 +16,8 @@
 #    (the 1D-mean default), with
 #    L96B_directunet2d_monaiM_seed1 (experiments/l96) as the mean.
 # Runs from the submitting worktree; resumes from checkpoints/stage1_last.ckpt if
-# resubmitted. CONFIG (default the M tier), SEED (default 1).
+# resubmitted. CONFIG (default the M tier), SEED (default 1); HYBRID=0 skips the hybrid evals
+# (the benchmark's 3-seed hybrid pairs DirectUNet seeds 1-3 with prior seed 1).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin:$PATH"
@@ -42,6 +43,7 @@ for TS in regular canonical; do
       --n-members 30 --n-outer 10 --r-var 0.5 --guidance-weight 25 \
       --normalize-stats $NORM --members-file scores --output "$OUT/sda_eval.json"
   fi
+  [ "${HYBRID:-1}" = 1 ] || continue
   for GW in 1 2; do
     OUT=$E/hybrid_DU2dMs1_${NAME}/tau0.1_gw$GW
     [ -f "$OUT/hybrid_eval.json" ] && continue; mkdir -p "$OUT"

@@ -1,0 +1,21 @@
+# @package _global_
+# SDA3-fix (params+forcing conditioned prior, trained with noisy biased DA params) with the 2D (time x sector)
+# circular backbone of L96B_sda1_monai2dM_ep1200 ([40, 80, 160], GroupNorm 8, per-sector
+# time-axial bottleneck attention); the forcing and the 8 parameters enter every sector as
+# extra input channels (models.monai_unet_l96_2d.MonaiConditionalPriorCFM2D). Everything else
+# -- training data (generated with data seed 42, its own normalization), 1200 epochs, the
+# conditioning -- is A3_sda3fix_monaiM_ep1200_l96, so the backbone is the only change.
+defaults:
+  - /experiment/A3_sda3fix_monaiM_ep1200_l96
+  - _self_
+model:
+  model_type: monai_sda_prior_cond_2d
+  monai_sda_prior_2d:
+    hidden_channels: [40, 80, 160]
+    N_outer: 10
+    sigma_prior: 0.5
+    dropout: 0.1
+    num_res_blocks: 2
+    norm_num_groups: 8
+    mid_attention: time
+    use_flash_attention: true

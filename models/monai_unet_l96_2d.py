@@ -31,7 +31,7 @@ from monai.networks.nets import diffusion_model_unet as _dmu
 
 from models.interpolant import LinearInterpolant
 from models.monai_unet_adapter import MonaiDirectUNet, _patch_resblock_for_1d
-from models.sda import UnconditionalPriorCFM
+from models.sda import ConditionalPriorCFM, UnconditionalPriorCFM
 from models.vanilla_cfm import VanillaCFM
 
 
@@ -306,6 +306,52 @@ class MonaiUnconditionalPriorCFM2D(UnconditionalPriorCFM):
         nn.Module.__init__(self)
         self.unet = MonaiUNet2DSectorSolver(
             state_dim=state_dim, block_dim=state_dim, NO=NO, hidden_channels=hidden_channels,
+            num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
+            use_flash_attention=use_flash_attention, mid_attention=mid_attention)
+        self.interpolant = LinearInterpolant(nu=1.0)
+        self.N_outer = N_outer
+        self.sigma_prior = sigma_prior
+        self.state_dim = state_dim
+        self.train_tau_0_only = False
+
+
+class SectorGlobalConditionedUNet(nn.Module):
+    """`(x, cond, tau)` -> velocity on the sector grid, for a conditioning
+    signal with no sector structure (the forcing series and the window's
+    physical parameters): `x` is laid out by `to_sector_grid`, `cond`
+    `(B, C, T)` is broadcast to every sector as `C` extra input channels, so
+    the network stays exactly equivariant to cyclic sector shifts. Same
+    `(B, D, T)` call signature as `MonaiUNet1D(use_obs=True)`."""
+
+    def __init__(self, state_dim: int, cond_dim: int, NO: int = 8, **backbone_kwargs):
+        super().__init__()
+        self.NO, self.channels_per_sector = l96_sector_layout(NO, state_dim)
+        self.unet2d = MonaiUNet2DSector(in_channels=self.channels_per_sector + cond_dim,
+                                        out_channels=self.channels_per_sector, **backbone_kwargs)
+
+    def forward(self, x: torch.Tensor, cond: torch.Tensor, tau: torch.Tensor = None) -> torch.Tensor:
+        g = to_sector_grid(x.transpose(1, 2), self.NO)
+        c = cond.unsqueeze(-1).expand(-1, -1, -1, self.NO)
+        out = self.unet2d(torch.cat([g, c], dim=1), tau=tau)
+        return from_sector_grid(out).transpose(1, 2)
+
+
+class MonaiConditionalPriorCFM2D(ConditionalPriorCFM):
+    """SDA2 / SDA3 prior p(x_1 | params, forcing) with the 2D (time x sector)
+    circular backbone: the forcing and the `param_dim` parameters (`_cond`,
+    inherited) enter every sector as extra channels
+    (`SectorGlobalConditionedUNet`). Subclassing keeps the `isinstance(model,
+    ConditionalPriorCFM)` dispatch of the guided sampler and the hybrid eval,
+    which feed it the DA-model params at S1."""
+
+    def __init__(self, state_dim: int = 24, param_dim: int = 8, NO: int = 8, hidden_channels=None,
+                 N_outer: int = 10, sigma_prior: float = 0.5, dropout: float = 0.1,
+                 num_res_blocks: int = 2, norm_num_groups: int = 32,
+                 use_flash_attention: bool = True, mid_attention: str = "time"):
+        nn.Module.__init__(self)
+        self.param_dim = param_dim
+        self.unet = SectorGlobalConditionedUNet(
+            state_dim=state_dim, cond_dim=1 + param_dim, NO=NO, hidden_channels=hidden_channels,
             num_res_blocks=num_res_blocks, norm_num_groups=norm_num_groups, dropout=dropout,
             use_flash_attention=use_flash_attention, mid_attention=mid_attention)
         self.interpolant = LinearInterpolant(nu=1.0)
