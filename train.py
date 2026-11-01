@@ -172,6 +172,18 @@ def model_factory(cfg: DictConfig, device: torch.device):
             num_res_blocks=mdu.get("num_res_blocks", 2),
             norm_num_groups=mdu.get("norm_num_groups", 32),
         )
+    elif model_type == "mmnet":
+        from models.mmnet import MMNet
+        mm = cfg.model.mmnet
+        model = MMNet(
+            state_dim=cfg.model.state_dim,
+            hidden_channels=mm.get("hidden_channels", 32),
+            n_iter=mm.get("n_iter", 10),
+            step=mm.get("step", 0.5),
+            prior_weight=mm.get("prior_weight", 1.0),
+            init_std=mm.get("init_std", 1e-3),
+            dilations=tuple(mm.get("dilations", (1, 2, 4))),
+        )
     elif model_type == "monai_direct_unet_2d":
         from models.monai_unet_l96_2d import MonaiDirectUNet2D
         mdu = cfg.model.monai_direct_unet_2d
@@ -548,7 +560,7 @@ def evaluate_model(model, dataset, device, model_type="tweedie", return_params=F
                                  norm_stats=norm_stats)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
+        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d", "mmnet"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]
@@ -628,7 +640,7 @@ def save_trajectories(model, dataset, device, model_type, save_path,
                                  norm_stats=norm_stats)
         if model_type == "tweedie":
             pred = model(batch.obs).detach().cpu().numpy()[0]
-        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
+        elif model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d", "mmnet"):
             pred = model(batch).detach().cpu().numpy()[0]
         elif model_type in ("vanilla_cfm", "monai_vanilla_cfm"):
             pred = model.sample(batch).detach().cpu().numpy()[0]

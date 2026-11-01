@@ -10,6 +10,7 @@ Three model families + CS3/CS4 randomized-parameter tests + Experiment G ablatio
 - **RandomParamDataset**: Per-window randomized `σ,ρ,β` ±20% for robust training — implemented
 - **CS3/CS4**: Evaluation on unseen random parameter draws — implemented
 - **Exp G (τ=0 CFM)**: Ablate multi-τ training to isolate CFM's source of advantage — implemented (L63; τ=0 runs superseded by the S-series, also L63)
+- **MM-Net (L63)**: unrolled MM solver, MSE data term, fixed step γp, learned conv prior Φ (`models/mmnet.py`, `config/experiment/L63B_mmnet.yaml`) — implemented, 1200-epoch runs + `γp`/`λ₁`/`I` tuning pending
 
 **System naming convention:** the E/F/G/S experiment series are all **Lorenz-63**
 (`train_mix: cs1+cs2`, `state_dim=3` checkpoints). The **L-series** is the two-scale

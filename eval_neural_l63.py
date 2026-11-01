@@ -17,13 +17,17 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 EXP = os.path.join(BASE, "experiments")
 OUT_DIR = os.path.join(EXP, "l63_da_table2")
 def checkpoints(prefix):
-    return {m: (os.path.join(EXP, f"{prefix}_{m}_monaiM", "checkpoints", "stage1_best.ckpt"),
-                os.path.join(EXP, f"{prefix}_{m}_monaiM", "resolved_config.yaml"))
-            for m in ("directunet", "vanillacfm", "sda2")}
+    def paths(m):
+        d = os.path.join(EXP, f"{prefix}_{m}" + ("" if m == "mmnet" else "_monaiM"))
+        return os.path.join(d, "checkpoints", "stage1_best.ckpt"), os.path.join(d, "resolved_config.yaml")
+    return {m: paths(m) for m in ("directunet", "vanillacfm", "sda2", "mmnet")}
 
 
 NORM_STATS = os.path.join(EXP, "l63_norm_stats.pt")
-METHODS = ("D-Unet", "CFM", "SDA2", "D-Unet+SDA2")
+METHODS = ("D-Unet", "CFM", "SDA2", "D-Unet+SDA2", "MM-Net")
+DEFAULT_METHODS = ("D-Unet", "CFM", "SDA2", "D-Unet+SDA2")
+NEEDS = {"D-Unet": ("directunet",), "CFM": ("vanillacfm",), "SDA2": ("sda2",),
+         "D-Unet+SDA2": ("directunet", "sda2"), "MM-Net": ("mmnet",)}
 GW_GRID = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 40.0]
 HYBRID_TAU0_GRID = [0.1, 0.3, 0.5]
 HYBRID_GW_GRID = [0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
@@ -46,6 +50,8 @@ def sample(method, models, batch, n_members, gw=None, tau0=None):
     with torch.no_grad():
         if method == "D-Unet":
             return models["directunet"](batch).unsqueeze(-1)
+        if method == "MM-Net":
+            return models["mmnet"](batch).unsqueeze(-1)
         if method == "CFM":
             return torch.stack([models["vanillacfm"].sample(batch, N_outer=N_OUTER) for _ in range(n_members)], -1)
         mean_est = models["directunet"](batch) if method == "D-Unet+SDA2" else None
@@ -79,7 +85,7 @@ def val_rmse(res):
 def main():
     p = argparse.ArgumentParser(description="L63 neural schemes: EV / CRPSS / SS (Table 2 columns)")
     p.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
-    p.add_argument("--methods", nargs="+", default=list(METHODS), choices=list(METHODS))
+    p.add_argument("--methods", nargs="+", default=list(DEFAULT_METHODS), choices=list(METHODS))
     p.add_argument("--obs-interval", type=int, default=DEFAULT_OBS_INTERVAL)
     p.add_argument("--num-test", type=int, default=200)
     p.add_argument("--num-val", type=int, default=50)
@@ -91,7 +97,9 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats = load_norm_stats(NORM_STATS)
-    models = {k: load_model(c, cfg, device=device)[0] for k, (c, cfg) in checkpoints(a.exp_prefix or ("L63B" if a.obs_interval == 10 else f"L63B{a.obs_interval}")).items()}
+    needed = {k for m in a.methods for k in NEEDS[m]}
+    ckpts = checkpoints(a.exp_prefix or ("L63B" if a.obs_interval == 10 else f"L63B{a.obs_interval}"))
+    models = {k: load_model(c, cfg, device=device)[0] for k, (c, cfg) in ckpts.items() if k in needed}
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, f"table2_l63_neural_obs{a.obs_interval}.json")
     results = json.load(open(path)) if os.path.exists(path) else {}
@@ -118,7 +126,7 @@ def main():
             elif method == "D-Unet+SDA2":
                 hp, trace = tune(method, c, ["tau0", "gw"], [HYBRID_TAU0_GRID, HYBRID_GW_GRID])
             t0 = time.time()
-            n = 1 if method == "D-Unet" else a.n_members
+            n = 1 if method in ("D-Unet", "MM-Net") else a.n_members
             res = run(method, models, test[c], device, stats, n, a.batch_size, **hp)
             row = score(res, *clim[c])
             row.update(hyperparameters=hp, tuning=trace, obs_interval=a.obs_interval, seconds=time.time() - t0)

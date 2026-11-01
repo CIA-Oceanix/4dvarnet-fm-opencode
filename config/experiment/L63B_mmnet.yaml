@@ -1,0 +1,31 @@
+# @package _global_
+# MM-Net (Tran et al., Sparse MM-Net with lambda_2 = 0) on L63: unrolled MM solver, MSE data term,
+# fixed curvature step gamma*p, learned conv prior Phi. Same protocol as L63B_directunet_monaiM
+# (S0/S1, obs every 10 steps, cosine LR, 1200 epochs, per-channel z-score normalisation).
+defaults:
+  - /lorenz63_default
+  - _self_
+model:
+  model_type: mmnet
+  mmnet:
+    hidden_channels: 32
+    n_iter: 10
+    step: 0.5
+    prior_weight: 1.0
+    init_std: 0.001
+    dilations: [1, 2, 4]
+training:
+  stage1: {epochs: 1200, lr: 0.001, gradient_clip_val: 10.0, use_cosine_scheduler: true}
+  stage2: {epochs: 0}
+  batch_size: 16
+  seed: null
+  loss: {use_gradient: false}
+data:
+  data_setup: s0_s1
+  obs_interval: 10
+  bias_max: 0.2
+  normalize: true
+  num_train_windows: 1000
+  num_val_windows: 100
+  num_test_windows: 200
+  test_param_noise: 0.2

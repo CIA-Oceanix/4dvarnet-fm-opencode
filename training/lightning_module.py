@@ -218,6 +218,8 @@ class LitModel(pl.LightningModule):
             loss = self.model.compute_loss(batch)
         elif self.model_type in ("sda_prior", "sda_prior_cond", "monai_sda_prior", "monai_sda_prior_cond"):
             loss = self.model.compute_cfm_loss(batch)
+        elif self.model_type == "mmnet":
+            loss = self.model.compute_loss(batch)
         elif self.model_type == "fourdvarnet":
             loss = self.model.compute_loss(batch)
         elif self.model_type == "fourdvarnet_cfm":
@@ -255,7 +257,7 @@ class LitModel(pl.LightningModule):
         return loss
 
     def forward(self, batch, **kwargs):
-        if self.model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d"):
+        if self.model_type in ("direct_unet", "monai_direct_unet", "monai_direct_unet_2d", "mmnet"):
             return self.model(batch)
         elif self.model_type in ("predict_state_cfm", "monai_predict_state_cfm"):
             return self.model.sample(batch)
