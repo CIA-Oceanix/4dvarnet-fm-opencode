@@ -1,6 +1,6 @@
 # Neural schemes on the QG gyrostat benchmark: end-to-end, SDA and SDA hybrids across observation configurations
 
-**Status:** RESULTS (2026-10-21).
+**Status:** RESULTS (2026-10-21; DA rows for the stress configurations added 2026-10-22).
 - **Question 1:** is there an observing configuration where SDA sampled from pure noise
   (the published sampler) falls behind the end-to-end schemes?
 - **Question 2:** does the SDA hybrid (SDA started from an end-to-end estimate) stay ahead
@@ -94,11 +94,30 @@ configurations:
   [−0.0006, +0.0015].
 - A stitched warm start at dense observations is untested.
 
-**Against DA (section 9 of the report):**
-- **S0:** the hybrid is +0.060 over the best DA reference (EnKS, N = 320).
-- **S1:** the hybrid is +0.18 over it.
-- See the report's caveat: the networks are trained on the true model, so in S1 they carry
-  no model error.
+**Against DA (sections 9–10 of the report):** the hybrid beats the best DA row everywhere, but
+the gap shrinks as observations get denser.
+
+| config | best DA row | hybrid − best DA [95% CI] |
+|---|---|---|
+| S0, 3 col/day | EnKS N = 320, 0.841 | +0.060 [+0.053, +0.067] |
+| S1 | EnKS N = 320 (S1-tuned), 0.675 | +0.182 [+0.163, +0.202] |
+| 6 col/day | strong 4D-Var, 0.911 | +0.018 [+0.012, +0.024] |
+| 12 col/day | strong 4D-Var, 0.933 | +0.007 [+0.002, +0.013] |
+| 15% noise | EnKS N = 80, 0.802 | +0.071 [+0.063, +0.078] |
+| 2% noise | strong 4D-Var, 0.843 | +0.062 [+0.048, +0.077] |
+
+- **Density:** 4D-Var gains the most from denser observations (0.840 → 0.911 → 0.933). At 12
+  columns it ties G1-M-3D stitched (0.933), and the end-to-end and SDA advantage is mostly a
+  sparse-observation effect.
+- **Noise:** the ensembles degrade little at 15% noise (EnKS 0.812 → 0.802), while 4D-Var drops
+  to 0.785. Neither DA family gains at 2% noise (EnKS 0.814, 4D-Var 0.843), while the networks
+  gain +0.003 to +0.014 (pure-noise SDA the most).
+- **Not re-tuned:** the DA settings are the reference-case ones. The ETKF's q₂ falls from 6 to
+  12 columns (0.592 → 0.566), which suggests radius 8 is too wide at 12 columns, and 4D-Var has
+  6 sub-window fallbacks at 15% and at 2% noise. The 12-column and noise gaps to DA are
+  therefore upper bounds.
+- **S1:** see the report's caveat. The networks are trained on the true model, so in S1 they
+  carry no model error.
 
 ### 3. The warm start sets the hybrid's level
 
@@ -189,11 +208,12 @@ the most spread.
 - One training seed per network.
 - **Tier mismatch:** the G1-L-3D hybrid uses an L-tier warm start, while G2 and G3 exist at
   M tier only.
-- **DA rows:** they exist only at the reference density and S1 (plus the ETKF at 6 columns).
-  The stress configurations have no DA counterpart yet.
+- **DA rows at the stress configurations:** ETKF, EnKS and strong 4D-Var with the
+  reference-case settings, not re-tuned. There is no N = 320 EnKS there.
 
 **Open items:**
 - **Stitched warm start at dense observations:** for the 12-column gap.
 - **L-tier G2 and G3:** about 2 days of training each.
 - **Spread of the hybrid:** perturbed warm starts, or a τ₀/weight trade-off on CRPS.
-- **DA rows at 12 columns and at 15% / 2% noise:** EnKS and 4D-Var.
+- **DA re-tuning at 12 columns:** localization radius and 4D-Var sub-window, if the dense-observation
+  comparison matters.
