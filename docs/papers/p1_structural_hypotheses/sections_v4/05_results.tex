@@ -32,16 +32,16 @@ Best per column in bold, second best in italics.}
 \cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
 scheme & EV & CRPSS & SS & EV & CRPSS & SS & EV & CRPSS & SS \\
 \midrule
-ETKF            & & &  & 0.815 & 0.710 & 0.76 & 0.934 & 0.867 &  \\
-EnKF            & & &  & 0.801 & 0.693 & 0.85 & 0.923 & 0.857 &  \\
-ETKS            & & &  & 0.866 & 0.744 & 0.48 & 0.963 & \textit{0.898} &  \\
-Strong-4DVar    & & & --- & 0.741 & (0.523) &  - & \textbf{0.980} & (0.885)$^\dagger$ & -- \\
-Weak-4DVar      & & & -- & 0.757 & (0.520) & -- & & & -- \\
+ETKF            & 0.9917 & 0.905 & 1.77 & 0.815 & 0.710 & 0.76 & 0.934 & 0.867 &  \\
+EnKF            & 0.9918 & 0.905 & 1.76 & 0.801 & 0.693 & 0.85 & 0.923 & 0.857 &  \\
+ETKS            & 0.9947 & \textit{0.938} & 0.86 & 0.866 & 0.744 & 0.48 & 0.963 & \textit{0.898} &  \\
+Strong-4DVar    & 0.9942 & (0.923) & --- & 0.741 & (0.523) &  - & \textbf{0.980} & (0.885)$^\dagger$ & -- \\
+Weak-4DVar      & 0.9957 & (0.929) & -- & 0.757 & (0.520) & -- & & & -- \\
 \midrule
-D-Unet      & & & -- & 0.972 & (0.840) & -- & 0.975 & (0.888) & -- \\
-CFM$^\ast$             & & &  & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
-SDA$^{\ast\S}$             & & &  & 0.923 & 0.790 & $\circ$ & & &  \\
-D-Unet+SDA$^{\ast\S}$ & & &  & \textbf{0.981} & \textbf{0.908} & $\circ$ & \textit{0.977} & \textbf{0.912} &  \\
+D-Unet      & \textit{0.9962} & (0.917) & -- & 0.972 & (0.840) & -- & 0.975 & (0.888) & -- \\
+CFM$^\ast$             & 0.9954 & 0.937 & 0.71 & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
+SDA$^{\ast\S}$             & 0.9883 & 0.932 & 0.57 & 0.923 & 0.790 & $\circ$ & & &  \\
+D-Unet+SDA$^{\ast\S}$ & \textbf{0.9980} & \textbf{0.957} & 0.63 & \textbf{0.981} & \textbf{0.908} & $\circ$ & \textit{0.977} & \textbf{0.912} &  \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -195,16 +195,16 @@ Table~\ref{tab:s0}. Best per column in bold, second best in italics.}
 \cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
 scheme & EV & CRPSS & SS & EV & CRPSS & SS & EV & CRPSS & SS \\
 \midrule
-ETKF            & & &  & 0.272 & 0.201 & 0.59 & 0.828 & 0.787 &  \\
-EnKF            & & &  & 0.266 & 0.196 & 0.72 & 0.829 & 0.783 &  \\
-ETKS            & & &  & 0.358 & 0.191 & 0.34 & 0.838 & \textit{0.819} &  \\
-Strong-4DVar    & & & -- & 0.239 & ($-0.042$) & -- & 0.779 & (0.709)$^\dagger$ & -- \\
-Weak-4DVar      & & & -- & 0.561 & (0.225) & -- & 0.847 & (0.764)$^\dagger$ & -- \\
+ETKF            & 0.9718 & 0.758 & 2.86 & 0.272 & 0.201 & 0.59 & 0.828 & 0.787 &  \\
+EnKF            & 0.9711 & 0.804 & 1.96 & 0.266 & 0.196 & 0.72 & 0.829 & 0.783 &  \\
+ETKS            & 0.9733 & 0.841 & 0.93 & 0.358 & 0.191 & 0.34 & 0.838 & \textit{0.819} &  \\
+Strong-4DVar    & 0.9378 & (0.688) & -- & 0.239 & ($-0.042$) & -- & 0.779 & (0.709)$^\dagger$ & -- \\
+Weak-4DVar      & 0.9918 & (0.885) & -- & 0.561 & (0.225) & -- & 0.847 & (0.764)$^\dagger$ & -- \\
 \midrule
-D-Unet          & & & -- & 0.973 & (0.841) & -- & \textit{0.964} & (0.846) & -- \\
-CFM$^\ast$             & & &  & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
-SDA$^{\ast\S}$             & & &  & 0.924 & 0.790 & $\circ$ & & &  \\
-D-Unet+SDA$^{\ast\S}$      & & &  & \textbf{0.982} & \textbf{0.909} & $\circ$ & \textbf{0.965} & \textbf{0.871} &  \\
+D-Unet          & \textit{0.9963} & (0.919) & -- & 0.973 & (0.841) & -- & \textit{0.964} & (0.846) & -- \\
+CFM$^\ast$             & 0.9954 & \textit{0.937} & 0.71 & \textit{0.977} & \textit{0.901} & $\circ$ & & &  \\
+SDA$^{\ast\S}$             & 0.9922 & 0.933 & 1.39 & 0.924 & 0.790 & $\circ$ & & &  \\
+D-Unet+SDA$^{\ast\S}$      & \textbf{0.9968} & \textbf{0.942} & 0.59 & \textbf{0.982} & \textbf{0.909} & $\circ$ & \textbf{0.965} & \textbf{0.871} &  \\
 \bottomrule
 \end{tabular}
 \end{table}

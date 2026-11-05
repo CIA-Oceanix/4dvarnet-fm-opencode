@@ -1,0 +1,6 @@
+## 2026-11-05: P1 paper — L63 columns of Tables 2–3 from the committed L63 results
+
+**Summary:** Filled the L63 columns of the perfect- and imperfect-model tables (`tab:s0`, `tab:s1`) of `sections_v4/05_results.tex` from `l63_results/table2_l63_{da,4dvar,neural}_obs10.json`, reconciling the Overleaf edit of 2026-10-21 with the 2D-backbone L96 rows of #357.
+**Files modified:** `docs/papers/p1_structural_hypotheses/sections_v4/05_results.tex` — L63 EV / CRPSS (MAE skill in parentheses) / SS for all nine schemes, both cases; bold/italic recomputed for the L63 columns.
+**Rationale:** Overleaf and master diverged on 2026-10-21 (Overleaf added L63 columns on the older 1D L96 rows; #357 moved the L96 rows to the 2D backbone). The Overleaf S0 CFM row (EV 0.9974, CRPSS 0.950, SS 0.70) matched no committed result file and is replaced by `table2_l63_neural_obs10.json` (0.9954 / 0.937 / 0.71); D-Unet becomes second-best L63 EV and the ETKS second-best L63 CRPSS at S0. Table "SDA" = the `SDA2` entry, "D-Unet+SDA" = `D-Unet+SDA2`. Overleaf's other changes to this file (1D captions and prior-table rows) were superseded by #357 and are not kept.
+**Verification:** script check of all 51 L63 cells against the JSONs (0 mismatches at the printed precision); `pdflatex` compiles; `sync-overleaf.sh status` no drift after push.
