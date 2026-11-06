@@ -69,17 +69,27 @@ Stop for user input only on a genuine external blocker:
 
 - Approvals come from the second GitHub account **`rfablet-review`** — not the author
   (GitHub blocks self-approval). Use `scripts/open_pr.sh review <PR#>` with the reviewer
-  token at `~/.config/opencode/reviewer-token`.
+  token at `~/.config/opencode/reviewer-token`. The `llm-review` workflow also approves as
+  `rfablet-review`, but the manual approval stays required: commits from this machine are not
+  attributed to a GitHub account, and the `master` ruleset requires an extra approval for
+  unattributed changes.
 - Pipeline: `scripts/open_pr.sh create "<msg>"` → wait for CI → `review <PR#>` →
   `verify <PR#>` (squash-merge).
 - **Merge gate = `pytest -m "not slow"`** on the required test files. Ruff is informational
   (`continue-on-error: true`) so `mergeStateStatus: UNSTABLE` does not block the merge.
 - Before merging, run the fast tests and `ruff check` on touched files locally.
+- **Docs-only changes** (every changed file is `*.md`, `*.tex`, `*.bib`, anything under `docs/`,
+  or an md/png/pdf/gif under `reports/*/outputs/`; e.g. paper syncs from Overleaf, plans, result
+  notes): CI takes a fast path (docs tests only, about 30 s instead of the full suite; see
+  `.github/workflows/ci.yml`). Locally, run `pytest tests/test_docs_layout.py
+  tests/test_reports_index.py` instead of the full suite. Committed JSON results are not docs:
+  tests read them, so they take the full suite.
 
 ### Hygiene
 
 - Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
-- Add a CHANGELOG.d/ fragment (see format below) for every merged change.
+- Add a CHANGELOG.d/ fragment (see format below) for every merged change, except pure paper
+  syncs (changes under `docs/papers/` only), whose history is the Overleaf log.
 - Don't reformat or restyle unrelated code in the same change — keep diffs scoped to
   the requested task, even when touching a file that could use a broader cleanup.
 
