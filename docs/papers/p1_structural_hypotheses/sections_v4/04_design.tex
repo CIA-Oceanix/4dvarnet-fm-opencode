@@ -184,7 +184,10 @@ ones (Strong- and Weak-4DVar, D-Unet) --- and by $\xv^{(i)}_w(t)$, $i = 1, \dots
 the members of an ensemble. Subscript $j = 1, \dots, n$ denotes a component, e.g.
 $x^\star_{w,j}(t)$, and $\mu_{c,j}$, $\sigma_{c,j}^2$ are the climatological mean and
 variance of component $j$. For QG, the average over the $n$ components is taken within
-each layer and then over the two layers. Three skill scores are reported: the explained
+each layer and then over the two layers, and $\sigma_{c,j}^2$ is the climatological variance of
+the layer over the test windows, the same for every grid point of the doubly periodic domain.
+This differs from the per-window explained variance often used for this configuration, which
+normalises each window by its own variance and gives lower values. Three skill scores are reported: the explained
 variance (EV) for the mean, the CRPS skill score (CRPSS) for the marginal
 distributions, and the flow-matching skill score (FMSS$_\tau$) for the posterior at
 every $\tau$.

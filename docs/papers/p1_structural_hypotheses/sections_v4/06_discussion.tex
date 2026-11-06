@@ -33,7 +33,8 @@ uses the prior, not by the fidelity of the prior. Conditioning a learned prior o
 parameters brings little with a perfect model, and becomes a misspecification channel under
 model error unless the prior is trained with noisy parameters. Composing an amortised mean
 with a guided sampler gives the best mean in both case studies, but an over-confident
-distribution, and the composition is what makes the learned prior usable on QG.
+distribution; on QG, it also protects the estimate when the likelihood of the guided sampler
+is misspecified.
 
 Model error also changes what the observations bring (Sect.~\ref{sec:q1-density}). Under
 model error, additional or more accurate observations bring little to the DA schemes, whose
@@ -45,7 +46,9 @@ very sparse, and, together with SDA, it generalises beyond the observing systems
 training, because it keeps the observation operator and the error covariance explicit: the
 learned schemes degrade when a window holds fewer or many more observations than in training,
 and transfer less well between observing systems. On QG, with a realistic observing system,
-strong-constraint 4D-Var gives the best mean with a perfect model. DA also needs no training
+strong-constraint 4D-Var is within 0.004 of normalised MSE of the learned schemes with a perfect
+model, and under model error the DA ensembles, run with an inflated observation error, report a
+better calibrated spread than the learned schemes. DA also needs no training
 set, whereas the learned schemes we compare are trained on simulations of the true system.
 \todo{Back to the puzzle: what the budgets suggest for reanalyses versus observation-only
 products, stated as hypotheses for real systems.}
@@ -59,8 +62,9 @@ experiment are oracle bounds, since the learned schemes are trained on the true 
 \needsrun{biased-model training arms}. The flow-matching score is evaluated per element, with
 sliced evaluations as a check of the dependence structure, and its shape diagnostic has a small
 negative floor for finite and over-confident ensembles. Finally, the cross-class conclusions
-rest mostly on L96: on QG, only D-Unet and D-Unet+SDA are available among the learned schemes,
-and the L63 case study is to be completed.
+rest on L96 and QG, with one training seed for the QG networks, and the L63 case study is to
+be completed. The QG streamfunction is well observed and smooth, so that all QG scores are close
+to 1 and the QG differences are small in absolute terms.
 
 This study relates to the literature on model error in DA --- weak-constraint
 4D-Var~\cite{tremolet_accounting_2006}, inflation and model-error

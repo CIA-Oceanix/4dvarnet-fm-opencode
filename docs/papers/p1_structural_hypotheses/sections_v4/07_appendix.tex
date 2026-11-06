@@ -73,10 +73,19 @@ grow to 15\,\% white plus 15\,\% correlated per pass; and the DA model runs on a
 $32 \times 32$ grid, which does not resolve the deformation radius.
 
 \paragraph{Data sets.}
-The neural schemes are trained on 5000 windows drawn from the same distribution, with
-observation-noise augmentation (5--15\,\% white, 0--15\,\% correlated per pass) and a
-random number of observed columns per day. \todo{QG training details for D-Unet and SDA
-(window length, density draw).}
+The neural schemes are trained on 5000 windows drawn from the same distribution. All are
+3D U-Nets over (time, $y$, $x$) trained on 15-day crops, with a random observing system per
+draw: 3 to 30 observed (time step, column) slots per day, drawn with a $K^{-1.5}$ tilt towards
+sparse configurations, and an observation error between the \Sz{} and \So{} models (5--15\,\%
+white, 0--15\,\% correlated per pass). They estimate daily means, interpolated to the 2\,h grid
+with cubic splines. D-Unet is applied to the whole 30-day window. CFM is an
+observation-conditioned flow (16.8\,M parameters), applied over overlapping 15-day passes, as is
+SDA, whose prior is unconditional and never sees observations (10.0\,M parameters; at \So, a
+16.8\,M retrain that scores within 0.002 at \Sz). SDA from pure noise follows the published
+sampler~\cite{rozet_score-based_2023} ($\gamma = 0.01$, 100 steps, one corrector step,
+observation standard deviation at the 5\,\% \Sz{} level); D-Unet+SDA starts the same sampler at
+$\tau_0 = 0.5$ from the D-Unet estimate, with 10 steps and a normalised guidance step of length
+2, selected on validation windows. Each network is trained with one seed.
 
 
 \section{Operators and proofs}\label{app:proofs}
