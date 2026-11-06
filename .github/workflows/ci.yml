@@ -1,5 +1,14 @@
 name: CI
 
+# One job, `pytest`, the only required check of the branch rulesets. Actions bills each job
+# rounded up to the minute and the minutes are shared by the CIA-Oceanix organization, so the
+# cheap checks (changelog policy, ruff) run as steps of this job rather than as separate jobs.
+#
+# Docs-only fast path: when every changed file is text or a figure that no code or test reads
+# (*.md, *.tex, *.bib, anything under docs/, md/png/pdf/gif under reports/*/outputs/), the job
+# installs pytest only and runs the docs tests (layout, reports index), about 30 s instead of
+# the full suite. Any other file (code, configs, committed JSON results read by tests, this
+# workflow) runs the full fast suite. The check still reports, so the rulesets are unchanged.
 on:
   pull_request:
     branches:
@@ -11,80 +20,11 @@ on:
       - 'feat/qg-*'
       - 'feat/l96-*'
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint:
-    name: ruff lint (informational)
-    runs-on: ubuntu-latest
-    # Non-blocking (continue-on-error) as a second line of defense, but the
-    # real fix is scope: lint only the Python files this PR/push actually
-    # changed, so pre-existing ruff debt elsewhere in the repo doesn't show
-    # as a failure on every unrelated PR. Fix lint progressively; gate = pytest.
-    continue-on-error: true
-    env:
-      PYTHON_VERSION: "3.10"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install ruff
-        run: pip install ruff
-      - name: Lint changed Python files
-        run: |
-          BASE_SHA="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
-          fi
-          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- '*.py' 2>/dev/null || true)
-          if [ -n "$CHANGED" ]; then
-            echo "Linting changed files:"
-            echo "$CHANGED"
-            echo "$CHANGED" | xargs ruff check
-          else
-            echo "No changed Python files to lint."
-          fi
-
-  changelog-policy:
-    name: changelog fragments policy
-    runs-on: ubuntu-latest
-    # Blocking (no continue-on-error): a direct CHANGELOG.md edit is exactly
-    # the thing CHANGELOG.d/ exists to prevent (see CHANGELOG.d/README.md) --
-    # every concurrently-open PR editing that file's top section is what
-    # caused repeated merge conflicts before this policy. The one legitimate
-    # way CHANGELOG.md changes is scripts/assemble_changelog.py, which always
-    # deletes the fragment files it consumes in the same diff -- so a
-    # CHANGELOG.md change paired with at least one CHANGELOG.d/*.md deletion
-    # is allowed; any other CHANGELOG.md change fails the build.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Check CHANGELOG.md was not hand-edited
-        run: |
-          BASE_SHA="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
-          fi
-          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- CHANGELOG.md)
-          if [ -z "$CHANGED" ]; then
-            echo "CHANGELOG.md not touched -- OK."
-            exit 0
-          fi
-          MARKER='<!-- AUTO-ASSEMBLED FROM CHANGELOG.d/ -- do not hand-edit above this line; add new files to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -->'
-          if ! git show "$BASE_SHA:CHANGELOG.md" 2>/dev/null | grep -qF "$MARKER"; then
-            echo "Marker absent from CHANGELOG.md in the base commit -- this is the one-time bootstrap PR introducing the CHANGELOG.d/ policy itself. OK."
-            exit 0
-          fi
-          DELETED_FRAGMENTS=$(git diff --name-only --diff-filter=D "$BASE_SHA" HEAD -- 'CHANGELOG.d/*.md')
-          if [ -z "$DELETED_FRAGMENTS" ]; then
-            echo "::error::CHANGELOG.md was edited directly. Add a new file to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -- do not hand-edit CHANGELOG.md. It may only change as part of running scripts/assemble_changelog.py, which also deletes the fragment files it consumes; no CHANGELOG.d/*.md files were deleted in this diff."
-            exit 1
-          fi
-          echo "CHANGELOG.md changed, but paired with fragment deletions -- looks like a legitimate scripts/assemble_changelog.py run:"
-          echo "$DELETED_FRAGMENTS"
-
   test:
     name: pytest
     runs-on: ubuntu-latest
@@ -97,11 +37,78 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Base commit
+        run: |
+          BASE_SHA="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+      # Blocking: CHANGELOG.md may only change through scripts/assemble_changelog.py, which
+      # deletes the fragments it consumes in the same diff.
+      - name: Check CHANGELOG.md was not hand-edited
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- CHANGELOG.md)
+          if [ -z "$CHANGED" ]; then
+            echo "CHANGELOG.md not touched -- OK."
+            exit 0
+          fi
+          MARKER='<!-- AUTO-ASSEMBLED FROM CHANGELOG.d/ -- do not hand-edit above this line; add new files to CHANGELOG.d/ instead (see CHANGELOG.d/README.md) -->'
+          if ! git show "$BASE_SHA:CHANGELOG.md" 2>/dev/null | grep -qF "$MARKER"; then
+            echo "Marker absent from CHANGELOG.md in the base commit -- bootstrap PR. OK."
+            exit 0
+          fi
+          DELETED_FRAGMENTS=$(git diff --name-only --diff-filter=D "$BASE_SHA" HEAD -- 'CHANGELOG.d/*.md')
+          if [ -z "$DELETED_FRAGMENTS" ]; then
+            echo "::error::CHANGELOG.md was edited directly. Add a new file to CHANGELOG.d/ instead (see CHANGELOG.d/README.md); CHANGELOG.md may only change through scripts/assemble_changelog.py, which deletes the fragments it consumes."
+            exit 1
+          fi
+          echo "CHANGELOG.md changed together with fragment deletions (assemble_changelog.py run):"
+          echo "$DELETED_FRAGMENTS"
+
+      - name: Classify the change (docs-only or code)
+        id: scope
+        run: |
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "$CHANGED"
+          OTHER=$(echo "$CHANGED" | grep -vE '\.(md|tex|bib)$|^docs/|^reports/[^/]+/outputs/.*\.(md|png|pdf|gif)$' | grep -v '^$' || true)
+          if [ -n "$CHANGED" ] && [ -z "$OTHER" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "Docs-only change: running the docs tests only."
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "Files outside the docs fast path:"
+            echo "$OTHER"
+          fi
+
+      # Non-blocking: lint only the Python files this change touched.
+      - name: Lint changed Python files (informational)
+        if: steps.scope.outputs.docs_only != 'true'
+        continue-on-error: true
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- '*.py' 2>/dev/null || true)
+          if [ -n "$CHANGED" ]; then
+            pip install -q ruff
+            echo "$CHANGED" | xargs ruff check
+          else
+            echo "No changed Python files to lint."
+          fi
+
+      - name: Docs tests (docs-only change)
+        if: steps.scope.outputs.docs_only == 'true'
+        run: |
+          pip install -q pytest
+          pytest tests/test_docs_layout.py tests/test_reports_index.py -q
+
       - name: Install dependencies
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           pip install -r requirements.txt
           pip install hydra-core omegaconf pytorch-lightning tensorboard
       - name: Run fast test suite
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           # The whole tests/ tree, not a hand-maintained file list. The list
           # this replaced named 24 of 53 files; the other 29 had never run in
