@@ -140,6 +140,9 @@ def field_fms(ensemble: np.ndarray, truth: np.ndarray, tp: dict, cfg: QGConfig, 
     inflation); for N > 1 the Silverman kernel-density score (`fm_<f>_kde_<tau>`) and the Gaussian
     score at the kernel density's variance (`fm_<f>_kdevar_<tau>`). Sums of member variance and
     squared error of the mean (`ss_<f>_var`, `ss_<f>_err2`) give the pooled spread-skill ratio.
+    `fm_<f>_orc_<tau>` is the Gaussian score with the variance set to the realised squared error of
+    the mean, mean(e^2 / (1 + alpha_tau e^2)): a lower bound on the score of any Gaussian with this
+    mean, i.e. on the part of the score due to the mean alone.
     """
     t = _layers(truth[::FM_STRIDE], tp, cfg, device)
     members = [_layers(np.asarray(e)[::FM_STRIDE], tp, cfg, device) for e in ensemble]
@@ -159,6 +162,7 @@ def field_fms(ensemble: np.ndarray, truth: np.ndarray, tp: dict, cfg: QGConfig, 
         x0 = rng.standard_normal(x.shape + (FM_DRAWS,))
         for tau in FM_TAUS:
             out[f"fm_{f}_gauss_{tau}"] = float(gaussian_score(err, var, tau).mean())
+            out[f"fm_{f}_orc_{tau}"] = float(gaussian_score(err, err ** 2, tau).mean())
             out[f"fm_{f}_gc_{tau}"] = [float(gaussian_score(err, c * var, tau).mean()) for c in FM_CS]
             if n > 1:
                 out[f"fm_{f}_kde_{tau}"] = float(ensemble_score(m, x, tau, x0, h2[..., None])[0].mean())

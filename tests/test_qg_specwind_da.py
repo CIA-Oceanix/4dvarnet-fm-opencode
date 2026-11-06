@@ -298,6 +298,10 @@ def test_field_fms_gaussian_limits_and_kernel_terms(built):
             assert abs(out[f"fm_{f}_gc_{tau}"][i1] - out[f"fm_{f}_gauss_{tau}"]) <= 1e-12
             assert out[f"fm_{f}_kde_{tau}"] > 0 and out[f"fm_{f}_kdevar_{tau}"] > 0
         assert abs(out[f"fm_{f}_kde_0.0"] - out[f"fm_{f}_gauss_0.0"]) <= 1e-9 * out[f"fm_{f}_gauss_0.0"]
+        assert abs(out[f"fm_{f}_orc_0.0"] - out[f"fm_{f}_gauss_0.0"]) <= 1e-12
+        for tau in FM_TAUS[1:]:
+            assert 0 < out[f"fm_{f}_orc_{tau}"] < out[f"fm_{f}_orc_0.0"]
+            assert out[f"fm_{f}_orc_{tau}"] <= min(out[f"fm_{f}_gc_{tau}"]) + 1e-12
     det = field_fms(ens[:1], truth, tp, cfg, torch.device("cpu"), clim, seed=0)
     assert not any("_kde" in k for k in det)
     for f in FM_FIELDS:
