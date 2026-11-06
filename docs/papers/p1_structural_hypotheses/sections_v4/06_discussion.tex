@@ -1,11 +1,13 @@
 \section{Discussion}\label{sec:discussion}
 
-Decomposing the error of DA schemes along the chain of Sect.~\ref{sec:chain}, for the mean
-and for the reported uncertainty, changes how their performance can be read. With a perfect
+Measuring the error budget of~\cite{fablet_not_2026} on classical and learned DA schemes, for
+the mean and for the reported uncertainty, changes how their performance can be read, and
+separates the three explanations of the introduction: model error, prior representation and
+DA algorithm. With a perfect
 model, the deficit of model-based DA with respect to the best schemes is mostly reducible:
 on L96, the excess of the ensemble schemes over the best scheme splits into comparable shares
-of restriction, due to filtering, approximation, due to the ensemble size, and an unattributed
-term (Sect.~\ref{sec:q1}). The first two shrink with smoothing and with more members. The third
+of restriction, due to filtering, approximation, due to the ensemble size, and a residual
+(Sect.~\ref{sec:q1}). The first two shrink with smoothing and with more members. The third
 includes a structural misspecification of the posterior family --- Gaussian updates, the mode
 instead of the mean, a hard constraint --- which dominates the budget of the 4D-Var schemes, so
 that misspecification is not zero even when the dynamical model is exact. This deficit is not
@@ -17,13 +19,15 @@ Under model error, misspecification dominates the budget of every model-based sc
 multiplies their normalised MSE by two to four, and the contrasts that reduced the perfect-model
 excess no longer help (Sect.~\ref{sec:q2}). Representing the uncertainty of the model recovers
 part of the loss --- a weak constraint reduces the error of the hard one by a third to two
-fifths --- without closing the gap. The flow-matching score shows that misspecification
-degrades the reported distribution even more than the mean: the DA ensembles become more
-over-confident and short-tailed, and their score at large $\tau$ falls below that of
-climatology, whereas the learned schemes report a distribution whose skill and calibration
-are unchanged. The advantage of the learned schemes is thus larger for the distribution than
-for the mean, and the large-$\tau$ score reveals misspecification where the mean-based scores
-only suggest it.
+fifths --- without closing the gap. For the reported uncertainty, the flow-matching score
+qualifies the picture. In raw scores, model error costs every ensemble less on the reported
+distribution than on the mean: the re-tuned spread absorbs part of it. How much it absorbs
+depends on the error model. On L96, the inflated DA ensembles remain over-confident and
+short-tailed, so that their skill for the distribution falls below that of climatology while
+their mean keeps a positive skill; on QG, an inflated observation-error variance keeps them
+calibrated, whereas the learned schemes, outside the error statistics of their training data,
+become over-confident. The score at large $\tau$ thus shows whether a scheme's reported
+uncertainty represents its model error, which the mean-based scores cannot.
 
 The comparison of priors at matched likelihood (Sect.~\ref{sec:q3}) qualifies the common
 reading that learned schemes win because they learn a better prior. A learned prior
@@ -72,10 +76,12 @@ estimation~\cite{carrassi_data_2018,farchi_using_2021}, assimilation in the unst
 subspace~\cite{trevisan_assimilation_2004,bocquet_four-dimensional_2017} --- and on learned and
 hybrid DA~\cite{brajard_combining_2021,bocquet_bayesian_2020,fablet_learning_2021}, including
 score-based and flow-based DA~\cite{rozet_score-based_2023}. \todo{Proper scores and their
-decompositions; mismatched estimation.} To our knowledge, no controlled study has measured
-\emph{where} the error of a DA scheme comes from --- restriction, misspecification or
-approximation --- for the mean and for the reported uncertainty, at matched information across
-classical and learned schemes.
+decompositions; mismatched estimation.} This paper is the experimental companion of~\cite{fablet_not_2026}, which defines the error
+budget and derives its terms for classes of schemes, and relates to~\cite{fablet_flow_2026},
+which develops the theory of the flow-matching score along the flow time. To our knowledge, no
+controlled study has measured \emph{where} the error of a DA scheme comes from --- restriction,
+misspecification or approximation --- for the mean and for the reported uncertainty, at matched
+information across classical and learned schemes.
 
 Several questions remain open. The first concerns the nature of model error: separating
 parametric from structural error, as the full-model variant of L96 begins to do, and varying the

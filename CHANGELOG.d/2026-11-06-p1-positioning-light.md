@@ -1,0 +1,6 @@
+## 2026-11-06: P1 paper — positioning revised (lighter version)
+
+**Summary:** P1 is repositioned as the experimental companion of paper A (error budget) and B (flow-matching theory): new title (*Model error, prior representation or DA algorithm?*), A's budget with the infinite-resource limit and cross term replaces the three-term chain, the FMS budget along tau is stated and deferred to B, and a new paragraph says what the score separates. The claim that misspecification degrades the reported distribution more than the mean is withdrawn: in raw scores, model error costs every ensemble less at larger tau; a new figure (`fig_missp_tau`) shows the ratio and the share due to scalar miscalibration. Synced from Overleaf.
+**Files modified:** `docs/papers/p1_structural_hypotheses/` — `main.tex`, `companion.bib` (new; papers A and B, kept out of the Zotero export), `sections_v4/0[0-6]_*.tex`, `figures/fig_missp_tau.pdf` (new), `figures/fig_budget_s{0,1}.pdf` (legend: residual).
+**Rationale:** Positioning agreed on da-error-budget#128 (Part 0b, lighter version). The withdrawn claim compared skill scores across tau, whose climatological normalisation shrinks with tau.
+**Verification:** `sync-overleaf.sh status` (no drift); `pytest tests/test_docs_layout.py`; LaTeX build (only the pre-existing `tab:schemes` reference undefined).
