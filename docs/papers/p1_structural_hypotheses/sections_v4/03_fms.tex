@@ -69,37 +69,34 @@ The considered score has the following properties:
 \end{enumerate}
 Besides the decomposition between the mean at $\tau =0$ and the distribution of the anomaly characterized by $\tau >0$, the score at small $\tau$ characterize the space-time scale with the largest energy, in general large-scale patterns, and large $\tau$ reads the lower-energy components, in general fine-scale patterns \cite{rissanen_generative_2022,kadkhodaie_generalization_2024}.
 
-As the considered score relies on conditional expectations of the state, we can derive a decomposition similar to \eqref{eq:chain0} for conditioning variables $(\xv_\tau, C)$ instead of $C$ only. Under the condition
-of~\eqref{eq:chain0}, for every $\tau$,
+As the score relies on conditional expectations of the state, the budget
+\eqref{eq:chain0}--\eqref{eq:residual} extends to every $\tau$, with the conditioning
+variables $(\xv_\tau, C)$ instead of $C$: under the same conditions,
 \begin{equation}\label{eq:chaintau}
-  \FMS_\tau( q) \;=\;
+  \FMS_\tau(q) \;=\;
   \underbrace{\mathrm{mmse}_p(\tau)}_{\text{irreducible}}
-  \;+\; \underbrace{D_\tau(p \,\|\, p_S)}_{ \text{restriction}}
-  \;+\; \underbrace{D_\tau(p_S \,\|\, q)}_{\text{misspecification+approximation}} ,
-%  \underbrace{\mathrm{mmse}_p(\tau)}_{\text{irreducible}}
-%  \;+\; \underbrace{\E\|\Psi_p(\xv_\tau, \tau) - \Psi_{p_S}(\xv_\tau, \tau)\|^2}_{D_\tau(p \,\|\, p_S):\ \text{restriction}}
-%  \;+\; \underbrace{\E\|\Psi_{p_S}(\xv_\tau, \tau) - \Psi_{\tilde p}(\xv_\tau, \tau)\|^2}_{D_\tau(p_S \,\|\, \tilde p):\ \text{misspecification}} ,
-%  \;+\; \underbrace{\E\|\Psi_q(\xv_\tau, \tau) - \Psi_{\tilde p}(\xv_\tau, \tau)\|^2}_{D_\tau(\tilde p \,\|\, q):\ \text{approximation}} ,
+  \;+\; \underbrace{D_\tau(p \,\|\, p_S)}_{\text{restriction}}
+  \;+\; \underbrace{D_\tau(p_S \,\|\, q)}_{\text{scheme residual}} ,
 \end{equation}
-%with $\mathrm{mmse}_p(\tau) = \E\|\Psi_p(\xv_\tau, \tau) - \xv_1^\star\|^2$. $\forall \tau, p, q, \ D_\tau (p \,\|\, q) \ge 0$,
-with equality if and only if $q = p$. At $\tau = 0$, \eqref{eq:chaintau}
-reduces to~\eqref{eq:chain0}. Three consequences follow.
+with $D_\tau \ge 0$, and~\eqref{eq:chaintau} reduces to~\eqref{eq:chain0} at $\tau = 0$. The
+split of the residual along $\tau$, its integral over $\tau$ and its floors are developed
+in~\cite{fablet_flow_2026}. We use two consequences.
 \begin{itemize}
-  \item \textbf{Differences are exact.} The irreductible component $\mathrm{mmse}_p(\tau)$ is unknown but common to all schemes, so score differences  between schemes are exact differences of operator divergences. This also means that the lowest score among different schemes deliver an upper bound for the irreductible term;
-  \item \textbf{A restriction identity along $\tau$.} Consider two schemes using nested information $S' \subseteq S \subseteq C$, for instance a filter ($S'$, observations up to the current time) and the smoother computed on the same ensemble ($S$, all observations of the window). If both were exact, $q' = p_{S'}$ and $q = p_S$, the chain~\eqref{eq:chaintau} would give, at every $\tau$,
-  \begin{equation}\label{eq:restriction_identity}
-    \FMS_\tau(q') - \FMS_\tau(q) = D_\tau(p_S\,\|\,p_{S'})
-    = \E\big\|\Psi_{q}(\xv_\tau, C, \tau) - \Psi_{q'}(\xv_\tau, C, \tau)\big\|^2 \;\ge\; 0 :
-  \end{equation}
-  the score gap equals the distance between the two operators, which is computable  without the truth. A gap that does not match this distance flags misspecification or  approximation. At $\tau = 0$ the identity reads
-  \begin{equation}
-    \E\|\mathbf{m}_{q'} - \xv_1^\star\|^2 - \E\|\mathbf{m}_{q} - \xv_1^\star\|^2
-    = \E\operatorname{tr}\Cov_{q'}(\xv_1 \mid S') - \E\operatorname{tr}\Cov_{q}(\xv_1 \mid S)
-    = \E\|\mathbf{m}_{q} - \mathbf{m}_{q'}\|^2 ,
-  \end{equation}
-  relating the MSE gap, the gap of reported variances and the mean shift between the  two schemes, which we test in Section~\ref{sec:q1}.
-  \item \textbf{Restriction vs. misspecification and approximation.} For exact schemes  with nested information, the score gap~\eqref{eq:restriction_identity} is  non-negative at every $\tau$: a pure restriction raises the score curve uniformly in sign, and the less informed scheme stays calibrated for its own information. A gap that changes sign along $\tau$ therefore reveals misspecification or approximation, with a scale-dependent signature; for schemes with non-nested information, sign
-  changes can also arise from restriction alone.
+  \item \textbf{Differences are exact.} The irreducible term $\mathrm{mmse}_p(\tau)$ is
+    unknown but common to all schemes, so that score differences between schemes are exact
+    differences of their divergences to $p$; the lowest score among the schemes is only an
+    upper bound on the irreducible term.
+  \item \textbf{A restriction identity.} For two schemes with nested information
+    $S' \subseteq S$ that compute their targets exactly and share the same ensemble
+    realisation, e.g.\ a filter and the smoother of the same ensemble, the gap of
+    mean-squared errors equals the gap of reported variances and the mean shift,
+    \begin{equation}\label{eq:restriction_identity}
+      \E\|\mathbf{m}_{q'} - \xv_1^\star\|^2 - \E\|\mathbf{m}_{q} - \xv_1^\star\|^2
+      = \E\operatorname{tr}\Cov_{q'}(\xv_1 \mid S') - \E\operatorname{tr}\Cov_{q}(\xv_1 \mid S)
+      = \E\|\mathbf{m}_{q} - \mathbf{m}_{q'}\|^2 .
+    \end{equation}
+    The last two terms are computable without the truth, and a mismatch flags
+    misspecification or approximation; we test it in Section~\ref{sec:q1}.
 \end{itemize}
 
 The chain decomposition is not unique to $\FMS$: the expected log score splits
@@ -113,6 +110,18 @@ decompositions exist for every proper score \cite{brocker_reliability_2009,gneit
 \end{itemize}
 The CRPS remains a useful marginal check and is reported alongside.
 
+
+\paragraph{What the score separates.} At $\tau = 0$, the score is the error of the mean
+alone. For $\tau > 0$, it scores the reported distribution as a whole, and the error of the
+mean remains part of it: in the Gaussian form below, a scheme with a worse mean scores worse at
+every $\tau$, even with a perfect spread. Comparing scores across $\tau$ therefore does not
+separate, by itself, the error of the mean from the error on the distribution around it. The
+diagnostics below isolate two parts of the latter, the mis-scaling of the reported spread
+($L_\tau$) and its non-Gaussian shape ($G_\tau$). What remains, the score of the
+scalar-calibrated Gaussian, still combines the error of the mean with the resolution of the
+spread, i.e.\ whether it is large where the errors are large. Its mean part, the score of the
+best Gaussian with the scheme's mean, is bounded below by the score with the variance set to the
+realised squared error; the full split along $\tau$ is developed in~\cite{fablet_flow_2026}.
 
 \subsection{Derived diagnostics}
 All diagnostics are computed per element (window, time step, observed channel) in

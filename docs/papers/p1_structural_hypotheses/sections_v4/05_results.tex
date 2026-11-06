@@ -85,10 +85,11 @@ the error chain~\eqref{eq:chain0}. Grey: the best \Sz{} scheme of each case stud
 upper bound on the irreducible term. Blue: restriction due to filtering, measured as the
 gap between the ETKF and the ETKS with large ensembles (100 members for L96, 320 for
 QG). Green: approximation due to the ensemble size (30 vs 100 members for L96, 80 vs 320
-for QG). Orange: excess over the floor not attributed to a term by a contrast; it can contain
-restriction, approximation and, through the posterior family of the scheme (e.g.
-Gaussian updates, mode instead of mean), misspecification, even with a perfect
-dynamical model.}
+for QG). Orange: residual~\eqref{eq:residual}, not attributed to a term by a contrast:
+misspecification through the posterior family of the scheme (e.g. Gaussian updates, mode
+instead of mean), even with a perfect dynamical model, the cross term, the approximation that
+the varied resources do not remove, and, for 4D-Var, the restriction of cycling over
+sub-windows.}
 \label{fig:budget-s0}
 \end{figure}
 
@@ -137,38 +138,45 @@ is an approximation error of the ensemble.
   24\,\% (e.g. 0.490 vs 0.470 for D-Unet and 0.410 vs 0.341 for CFM on L96).
 \end{itemize}
 
-\paragraph{Unattributed component.}
-The excess left after these contrasts is therefore unattributed: it can contain restriction, approximation and structural misspecification. On L96, it is 0.062 for the 100-member ETKS, and it makes
-up almost all of the excess of the 4D-Var schemes (0.22 to 0.24), although they use the
-exact model and have converged. Their candidates are structural: the mode instead of
-the mean, a hard constraint, a Gaussian background, and the restriction of cycling over
-sub-windows. The EnKF exceeds the ETKF (0.199 against 0.185), consistent with the
-sampling noise of its perturbed observations. For the neural schemes, the unattributed
+\paragraph{Residual component.}
+The excess left after these contrasts is a residual: in the budget~\eqref{eq:residual}, it
+contains the misspecification of the scheme, the cross term and the approximation that the
+resources we vary do not remove. On L96, it is 0.062 for the 100-member ETKS, consistent with
+the floor that a Gaussian update leaves above the MMSE for any ensemble
+size~\cite{fablet_not_2026}, and it makes up almost all of the excess of the 4D-Var schemes
+(0.22 to 0.24), although they use the exact model and have converged. Their candidates are the
+mode instead of the mean, whose gap to the mean does not depend on the
+resources~\cite{fablet_not_2026}, the hard constraint and the Gaussian background; cycling over
+sub-windows adds a restriction that no contrast measures here. The EnKF exceeds the ETKF (0.199 against 0.185), consistent with the
+sampling noise of its perturbed observations. For the neural schemes, the residual
 term is smaller: 0.009 for D-Unet, 0.004 for CFM and 0.058 for SDA, whose guided sampler
-approximates the likelihood. On QG, the same holds at a smaller scale: the unattributed
-term is 0.005 for the 320-member ETKS, the EnKF again exceeds the ETKF (0.027 against 0.024),
+approximates the likelihood. On QG, the same holds at a smaller scale: the residual
+is 0.005 for the 320-member ETKS, the EnKF again exceeds the ETKF (0.027 against 0.024),
 and the neural schemes lie within 0.002 of the floor. The excess of Strong-4DVar is entirely
-unattributed, as on L96, but small on the streamfunction (0.004). Its structural costs show more
+residual, as on L96, but small on the streamfunction (0.004). Its structural costs show more
 clearly on the potential vorticity, which is smaller-scale and unobserved: the learned schemes
 reach an EV of 0.76--0.79 there, against 0.62 for Strong-4DVar and the ETKS.
 
 \paragraph{Synthesis.}
 Figure~\ref{fig:budget-s0} summarises the budget per scheme family. For the ensemble
 DA schemes, the excess over the floor splits into comparable shares of restriction,
-approximation and unattributed error on L96 (ETKF: 0.057, 0.047 and 0.062), while the
+approximation and residual error on L96 (ETKF: 0.057, 0.047 and 0.062), while the
 restriction due to filtering dominates on QG (ETKF: 0.011, 0.004 and 0.005). For the
-variational schemes, the excess is almost entirely unattributed in both case studies, but
+variational schemes, the excess is almost entirely residual in both case studies, but
 small on QG (0.004), where Strong-4DVar is the best DA scheme. By contrast, the end-to-end neural schemes,
 D-Unet and CFM, lie just above the floor in both case studies (excess 0.009 and 0.004
 on L96, 0.0006 and 0.0017 on QG). SDA, which combines a learned prior with an explicit
-likelihood, has a larger excess on L96 (0.058), in the same range as the unattributed
-term of the 100-member ETKS (0.062). This points to a misspecification of the
+likelihood, has a larger excess on L96 (0.058), in the same range as the residual
+of the 100-member ETKS (0.062). This points to a misspecification of the
 posterior induced by the approximate likelihood of the guided sampler, even though the
 observation operator and the error statistics are exact. On QG, by contrast, SDA guided
 from pure noise lies within 0.001 of the floor, and started from the D-Unet estimate it
 sets it (D-Unet+SDA): this excess is therefore not intrinsic to guided sampling. Overall, even with a perfect dynamical model, the error
 budget of the DA schemes involves significant approximation and misspecification
-components, beyond the restriction due to their conditioning. These components prevent
+components, beyond the restriction due to their conditioning, as expected
+from~\cite{fablet_not_2026}: a Gaussian update leaves a floor above the MMSE whatever the
+ensemble size, and a posterior mode a gap to the mean whatever the iterations, whereas learned
+estimators of the window escape the first. These components prevent
 the schemes from extracting the full information that the observations carry about
 the state. As a consequence, these findings suggest that the skill of end-to-end neural schemes deliver 
 a better and more robust indicator of the reconstruction skill that a given observing system actually allows:
@@ -220,7 +228,7 @@ D-Unet+SDA$^{\ast\S}$      & \textbf{0.9968} & \textbf{0.942} & 0.59 & \textbf{0
 \caption{\textbf{Error budget under model error (\So).} The \Sz{} budget of
 Fig.~\ref{fig:budget-s0}, extended by the increase of the normalised mean-squared error
 from \Sz{} to \So{} (hatched red), i.e. misspecification plus the cross term
-of~\eqref{eq:chain0} (Sect.~\ref{sec:chain}). Learned schemes are trained on the true
+of~\eqref{eq:residual} (Sect.~\ref{sec:chain}). Learned schemes are trained on the true
 system and are an oracle bound at \So{}. For L96, the \So{} DA model is also truncated to
 the 24 observed variables (Sect.~\ref{sec:testbeds}). QG Weak-4DVar is run at \So{} only
 (outline).}
@@ -261,7 +269,8 @@ differs between scheme families. For the ensemble DA schemes, the increase is
 0.50--0.54 on L96, i.e. about three times the \Sz{} error of the ETKF and EnKF and nearly
 four times that of the ETKS, and 0.019--0.024 on QG, i.e. one to one and a half times
 their \Sz{} error. The contrasts that reduced their
-\Sz{} excess no longer help: 100 members leave the L96 ETKS unchanged (EV 0.358 with 30
+\Sz{} excess no longer help, as expected of a misspecification, which by definition remains
+with unlimited resources~\cite{fablet_not_2026}: 100 members leave the L96 ETKS unchanged (EV 0.358 with 30
 and 100 members), 320 members barely improve the QG ETKS (EV 0.9674 to 0.9681), and smoothing
 gains only 12\,\% of normalised MSE over filtering on L96 (0.642 against 0.728). On QG,
 smoothing keeps most of its \Sz{} gain (32\,\%, 0.033 against 0.048, against 45\,\% at
@@ -352,14 +361,48 @@ less accurate. Reporting no uncertainty is penalised: D-Unet, as accurate as the
 learned schemes for the mean, falls to 0.55, and Strong-4DVar to $-1.6$. Under model
 error, the decay of the DA schemes becomes much steeper: their FMSS crosses zero, i.e.
 the climatological forecast, as soon as $\tau \approx 0.5$, and reaches $-1.56$ for the
-ETKS at $\tau = 0.75$. The learned schemes keep their \Sz{} curves. Misspecification
-thus degrades the reported distribution even more than the mean. On QG, the skill of the
+ETKS at $\tau = 0.75$, while their mean keeps a positive skill (EV 0.27--0.36). The learned
+schemes keep their \Sz{} curves. Relative to climatology, misspecification thus removes the
+skill of the reported distribution before that of the mean. On QG, the skill of the
 reported distribution stays high for every scheme, as the streamfunction is smooth and
 well observed, but the same ordering holds. With a perfect model, the learned schemes lead
 at $\tau = 0.75$ (0.94--0.95), ahead of Strong-4DVar (0.91, no uncertainty), the ETKS
 (0.89) and the filters (0.82--0.84). Under model error, the DA ensembles fall to
 0.71--0.78 and Strong-4DVar to 0.57, while D-Unet, CFM and D-Unet+SDA stay at 0.89--0.90;
 SDA guided from pure noise, with its misspecified likelihood, falls to 0.78. \todo{L63.}
+
+\paragraph{Model error along the flow time.} Skill scores at different $\tau$ are normalised by
+different climatological scores, which shrink as $\tau$ grows: the comparison above is relative to
+climatology at each $\tau$, and it does not say whether model error costs more on the
+distribution than on the mean. Figure~\ref{fig:missp-tau} answers this in raw scores, with the
+increase $\Delta\mathrm{FMS}_\tau$ from \Sz{} to \So{} of each scheme, normalised by its value
+at $\tau = 0$, i.e.\ by the increase of the mean-squared error. A scheme that reports no
+uncertainty has a ratio of 1 at every $\tau$. For every ensemble, the ratio decreases with
+$\tau$: the reported spread absorbs part of the model error, more on L96 (0.12--0.39 at $\tau =
+0.75$ for the DA ensembles), where the \So{} inflation is large, than on QG (0.50--0.60 for the DA
+ensembles, 0.77--0.98 for the learned schemes). Model error therefore does not cost more on the
+reported distribution than on the mean; what differs between schemes is how much of it their
+reported spread absorbs. The lower panels split the remaining increase: the share removed by the
+best scalar rescaling of the spread grows with $\tau$ for the L96 DA ensembles, up to 71\,\% for
+the ETKS at $\tau = 0.75$, whose spread remains mis-scaled under model error despite its re-tuned
+inflation. On QG, the six-fold observation-error variance leaves the DA ensembles calibrated
+under model error (negative shares), whereas a growing share of the increase of the learned
+schemes (8 to 18\,\%) is a loss of calibration. The rest combines the error of the mean with the
+resolution of the spread (Sect.~\ref{sec:fms}). \needsrun{Mean-only lower bound of the score
+(QG re-scoring and L96), to bracket the share of the mean.}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/fig_missp_tau.pdf}
+\caption{\textbf{Cost of model error along the flow time.} Top: increase of the
+flow-matching score from \Sz{} to \So{}, $\Delta\mathrm{FMS}_\tau$ (raw, standardised units),
+divided by its value at $\tau = 0$ (the increase of the mean-squared error); dashed: a scheme
+reporting no uncertainty. Bottom: share of $\Delta\mathrm{FMS}_\tau$ due to the scalar
+miscalibration of the reported spread, $\Delta(L_\tau\,\mathrm{FMS}_\tau)/\Delta\mathrm{FMS}_\tau$.
+\So{} DA rows use their \So{} tuning. L96 learned schemes (1D rows) are not shown: their
+$|\Delta\mathrm{FMS}_\tau|$ stays below 0.005. QG: $\psi_1$, $\psi_2$, one seed.}
+\label{fig:missp-tau}
+\end{figure}
 
 \paragraph{Calibration and shape.}
 The $\tau$-resolved spread--skill ratio (Fig.~\ref{fig:ss-tau}) and the shape diagnostic (Fig.~\ref{fig:g-tau}) explain these differences. CFM is calibrated at every $\tau$ and in both experiments
@@ -401,12 +444,13 @@ The $\tau$-resolved scores separate what the mean-based metrics of Sects.~\ref{s
 and~\ref{sec:q2} conflate. With a perfect model, the DA ensembles lose more skill from
 the mean to the distribution than the learned schemes, because they are over-confident,
 and the more so as their mean improves; smoothing and larger ensembles reduce the error
-of the mean, not the miscalibration. Under model error, misspecification affects the
-reported distribution even more than the mean: the DA ensembles become more
-over-confident and, beyond the noise floor of the shape diagnostic, short-tailed, and their score at large $\tau$ falls below that of
-climatology. The learned schemes, by contrast, report a distribution whose skill,
-calibration and shape are unchanged from \Sz{} to \So{}, with CFM the best calibrated.
-Their advantage over DA is therefore larger for the distribution than for the mean. On
+of the mean, not the miscalibration. Under model error, the reported spread of every
+ensemble absorbs part of the model error, so that it costs less on the distribution than on
+the mean in raw scores; but on L96 the DA ensembles become more over-confident and, beyond the
+noise floor of the shape diagnostic, short-tailed, and their skill for the distribution falls
+below that of climatology while their mean keeps a positive skill. The learned schemes, by
+contrast, report a distribution whose skill, calibration and shape are unchanged from \Sz{} to
+\So{} on L96, with CFM the best calibrated. On
 QG, the inflated observation-error variance of the \So{} ensembles reverses the ordering
 of calibration: an explicit error model that can be re-tuned keeps the reported spread of
 DA calibrated, whereas the learned schemes, outside the error statistics of their training

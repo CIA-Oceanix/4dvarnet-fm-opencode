@@ -123,32 +123,56 @@ resulting samples approximate the true posterior only up to a structural error.
 Following \cite{rozet_score-based_2023}, we will refer to this class of neural approaches as score-based data assimilation schemes (SDA). 
 \end{itemize}
 
-\subsection{The estimation error chain for \texorpdfstring{$\E[\xv \mid C]$}{E[x|C]}}
+\subsection{The error budget of \texorpdfstring{$\E[\xv \mid C]$}{E[x|C]}}
 
-Let us focus here on the skills of a DA scheme in terms of estimation of the conditional mean $m_C=\E[\xv \mid C]$. The DA scheme  departs from this MSE-optimal estimation in three ways:
+We follow the error budget of~\cite{fablet_not_2026} for the estimation of the conditional
+mean $m = \E[\xv \mid C]$, the MSE-optimal estimate given the full context $C$. A DA scheme
+departs from it in three ways:
 \begin{itemize}
-\item the DA scheme may use some information
-$S \subseteq C$ rather than the full context $C$: for instance, contrary to a smoother, a DA filter uses the observations up to the current time; a learned DA scheme may ignore $\thv$ and $\zv$;
-\item It believes a model $\tilde p( \cdot|C)$ that may differ from the true posterior $p( \cdot|C)$: for instance, 4DVar schemes relate to considering the MAP estimate and Ensemble Kalman methods exploit Gaussian approximation, which can be interpreted as not considering the true posterior $p$;
-\item It computes its own target only approximately: this accounts among other for the number of optimization steps, finite-ensemble approximations, training dataset size\ldots 
+\item it may use some information $S \subseteq C$ rather than the full context: contrary to
+  a smoother, a filter uses the observations up to the current time only; a 4D-Var cycled
+  over sub-windows uses one sub-window at a time; a learned scheme may ignore $\thv$ and
+  $\zv$;
+\item its output depends on its resources $\nu$ (ensemble size, optimisation iterations,
+  training data and capacity), and even with unlimited resources it may converge to a
+  limit $m_\infty$ that differs from $m_S = \E[\xv \mid S]$: because it believes a wrong
+  model or prior, because its update is Gaussian, or because it returns the mode instead of
+  the mean;
+\item at finite resources, it computes this limit only approximately.
 \end{itemize}
-This leads to the corresponding chain of estimators as
+This leads to the chain of estimators
 \begin{equation}\label{eq:chain}
   m = \E[\xv\mid C] \;\longrightarrow\; m_S = \E[\xv\mid S]
-  \;\longrightarrow\; \tilde m = \E_{\tilde p}[\xv\mid S]
-  \;\longrightarrow\; \hat m ,
+  \;\longrightarrow\; m_\infty \;\longrightarrow\; \hat m ,
 \end{equation}
-where $\hat m$ is what the DA scheme outputs. Assuming that estimate $\hat m$ depends only on subcontext $S$ and on randomness independent of the truth, we can derive the following decomposition of the associated mean square estimation error $ \E \|\hat m - \xv\|^2$
+where $\hat m$ is the output of the scheme. If $\hat m$ depends only on $S$ and on internal
+randomness (ensemble draws, training sample, sampler noise) independent of the truth, its
+mean-squared error splits exactly as~\cite{fablet_not_2026}
 \begin{equation}\label{eq:chain0}
   \E \|\hat m - \xv\|^2 \;=\;
   \underbrace{\E\tr\Cov(\xv\mid C)}_{\text{irreducible}}
   \;+\; \underbrace{\E\|m - m_S\|^2}_{\text{restriction}}
-  \;+\; \underbrace{\E\|m_S - \hat m\|^2}_{\text{misspecification+approximation }} %.  \;+\; \underbrace{\E\|\tilde m - \hat m\|^2}_{\text{}} .
+  \;+\; \underbrace{\E\|m_S - \hat m\|^2}_{\text{scheme residual}},
 \end{equation}
-The first holds because $m$ is the conditional expectation
-given $C$. The second holds because $m_S = \E[m \mid S]$ (tower property). The third holds because $m_S - \tilde m$ is a function of $S$ and of independent randomness only, so the cross terms vanish. The latter also applies to the fourth term. One cannot in general split the third term into distinct mispecification and approximation terms, as their conditional independence w.r.t. $S$ is not always verified. 
-
-%The last term contains the misspecification $\E\|m_S - \tilde m\|^2$, the approximation $\E\|\tilde m - \hat m\|^2$ and their cross term. That cross term does not vanish in general: a finite ensemble can partly compensate a wrong model, or worsen it. We therefore do not claim a four-term identity. We separate misspecification from approximation by controlled contrasts --- the same scheme with more members, more iterations or more training, and the same scheme with and without model error (Sect.~\ref{sec:design}) --- and we report the cross term as the residual it is.
+\begin{equation}\label{eq:residual}
+  \E\|m_S - \hat m\|^2 \;=\;
+  \underbrace{\E\|m_S - m_\infty\|^2}_{\text{misspecification}}
+  \;+\; \underbrace{\E\|m_\infty - \hat m\|^2}_{\text{approximation}}
+  \;+\; 2\,\E\langle m_S - m_\infty,\, m_\infty - \hat m\rangle .
+\end{equation}
+The first two terms of~\eqref{eq:chain0} follow from the orthogonality of the conditional
+expectations, the third from the independence of the internal randomness. The cross term
+of~\eqref{eq:residual} does not vanish in general: a finite ensemble can partly compensate
+a wrong model, or worsen it. Approximation is thus everything that vanishes when the
+resources grow without bound, and misspecification what remains; with this convention, the
+finite-data error of a learned scheme is approximation. Misspecification arises from a
+wrong dynamical model or prior, but also, with the true model, from a Gaussian update,
+which leaves a floor above the MMSE for any ensemble size, or from returning the posterior
+mode, whose gap to the mean does not depend on the resources~\cite{fablet_not_2026}. In
+the experiments, we measure approximation with resource sweeps (members, iterations,
+training budget), restriction with the filter--smoother contrast, and misspecification of
+the dynamics with the contrast between a perfect and an imperfect model at a matched
+scheme (Sect.~\ref{sec:design}); what no contrast attributes is reported as a residual.
 
 We can analyse the design choices in the above-mentioned model-based and neural schemes according to the associated error term as summarized in Table~\ref{tab:commitments}. These features are choices, not errors: each buys something --- tractability,
 a sequential implementation, robustness to the observing system --- and the
