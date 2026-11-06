@@ -55,7 +55,7 @@ drives a subtask **all the way to a merged PR without pausing for another approv
 the create → CI → review → merge steps**. The loop is fully automated (approval is done by
 the `rfablet-review` identity and the `pytest` CI check is the merge gate), so nothing a human
 must decide sits in the middle. Concretely, after pushing and opening the PR, continue:
-wait for the `pytest` check to pass and for the automatic `llm-review` approval, then verify and squash-merge.
+wait for the `pytest` check to pass, run the reviewer approval, then verify and squash-merge.
 Do **NOT** treat "PR created" as a natural stopping point.
 
 Stop for user input only on a genuine external blocker:
@@ -68,12 +68,13 @@ Stop for user input only on a genuine external blocker:
 ### Review + merge
 
 - Approvals come from the second GitHub account **`rfablet-review`** — not the author
-  (GitHub blocks self-approval). The `llm-review` workflow (`.github/workflows/pr_llm_review.yml`)
-  submits that review automatically on every push, so **no manual approval is needed**. Run
-  `scripts/open_pr.sh review <PR#>` (reviewer token at `~/.config/opencode/reviewer-token`) only
-  as a fallback, when the workflow failed or did not approve the current head.
-- Pipeline: `scripts/open_pr.sh create "<msg>"` → wait for `pytest` and `llm-review` →
-  check the head SHA → `verify <PR#>` (squash-merge).
+  (GitHub blocks self-approval). Use `scripts/open_pr.sh review <PR#>` with the reviewer
+  token at `~/.config/opencode/reviewer-token`. The `llm-review` workflow also approves as
+  `rfablet-review`, but the manual approval stays required: commits from this machine are not
+  attributed to a GitHub account, and the `master` ruleset requires an extra approval for
+  unattributed changes.
+- Pipeline: `scripts/open_pr.sh create "<msg>"` → wait for CI → `review <PR#>` →
+  `verify <PR#>` (squash-merge).
 - **Merge gate = `pytest -m "not slow"`** on the required test files. Ruff is informational
   (`continue-on-error: true`) so `mergeStateStatus: UNSTABLE` does not block the merge.
 - Before merging, run the fast tests and `ruff check` on touched files locally.
