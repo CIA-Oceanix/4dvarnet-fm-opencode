@@ -28,6 +28,7 @@
 # FMPOST=1 samples with evaluation/fm_posterior_sampler.py (FMG guidance, FMW weight, FMGAMMA EM noise,
 # R_NORM obs-error variance in normalized units, OBS_PERT perturbed-obs starts, INFL inflation).
 # SHARD/N_SHARDS (default 0/1) score one shard of the windows (shard_<SHARD>_of_<N_SHARDS>, like the DA rows).
+# FMCLIM=<json of per-field climatological mean/std> adds the psi flow-matching scores.
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 PY=/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin/python
@@ -47,4 +48,4 @@ mkdir -p "$(dirname "$OUT")"
   --sda-sampler "$SDA_SAMPLER" --gamma "${GAMMA:-0.01}" --n-corrector "${NCORR:-1}" --lmc-tau "${LMC_TAU:-0.1}" ${OBS_SIGMA:+--obs-sigma "$OBS_SIGMA"} \
   $([ "${FMPOST:-0}" = 1 ] && echo "--fm-posterior --fm-guidance ${FMG:-dps} --fm-weight ${FMW:-1} --fm-gamma ${FMGAMMA:-0.5} --obs-pert ${OBS_PERT:-0} --inflation ${INFL:-1}" || true) ${R_NORM:+--r-norm "$R_NORM"} $([ "$S1" = 1 ] && echo "--s1" || true) \
   ${WARM:+--warm-start-run "$WARM" --tau0 "${TAU0:-0.5}"} $([ "${WARM_FULL:-0}" = 1 ] && echo "--warm-full-window" || true) $([ "${FULL:-0}" = 1 ] && echo "--full-window" || true) \
-  --out "$OUT" --device cuda
+  ${FMCLIM:+--fm-clim "$FMCLIM"} --out "$OUT" --device cuda

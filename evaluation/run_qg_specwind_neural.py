@@ -64,6 +64,7 @@ from evaluation.run_qg_specwind_da import (
     apply_s1,
     build_cfg,
     field_crps,
+    field_fms,
     s0_windows,
     window_metrics,
 )
@@ -357,7 +358,7 @@ def _daily_mean(x: np.ndarray, spd: int) -> np.ndarray:
 
 
 def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, device: torch.device,
-                 interp: str = "cubic") -> dict:
+                 interp: str = "cubic", fm_clim: dict | None = None) -> dict:
     """Scores of one window from its (N, days, D) physical daily psi members."""
     spd = steps_per_day(cfg)
     truth = window["true_state"].cpu().numpy()
@@ -377,6 +378,9 @@ def score_window(members_psi_daily: np.ndarray, window: dict, cfg: QGConfig, dev
     out["daily_score"] = md["score"]
     out["crps"] = float(np.mean(ensemble_crps(q, truth)))
     out.update(field_crps(q, truth, window["true_params"], cfg, device))
+    if fm_clim:
+        out.update(field_fms(q, truth, window["true_params"], cfg, device, fm_clim,
+                             int(window["init_seed_key"])))
     if n > 1:
         per = d // 2
         var = q.var(0, ddof=1)
@@ -394,7 +398,8 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
              tau0: float = 0.5, full_window: bool = False,
              published: PublishedSDA | None = None,
              fm_posterior: FMPosterior | None = None,
-             warm_full_window: bool = False, cfm_warm_start: str = "member") -> list[dict]:
+             warm_full_window: bool = False, cfm_warm_start: str = "member",
+             fm_clim: dict | None = None) -> list[dict]:
     """Per-window scores. A network built for fewer days than the window covers it with
     overlapping sub-windows `window_stride` days apart: a DirectUNet blends its sub-window
     estimates (`windowed_estimate`), a flow blends its velocity at every step
@@ -450,7 +455,7 @@ def evaluate(model, model_type: str, norm: dict | None, windows: list[dict], cfg
         for b, i in enumerate(idx):
             w = windows[i]
             phys = denorm_psi(members[:, b], cfg, norm).numpy()
-            m = score_window(phys, w, cfg, device, interp)
+            m = score_window(phys, w, cfg, device, interp, fm_clim)
             m.update({"index": int(w["init_seed_key"]), "level": w["specwind"]["factors"]["level"],
                       "n_members": int(phys.shape[0])})
             per_window.append(m)
@@ -526,6 +531,8 @@ def main() -> None:
     p.add_argument("--interp", default="cubic", choices=INTERP_KINDS)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--out", required=True, help="output path; per-window scores go to <out>_meta.json")
+    p.add_argument("--fm-clim", default=None,
+                   help="JSON of per-field climatological mean/std; adds the psi flow-matching scores")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
     spec = SPECS[args.spec]
@@ -571,7 +578,8 @@ def main() -> None:
                           window_stride=stride, warm_start=warm, tau0=args.tau0,
                           full_window=args.full_window, published=published, fm_posterior=fmpost,
                           warm_full_window=args.warm_full_window,
-                          cfm_warm_start=args.cfm_warm_start)
+                          cfm_warm_start=args.cfm_warm_start,
+                          fm_clim=json.load(open(args.fm_clim)) if args.fm_clim else None)
     meta = {"spec": spec.name, "split": args.split, "indices": idx,
             "method": f"neural_{model_type}", "run_dir": os.path.abspath(args.run_dir),
             "cols_per_day": args.cols_per_day, "obs_noise_frac": args.obs_noise_frac,

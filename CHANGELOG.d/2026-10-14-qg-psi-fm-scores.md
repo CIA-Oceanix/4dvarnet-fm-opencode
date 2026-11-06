@@ -1,0 +1,6 @@
+## 2026-10-14: QG flow-matching scores of the streamfunction
+
+**Summary:** With `--fm-clim` (or `FMCLIM=` in the batch scripts), the QG DA and neural scorers also store, per window and for psi1/psi2 in standardised units, the Gaussian flow-matching score at tau = 0, 0.25, 0.5, 0.75 (also on a 49-value variance-scaling grid), the Silverman kernel-density score and its equal-variance Gaussian, and the sums giving the pooled spread-skill ratio.
+**Files modified:** `evaluation/run_qg_specwind_da.py` — `field_fms` and the `--fm-clim` option, wired into the ensemble hook; `evaluation/run_qg_specwind_neural.py` — same in `score_window`; `batch/run_qg_specwind_da.sbatch`, `batch/run_qg_specwind_neural_eval.sbatch` — `FMCLIM` passthrough; `tests/test_qg_specwind_da.py` — Gaussian limits (tau = 0 is the MSE, unit scaling reproduces the score, a single member has no spread and a tau-independent score) and the end-to-end option.
+**Rationale:** Paper P1 section 5.3 reports the flow-matching skill score, a tau-resolved spread-skill ratio and the shape diagnostic for all three case studies; QG had none of them.
+**Verification:** `pytest -m "not slow" tests/test_qg_specwind_da.py tests/test_qg_specwind_neural_eval.py` (38 passed); `ruff check` on the touched files.

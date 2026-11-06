@@ -15,7 +15,8 @@ from evaluation.run_qg_baselines import (
     run,
 )
 from evaluation.metrics import crps as ensemble_crps
-from evaluation.run_qg_specwind_da import FIELDS, _layers, build_cfg, evaluate, field_crps, s0_windows
+from evaluation.run_qg_specwind_da import (FIELDS, FM_CS, FM_FIELDS, FM_TAUS, _layers, build_cfg, evaluate,
+                                             field_crps, field_fms, s0_windows)
 from models.qg_batched import BatchedQGDynamics, SpectralWindForcing
 from models.qg_dynamics import QGDynamics
 from models.qg_wind_modes import FourierWindBasis
@@ -274,3 +275,40 @@ def test_field_crps_of_a_single_member_is_its_mae(built):
     for k in FIELDS:
         assert abs(out[f"crps_{k}"] - float(abs(e[k] - t[k]).mean())) <= 1e-6 * out[f"crps_{k}"]
     assert float(ensemble_crps(truth[None], truth).mean()) == 0.0
+
+
+def _clim(ws, cfg):
+    t = _layers(ws[0]["true_state"].cpu().numpy(), ws[0]["true_params"], cfg, torch.device("cpu"))
+    return {f: {"mean": float(t[f].mean()), "std": float(t[f].std())} for f in FIELDS}
+
+
+def test_field_fms_gaussian_limits_and_kernel_terms(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.35)
+    ws, _ = s0_windows(TINY, "test", built, [0], cfg)
+    truth = ws[0]["true_state"].cpu().numpy()
+    tp, clim = ws[0]["true_params"], _clim(ws, cfg)
+    g = torch.Generator().manual_seed(0)
+    scale = float(abs(truth).mean())
+    ens = truth[None] + 0.1 * scale * torch.randn((6,) + truth.shape, generator=g).numpy()
+    out = field_fms(ens, truth, tp, cfg, torch.device("cpu"), clim, seed=0)
+    i1 = FM_CS.index(1.0)
+    for f in FM_FIELDS:
+        assert abs(out[f"fm_{f}_gauss_0.0"] - out[f"ss_{f}_err2"] / out[f"fm_{f}_n"]) <= 1e-9
+        for tau in FM_TAUS:
+            assert abs(out[f"fm_{f}_gc_{tau}"][i1] - out[f"fm_{f}_gauss_{tau}"]) <= 1e-12
+            assert out[f"fm_{f}_kde_{tau}"] > 0 and out[f"fm_{f}_kdevar_{tau}"] > 0
+        assert abs(out[f"fm_{f}_kde_0.0"] - out[f"fm_{f}_gauss_0.0"]) <= 1e-9 * out[f"fm_{f}_gauss_0.0"]
+    det = field_fms(ens[:1], truth, tp, cfg, torch.device("cpu"), clim, seed=0)
+    assert not any("_kde" in k for k in det)
+    for f in FM_FIELDS:
+        assert det[f"ss_{f}_var"] == 0.0
+        assert abs(det[f"fm_{f}_gauss_0.75"] - det[f"fm_{f}_gauss_0.0"]) <= 1e-12
+
+
+def test_evaluate_adds_fm_scores_when_given_a_climatology(built):
+    cfg = build_cfg(TINY, cols_per_day=2, obs_noise_std_frac=0.05, init_lag_days=0.35)
+    ws, _ = s0_windows(TINY, "test", built, [0, 1], cfg)
+    _, per_window = evaluate(ws, cfg, "etkf", torch.device("cpu"), N=6, loc_radius=2.0,
+                             init_ensemble="white", init_lag_days=0.35, fm_clim=_clim(ws, cfg))
+    for m in per_window:
+        assert all(f"fm_{f}_kde_0.75" in m for f in FM_FIELDS)

@@ -43,6 +43,7 @@ from evaluation.qg_specwind_s1 import (
     obs_error_frac,
     s1_windows,
 )
+from evaluation.fm_score import ensemble_score, gaussian_score, silverman_h2
 from evaluation.metrics import crps as ensemble_crps
 from evaluation.run_qg_baselines import run
 from models.qg_dynamics import QGDynamics
@@ -122,6 +123,49 @@ def field_crps(ensemble: np.ndarray, truth: np.ndarray, tp: dict, cfg: QGConfig,
             for k in FIELDS}
 
 
+FM_FIELDS = ("psi1", "psi2")
+FM_TAUS = (0.0, 0.25, 0.5, 0.75)
+FM_CS = tuple(float(c) for c in np.exp(np.linspace(np.log(1 / 16), np.log(16), 49)))
+FM_STRIDE = 12
+FM_DRAWS = 4
+
+
+def field_fms(ensemble: np.ndarray, truth: np.ndarray, tp: dict, cfg: QGConfig, device, clim: dict,
+              seed: int) -> dict:
+    """Flow-matching scores of psi1/psi2 from an (N, T, D) q-state ensemble, every FM_STRIDE steps.
+
+    States are standardised with the climatological mean and standard deviation of each field
+    (`clim`). Per field and tau: the Gaussian score with the member variance (`fm_<f>_gauss_<tau>`)
+    and with that variance scaled by each factor of FM_CS (`fm_<f>_gc_<tau>`, for the optimal
+    inflation); for N > 1 the Silverman kernel-density score (`fm_<f>_kde_<tau>`) and the Gaussian
+    score at the kernel density's variance (`fm_<f>_kdevar_<tau>`). Sums of member variance and
+    squared error of the mean (`ss_<f>_var`, `ss_<f>_err2`) give the pooled spread-skill ratio.
+    """
+    t = _layers(truth[::FM_STRIDE], tp, cfg, device)
+    members = [_layers(np.asarray(e)[::FM_STRIDE], tp, cfg, device) for e in ensemble]
+    rng = np.random.default_rng(seed)
+    out = {}
+    for f in FM_FIELDS:
+        mu, sd = clim[f]["mean"], clim[f]["std"]
+        x = (t[f].astype(np.float64) - mu) / sd
+        m = (np.stack([mm[f] for mm in members], -1).astype(np.float64) - mu) / sd
+        n = m.shape[-1]
+        err = m.mean(-1) - x
+        var = m.var(-1, ddof=1) if n > 1 else np.zeros_like(x)
+        out[f"ss_{f}_var"] = float(var.sum())
+        out[f"ss_{f}_err2"] = float((err ** 2).sum())
+        out[f"fm_{f}_n"] = int(x.size)
+        h2 = silverman_h2(m) if n > 1 else None
+        x0 = rng.standard_normal(x.shape + (FM_DRAWS,))
+        for tau in FM_TAUS:
+            out[f"fm_{f}_gauss_{tau}"] = float(gaussian_score(err, var, tau).mean())
+            out[f"fm_{f}_gc_{tau}"] = [float(gaussian_score(err, c * var, tau).mean()) for c in FM_CS]
+            if n > 1:
+                out[f"fm_{f}_kde_{tau}"] = float(ensemble_score(m, x, tau, x0, h2[..., None])[0].mean())
+                out[f"fm_{f}_kdevar_{tau}"] = float(gaussian_score(err, var + h2, tau).mean())
+    return out
+
+
 def window_metrics(analysis: np.ndarray, free: np.ndarray, truth: np.ndarray, tp: dict,
                    cfg: QGConfig, device) -> dict:
     """Per-window EV and RMSE of psi1/psi2/q1/q2 for the analysis and the free forecast.
@@ -147,7 +191,8 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
              disp_frac: float = 1.0, init_lag_days: float = 5.0, out_path: str | None = None,
              save_traj: str | None = None, etkf_loc_mode: str = "ensrf",
              enks_lag: int | None = None, r_scale: float = 1.0,
-             enks_taper_days: float | None = None, **var_kwargs) -> tuple[dict, list[dict]]:
+             enks_taper_days: float | None = None, fm_clim: dict | None = None,
+             **var_kwargs) -> tuple[dict, list[dict]]:
     """Run S0/S1 DA on prepared windows; return run()'s payload and per-window metrics."""
     traj_dir = save_traj or tempfile.mkdtemp(prefix="qgda_", dir=os.environ.get("TMPDIR", "/tmp"))
     try:
@@ -160,8 +205,10 @@ def evaluate(windows: list[dict], cfg: QGConfig, method: str, device: torch.devi
                       etkf_loc_mode=etkf_loc_mode, enks_lag=enks_lag, obs_var_r_scale=r_scale,
                       enks_taper_steps=(enks_taper_days * 86400.0 / cfg.dt
                                         if enks_taper_days is not None else None),
-                      ensemble_hook=lambda ens, ref, w: field_crps(ens, ref, w["true_params"], cfg,
-                                                                   device),
+                      ensemble_hook=lambda ens, ref, w: {
+                          **field_crps(ens, ref, w["true_params"], cfg, device),
+                          **(field_fms(ens, ref, w["true_params"], cfg, device, fm_clim,
+                                       int(w["init_seed_key"])) if fm_clim else {})},
                       **var_kwargs)
         s = payload["scenarios"]["test_s0"]
         traj = np.load(s["traj_path"])
@@ -244,6 +291,8 @@ def main() -> None:
                    help="relaxation inflation of the ETKF/EnKF analysis anomalies")
     p.add_argument("--relax-alpha", type=float, default=0.0)
     p.add_argument("--out", required=True, help="summary JSON path (run() output)")
+    p.add_argument("--fm-clim", default=None,
+                   help="JSON of per-field climatological mean/std; adds the psi flow-matching scores")
     p.add_argument("--save-traj", default=None,
                    help="directory for run()'s trajectory npz (analysis mean, free forecast, truth)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -275,6 +324,7 @@ def main() -> None:
         breed_days=args.breed_days, disp_frac=args.disp_frac, init_lag_days=args.init_lag_days,
         out_path=args.out, save_traj=args.save_traj, etkf_loc_mode=args.etkf_loc_mode,
         enks_lag=args.enks_lag or None, r_scale=args.r_scale,
+        fm_clim=json.load(open(args.fm_clim)) if args.fm_clim else None,
         enks_taper_days=args.enks_taper_days if args.enks_taper_days and args.enks_taper_days > 0 else None,
         **({"relax": args.relax, "relax_alpha": args.relax_alpha} if args.relax != "none" else {}),
         **({k: getattr(args, k) for k in ("da_window_steps", "b_var_scale", "q_var_scale")}
