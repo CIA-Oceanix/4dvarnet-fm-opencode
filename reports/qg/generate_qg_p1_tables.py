@@ -8,7 +8,9 @@ Reads the per-window score files (`shard_*_meta.json`) of the gyrostat benchmark
   per-window EV of the gyrostat report, kept for cross-reference), CRPS skill score of psi against the climatological forecast (`crpss_psi`; for a
   deterministic scheme the MAE skill, from its exact absolute error when stored or from its RMSE
   assuming Gaussian errors, flagged `mae_from_rmse`), and the pooled spread-skill ratio `ss_psi`;
-  `large_ensemble` holds the EV of the 320-member ETKF and ETKS (the ensemble-size contrast);
+  `ev_q` is the EV of the potential vorticity (q1, q2) and `ev_free_psi` that of the free run of
+  the DA model; `large_ensemble` holds the EV of the 320-member ETKF and ETKS (the ensemble-size
+  contrast) and `s1_s0_tuned` the S1 ensembles with their S0 settings (the re-tuning contrast);
 - `reports/qg/outputs/qg_p1/qg_p1_series.json`: FMSS_tau, SS_tau = 1/sqrt(c*(tau)), its grid-edge
   flag, the calibration loss L_tau and the shape diagnostic G_tau, over psi1 and psi2.
 
@@ -65,6 +67,11 @@ LARGE = {
         "ETKS": "enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k1_rbase_R6_N320_s0_n100",
     },
 }
+S1_S0_TUNED = {
+    "ETKF": "etkf_c3_loc8.0_r0.1_x1.0_bred_ensrf_d1.0_k1_rbase_s0_n100",
+    "EnKF": "enkf_c3_loc6.0_r0.1_x1.0_bred_d1.0_k1_rbase_s0_n100",
+    "ETKS": "enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k1_rbase_s0_n100",
+}
 
 
 def alpha(tau: float) -> float:
@@ -79,9 +86,16 @@ def load_windows(run_dir: str) -> list[dict]:
     return [rows[i] for i in sorted(rows)]
 
 
-def explained_variance(windows: list[dict], clim: dict) -> dict:
+def explained_variance(windows: list[dict], clim: dict, fields=PSI, tag: str = "da") -> dict:
     sd = clim["mean_std"]
-    return {f: 1 - float(np.mean([w[f"rmse_da_{f}"] ** 2 for w in windows])) / sd[f]["std"] ** 2 for f in PSI}
+    return {f: 1 - float(np.mean([w[f"rmse_{tag}_{f}"] ** 2 for w in windows])) / sd[f]["std"] ** 2 for f in fields}
+
+
+def ev_extras(windows: list[dict], clim: dict) -> dict:
+    out = {"ev_q": float(np.mean(list(explained_variance(windows, clim, ("q1", "q2")).values())))}
+    if "rmse_free_psi1" in windows[0]:
+        out["ev_free_psi"] = float(np.mean(list(explained_variance(windows, clim, PSI, "free").values())))
+    return out
 
 
 def table_row(windows: list[dict], kind: str, clim: dict) -> dict:
@@ -93,7 +107,7 @@ def table_row(windows: list[dict], kind: str, clim: dict) -> dict:
         crps = {f: float(np.mean([w[f"crps_{f}"] for w in windows])) for f in PSI}
     skill = {f: 1 - crps[f] / clim["crps_clim"][f] for f in PSI}
     out = {"n_windows": len(windows), "ev": ev, "ev_psi": float(np.mean(list(ev.values()))),
-           "ev_window_psi": float(np.mean(list(ev_window.values()))),
+           "ev_window_psi": float(np.mean(list(ev_window.values()))), **ev_extras(windows, clim),
            "crpss": skill, "crpss_psi": float(np.mean(list(skill.values()))),
            "deterministic": kind != "ensemble", "mae_from_rmse": kind == "rmse", "ss_psi": None}
     if kind == "ensemble" and "ss_psi1_var" in windows[0]:
@@ -172,8 +186,15 @@ def main() -> None:
                 raise SystemExit(f"{case} {name} N=320: {len(w)} windows in {d}")
             ev = explained_variance(w, clim)
             large[case][name] = {"run": d, "n_members": 320, "ev": ev, "ev_psi": float(np.mean(list(ev.values())))}
+    s0_tuned = {}
+    for name, d in S1_S0_TUNED.items():
+        w = load_windows(os.path.join(args.root, d))
+        if len(w) != 100:
+            raise SystemExit(f"s1 {name} S0-tuned: {len(w)} windows in {d}")
+        ev = explained_variance(w, clim)
+        s0_tuned[name] = {"run": d, "ev": ev, "ev_psi": float(np.mean(list(ev.values()))), **ev_extras(w, clim)}
     os.makedirs(args.out, exist_ok=True)
-    json.dump({"fields": list(PSI), "rows": rows, "large_ensemble": large}, open(os.path.join(args.out, "qg_p1_rows.json"), "w"), indent=1)
+    json.dump({"fields": list(PSI), "rows": rows, "large_ensemble": large, "s1_s0_tuned": s0_tuned}, open(os.path.join(args.out, "qg_p1_rows.json"), "w"), indent=1)
     json.dump({"taus": list(TAUS), "cases": series}, open(os.path.join(args.out, "qg_p1_series.json"), "w"), indent=1)
     for case in rows:
         for name, r in rows[case].items():

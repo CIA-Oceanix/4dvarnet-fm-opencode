@@ -10,8 +10,9 @@ spec = importlib.util.spec_from_file_location("gen", os.path.join(ROOT, "reports
 gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
 
-CLIM = {"crps_clim": {"psi1": 2.0, "psi2": 4.0}, "mean_std": {"psi1": {"mean": 0.0, "std": 2.0},
-                                                              "psi2": {"mean": 0.0, "std": 4.0}}}
+CLIM = {"crps_clim": {"psi1": 2.0, "psi2": 4.0},
+        "mean_std": {"psi1": {"mean": 0.0, "std": 2.0}, "psi2": {"mean": 0.0, "std": 4.0},
+                     "q1": {"mean": 0.0, "std": 1.0}, "q2": {"mean": 0.0, "std": 1.0}}}
 
 
 def gaussian(e2: float, v: float, tau: float) -> float:
@@ -20,7 +21,7 @@ def gaussian(e2: float, v: float, tau: float) -> float:
 
 
 def window(i: int, e2: float, v: float) -> dict:
-    w = {"index": i}
+    w = {"index": i, "rmse_da_q1": 0.5, "rmse_da_q2": 0.5}
     for f in gen.PSI:
         sd = CLIM["mean_std"][f]["std"]
         w[f"rmse_da_{f}"] = np.sqrt(e2) * sd
@@ -44,6 +45,8 @@ def test_table_row_uses_climatological_ev_and_pooled_ss():
     assert r["ev_window_psi"] == pytest.approx(0.5)
     assert r["crpss_psi"] == pytest.approx(0.5)
     assert r["ss_psi"] == pytest.approx(0.5)
+    assert r["ev_q"] == pytest.approx(0.75)
+    assert "ev_free_psi" not in r
 
 
 def test_deterministic_fmss_is_ev_at_every_tau_scale():
