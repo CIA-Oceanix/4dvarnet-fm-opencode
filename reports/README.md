@@ -98,6 +98,7 @@ A note after the status says which cells it qualifies.
 | QG | `reports/qg/outputs/qg_neural_report.md` (DA and neural rows); `qg_da_report.md` for the DA configuration. |
 | QG gyrostat (spectral wind) | `reports/qg/outputs/qg_specwind_da_report.md`: DA baselines S0 + realistic S1 on the forced and coupled test sets, with the S1 error budget and reconstruction examples; neural schemes (DirectUNet, CFM, SDA, SDA hybrids) on the forced test set and their observation-configuration stress test (§9–10). |
 | L63 | none — see the L63 section. |
+| P1 paper figures | `reports/p1/p1_figures.py` regenerates the seven figures of the P1 paper (budgets, tau-resolved scores, model error along tau, observing system) from the L96 report bundle and the committed L96/QG outputs; `reports/p1/outputs/l96_tau_series.json` is its L96 tau-series. |
 
 ## L96
 

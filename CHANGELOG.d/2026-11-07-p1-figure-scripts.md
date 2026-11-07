@@ -1,0 +1,6 @@
+## 2026-11-07: P1 paper figures regenerated from the repo
+
+**Summary:** New `reports/p1/p1_figures.py` regenerates the seven figures of the P1 paper (budgets S0/S1, FMSS_tau, SS_tau, G_tau, model error along tau, observing system); its `series` step writes the committed L96 tau-series `reports/p1/outputs/l96_tau_series.json`.
+**Files modified:** `reports/p1/p1_figures.py` (new), `reports/p1/outputs/l96_tau_series.json` (new), `.gitignore` — generated figures under `reports/p1/outputs/figures/` (the paper folder tracks its copies), `reports/README.md` — index line.
+**Rationale:** The figure scripts lived in untracked scratch folders (lost twice); the paper's figures should be reproducible from repo files. Inputs come from the L96 report bundle (`reports/l96/_inputs.py`) and committed L96/QG outputs, with no absolute paths. The 100-member L96 ETKF/ETKS EVs of the budget figure (0.862 / 0.919) are documented constants: that run stored per-window RMSE only.
+**Verification:** the L96 tau-series equals the exploratory one, and all seven figures are pixel-identical to the paper's; `pytest tests/test_report_inputs.py tests/test_reports_index.py tests/test_docs_layout.py`; `ruff check reports/p1/p1_figures.py`.
