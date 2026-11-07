@@ -116,8 +116,9 @@ jobs:
       - name: Docs tests (docs-only change)
         if: steps.scope.outputs.docs_only == 'true'
         run: |
-          pip install -q pytest
-          pytest tests/test_docs_layout.py tests/test_reports_index.py -q
+          pip install -q pytest pyyaml
+          # --noconftest: tests/conftest.py imports torch, which the docs tests do not need.
+          pytest --noconftest tests/test_docs_layout.py tests/test_reports_index.py -q
 
       - name: Install dependencies
         if: steps.scope.outputs.docs_only != 'true'
