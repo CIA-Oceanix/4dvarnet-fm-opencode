@@ -12,7 +12,10 @@ Reads the per-window score files (`shard_*_meta.json`) of the gyrostat benchmark
   the DA model; `large_ensemble` holds the EV of the 320-member ETKF and ETKS (the ensemble-size
   contrast) and `s1_s0_tuned` the S1 ensembles with their S0 settings (the re-tuning contrast);
 - `reports/qg/outputs/qg_p1/qg_p1_series.json`: FMSS_tau, SS_tau = 1/sqrt(c*(tau)), its grid-edge
-  flag, the calibration loss L_tau and the shape diagnostic G_tau, over psi1 and psi2.
+  flag, the calibration loss L_tau and the shape diagnostic G_tau, over psi1 and psi2; and
+  `mean_bracket`, the bounds on the mean part of the score (lower: variance set to the realised
+  squared error of the mean; upper: scalar-calibrated score), from the rows re-scored with that term
+  (`*_fmo`, a new draw of the same schemes).
 
 The climatological references (`qg_p1_climatology.json`, from `compute_qg_p1_climatology.py`) are
 the CRPS of the climatological forecast per field and the climatological mean and standard
@@ -65,6 +68,26 @@ LARGE = {
     "s1": {
         "ETKF": "etkf_c3_loc8.0_r0.1_x1.0_bred_ensrf_d1.0_k1_rbase_R6_N320_s0_n100",
         "ETKS": "enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k1_rbase_R6_N320_s0_n100",
+    },
+}
+MEAN_BRACKET = {
+    "s0": {
+        "ETKF": "etkf_c3_loc8.0_r0.1_x1.0_bred_ensrf_d1.0_k0_s0_n100_fmo",
+        "EnKF": "enkf_c3_loc6.0_r0.1_x1.0_bred_d1.0_k0_s0_n100_fmo",
+        "ETKS": "enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k0_s0_n100_fmo",
+        "D-Unet": "neural_G1L3D_b16_w15_kpow_s0_full_fmo_c3_cubic_N1",
+        "CFM": "neural_G2_3d_w15_kpow_s0_fmo_c3_cubic_N30",
+        "SDA": "neural_G3_3d_w15_pub_g0.01_st100_c1_fmo_c3_cubic_N30",
+        "D-Unet+SDA": "neural_G3_3d_w15_warmG1L3Dfull_t0.5_gw2_st10_fmo_c3_cubic_N30",
+    },
+    "s1": {
+        "ETKF": "etkf_c3_loc8.0_r0.1_x1.0_bred_ensrf_d1.0_k1_rbase_R6.0_s0_n100_fmo",
+        "EnKF": "enkf_c3_loc6.0_r0.1_x1.0_bred_d1.0_k1_rbase_R6.0_s0_n100_fmo",
+        "ETKS": "enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k1_rbase_R6.0_s0_n100_fmo",
+        "D-Unet": "neural_G1L3D_b16_w15_kpow_s0_full_fmo_c3_cubic_N1_k1_rbase",
+        "CFM": "neural_G2_3d_w15_kpow_s0_fmo_c3_cubic_N30_k1_rbase",
+        "SDA": "neural_G3M_3d_w15_pub_g0.01_st100_c1_fmo_c3_cubic_N30_k1_rbase",
+        "D-Unet+SDA": "neural_G3_3d_w15_warmG1L3Dfull_t0.5_gw2_st10_fmo_c3_cubic_N30_k1_rbase",
     },
 }
 S1_S0_TUNED = {
@@ -159,6 +182,18 @@ def series_row(windows: list[dict], kind: str, clim: dict) -> dict | None:
     return out
 
 
+def mean_bracket(windows: list[dict]) -> dict:
+    """Bounds on the mean part of the Gaussian score (best Gaussian with the scheme's mean), per tau,
+    averaged over psi1 and psi2: `lower` = variance set to the realised squared error of the mean,
+    `upper` = scalar-calibrated score; `fms` = the reported score."""
+    out = {"fms": [], "lower": [], "upper": []}
+    for t in TAUS:
+        out["fms"].append(float(np.mean([pooled(windows, f"fm_{{f}}_gauss_{t}", f) for f in PSI])))
+        out["lower"].append(float(np.mean([pooled(windows, f"fm_{{f}}_orc_{t}", f) for f in PSI])))
+        out["upper"].append(float(np.min(np.mean([pooled(windows, f"fm_{{f}}_gc_{t}", f) for f in PSI], 0))))
+    return out
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--root", default=os.path.join(REPO, TEST), help="directory of the benchmark rows")
@@ -193,9 +228,17 @@ def main() -> None:
             raise SystemExit(f"s1 {name} S0-tuned: {len(w)} windows in {d}")
         ev = explained_variance(w, clim)
         s0_tuned[name] = {"run": d, "ev": ev, "ev_psi": float(np.mean(list(ev.values()))), **ev_extras(w, clim)}
+    bracket = {}
+    for case, schemes in MEAN_BRACKET.items():
+        bracket[case] = {}
+        for name, d in schemes.items():
+            w = load_windows(os.path.join(args.root, d))
+            if len(w) != 100:
+                raise SystemExit(f"{case} {name} mean bracket: {len(w)} windows in {d}")
+            bracket[case][name] = {"run": d, **mean_bracket(w)}
     os.makedirs(args.out, exist_ok=True)
     json.dump({"fields": list(PSI), "rows": rows, "large_ensemble": large, "s1_s0_tuned": s0_tuned}, open(os.path.join(args.out, "qg_p1_rows.json"), "w"), indent=1)
-    json.dump({"taus": list(TAUS), "cases": series}, open(os.path.join(args.out, "qg_p1_series.json"), "w"), indent=1)
+    json.dump({"taus": list(TAUS), "cases": series, "mean_bracket": bracket}, open(os.path.join(args.out, "qg_p1_series.json"), "w"), indent=1)
     for case in rows:
         for name, r in rows[case].items():
             ss = "" if r["ss_psi"] is None else f"  SS {r['ss_psi']:.2f}"
