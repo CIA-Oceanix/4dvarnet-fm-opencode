@@ -388,8 +388,44 @@ the ETKS at $\tau = 0.75$, whose spread remains mis-scaled under model error des
 inflation. On QG, the six-fold observation-error variance leaves the DA ensembles calibrated
 under model error (negative shares), whereas a growing share of the increase of the learned
 schemes (8 to 18\,\%) is a loss of calibration. The rest combines the error of the mean with the
-resolution of the spread (Sect.~\ref{sec:fms}). \needsrun{Mean-only lower bound of the score
-(QG re-scoring and L96), to bracket the share of the mean.}
+resolution of the spread (Sect.~\ref{sec:fms}). Bounding the mean part of the score separates
+the two (Table~\ref{tab:mean-share}). On QG, the mean part is at least two thirds of the score at
+$\tau = 0.75$ for every scheme and in both experiments (at least 59\,\% for SDA under model
+error): the reported distributions are scored mostly through their mean, and so is the cost of
+model error. On L96, the distribution weighs more. With a perfect model, the mean part of the ETKS
+score is 33 to 66\,\%, and under model error at most 37\,\%: most of the large-$\tau$ score of
+the smoother is then the characterisation of its distribution, not its mean, consistent with the
+calibration share of Fig.~\ref{fig:missp-tau}. The learned schemes keep a mean part of 60 to
+100\,\% in both experiments.
+
+\begin{table}[t]
+\centering\small
+\caption{\textbf{Share of the mean in the flow-matching score at $\tau = 0.75$} (\%). The mean part
+of the score of a scheme, the score of the best Gaussian with its mean, lies between the score with
+the variance set to the realised squared error of the mean (lower bound) and the scalar-calibrated
+score (upper bound); the rest is the characterisation of the distribution around the mean. L96:
+1D learned rows (3 seeds), as in Figs.~\ref{fig:fmss}--\ref{fig:missp-tau}; the stored \Sz{} DA
+means differ from those behind the scores by up to 3\,\% in MSE. QG: $\psi_1$, $\psi_2$, one seed,
+a new draw of the same schemes. --: not computed. Sources:
+\texttt{reports/l96/outputs/fm\_score/p1\_mean\_bracket.json},
+\texttt{reports/qg/outputs/qg\_p1/qg\_p1\_series.json}.}
+\label{tab:mean-share}
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{L96} & \multicolumn{2}{c}{QG} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+scheme & \Sz & \So & \Sz & \So \\
+\midrule
+ETKF         & 45--86 & 41--77 & 67--94 & 70--99 \\
+EnKF         & -- & -- & 67--93 & 69--99 \\
+ETKS         & 33--66 & 20--37 & 70--93 & 73--99 \\
+D-Unet       & -- & -- & 75--100 & 66--100 \\
+CFM          & 72--100 & 72--100 & 81--99 & 76--96 \\
+SDA          & 66--93 & 67--97 & 82--98 & 59--86 \\
+D-Unet+SDA   & 60--84 & 61--85 & 77--94 & 68--89 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \begin{figure}[!htbp]
 \centering
