@@ -13,15 +13,19 @@
 # 100-member ETKS (and its own filter pass) on the 200 L96 test windows at the validation-selected
 # inflation (S0 1.05, S1 2.5; one value per case, worse-layout RMSE loss), regular grid and
 # canonical random set: the ensemble-size sensitivity row. Submit from the repository root.
+# OUT_DIR (default experiments/etks100_test) sets the output folder; SAVE_TRAJ=1 also stores the ETKF/ETKS
+# ensemble means and variances (scripts/etks_ensemble_check.py). Use a new OUT_DIR for a rerun: the files
+# of the default folder are hard-linked into the report bundle.
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/fdv-monai-proto/bin:$PATH"
 export PYTHONUNBUFFERED=1
 NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP" 2>/dev/null || { NODE_TMP="$SLURM_SUBMIT_DIR/sbatch_logs/tmp_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP"; }
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig"; trap 'rm -rf "$NODE_TMP"' EXIT
-mkdir -p "$MPLCONFIGDIR" sbatch_logs experiments/etks100_test
+OUT_DIR="${OUT_DIR:-experiments/etks100_test}"
+mkdir -p "$MPLCONFIGDIR" sbatch_logs "$OUT_DIR"
 TASKS=("test_regular s0 1.05" "test_regular s1 2.5" "test_rlayout s0 1.05" "test_rlayout s1 2.5")
 read -r SET CASE LAM <<< "${TASKS[$SLURM_ARRAY_TASK_ID]}"
 echo "task $SLURM_ARRAY_TASK_ID: $SET $CASE lambda=$LAM N=100 | commit $(git rev-parse --short HEAD) | $(hostname) | $(date)"
-python -u scripts/etks_ensemble_check.py "$SET" 100 "experiments/etks100_test/etks100_${SET}_${CASE}_lam${LAM}.json" "$LAM" "$CASE"
+python -u scripts/etks_ensemble_check.py "$SET" 100 "$OUT_DIR/etks100_${SET}_${CASE}_lam${LAM}.json" "$LAM" "$CASE"
 echo "Done at $(date)"
