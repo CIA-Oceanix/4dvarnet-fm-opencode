@@ -25,7 +25,10 @@ model, whereas learned schemes lie close to the best estimate. Under model error
 misspecification dominates every model-based budget and is not reduced by more members or
 smoothing. The re-tuned spread of the DA ensembles absorbs part of it in the reported
 distribution, but not enough on Lorenz-96, where their skill for the distribution falls below
-that of climatology while their mean keeps a positive skill. The
+that of climatology while their mean keeps a positive skill. Bounding the part of the score due to
+the mean shows that, at large flow times, the reported distributions of the quasi-geostrophic case
+are scored mostly through their mean, whereas under model error most of the score of the Lorenz-96
+smoother comes from the characterisation of its distribution. The
 representation of the prior matters through the algorithm that uses it: a learned prior
 can beat the exact equations, and the ranking is set by the approximation budget of the
 scheme. Explicit error models keep their value for the uncertainty: with an inflated,
