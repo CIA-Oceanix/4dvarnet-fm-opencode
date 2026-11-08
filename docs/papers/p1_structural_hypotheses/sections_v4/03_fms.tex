@@ -99,6 +99,13 @@ in~\cite{fablet_flow_2026}. We use two consequences.
     misspecification or approximation; we test it in Section~\ref{sec:q1}.
 \end{itemize}
 
+The divergence $D_\tau$ is not new: it is the mismatched-estimation error
+of~\cite{verdu_mismatched_2010}, i.e.\ the excess mean-squared error, in Gaussian noise, of the
+conditional-mean estimator of $q$ over that of $p$, whose integral over the signal-to-noise
+ratio is the Kullback--Leibler divergence between $p$ and $q$~\cite{guo_mutual_2005,verdu_mismatched_2010};
+by Tweedie's formula, it is also the scaled Fisher divergence~\eqref{eq:fisher} of denoising score
+matching~\cite{hyvarinen_estimation_2005,vincent_connection_2011}, a proper local scoring rule in the
+sense of~\cite{parry_proper_2012}. What we use is this profile as a verification score for DA.
 The chain decomposition is not unique to $\FMS$: the expected log score splits
 the same way, through Kullback--Leibler divergences, and calibration--resolution
 decompositions exist for every proper score \cite{brocker_reliability_2009,gneiting_strictly_2007}. We use $\FMS_\tau$ for three reasons:

@@ -49,7 +49,8 @@ error is set by their model, whereas the learned schemes keep their perfect-mode
 the observing system. Assessments of an observing system through a model-based DA system therefore measure what
 that system extracts rather than what the observations carry, and the gap grows with model
 error. This is distinct from the known overestimation of observation impact by identical-twin
-OSSEs, which comes from using the same model for the truth and the assimilation; whether the
+OSSEs~\cite{halliwell_rigorous_2014,yu_evaluation_2019}, which comes from using the same model
+for the truth and the assimilation; whether the
 learned schemes would close the gap without simulations of the true system remains to be
 shown (training on the biased model). Classical DA nevertheless keeps clear strengths. It is better when observations are
 very sparse, and, together with SDA, it generalises beyond the observing systems seen in
@@ -76,18 +77,47 @@ rest on L96 and QG, with one training seed for the QG networks, and the L63 case
 be completed. The QG streamfunction is well observed and smooth, so that all QG scores are close
 to 1 and the QG differences are small in absolute terms.
 
-This study relates to the literature on model error in DA --- weak-constraint
-4D-Var~\cite{tremolet_accounting_2006}, inflation and model-error
-estimation~\cite{carrassi_data_2018,farchi_using_2021}, assimilation in the unstable
-subspace~\cite{trevisan_assimilation_2004,bocquet_four-dimensional_2017} --- and on learned and
-hybrid DA~\cite{brajard_combining_2021,bocquet_bayesian_2020,fablet_learning_2021}, including
-score-based and flow-based DA~\cite{rozet_score-based_2023}. \todo{Proper scores and their
-decompositions; mismatched estimation.} This paper is the experimental companion of~\cite{fablet_not_2026}, which defines the error
-budget and derives its terms for classes of schemes, and relates to~\cite{fablet_flow_2026},
-which develops the theory of the flow-matching score along the flow time. To our knowledge, no
-controlled study has measured \emph{where} the error of a DA scheme comes from --- restriction,
-misspecification or approximation --- for the mean and for the reported uncertainty, at matched
-information across classical and learned schemes.
+This study builds on three lines of work. The first is the treatment of model error in DA:
+weak-constraint 4D-Var~\cite{tremolet_accounting_2006,laloyaux_exploring_2020}, inflation and
+model-error estimation~\cite{whitaker_evaluating_2012,raanes_adaptive_2019,carrassi_data_2018,farchi_using_2021},
+bias correction~\cite{dee_bias_2005} and assimilation in the unstable
+subspace~\cite{trevisan_assimilation_2004,bocquet_four-dimensional_2017}. These methods reduce
+misspecification; the budget measures how much of it remains with the treatments considered, and
+how much the usual levers (members, smoothing, iterations) cannot recover. The second line
+evaluates DA schemes against the exact posterior. DA schemes can approximate the posterior mean
+of a two-dimensional Navier--Stokes flow but not its covariance~\cite{law_evaluating_2012}; the
+ensemble Kalman filter converges, as the ensemble grows, to a limit that differs from the
+posterior~\cite{ernst_analysis_2015}; and DA schemes may target the posterior mean, its mode or
+neither~\cite{hodyss_what_2016}. These results identify, individually and mostly in theory, the
+mechanisms that the budget books as a misspecification of the posterior family. Here, we measure
+their share in the error of the mean and of the reported uncertainty, on systems whose exact
+posterior is unknown, and compare classical with learned
+schemes~\cite{brajard_combining_2021,bocquet_bayesian_2020,fablet_learning_2021,mccabe_learning_2021,boudier_data_2023,bocquet_accurate_2024,rozet_score-based_2023,rozet_learning_2024,bao_ensemble_2024}.
+That learned schemes can outperform classical DA on such systems is
+known~\cite{mccabe_learning_2021,bocquet_accurate_2024}; the budget adds where the gap comes from.
+
+The third line concerns the verification of probabilistic estimates: proper scores and their
+decompositions~\cite{gneiting_strictly_2007,brocker_reliability_2009}, scores for multivariate
+quantities~\cite{gneiting_assessing_2008,scheuerer_variogram_2015}, fair scores for finite
+ensembles~\cite{ferro_fair_2014}, multivariate calibration~\cite{allen_assessing_2024} and the
+reliability budget of ensemble DA~\cite{rodwell_reliability_2016}. The flow-matching score
+belongs to the family of denoising and score-matching
+criteria~\cite{hyvarinen_estimation_2005,vincent_connection_2011,parry_proper_2012}: its excess
+over the optimum is the mismatched-estimation error of~\cite{verdu_mismatched_2010}, whose
+integral over the noise level is the Kullback--Leibler
+divergence~\cite{guo_mutual_2005,verdu_mismatched_2010}. We use it as a verification score for
+DA because it reduces to the mean-squared error at $\tau = 0$, applies to point estimates,
+Gaussian reports and ensembles alike, and resolves calibration along $\tau$. A comparison with
+the energy and variogram scores on one case study would show what it adds
+\needsrun{Energy and variogram scores of the L96 ensembles, alongside $\mathrm{FMSS}_\tau$.}
+
+This paper is the benchmark of a set of three: \cite{fablet_not_2026} defines the error budget
+and derives its terms for classes of schemes, \cite{fablet_flow_2026} develops the theory of the
+flow-matching score along the flow time, and the present paper measures both on classical and
+learned schemes, restating their theory only as far as its measurements need. To our knowledge,
+the shares of restriction, misspecification and approximation in the error of DA schemes have
+not been measured in a controlled setting, for the mean and for the reported uncertainty, at
+matched information across classical and learned schemes.
 
 Several questions remain open. The first concerns the nature of model error: separating
 parametric from structural error, as the full-model variant of L96 begins to do, and varying the
