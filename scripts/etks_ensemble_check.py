@@ -10,6 +10,8 @@ terms MSE_F - MSE_S, var_F - var_S, E|m_F - m_S|^2 (pooled, 24D observed space).
 usage (from a master checkout):
   etks_ensemble_check.py <val_regular|val_rlayout|test_regular|test_rlayout> <N> <out.json> [lambda case]
 (``lambda case``: one inflation for one case, s0 or s1; default both cases at 1.15 / 2.5)
+SAVE_TRAJ=1 also writes <out>_trajectories.npz: per case, the ensemble mean and variance of the ETKF
+filter pass and of the ETKS on the observed channels (float32, (windows, time, 24)), and the truth.
 """
 import glob
 import json
@@ -68,6 +70,7 @@ else:
         z.update({f"{c}_ETKS_{k}": v for k, v in np.load(per[0]).items()})
 nw = len(datasets[f"test_{CASES[0]}"])
 PER_WINDOW = {}
+TRAJ = {}
 out = {"valset": valset, "N": N, "inflation": INF, "n_windows": nw, "cases": {}}
 assert len(FILTER) == len(CASES) * nw, (len(FILTER), nw)
 for ci, c in enumerate(CASES):
@@ -82,6 +85,9 @@ for ci, c in enumerate(CASES):
         r[m] = {"t": t, "mse": float(se.mean()), "var": float(v.mean()), "rmse": float(np.sqrt(se.mean(1)).mean())}
         PER_WINDOW[f"{c}_{m}_rmse"] = np.sqrt(se.mean(1))
         PER_WINDOW[f"{c}_{m}_spread"] = np.sqrt(v).mean(1)
+        TRAJ[f"{c}_{m}_trajectories"] = t.astype(np.float32)
+        TRAJ[f"{c}_{m}_ensemble_variance"] = v.astype(np.float32)
+    TRAJ[f"{c}_truth"] = tr.astype(np.float32)
     out["cases"][c] = {
         "rmse_F": r["ETKF"]["rmse"], "rmse_S": r["ETKS"]["rmse"],
         "pooled_F": float(np.sqrt(r["ETKF"]["var"] / r["ETKF"]["mse"])),
@@ -92,6 +98,8 @@ for ci, c in enumerate(CASES):
 for c in CASES:
     PER_WINDOW[f"{c}_ETKS_crps"] = sel(np.asarray(z[f"{c}_ETKS_crps"]))
 np.savez_compressed(out_path.replace(".json", "_per_window.npz"), **PER_WINDOW)
+if os.environ.get("SAVE_TRAJ") == "1":
+    np.savez_compressed(out_path.replace(".json", "_trajectories.npz"), **TRAJ)
 json.dump(out, open(out_path, "w"), indent=1)
 print(json.dumps(out))
 for f in glob.glob(os.path.join(EXP_DIR, f"*{suffix}_*")):
