@@ -116,7 +116,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="Torch seed before sampling")
     parser.add_argument("--cases", nargs="+", default=["s0", "s1"], choices=["s0", "s1"])
     parser.add_argument("--output", default="sda_directunet_hybrid_eval_results.json", help="Output JSON")
-    parser.add_argument("--members-file", default="full", choices=["full", "scores"],
+    parser.add_argument("--members-file", default="full", choices=["full", "scores", "variance"],
                         help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
                              "only (scores_<case>.npz, KBs)")
     parser.add_argument("--keep-members", action="store_true",

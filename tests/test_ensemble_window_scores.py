@@ -41,3 +41,14 @@ def test_unknown_mode_raises(tmp_path):
     members, truth = _ensemble()
     with pytest.raises(ValueError):
         save_members_or_scores(tmp_path, "s0", members, truth, "bogus")
+
+
+def test_variance_mode_adds_ensemble_variance(tmp_path):
+    members, truth = _ensemble()
+    s = np.load(save_members_or_scores(tmp_path, "s0", members, truth, "variance"))
+    np.testing.assert_allclose(s["ensemble_variance"], members.var(axis=-1, ddof=1), rtol=1e-6)
+    assert s["ensemble_variance"].dtype == np.float32
+    (tmp_path / "ref").mkdir()
+    ref = np.load(save_members_or_scores(tmp_path / "ref", "s0", members, truth, "scores"))
+    for key in ("rmse", "crps", "spread"):
+        np.testing.assert_array_equal(s[key], ref[key])

@@ -63,3 +63,8 @@ def test_writers_route_through_members_store(script):
     assert 'output_path.parent / f"members_{case}.npz"' not in src
     assert "members_store.members_path(" in src or "members_store.members_dir(" in src
     assert '"--keep-members"' in src
+
+
+def test_variance_mode_stays_next_to_outputs(tmp_path):
+    out = tmp_path / "run"
+    assert members_store.members_dir(out, mode="variance") == out

@@ -66,7 +66,7 @@ def main():
     parser.add_argument("--output", default="neural_eval_results.json", help="Output JSON")
     parser.add_argument("--sigma-prior", type=float, default=None,
                         help="override the flow's prior std at SAMPLING time (calibration probe)")
-    parser.add_argument("--members-file", default="full", choices=["full", "scores"],
+    parser.add_argument("--members-file", default="full", choices=["full", "scores", "variance"],
                         help="full: members_<case>.npz (GBs); scores: per-window rmse/crps/spread "
                              "only (scores_<case>.npz, KBs)")
     parser.add_argument("--keep-members", action="store_true",
