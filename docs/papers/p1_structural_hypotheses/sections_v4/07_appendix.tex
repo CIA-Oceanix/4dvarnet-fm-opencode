@@ -101,16 +101,143 @@ $\Cov(\xv_1, \xv_\tau) = \tau v$ and $\mathrm{Var}(\xv_\tau) = \tau^2 v +
 \end{equation}
 Substituting $\xv_\tau^\star = \tau\xv_1^\star + (1-\tau)\xv_0$ and taking the expectation over $\xv_0$ gives property (iii).
 
-\paragraph{The chain at every $\tau$.}
-\todo{Write out: (a) $\Psi_p(\xv_\tau, C) = \E[\xv_1^\star \mid \xv_\tau, C]$ and
-$\Psi_{p_S} = \E[\xv_1^\star \mid \xv_\tau, S] = \E[\Psi_p \mid \xv_\tau, S]$; (b)
-the two orthogonality relations; (c) the condition on the scheme's randomness;
-(d) strict propriety from injectivity of Gaussian smoothing; (e) the
-$\tau \to 1$ expansion and the $d\snr$ integral (Verdú 2010).}
+\paragraph{Setting.}
+This appendix proves the results of Sects.~\ref{sec:chain} and~\ref{sec:fms} that the analysis relies on: the
+budget~\eqref{eq:chain0}--\eqref{eq:residual}, the decomposition~\eqref{eq:fms_div} and the strict propriety of
+$\FMS_\tau$, the budget at every $\tau$~\eqref{eq:chaintau} and the restriction
+identity~\eqref{eq:restriction_identity}. The truth $\xv_1^\star \in \mathbb{R}^n$ has
+$\E\|\xv_1^\star\|^2 < \infty$, and $p(\cdot \mid C)$ is its law given the context. A scheme sees $S = g(C)$, so
+that $\sigma(S) \subseteq \sigma(C)$, and reports a law $q(\cdot \mid S, U)$, where $U$ collects its internal
+randomness (ensemble draws, perturbed observations, training sample, sampler noise). Its mean is $\hat m$, and
+$m_\infty$ is any function of $S$; we write $m = \E[\xv_1^\star \mid C]$ and $m_S = \E[\xv_1^\star \mid S]$. The only
+condition on the scheme is
+\begin{equation}\label{eq:indep}
+  U \text{ is independent of } (\xv_1^\star, C), \qquad
+  \xv_0 \sim \mathcal{N}(0, I) \text{ is independent of } (\xv_1^\star, C, U).
+\end{equation}
+It fails, for instance, for an ensemble initialised from perturbations of the true state, or for a network
+evaluated on its own training windows. All identities below hold in $[0, \infty]$.
+
+\begin{proposition}[Budget of the mean]\label{prop:budget}
+Under~\eqref{eq:indep}, the decomposition~\eqref{eq:chain0} holds. If the misspecification and the approximation
+are finite, so does~\eqref{eq:residual}, and the cross term is at most
+$2\sqrt{\text{misspecification} \times \text{approximation}}$ in absolute value.
+\end{proposition}
+\begin{proof}
+Write $\hat m - \xv_1^\star = (\hat m - m_S) + (m_S - m) + (m - \xv_1^\star)$. By~\eqref{eq:indep},
+$\E[\xv_1^\star \mid C, U] = m$, so $m - \xv_1^\star$ is orthogonal in $L^2$ to every square-integrable function of
+$(C, U)$ (the orthogonality principle of the conditional mean), in particular to $m_S - m$ and, when it is
+square-integrable, to $\hat m - m_S$. By the tower property and~\eqref{eq:indep},
+$\E[m \mid S, U] = \E[m \mid S] = m_S$, so $m - m_S$ is orthogonal to every square-integrable function of
+$(S, U)$, in particular to $\hat m - m_S$. Pythagoras gives~\eqref{eq:chain0} when $\E\|\hat m - m_S\|^2 < \infty$;
+otherwise both sides are infinite, since $\|\hat m - m_S\| \le \|\hat m - \xv_1^\star\| + \|\xv_1^\star - m_S\|$. The
+first term is $\E\|m - \xv_1^\star\|^2 = \E\tr\Cov(\xv_1^\star \mid C)$. Equation~\eqref{eq:residual} expands the
+square of $(m_S - m_\infty) + (m_\infty - \hat m)$, and the bound on the cross term is Cauchy--Schwarz.
+\end{proof}
+
+Unlike the first two error terms, $m_\infty - \hat m$ need not be orthogonal to the functions of $S$: the
+finite-resource error of a scheme can be correlated with its misspecification, which is why the cross term
+of~\eqref{eq:residual} remains.
+
+\paragraph{The operator as a Gaussian channel.}
+For $\tau \in (0,1)$, $\yv = \xv_\tau / \tau = \xv_1 + \sigma_\tau \xv_0$ with $\sigma_\tau = (1-\tau)/\tau$: an
+observation of the whole state in white Gaussian noise, of signal-to-noise ratio
+$\snr = \alpha_\tau = \sigma_\tau^{-2} = \tau^2/(1-\tau)^2$. For any probability law $\rho$ on $\mathbb{R}^n$, let
+$\varphi_\sigma$ be the $\mathcal{N}(0, \sigma^2 I)$ density. The law of $\yv$ has the density
+$\rho_\sigma(\yv) = \int \varphi_\sigma(\yv - \xv)\, \rho(d\xv)$, positive and infinitely differentiable on
+$\mathbb{R}^n$, and
+\begin{equation}\label{eq:psi_explicit}
+  \Psi_\rho(\xv_\tau, \tau)
+  = \frac{\int \xv\, \varphi_\sigma(\yv - \xv)\, \rho(d\xv)}{\int \varphi_\sigma(\yv - \xv)\, \rho(d\xv)}
+  = \yv + \sigma_\tau^2\, \nabla \log \rho_\sigma(\yv), \qquad \yv = \xv_\tau / \tau,\ \sigma = \sigma_\tau ,
+\end{equation}
+is a version of $\E_\rho[\xv_1 \mid \xv_\tau]$, finite and continuous at every $\yv$ with no moment assumption on
+$\rho$, since $\|\xv\|\varphi_\sigma(\yv - \xv)$ is bounded in $\xv$. The second form, Tweedie's formula, follows by
+differentiating $\rho_\sigma$ under the integral; with $\nabla_{\xv_\tau} = \tau^{-1}\nabla_{\yv}$ it is the form of
+Sect.~\ref{sec:fms}, and it gives the Fisher form~\eqref{eq:fisher}. Two properties follow at once. At $\tau = 0$,
+$\xv_\tau = \xv_0$ is independent of $\xv_1$ and $\Psi_q = \mathbf{m}_q$: property~(i). A point estimate $\hat m$
+is the law $\delta_{\hat m}$, for which~\eqref{eq:psi_explicit} gives $\Psi_q \equiv \hat m$ at every $\tau$:
+property~(iv). The context enters as a parameter: $\Psi_p(\xv_\tau, C, \tau)$ is~\eqref{eq:psi_explicit} with
+$\rho = p(\cdot \mid C)$. Since $\xv_0$ is independent of $(\xv_1^\star, C)$,
+$\Psi_p = \E[\xv_1^\star \mid \xv_\tau, C]$ and $\Psi_{p_S} = \E[\xv_1^\star \mid \xv_\tau, S]$, while $\Psi_q$ is a
+function of $(\xv_\tau, S, U)$.
+
+\begin{proposition}[Decomposition and strict propriety]\label{prop:proper}
+For $\tau \in (0,1)$, $\FMS_\tau(q) = D_\tau(p \,\|\, q) + \mathrm{mmse}_p(\tau)$ with
+$\mathrm{mmse}_p(\tau) \le n/\alpha_\tau$, and $\FMS_\tau$ is strictly proper: its expectation over contexts is
+minimised by $q(\cdot \mid C) = p(\cdot \mid C)$, and only by laws equal to $p(\cdot \mid C)$ for almost every $C$.
+\end{proposition}
+\begin{proof}
+The estimator $\yv$ has error $\sigma_\tau \xv_0$, so $\mathrm{mmse}_p(\tau) \le n\sigma_\tau^2 = n/\alpha_\tau$.
+Since $\Psi_p = \E[\xv_1^\star \mid \xv_\tau, C]$, $\xv_1^\star - \Psi_p$ is orthogonal to every square-integrable
+function of $(\xv_\tau, C)$, and the argument of Proposition~\ref{prop:budget} gives the decomposition. The
+term $\mathrm{mmse}_p(\tau)$ does not depend on $q$, so the expected score of $q$ exceeds that of $p$ by
+$D_\tau \ge 0$. Suppose $D_\tau = 0$. For almost every $C$, $\Psi_q = \Psi_p$ almost everywhere under the law of
+$\yv$, whose density $p_\sigma(\cdot \mid C)$ is positive; the two operators thus agree Lebesgue-almost everywhere,
+hence everywhere by continuity. By~\eqref{eq:psi_explicit}, $\nabla \log p_\sigma = \nabla \log q_\sigma$ on
+$\mathbb{R}^n$, so $p_\sigma = c\, q_\sigma$, and $c = 1$ since both integrate to one. The Fourier transform of a
+Gaussian convolution is a product, $\hat p(\boldsymbol{\omega})\, e^{-\sigma_\tau^2\|\boldsymbol{\omega}\|^2/2}
+= \hat q(\boldsymbol{\omega})\, e^{-\sigma_\tau^2\|\boldsymbol{\omega}\|^2/2}$, so the characteristic functions,
+hence the laws, coincide: Gaussian smoothing is injective. With internal randomness, the argument applies to
+$q(\cdot \mid S, U)$ for almost every $U$, by~\eqref{eq:indep}.
+\end{proof}
+
+For a one-dimensional slice $\mathbf{u}^\top \xv_1$, the proof applies to the law of the slice. If the directions are
+drawn with a positive density on the sphere, a zero expected divergence forces equality of the slice laws for almost
+every direction, hence, by continuity of the characteristic functions along directions, for every direction, and of
+the joint laws by the Cramér--Wold theorem: property~(ii) for the sliced score.
+
+\begin{proposition}[Budget at every $\tau$]\label{prop:chaintau}
+Under~\eqref{eq:indep} and for $\tau \in (0,1)$, the decomposition~\eqref{eq:chaintau} holds, with
+$D_\tau(p \,\|\, p_S) = \E\|\Psi_p - \Psi_{p_S}\|^2$ and $D_\tau(p_S \,\|\, q) = \E\|\Psi_{p_S} - \Psi_q\|^2$,
+expectations under the true law, and its residual splits as~\eqref{eq:residual} with the operators in place of the
+means. The irreducible and restriction terms are both at most $n/\alpha_\tau$, and vanish as $\tau \to 1$.
+\end{proposition}
+\begin{proof}
+Apply Proposition~\ref{prop:budget} to the augmented contexts $C_\tau = (C, \xv_\tau)$ and $S_\tau = (S, \xv_\tau)$,
+with $\sigma(S_\tau) \subseteq \sigma(C_\tau)$, and to the estimator $\Psi_q$, a function of $(S_\tau, U)$. Condition~\eqref{eq:indep}
+carries over: $U$ is independent of $(\xv_1^\star, C, \xv_0)$, hence of $(\xv_1^\star, C_\tau)$. The conditional means
+are $\Psi_p$ and $\Psi_{p_S}$, and no moment assumption is needed, since
+$\mathrm{mmse}_p(\tau) \le \mathrm{mmse}_{p_S}(\tau) \le n/\alpha_\tau$ and, by Pythagoras, the restriction is
+$\mathrm{mmse}_{p_S}(\tau) - \mathrm{mmse}_p(\tau) \le n/\alpha_\tau$.
+\end{proof}
+
+The integrals over the signal-to-noise ratio connect these terms to information measures. For laws with finite
+second moments, $\tfrac12\int_0^\infty D_\tau(p_S \,\|\, q)\, d\alpha_\tau = \E\,\mathrm{KL}(p_S \,\|\, q)$, the
+mismatched-estimation identity of~\cite{verdu_mismatched_2010}, and the restriction integrates to
+$2\, I(\xv_1^\star; C \mid S)$ by the I-MMSE relation of~\cite{guo_mutual_2005} applied conditionally on $S$; the
+irreducible term alone is not integrable when $\xv_1^\star$ has a density. Both identities are proved for vector
+states in~\cite{fablet_flow_2026}; they are not used in the analysis.
+
+\begin{proposition}[Restriction identity]\label{prop:restriction}
+If two schemes report the exact posteriors given $S$ and $S' = g'(S)$, i.e.\ $\mathbf{m}_q = m_S$,
+$\Cov_q = \Cov(\xv_1^\star \mid S)$ and likewise for $q'$ and $S'$, then~\eqref{eq:restriction_identity} holds.
+\end{proposition}
+\begin{proof}
+Proposition~\ref{prop:budget}, with $S$ as the full context, $S'$ as the restriction and the exact scheme $q'$, gives
+$\E\|m_{S'} - \xv_1^\star\|^2 = \E\tr\Cov(\xv_1^\star \mid S) + \E\|m_S - m_{S'}\|^2$, and
+$\E\|m_S - \xv_1^\star\|^2 = \E\tr\Cov(\xv_1^\star \mid S)$, $\E\|m_{S'} - \xv_1^\star\|^2 = \E\tr\Cov(\xv_1^\star \mid S')$.
+\end{proof}
+For actual schemes, the two sides of~\eqref{eq:restriction_identity} are computed from their reported means and
+variances; a gap between them measures their departure from the exact posteriors, i.e.\ misspecification or
+approximation.
 
 \paragraph{Mixture operator.}
-\todo{The posterior-weighted average for an empirical or kernel-density output;
-nearest-member snapping of the atomic form at large $\tau$.}
+For a Gaussian mixture $q = \sum_i w_i\, \mathcal{N}(\mathbf{m}_i, \Sigma_i)$, conditioning on the component gives
+\begin{equation}\label{eq:psi_mix}
+\begin{gathered}
+  \Psi_q = \sum_i \pi_i(\xv_\tau)\, \Psi_i(\xv_\tau), \qquad
+  \pi_i \propto w_i\, \mathcal{N}\big(\xv_\tau;\, \tau \mathbf{m}_i,\, \tau^2 \Sigma_i + (1-\tau)^2 I\big),\\
+  \Psi_i = \mathbf{m}_i + \tau \Sigma_i \big(\tau^2 \Sigma_i + (1-\tau)^2 I\big)^{-1}(\xv_\tau - \tau \mathbf{m}_i),
+\end{gathered}
+\end{equation}
+the posterior-weighted average of the Gaussian operators. A kernel-density estimate is the case
+$\Sigma_i = h^2 I$, $w_i = 1/N$. An ensemble $\{\xv_1^{(i)}\}$ is the case $\Sigma_i = 0$: $\Psi_i = \xv_1^{(i)}$ and
+$\pi_i \propto \exp(-\alpha_\tau \|\yv - \xv_1^{(i)}\|^2/2)$: $\Psi_q$ is a softmax-weighted average of the members. As $\tau \to 1$, these
+weights concentrate on the member nearest to $\yv \to \xv_1^\star$, and the score of the atomic form tends to
+$\E\min_i \|\xv_1^{(i)} - \xv_1^\star\|^2$ (nearest-member snapping), which does not vanish for a finite ensemble
+drawn from the true posterior: at large $\tau$, the atomic score reads the sampling density of the ensemble as well
+as its law. Hence the kernel and per-element forms used in practice (Appendix~\ref{app:fms}).
 
 \section{The design matrix}\label{app:matrix}
 \todo{Five choices, each a column of Table~\ref{tab:schemes}:
