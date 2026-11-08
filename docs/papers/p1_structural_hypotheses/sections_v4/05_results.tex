@@ -37,7 +37,7 @@ scheme & EV & CRPSS & SS & EV & CRPSS & SS & EV & CRPSS & SS \\
 ETKF            & 0.9917 & 0.905 & 1.77 & 0.815 & 0.710 & 0.76 & 0.9758 & 0.867 & 0.71 \\
 EnKF            & 0.9918 & 0.905 & 1.76 & 0.801 & 0.693 & 0.85 & 0.9732 & 0.857 & 0.71 \\
 ETKS            & 0.9947 & \textit{0.938} & 0.86 & 0.866 & 0.744 & 0.48 & 0.9868 & 0.898 & 0.64 \\
-Strong-4DVar    & 0.9942 & (0.923) & --- & 0.741 & (0.523) &  - & 0.9911 & (0.885)$^\dagger$ & -- \\
+Strong-4DVar    & 0.9942 & (0.923) & -- & 0.741 & (0.523) & -- & 0.9911 & (0.885)$^\dagger$ & -- \\
 Weak-4DVar      & 0.9957 & (0.929) & -- & 0.757 & (0.520) & -- & & & -- \\
 \midrule
 D-Unet      & \textit{0.9962} & (0.917) & -- & 0.972 & (0.840) & -- & \textit{0.9946} & (0.905) & -- \\
@@ -405,8 +405,10 @@ raw scores, model error does not cost more on the reported distribution than on 
 ratio alone, however, does not show that the reported spread represents the model error: in the
 Gaussian form, $\mathrm{FMS}_\tau$ grows with the squared error of the mean at the rate
 $1/(1+\alpha_\tau v)^2 < 1$ for any non-zero spread $v$, so that it falls below 1 for any
-ensemble, calibrated or not. \needsrun{Counterfactual: \So{} means scored with the \Sz{}
-spreads.} Whether the spread represents the model error is shown instead by its calibration and
+ensemble, calibrated or not. Pairing the \So{} means of the L96 DA ensembles with their \Sz{}
+spreads, the ratio at $\tau = 0.75$ is 0.70--0.84 instead of 0.12--0.39: the Gaussian slope alone keeps
+it below 1, and the larger \So{} spreads, from the re-tuned inflation, account for the rest of the
+decrease. Whether the spread represents the model error is shown instead by its calibration and
 by the share of the mean in the score. The lower panels split the remaining increase: the share removed by the
 best scalar rescaling of the spread grows with $\tau$ for the L96 DA ensembles, up to 71\,\% for
 the ETKS at $\tau = 0.75$, whose spread remains mis-scaled under model error despite its re-tuned
@@ -420,8 +422,10 @@ error): the reported distributions are scored mostly through their mean, and so 
 model error. On L96, the distribution weighs more. With a perfect model, the mean part of the ETKS
 score is 33 to 66\,\%, and under model error at most 37\,\%: most of the large-$\tau$ score of
 the smoother is then the characterisation of its distribution, not its mean, consistent with the
-calibration share of Fig.~\ref{fig:missp-tau}. The learned schemes keep a mean part of 60 to
-100\,\% in both experiments.
+calibration share of Fig.~\ref{fig:missp-tau}. The ETKF and EnKF keep a mean part of 41 to
+88\,\%, and the learned ensembles of 60 to 100\,\%, in both experiments. D-Unet, which reports no
+uncertainty, scores its mean-squared error at every $\tau$, of which a Gaussian with its mean and an
+error-sized variance would keep only 29\,\% on L96.
 
 \begin{table}[t]
 \centering\small
@@ -431,7 +435,8 @@ the variance set to the realised squared error of the mean (lower bound) and the
 score (upper bound); the rest is the characterisation of the distribution around the mean. L96:
 1D learned rows (3 seeds), as in Figs.~\ref{fig:fmss}--\ref{fig:missp-tau}; the stored \Sz{} DA
 means differ from those behind the scores by up to 3\,\% in MSE. QG: $\psi_1$, $\psi_2$, one seed,
-a new draw of the same schemes. --: not computed. Sources:
+a new draw of the same schemes. D-Unet reports no uncertainty: its score, the upper bound, is
+its mean-squared error. Sources:
 \texttt{reports/l96/outputs/fm\_score/p1\_mean\_bracket.json},
 \texttt{reports/qg/outputs/qg\_p1/qg\_p1\_series.json}.}
 \label{tab:mean-share}
@@ -442,9 +447,9 @@ a new draw of the same schemes. --: not computed. Sources:
 scheme & \Sz & \So & \Sz & \So \\
 \midrule
 ETKF         & 45--86 & 41--77 & 67--94 & 70--99 \\
-EnKF         & -- & -- & 67--93 & 69--99 \\
+EnKF         & 48--88 & 46--87 & 67--93 & 69--99 \\
 ETKS         & 33--66 & 20--37 & 70--93 & 73--99 \\
-D-Unet       & -- & -- & 75--100 & 66--100 \\
+D-Unet       & 29--100 & 29--100 & 75--100 & 66--100 \\
 CFM          & 72--100 & 72--100 & 81--99 & 76--96 \\
 SDA          & 66--93 & 67--97 & 82--98 & 59--86 \\
 D-Unet+SDA   & 60--84 & 61--85 & 77--94 & 68--89 \\
@@ -519,8 +524,14 @@ DA calibrated, whereas the learned schemes, at the edge of the error statistics 
 training data, become over-confident.
 These conclusions hold when the score is evaluated on random projections of space--time
 patches rather than per element (Appendix~\ref{app:fms}), which accounts for the
-dependence between variables. \needsrun{The filter/smoother identity along $\tau$ (score
-of the ETKS's own filter pass).}
+dependence between variables. The filter/smoother identity of Sect.~\ref{sec:q1} extends along
+$\tau$, with the noised state added to both contexts (Proposition~\ref{prop:restriction}): the gap of
+scores, the gap of the reported $\mathrm{mmse}_q(\tau)$ and the shift of the operators should coincide. On L96
+with a perfect model and 100 members, they remain of the same order and shrink together as $\tau$ grows
+(0.057, 0.062 and 0.085 at $\tau = 0$; 0.023, 0.036 and 0.049 at $\tau = 0.5$; standardised units).
+Under model error, the score gap changes sign from $\tau = 0.5$ ($-0.049$, against 0.132 and 0.206):
+at large $\tau$, the filter scores better than the smoother, whose reported distribution is the more
+over-confident.
 
 \subsection{Sensitivity to the structure of the prior}\label{sec:q3}\label{sec:composition}
 The posterior~\eqref{eq:posterior} is a likelihood times a prior. Model-based DA
@@ -549,7 +560,7 @@ prior & scheme & \Sz & \So & \Sz & \So & \Sz & \So \\
 model, hard constraint & Strong-4DVar & 0.741 & 0.239 & $-1.56$ & $-6.48$ & -- & -- \\
 model + model error & Weak-4DVar & 0.757 & 0.561 & $-1.40$ & $-3.32$ & -- & -- \\
 model, 30-member ensemble & ETKS & 0.866 & 0.358 & 0.41 & $-1.56$ & 0.48 & 0.34 \\
-\emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.916} & \emph{0.359} & & & & \\
+\emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.916} & \emph{0.359} & \emph{0.63} & $\mathit{-1.49}$ & \emph{0.56} & \emph{0.36} \\
 \midrule
 learned, unconditional & SDA1$^\ast$ & 0.923 & 0.924 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
 learned, $\thv$ + forcing (true training) & SDA2 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
@@ -572,7 +583,8 @@ updates and the posterior mode approximate the posterior differently. The orderi
 of the model-based scheme, not by the fidelity of its prior, which is exact at \Sz{}. The
 learned prior also gives the better reported distribution ($\mathrm{FMSS}_{0.75}$ of
 0.62--0.69 against 0.41 for the ETKS), as it is less over-confident (SS 0.61--0.81
-against 0.48).
+against 0.48); with 100 members, the ETKS reaches the same skill for the distribution (0.63), while
+remaining over-confident (SS 0.56).
 
 \paragraph{A better prior is not a better estimate.}
 Two observations make the point. Training the SDA prior three times longer (400 to 1200

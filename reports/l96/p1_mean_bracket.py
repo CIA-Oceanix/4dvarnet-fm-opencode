@@ -8,8 +8,10 @@ characterisation of its distribution. The score of the best Gaussian with the sc
   mean(e^2 / (1 + alpha_tau e^2)) in standardised units (from the stored ensemble means);
 - upper: the score of the scalar-calibrated Gaussian, FMS_tau(c*) (committed FMS summaries).
 
-Rows and seeds as the tau-resolved figures of the paper: ETKF and ETKS (one DA run), CFM, SDA and
-D-Unet+SDA (1D backbone, 3 seeds averaged). Writes reports/l96/outputs/fm_score/p1_mean_bracket.json.
+Rows and seeds as the tau-resolved figures of the paper: ETKF, EnKF and ETKS (one DA run), D-Unet, CFM,
+SDA and D-Unet+SDA (1D backbone, 3 seeds averaged). The EnKF has no committed summary: its score and
+upper bound are computed here from its stored mean and variance, on the same scale grid. The D-Unet
+reports no uncertainty, so its score and upper bound are its mean-squared error. Writes reports/l96/outputs/fm_score/p1_mean_bracket.json.
 Caveat: the stored S0 DA means differ from those behind the committed DA scores by up to about 3 %
 in MSE (the S1 and learned rows match exactly), so the S0 DA bounds carry that uncertainty.
 """
@@ -24,7 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _inputs  # noqa: E402
-from reports.l96.probe_fm_score import norm_stats  # noqa: E402
+from reports.l96.probe_fm_score import SCALES, norm_stats  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CUR = HERE / "outputs" / "fm_score" / "current"
@@ -34,6 +36,8 @@ REG = EX / "eval_regular"
 DA_NPZ = _inputs.root("p1_benchmark", "here") / "da_current_2026-09-29" / (
     "l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0"
     "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz")
+ENKF_NPZ = EX / "da_inflation_2026-09-28" / ("l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0"
+                                          "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz")
 DA_TAG = ("da_reg_l96_baselines_trajs_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0"
           "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw")
 TAUS = (0.0, 0.25, 0.5, 0.75)
@@ -57,6 +61,11 @@ def alpha(tau: float) -> float:
 
 def lower_bound(err2: np.ndarray) -> list[float]:
     return [float((err2 / (1 + alpha(t) * err2)).mean()) for t in TAUS]
+
+
+def gauss(err2: np.ndarray, var: np.ndarray, tau: float) -> float:
+    a = alpha(tau)
+    return float(((err2 + a * var ** 2) / (1 + a * var) ** 2).mean())
 
 
 def _sel(a: np.ndarray) -> np.ndarray:
@@ -86,6 +95,17 @@ def main() -> None:
                 lower.append(lower_bound(((_mean(src, case) - truth) / sd) ** 2))
             res[case][name] = {"fms": np.mean(fms, 0).tolist(), "upper": np.mean(upper, 0).tolist(),
                                "lower": np.mean(lower, 0).tolist(), "n_seeds": len(items)}
+        z = np.load(ENKF_NPZ)
+        e2 = ((_sel(z[f"{case}_EnKF_trajectories"]).astype(np.float64) - truth) / sd) ** 2
+        v = np.clip(_sel(z[f"{case}_EnKF_ensemble_variance"]).astype(np.float64), 0, None) / sd ** 2
+        res[case]["EnKF"] = {"fms": [gauss(e2, v, t) for t in TAUS],
+                             "upper": [gauss(e2, v, 0.0)] + [min(gauss(e2, c * v, t) for c in SCALES) for t in TAUS[1:]],
+                             "lower": lower_bound(e2), "n_seeds": 1}
+        du = [((np.load(EX / f"L96B_directunet_monaiM_ep1200_seed{s}" / "ens1_no1" / f"estimates_{case}.npz")
+                ["trajectories"].astype(np.float64) - truth) / sd) ** 2 for s in SEEDS]
+        mse = float(np.mean([e.mean() for e in du]))
+        res[case]["D-Unet"] = {"fms": [mse] * len(TAUS), "upper": [mse] * len(TAUS),
+                               "lower": np.mean([lower_bound(e) for e in du], 0).tolist(), "n_seeds": len(SEEDS)}
     OUT.write_text(json.dumps({"taus": list(TAUS), "cases": res}, indent=1) + "\n")
     print(f"wrote {OUT}")
 
