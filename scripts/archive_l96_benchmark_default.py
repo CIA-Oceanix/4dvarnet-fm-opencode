@@ -16,6 +16,10 @@ Dry-run by default; ``--apply`` to link. ``--refresh`` replaces archived estimat
 eval json that differ from the report's current source (e.g. flows re-scored with the
 #257 sampler, SDA2/SDA3 re-evaluated after the S1 params fix); checkpoints are never
 replaced -- a checkpoint conflict is reported and left alone. Idempotent.
+
+The 2D (time x sector) VanillaCFM and SDA1 runs (S / M / L, seed 1) and the DirectUNet-2D-M -> SDA1-2D-M
+hybrid, behind the 2D rows of the extended report and the P1 paper tables, were trained in the
+``4dvarnet-fm-l96-fdv-2d`` worktree; they have no random-set scoring here.
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ ARCHIVE = REPO / "experiments" / "l96"
 BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
 HERE = REPO / "4dvarnet-fm-sda-nanfix/experiments"
 P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
+FDV2D = REPO / "4dvarnet-fm-l96-fdv-2d/experiments"
 REGULAR_EVAL = HERE / "eval_regular"
 CANON_EVAL = HERE / "eval_rlayout_n10-100_k4-16_w200"
 CANON_EVAL_FLOW = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
@@ -41,6 +46,7 @@ REPORTS = {"p1": "reports/l96/outputs/p1_l96_benchmark.md",
            "extended": "reports/l96/outputs/l96_benchmark_extended.md"}
 
 DET, FLOW, SDA20, SDA25, HYB = "ens1_no1", "ens30_no20", "ens30_gw20", "ens30_gw25", "tau0.1_gw2"
+HYB2D = "tau0.1_gw1"
 
 
 class Run(NamedTuple):
@@ -94,6 +100,13 @@ RUNS = (
                "A3_sda3fix_monaiM_l96_seed1") for s in (1, 2, 3)]
     + [_hybrid(f"hybrid_DU1200s{s}_A3_sda2_monaiM_l96", f"L96B_directunet_monaiM_ep1200_seed{s}",
                "A3_sda2_monaiM_l96") for s in (1, 2, 3)]
+    + [Run(n, FDV2D / n, FDV2D / n / FLOW, None, ("extended",))
+       for n in (f"L96B_vanillacfm_monai2d{t}_ep1200_seed1" for t in "SML")]
+    + [Run(n, FDV2D / n, FDV2D / "eval_regular" / n / SDA25, None, ("extended",))
+       for n in (f"L96B_sda1_monai2d{t}_ep1200_seed1" for t in "SML")]
+    + [Run("hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1", None,
+           FDV2D / "eval_regular" / "hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1" / HYB2D, None, ("extended",),
+           ("L96B_directunet2d_monaiM_seed1", "L96B_sda1_monai2dM_ep1200_seed1"))]
 )
 
 
