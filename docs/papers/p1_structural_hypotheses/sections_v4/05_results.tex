@@ -14,8 +14,8 @@ focuses on uncertainty quantification with the flow-matching score introduced in
 climatology). L96: 24 observed channels, regular observing system, 200 test windows;
 learned rows use the 2D (time $\times$ sector) circular U-Net (Sect.~\ref{sec:neural}) and are
 averaged over 3 seeds, except $^\ast$ seed 1 only (seeds 2--3 not trained yet); $^\S$ the
-unconditional SDA1 prior stands in for SDA2 / SDA3, not yet trained with the 2D backbone; $\circ$
-pending (SS needs the stored ensemble variance, not yet re-run for the 2D rows). QG: mean over $\psi_1, \psi_2$, 3 altimetry columns
+unconditional SDA1 prior stands in for SDA2 / SDA3, not yet trained with the 2D backbone; L96 SS of the
+learned rows: seed 1. QG: mean over $\psi_1, \psi_2$, 3 altimetry columns
 per day, 100 test windows, EV with the climatological variance of each layer; DA ensembles with $N = 80$
 members; learned schemes on a 3D (time $\times$ space) U-Net, one training seed: D-Unet applied to
 the whole window, CFM and SDA guided from pure noise with 30 members, and D-Unet+SDA (SDA started
@@ -41,9 +41,9 @@ Strong-4DVar    & 0.9942 & (0.923) & -- & 0.741 & (0.523) & -- & 0.9911 & (0.885
 Weak-4DVar      & 0.9957 & (0.929) & -- & 0.757 & (0.520) & -- & & & -- \\
 \midrule
 D-Unet      & \textit{0.9962} & (0.917) & -- & 0.972 & (0.840) & -- & \textit{0.9946} & (0.905) & -- \\
-CFM$^\ast$             & 0.9954 & 0.937 & 0.71 & \textit{0.977} & \textit{0.901} & $\circ$ & 0.9935 & 0.927 & 0.84 \\
-SDA$^{\ast\S}$             & 0.9883 & 0.932 & 0.57 & 0.923 & 0.790 & $\circ$ & 0.9942 & \textit{0.928} & 0.73 \\
-D-Unet+SDA$^{\ast\S}$ & \textbf{0.9980} & \textbf{0.957} & 0.63 & \textbf{0.981} & \textbf{0.908} & $\circ$ & \textbf{0.9951} & \textbf{0.929} & 0.37 \\
+CFM$^\ast$             & 0.9954 & 0.937 & 0.71 & \textit{0.977} & \textit{0.901} & 0.94 & 0.9935 & 0.927 & 0.84 \\
+SDA$^{\ast\S}$             & 0.9883 & 0.932 & 0.57 & 0.923 & 0.790 & 0.78 & 0.9942 & \textit{0.928} & 0.73 \\
+D-Unet+SDA$^{\ast\S}$ & \textbf{0.9980} & \textbf{0.957} & 0.63 & \textbf{0.981} & \textbf{0.908} & 0.68 & \textbf{0.9951} & \textbf{0.929} & 0.37 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -69,12 +69,11 @@ the ETKS (EV 0.9868). For the distribution, the three sample-based learned schem
 filtering, and the ETKF slightly outperforms the EnKF. On L63, which is low-dimensional and
 densely observed, every scheme explains more than 98.8\,\% of the variance; D-Unet+SDA is best
 for the mean and the distribution (EV 0.9980, CRPSS 0.957), and the DA schemes are within 0.006
-of it (ETKS 0.9947, Weak-4DVar 0.9957). The spread--skill ratios qualify these rankings on L96
-(for the learned schemes, values of the 1D backbone; the 2D ones are pending): CFM is nearly
-calibrated (SS 0.93), whereas the DA ensembles are
+of it (ETKS 0.9947, Weak-4DVar 0.9957). The spread--skill ratios qualify these rankings on L96:
+CFM is nearly calibrated (SS 0.94), whereas the DA ensembles are
 over-confident, the more so as they are more accurate (EnKF 0.85, ETKF 0.76, ETKS 0.48).
-SDA is moderately over-confident (0.81), and D-Unet+SDA, despite the best mean and CRPSS,
-markedly so (0.56), a consequence of its tempered guidance (Sect.~\ref{sec:q3}). On L63, by
+SDA is moderately over-confident (0.78), and D-Unet+SDA, despite the best mean and CRPSS,
+markedly so (0.68), a consequence of its tempered guidance (Sect.~\ref{sec:q3}). On L63, by
 contrast, the filters are over-dispersed at their RMSE-optimal inflation (SS 1.76--1.77), the
 smoother is close to calibrated (0.86), and the learned ensembles are over-confident
 (0.57--0.71).
@@ -210,7 +209,7 @@ competitor. On L96, SDA and D-Unet+SDA receive the biased parameters and forcing
 the model-based schemes; on QG, the SDA prior is unconditional, and its likelihood keeps the
 \Sz{} observation error. For L96, the \So{} DA model is also truncated to the 24 observed
 variables (Sect.~\ref{sec:testbeds}). $^\dagger$ estimated from the RMSE assuming Gaussian errors (a lower
-bound by up to 0.04). L96 learned rows: 2D backbone, with $^\ast$, $^\S$ and $\circ$ as in
+bound by up to 0.04). L96 learned rows: 2D backbone, with $^\ast$ and $^\S$ as in
 Table~\ref{tab:s0}. Best per column in bold, second best in italics.}
 \label{tab:s1}
 \begin{tabular}{lccccccccc}
@@ -226,9 +225,9 @@ Strong-4DVar    & 0.9378 & (0.688) & -- & 0.239 & ($-0.042$) & -- & 0.9570 & (0.
 Weak-4DVar      & 0.9918 & (0.885) & -- & 0.561 & (0.225) & -- & 0.9711 & (0.764)$^\dagger$ & -- \\
 \midrule
 D-Unet          & \textit{0.9963} & (0.919) & -- & 0.973 & (0.841) & -- & \textit{0.9893} & (0.865) & -- \\
-CFM$^\ast$             & 0.9954 & \textit{0.937} & 0.71 & \textit{0.977} & \textit{0.901} & $\circ$ & 0.9877 & \textbf{0.896} & 0.72 \\
-SDA$^{\ast\S}$             & 0.9922 & 0.933 & 1.39 & 0.924 & 0.790 & $\circ$ & 0.9728 & 0.842 & 0.51 \\
-D-Unet+SDA$^{\ast\S}$      & \textbf{0.9968} & \textbf{0.942} & 0.59 & \textbf{0.982} & \textbf{0.909} & $\circ$ & \textbf{0.9897} & \textit{0.889} & 0.27 \\
+CFM$^\ast$             & 0.9954 & \textit{0.937} & 0.71 & \textit{0.977} & \textit{0.901} & 0.95 & 0.9877 & \textbf{0.896} & 0.72 \\
+SDA$^{\ast\S}$             & 0.9922 & 0.933 & 1.39 & 0.924 & 0.790 & 0.78 & 0.9728 & 0.842 & 0.51 \\
+D-Unet+SDA$^{\ast\S}$      & \textbf{0.9968} & \textbf{0.942} & 0.59 & \textbf{0.982} & \textbf{0.909} & 0.69 & \textbf{0.9897} & \textit{0.889} & 0.27 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -547,8 +546,7 @@ flow-matching skill score at $\tau = 0.75$ and pooled spread--skill ratio (SS) i
 perfect-model (\Sz) and imperfect-model (\So) experiments, regular observing system.
 All schemes use the same explicit observation operator and error covariance. Learned rows:
 2D (time $\times$ sector) circular U-Net, seed 1 ($^\ast$; seeds 2--3 not trained yet); $\circ$
-pending (SDA2 / SDA3 not yet trained with the 2D backbone; FMSS and SS need the 2D ensembles
-re-run with their variance stored). D-Unet+SDA uses the SDA1 prior until SDA3 is trained.
+pending (SDA2 / SDA3 not yet trained with the 2D backbone). D-Unet+SDA uses the SDA1 prior until SDA3 is trained.
 The italic row is a sensitivity row.}
 \label{tab:prior}
 \begin{tabular}{llcccccc}
@@ -562,10 +560,10 @@ model + model error & Weak-4DVar & 0.757 & 0.561 & $-1.40$ & $-3.32$ & -- & -- \
 model, 30-member ensemble & ETKS & 0.866 & 0.358 & 0.41 & $-1.56$ & 0.48 & 0.34 \\
 \emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.916} & \emph{0.359} & \emph{0.63} & $\mathit{-1.49}$ & \emph{0.56} & \emph{0.36} \\
 \midrule
-learned, unconditional & SDA1$^\ast$ & 0.923 & 0.924 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
+learned, unconditional & SDA1$^\ast$ & 0.923 & 0.924 & 0.72 & 0.72 & 0.78 & 0.78 \\
 learned, $\thv$ + forcing (true training) & SDA2 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
 learned, $\thv$ + forcing (noisy training) & SDA3 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
-learned + amortised mean & D-Unet+SDA$^\ast$ & 0.981 & 0.982 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
+learned + amortised mean & D-Unet+SDA$^\ast$ & 0.981 & 0.982 & 0.89 & 0.90 & 0.68 & 0.69 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -584,7 +582,8 @@ of the model-based scheme, not by the fidelity of its prior, which is exact at \
 learned prior also gives the better reported distribution ($\mathrm{FMSS}_{0.75}$ of
 0.62--0.69 against 0.41 for the ETKS), as it is less over-confident (SS 0.61--0.81
 against 0.48); with 100 members, the ETKS reaches the same skill for the distribution (0.63), while
-remaining over-confident (SS 0.56).
+remaining over-confident (SS 0.56). With the 2D backbone, the unconditional prior moves ahead again
+(SDA1, 0.72, SS 0.78; Table~\ref{tab:prior}).
 
 \paragraph{A better prior is not a better estimate.}
 Two observations make the point. Training the SDA prior three times longer (400 to 1200
@@ -611,7 +610,8 @@ In the operator language of Sect.~\ref{sec:fms}, D-Unet+SDA composes D-Unet's me
 the anomaly of SDA3's guided sampler. It has the best mean in both experiments (EV 0.961),
 but not the best distribution: CFM reaches the same $\mathrm{FMSS}_{0.75}$ (0.80) with a
 less accurate mean, because D-Unet+SDA is over-confident (SS 0.56), a consequence of the
-tempered guidance of its sampler. The score thus separates the two components D-Unet+SDA
+tempered guidance of its sampler (1D backbone; with the 2D backbone and the SDA1 prior, both reach
+0.89 at \Sz, with SS 0.94 for CFM against 0.68). The score thus separates the two components D-Unet+SDA
 composes: an amortised mean, accurate, and an explicit-likelihood sampler whose
 uncertainty is too narrow. On QG, the learned prior alone, guided from pure noise, is
 already competitive with a perfect model (EV 0.9942, CRPSS 0.928, Table~\ref{tab:s0}); the

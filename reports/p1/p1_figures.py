@@ -1,8 +1,9 @@
 """Figures of the P1 paper (docs/papers/p1_structural_hypotheses/figures/).
 
     python reports/p1/p1_figures.py series    # L96 tau-series -> reports/p1/outputs/l96_tau_series.json
-    python reports/p1/p1_figures.py extras    # L96 ETKS-100 scores, filter/smoother identity along tau and
-                                              # the S1-mean/S0-spread counterfactual -> reports/p1/outputs/l96_extras.json
+    python reports/p1/p1_figures.py extras    # L96 ETKS-100 scores, filter/smoother identity along tau, the
+                                              # S1-mean/S0-spread counterfactual and the SS / FMSS of the 2D
+                                              # learned rows (seed 1) -> reports/p1/outputs/l96_extras.json
     python reports/p1/p1_figures.py figures   # the seven figures -> reports/p1/outputs/figures/
     python reports/p1/p1_figures.py all
 
@@ -173,7 +174,10 @@ def l96_extras() -> Path:
     enkf = np.load(ex / "da_inflation_2026-09-28" / ("l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0"
                                                      "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz"))
     lam = {"s0": "1.05", "s1": "2.5"}
-    res = {"etks100": {}, "identity": {}, "counterfactual": {}}
+    res = {"etks100": {}, "identity": {}, "counterfactual": {}, "learned2d": {}}
+    learned2d = {"CFM": ex / "L96B_vanillacfm_monai2dM_ep1200_seed1" / "ens30_no20_var",
+                 "SDA": ex / "eval_regular" / "L96B_sda1_monai2dM_ep1200_seed1" / "ens30_gw25_var",
+                 "D-Unet+SDA": ex / "eval_regular" / "hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1" / "tau0.1_gw1_var"}
     mv = {}
     for case in ("s0", "s1"):
         truth = np.load(ex / "L96B_directunet_monaiM_ep1200_seed1" / "ens1_no1" / f"estimates_{case}.npz")["truth"]
@@ -192,6 +196,14 @@ def l96_extras() -> Path:
         res["etks100"][case] = r
         res["identity"][case] = {f"{n}_members": _identity_along_tau(*std(npz, "ETKF"), *std(npz, "ETKS"), tz)
                                  for n, npz in ((30, da30), (100, z))}
+        res["learned2d"][case] = {}
+        for k, d in learned2d.items():
+            est = np.load(d / f"estimates_{case}.npz")
+            assert np.allclose(est["truth"], truth, atol=1e-4)
+            r = _from_mean_var(est["trajectories"].astype(np.float64),
+                               np.load(d / f"scores_{case}.npz")["ensemble_variance"].astype(np.float64), truth, sd)
+            r["fmss"] = [1 - f / c for f, c in zip(r["fms"], clim)]
+            res["learned2d"][case][k] = r
         mv[case] = {"ETKF": std(da30, "ETKF"), "EnKF": std(enkf, "EnKF"), "ETKS": std(da30, "ETKS"), "truth": tz}
     for k in ("ETKF", "EnKF", "ETKS"):
         (m0, v0), (m1, v1) = mv["s0"][k], mv["s1"][k]
