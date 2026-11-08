@@ -60,7 +60,7 @@ $\xv_1 \sim \rho(\cdot \mid C)$. Hence, the considered divergence is a scaled Fi
 The considered score has the following properties:
 \begin{enumerate}[label=(\roman*),leftmargin=*,nosep]
   \item At $\tau = 0$ it is the mean-squared error of the scheme's mean.
-  \item For $\tau \in (0,1)$ it is strictly proper~\cite{gneiting_strictly_2007}: its  expectation is minimised only by the true conditional distribution,  $q(\cdot \mid C) = p(\cdot \mid C)$ for almost every context. In practice, as  detailed for the ensemble form of the score (see below), the score is computed on one-dimensional slices $\mathbf{u}^\top\xv_1$ of the state --- the
+  \item For $\tau \in (0,1)$ it is strictly proper~\cite{gneiting_strictly_2007} (Proposition~\ref{prop:proper}): its  expectation is minimised only by the true conditional distribution,  $q(\cdot \mid C) = p(\cdot \mid C)$ for almost every context. In practice, as  detailed for the ensemble form of the score (see below), the score is computed on one-dimensional slices $\mathbf{u}^\top\xv_1$ of the state --- the
   coordinate axes for the per-element evaluation, random directions for the sliced  one. The computed score is then strictly proper for the distributions of the slices considered, i.e.\ for the marginal distributions in the per-element case; with directions drawn at random over a patch, its expectation over directions is strictly proper for the joint distribution of the patch (Cramér--Wold theorem).
   \item For a Gaussian $\mathcal{N}(m, v)$ with error $e$, $\FMS_\tau = (e^2 +
     \alpha_\tau\, v^2)/(1 + \alpha_\tau\, v)^2$, minimised at $v = \E e^2$ for every $\tau$:
@@ -78,7 +78,7 @@ variables $(\xv_\tau, C)$ instead of $C$: under the same conditions,
   \;+\; \underbrace{D_\tau(p \,\|\, p_S)}_{\text{restriction}}
   \;+\; \underbrace{D_\tau(p_S \,\|\, q)}_{\text{scheme residual}} ,
 \end{equation}
-with $D_\tau \ge 0$, and~\eqref{eq:chaintau} reduces to~\eqref{eq:chain0} at $\tau = 0$. The
+with $D_\tau \ge 0$ (Proposition~\ref{prop:chaintau}), and~\eqref{eq:chaintau} reduces to~\eqref{eq:chain0} at $\tau = 0$. The
 split of the residual along $\tau$, its integral over $\tau$ and its floors are developed
 in~\cite{fablet_flow_2026}. We use two consequences.
 \begin{itemize}
@@ -96,7 +96,7 @@ in~\cite{fablet_flow_2026}. We use two consequences.
       = \E\|\mathbf{m}_{q} - \mathbf{m}_{q'}\|^2 .
     \end{equation}
     The last two terms are computable without the truth, and a mismatch flags
-    misspecification or approximation; we test it in Section~\ref{sec:q1}.
+    misspecification or approximation (Proposition~\ref{prop:restriction}); we test it in Section~\ref{sec:q1}.
 \end{itemize}
 
 The divergence $D_\tau$ is not new: it is the mismatched-estimation error
