@@ -7,32 +7,35 @@ DA algorithm. With a perfect
 model, the deficit of model-based DA with respect to the best schemes is mostly reducible:
 on L96, the excess of the ensemble schemes over the best scheme splits into comparable shares
 of restriction, due to filtering, approximation, due to the ensemble size, and a residual
-(Sect.~\ref{sec:q1}). The first two shrink with smoothing and with more members. The third
-includes a structural misspecification of the posterior family --- Gaussian updates, the mode
-instead of the mean, a hard constraint --- which dominates the budget of the 4D-Var schemes, so
-that misspecification is not zero even when the dynamical model is exact. This deficit is not
-calibrated either: the DA ensembles are over-confident, and the more so as their mean improves
+(Sect.~\ref{sec:q1}). The first two shrink with smoothing and with more members. The third, an
+excess over the best scheme that our contrasts do not attribute, can include a structural
+misspecification of the posterior family --- Gaussian updates, the mode instead of the mean, a hard
+constraint --- and dominates the budget of the 4D-Var schemes, so that misspecification need not
+be zero even when the dynamical model is exact. This deficit is not calibrated either: on L96 and
+QG, the DA ensembles are over-confident, and the more so as their mean improves (on L63, the
+filters are over-dispersed at their RMSE-optimal inflation)
 (Sect.~\ref{sec:q1-uncertainty}). Smoothing and larger ensembles thus reduce the error of the
 mean, not the miscalibration of the reported uncertainty.
 
-Under model error, misspecification dominates the budget of every model-based scheme. On L96, it
-multiplies their normalised MSE by two to four, and the contrasts that reduced the perfect-model
+Under model error, misspecification dominates the budget of every model-based scheme, with the
+model-error treatments considered. On L96, it multiplies their normalised MSE by 1.8 to 4.8, and the contrasts that reduced the perfect-model
 excess no longer help (Sect.~\ref{sec:q2}). Representing the uncertainty of the model recovers
 part of the loss --- a weak constraint reduces the error of the hard one by a third to two
 fifths --- without closing the gap. For the reported uncertainty, the flow-matching score
-qualifies the picture. In raw scores, model error costs every ensemble less on the reported
-distribution than on the mean: the re-tuned spread absorbs part of it. How much it absorbs
-depends on the error model. On L96, the inflated DA ensembles remain over-confident and
-short-tailed, so that their skill for the distribution falls below that of climatology while
-their mean keeps a positive skill; on QG, an inflated observation-error variance keeps them
-calibrated, whereas the learned schemes, outside the error statistics of their training data,
-become over-confident. The score at large $\tau$ thus shows whether a scheme's reported
+qualifies the picture. In raw scores, model error does not cost more on the reported
+distribution than on the mean, but whether the reported spread represents it depends on the
+error model. On L96, the inflated DA ensembles remain over-confident and short-tailed: a scalar
+rescaling would remove up to 63\,\% of the score of the smoother at large $\tau$, and most of
+that score comes from the characterisation of the distribution rather than from the mean. On
+QG, an inflated observation-error variance keeps them calibrated, whereas the learned schemes,
+at the edge of the error statistics of their training data, become over-confident. The score at large $\tau$ thus shows whether a scheme's reported
 uncertainty represents its model error, which the mean-based scores cannot.
 
 The comparison of priors at matched likelihood (Sect.~\ref{sec:q3}) qualifies the common
 reading that learned schemes win because they learn a better prior. A learned prior
-outperforms the exact equations used by a 30-member smoother or by a hard constraint, but not
-by a 100-member smoother: the ordering is set by the approximation budget of the scheme that
+outperforms the exact equations used by a 30-member smoother or by a hard constraint and, with
+the 1D backbone, not those of a 100-member smoother (with the 2D backbone, the unconditional
+prior already exceeds it): the ordering is set by the approximation budget of the scheme that
 uses the prior, not by the fidelity of the prior. Conditioning a learned prior on the model
 parameters brings little with a perfect model, and becomes a misspecification channel under
 model error unless the prior is trained with noisy parameters. Composing an amortised mean
@@ -43,9 +46,12 @@ is misspecified.
 Model error also changes what the observations bring (Sect.~\ref{sec:q1-density}). Under
 model error, additional or more accurate observations bring little to the DA schemes, whose
 error is set by their model, whereas the learned schemes keep their perfect-model response to
-the observing system. DA-based assessments of an observing system, such as observing system
-simulation experiments, may therefore underestimate its value, and the more so as the model is
-imperfect. Classical DA nevertheless keeps clear strengths. It is better when observations are
+the observing system. Assessments of an observing system through a model-based DA system therefore measure what
+that system extracts rather than what the observations carry, and the gap grows with model
+error. This is distinct from the known overestimation of observation impact by identical-twin
+OSSEs, which comes from using the same model for the truth and the assimilation; whether the
+learned schemes would close the gap without simulations of the true system remains to be
+shown (training on the biased model). Classical DA nevertheless keeps clear strengths. It is better when observations are
 very sparse, and, together with SDA, it generalises beyond the observing systems seen in
 training, because it keeps the observation operator and the error covariance explicit: the
 learned schemes degrade when a window holds fewer or many more observations than in training,
