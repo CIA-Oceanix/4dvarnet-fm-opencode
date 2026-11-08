@@ -5,7 +5,8 @@
     python reports/p1/p1_figures.py all
 
 Inputs:
-- L96: the report bundle (reports/l96/_inputs.py roots `benchmark_extended/here` and `p1_benchmark/here`),
+- L96: the report bundle (reports/l96/_inputs.py roots `benchmark_extended/here` and `p1_benchmark/here`,
+  including the 100-member ETKF/ETKS trajectories `etks100_traj_2026-11-08`),
   the committed flow-matching summaries `reports/l96/outputs/fm_score/current/*.json`, and the pooled
   skill table of `reports/l96/outputs/p1_l96_benchmark.md` (paper tables, 2D rows).
 - QG: `reports/qg/outputs/qg_p1/qg_p1_rows.json` and `qg_p1_series.json` (reports/qg/generate_qg_p1_tables.py).
@@ -37,10 +38,7 @@ CS = np.exp(np.linspace(np.log(1 / 16), np.log(16), 49))
 IDX = list(range(8)) + [8 + k * 4 + j for k in range(8) for j in range(2)]
 DA_TAG = ("da_reg_l96_baselines_trajs_dws500_s0c_test_etks-correct-Lfull-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0"
           "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw")
-# EV of the 100-member ETKF / ETKS at S0 (the ensemble-size and filtering contrasts of the L96 budget).
-# Their per-channel errors were not stored (p1_benchmark/here/etks100_2026-10-02 keeps per-window RMSE
-# only), so these two values are not recomputed here.
-L96_EV_100_MEMBERS = {"ETKF": 0.862, "ETKS": 0.919}
+ETKS100_TRAJ = "etks100_traj_2026-11-08/etks100_test_regular_s0_lam1.05_trajectories.npz"
 
 INK, INK2, GRID, SURF = "#0b0b0b", "#52514e", "#e4e3df", "#ffffff"
 STYLE = {"ETKF": ("#2a78d6", "o"), "EnKF": ("#eb6834", "s"), "ETKS": ("#1baf7a", "^"),
@@ -271,6 +269,16 @@ def _l96_pooled_ev() -> dict:
     return out
 
 
+def l96_ev_100_members() -> dict:
+    """EV of the 100-member ETKF (the ETKS's own filter pass) and ETKS at S0, as in the paper tables:
+    per observed channel, 1 - MSE / Var(truth) pooled over windows and times, averaged over channels."""
+    z = np.load(_inputs.root("p1_benchmark", "here") / ETKS100_TRAJ)
+    truth = z["s0_truth"].astype(np.float64)
+    var_c = truth.reshape(-1, truth.shape[-1]).var(0)
+    return {m: float(np.mean(1 - ((z[f"s0_{m}_trajectories"].astype(np.float64) - truth) ** 2).mean((0, 1)) / var_c))
+            for m in ("ETKF", "ETKS")}
+
+
 def budget_figures(out: Path) -> None:
     from matplotlib.patches import Patch
     from matplotlib.ticker import FormatStrFormatter, MaxNLocator
@@ -281,7 +289,7 @@ def budget_figures(out: Path) -> None:
     learned = {"D-Unet", "CFM", "SDA", "D-Unet+SDA"}
     qg = json.loads((QG / "qg_p1_rows.json").read_text())
     l96 = _l96_pooled_ev()
-    ev = {"L96": {"S0": l96["S0"], "S1": l96["S1"], "big": L96_EV_100_MEMBERS},
+    ev = {"L96": {"S0": l96["S0"], "S1": l96["S1"], "big": l96_ev_100_members()},
           "QG": {"S0": {k: v["ev_psi"] for k, v in qg["rows"]["s0"].items()},
                  "S1": {k: v["ev_psi"] for k, v in qg["rows"]["s1"].items()},
                  "big": {k: v["ev_psi"] for k, v in qg["large_ensemble"]["s0"].items()}}}
