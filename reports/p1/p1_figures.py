@@ -1,6 +1,9 @@
 """Figures of the P1 paper (docs/papers/p1_structural_hypotheses/figures/).
 
     python reports/p1/p1_figures.py series    # L96 tau-series -> reports/p1/outputs/l96_tau_series.json
+    python reports/p1/p1_figures.py extras    # L96 ETKS-100 scores, filter/smoother identity along tau, the
+                                              # S1-mean/S0-spread counterfactual and the SS / FMSS of the 2D
+                                              # learned rows (seed 1) -> reports/p1/outputs/l96_extras.json
     python reports/p1/p1_figures.py figures   # the seven figures -> reports/p1/outputs/figures/
     python reports/p1/p1_figures.py all
 
@@ -119,9 +122,9 @@ def l96_series() -> Path:
         d = {k: _from_json(f(case)) for k, f in rows.items()}
         d["EnKF"] = _from_mean_var(_sel(enkf[f"{case}_EnKF_trajectories"]), _sel(enkf[f"{case}_EnKF_ensemble_variance"]),
                                    truth, sd)
-        du = np.mean([np.load(ex / f"L96B_directunet_monaiM_ep1200_seed{s}" / "ens1_no1" / f"estimates_{case}.npz")
-                      ["trajectories"].astype(np.float64) for s in (1, 2, 3)], 0)
-        d["D-Unet"] = _from_mean_var(du, None, truth, sd)
+        du = [_from_mean_var(np.load(ex / f"L96B_directunet_monaiM_ep1200_seed{s}" / "ens1_no1" / f"estimates_{case}.npz")
+                             ["trajectories"].astype(np.float64), None, truth, sd) for s in (1, 2, 3)]
+        d["D-Unet"] = {**du[0], "fms": np.mean([r["fms"] for r in du], 0).tolist()}
         d["Strong-4DVar"] = _from_mean_var(_sel(strong[f"{case}_Strong_4DVar_trajectories"]), None, truth, sd)
         clim = [var_c / (1 + alpha(t) * var_c) for t in TAUS]
         for k in d:
@@ -130,6 +133,87 @@ def l96_series() -> Path:
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / "l96_tau_series.json"
     path.write_text(json.dumps({"taus": TAUS, "cases": res}, indent=1) + "\n")
+    return path
+
+
+# ---------------------------------------------------------------- L96 extras (tables and text)
+
+def _gauss_fms(e2: np.ndarray, v: np.ndarray, t: float) -> float:
+    a = alpha(t)
+    return float(((e2 + a * v ** 2) / (1 + a * v) ** 2).mean())
+
+
+def _identity_along_tau(mf: np.ndarray, vf: np.ndarray, ms: np.ndarray, vs: np.ndarray, truth: np.ndarray) -> dict:
+    """Filter/smoother identity at every tau (standardised units), Proposition B.4 applied to (x_tau, S).
+
+    For exact posteriors, FMS_F - FMS_S = mmse_F - mmse_S = E||Psi_S - Psi_F||^2. Gaussian reports:
+    mmse_q(tau) = v / (1 + alpha v) per element; Psi = m + k (y - m), k = alpha v / (1 + alpha v),
+    y = x_tau / tau, and the shift is evaluated with y drawn from the smoother's predictive N(m_S, v_S + 1/alpha),
+    so that only the "score" side uses the truth.
+    """
+    out = {"score_gap": [], "mmse_gap": [], "shift": []}
+    ef2, es2 = (mf - truth) ** 2, (ms - truth) ** 2
+    for t in TAUS:
+        a = alpha(t)
+        out["score_gap"].append(_gauss_fms(ef2, vf, t) - _gauss_fms(es2, vs, t))
+        out["mmse_gap"].append(float((vf / (1 + a * vf) - vs / (1 + a * vs)).mean()))
+        kf, ks = a * vf / (1 + a * vf), a * vs / (1 + a * vs)
+        noise = 0.0 if t == 0 else float(((ks - kf) ** 2 * (vs + 1 / a)).mean())
+        out["shift"].append(float((((1 - kf) * (ms - mf)) ** 2).mean()) + noise)
+    return out
+
+
+def l96_extras() -> Path:
+    from reports.l96.probe_fm_score import norm_stats
+    ex = _inputs.root("benchmark_extended", "here")
+    p1 = _inputs.root("p1_benchmark", "here")
+    sd = _sel(norm_stats()[1])
+    da30 = np.load(p1 / "da_current_2026-09-29" / ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lfull"
+                                                    "-infs0-1.15_s1-2.5_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
+                                                    "_obsj2_int100_fw_dafw.npz"))
+    enkf = np.load(ex / "da_inflation_2026-09-28" / ("l96_baselines_trajectories_dws500_s0c_crps_infs0-1.2_s1-3.0"
+                                                     "_etkf_infs0-1.15_s1-2.5_obsj2_int100_fw_dafw.npz"))
+    lam = {"s0": "1.05", "s1": "2.5"}
+    res = {"etks100": {}, "identity": {}, "counterfactual": {}, "learned2d": {}}
+    learned2d = {"CFM": ex / "L96B_vanillacfm_monai2dM_ep1200_seed1" / "ens30_no20_var",
+                 "SDA": ex / "eval_regular" / "L96B_sda1_monai2dM_ep1200_seed1" / "ens30_gw25_var",
+                 "D-Unet+SDA": ex / "eval_regular" / "hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1" / "tau0.1_gw1_var"}
+    mv = {}
+    for case in ("s0", "s1"):
+        truth = np.load(ex / "L96B_directunet_monaiM_ep1200_seed1" / "ens1_no1" / f"estimates_{case}.npz")["truth"]
+        truth = truth.astype(np.float64)
+        var_c = float((truth.reshape(-1, 24).var(0) / sd ** 2).mean())
+        clim = [var_c / (1 + alpha(t) * var_c) for t in TAUS]
+        z = np.load(p1 / "etks100_traj_2026-11-08" / f"etks100_test_regular_{case}_lam{lam[case]}_trajectories.npz")
+        assert np.allclose(z[f"{case}_truth"], truth, atol=1e-4)
+        tz = truth / sd
+
+        def std(npz, key: str) -> tuple[np.ndarray, np.ndarray]:
+            return (_sel(npz[f"{case}_{key}_trajectories"]).astype(np.float64) / sd,
+                    np.clip(_sel(npz[f"{case}_{key}_ensemble_variance"]).astype(np.float64), 0, None) / sd ** 2)
+        r = _from_mean_var(*(a * b for a, b in zip(std(z, "ETKS"), (sd, sd ** 2))), truth, sd)
+        r["fmss"] = [1 - f / c for f, c in zip(r["fms"], clim)]
+        res["etks100"][case] = r
+        res["identity"][case] = {f"{n}_members": _identity_along_tau(*std(npz, "ETKF"), *std(npz, "ETKS"), tz)
+                                 for n, npz in ((30, da30), (100, z))}
+        res["learned2d"][case] = {}
+        for k, d in learned2d.items():
+            est = np.load(d / f"estimates_{case}.npz")
+            assert np.allclose(est["truth"], truth, atol=1e-4)
+            r = _from_mean_var(est["trajectories"].astype(np.float64),
+                               np.load(d / f"scores_{case}.npz")["ensemble_variance"].astype(np.float64), truth, sd)
+            r["fmss"] = [1 - f / c for f, c in zip(r["fms"], clim)]
+            res["learned2d"][case][k] = r
+        mv[case] = {"ETKF": std(da30, "ETKF"), "EnKF": std(enkf, "EnKF"), "ETKS": std(da30, "ETKS"), "truth": tz}
+    for k in ("ETKF", "EnKF", "ETKS"):
+        (m0, v0), (m1, v1) = mv["s0"][k], mv["s1"][k]
+        e0, e1 = (m0 - mv["s0"]["truth"]) ** 2, (m1 - mv["s1"]["truth"]) ** 2
+        d0 = float(e1.mean() - e0.mean())
+        res["counterfactual"][k] = {
+            "actual": [(_gauss_fms(e1, v1, t) - _gauss_fms(e0, v0, t)) / d0 for t in TAUS],
+            "s1_mean_s0_spread": [(_gauss_fms(e1, v0, t) - _gauss_fms(e0, v0, t)) / d0 for t in TAUS]}
+    path = OUT / "l96_extras.json"
+    path.write_text(json.dumps({"taus": TAUS, **res}, indent=1) + "\n")
     return path
 
 
@@ -454,10 +538,12 @@ def figures() -> Path:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("step", choices=("series", "figures", "all"), nargs="?", default="all")
+    p.add_argument("step", choices=("series", "extras", "figures", "all"), nargs="?", default="all")
     args = p.parse_args()
     if args.step in ("series", "all"):
         print(f"wrote {l96_series()}")
+    if args.step in ("extras", "all"):
+        print(f"wrote {l96_extras()}")
     if args.step in ("figures", "all"):
         print(f"figures in {figures()}")
 
