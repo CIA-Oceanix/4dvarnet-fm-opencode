@@ -245,15 +245,21 @@ def save_members_or_scores(out_dir, case: str, members: np.ndarray, truth: np.nd
                            mode: str = "full") -> str:
     """``mode="full"``: ``members_{case}.npz`` (members + truth, GBs);
     ``mode="scores"``: ``scores_{case}.npz`` from :func:`ensemble_window_scores`
-    plus truth-free metadata (KBs). Returns the written path."""
+    plus truth-free metadata (KBs); ``mode="variance"``: the same scores plus the
+    ensemble variance ``(W, T, D)`` float32 (ddof=1, as the DA trajectory files),
+    enough for the pooled spread--skill ratio and the Gaussian-form FMS (~60 MB).
+    Returns the written path."""
     from pathlib import Path
     out_dir = Path(out_dir)
     if mode == "full":
         path = out_dir / f"members_{case}.npz"
         np.savez_compressed(path, members=members, truth=truth)
-    elif mode == "scores":
+    elif mode in ("scores", "variance"):
         path = out_dir / f"scores_{case}.npz"
-        np.savez_compressed(path, n_members=members.shape[-1], **ensemble_window_scores(members, truth))
+        extra = {}
+        if mode == "variance":
+            extra["ensemble_variance"] = members.var(axis=-1, ddof=1).astype(np.float32)
+        np.savez_compressed(path, n_members=members.shape[-1], **ensemble_window_scores(members, truth), **extra)
     else:
         raise ValueError(f"unknown members-file mode {mode!r}")
     return str(path)

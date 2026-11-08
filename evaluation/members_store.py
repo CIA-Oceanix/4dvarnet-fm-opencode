@@ -39,7 +39,7 @@ def node_local_root() -> Path:
 
 def members_dir(output_dir: str | Path, keep: bool = False, mode: str = "full") -> Path:
     output_dir = Path(output_dir)
-    if mode == "scores" or keep_members(keep):
+    if mode in ("scores", "variance") or keep_members(keep):
         return output_dir
     local = node_local_root() / output_dir.resolve().relative_to("/")
     local.mkdir(parents=True, exist_ok=True)
