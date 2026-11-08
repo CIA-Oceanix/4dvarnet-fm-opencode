@@ -22,19 +22,19 @@ quasi-geostrophic ocean), the DA algorithm dominates with a perfect model: the d
 classical DA combines restriction, approximation and a misspecification of the posterior
 family (Gaussian updates, the mode instead of the mean) that remains with the exact
 model, whereas learned schemes lie close to the best estimate. Under model error,
-misspecification dominates every model-based budget and is not reduced by more members or
-smoothing. The re-tuned spread of the DA ensembles absorbs part of it in the reported
-distribution, but not enough on Lorenz-96, where their skill for the distribution falls below
-that of climatology while their mean keeps a positive skill. Bounding the part of the score due to
+misspecification dominates every model-based budget, with the model-error treatments
+considered, and is not reduced by more members or smoothing. On Lorenz-96, the reported
+uncertainty of the DA ensembles does not represent it: a scalar rescaling of their spread would
+remove up to 63\,\% of the score of the smoother at large flow times. Bounding the part of the score due to
 the mean shows that, at large flow times, the reported distributions of the quasi-geostrophic case
 are scored mostly through their mean, whereas under model error most of the score of the Lorenz-96
 smoother comes from the characterisation of its distribution. The
 representation of the prior matters through the algorithm that uses it: a learned prior
-can beat the exact equations, and the ranking is set by the approximation budget of the
-scheme. Explicit error models keep their value for the uncertainty: with an inflated,
+can match or beat the exact equations used by a finite ensemble or a hard constraint, the
+ranking being set by the approximation budget of the scheme. Explicit error models keep their value for the uncertainty: with an inflated,
 re-tunable observation error, the quasi-geostrophic DA ensembles remain calibrated under
-model error, whereas the learned schemes become over-confident outside the error
-statistics of their training data.
+model error, whereas the learned schemes, at the edge of the error statistics of their
+training data, become over-confident.
 %
 For sparsely observed systems with significant model error, such as ocean reanalyses,
 these results suggest assessing DA systems with scores that resolve their reported

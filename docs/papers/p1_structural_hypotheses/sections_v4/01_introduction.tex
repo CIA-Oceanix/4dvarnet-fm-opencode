@@ -6,7 +6,7 @@ carries information the observations lack, so that a model-based estimate should
 beat any estimate that ignores the model. The relevance of state-of-the-art data assimilation systems is widely acknowledged to support the monitoring and forecasting of earth system dynamics \cite{bauer_quiet_2015,carrassi_data_2018,hersbach_era5_2020,moore_synthesis_2019}.
 
 Despite these successes, practice keeps contradicting the above premise, especially when dealing with observation-sparse context. As an example, gridded sea level anomaly products from observation-only optimal and neural interpolation resolves finer scales than an eddy-permitting ocean reanalysis \cite{ballarotta_resolutions_2019,febvre_training_2023}. Over the recent years, numerous learned and hybrid schemes have been
-reported to outperform classical DA for both toy dynamical systems and real-wrold ones
+reported to outperform classical DA for both toy dynamical systems and real-world ones
 \cite{bocquet_bayesian_2020,brajard_combining_2021,rozet_score-based_2023}. Three explanations are usually offered: the dynamical model is wrong; the prior,
 derived from the model equations or learned from data, is poorly represented; or the DA
 algorithm loses information (filtering instead of smoothing, Gaussian updates, finite
@@ -41,7 +41,7 @@ Our contributions are the following:
     in~\cite{fablet_flow_2026};
   \item the resulting picture: with a perfect model, the DA algorithm dominates the budget;
     under model error, misspecification dominates it, and the uncertainty reported by the
-    schemes absorbs it only in part; and the prior representation matters through the
+    schemes represents it only in part; and the prior representation matters through the
     algorithm that uses it.
 \end{itemize}
 

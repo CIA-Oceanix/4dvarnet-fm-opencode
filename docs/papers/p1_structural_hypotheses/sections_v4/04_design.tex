@@ -13,7 +13,7 @@ Each case-study involves forced or coupled dynamics as follows:
   \item {\bf Quasi-geostrophic ocean dynamics.} We consider a two-layer quasi-geostrophic ocean \cite{vallis_atmospheric_2017} on a $64\times64$ doubly periodic grid (1000,km, time step 2,h), in the configuration of the pyqg model \cite{abernathey_pyqg_2022,ross_benchmarking_2023}, forced by the wind-stress curl of a low-order chaotic atmosphere built from coupled gyrostats \cite{gluhovsky_structure_1999}, which induces regime changes. Only the upper-layer streamfunction is observed according to randomly-sampled meridional columns mimicking satellite altimetry configurations \cite{febvre_training_2023,ballarotta_resolutions_2019}.
 \end{itemize}
 
-For each case-study, we follow the same experimental framework and design two state reconstruction problems, namely a perfect-model experiment (\Sz{}) and a imperfect-model one (\So{}):
+For each case-study, we follow the same experimental framework and design two state reconstruction problems, namely a perfect-model experiment (\Sz{}) and an imperfect-model one (\So{}):
 \begin{itemize}
     \item {\bf Perfect-model experiment (\Sz{})}: The model-based schemes assimilate the observations with the same model that generated the truth, including each window's true parameters and stochastic forcing. Their dynamical model is then exact, so that misspecification can only come from their posterior family (Gaussian updates, the mode instead of the mean)~\cite{fablet_not_2026};
     \item {\bf Imperfect-model experiment (\So{})}: The truth is unchanged, but the model-based schemes are given an imperfect model: biased parameters, a corrupted forcing, and a reduced representation of the small scales: a state space truncated to the observed variables for L96 (see below), a coarser grid that does not resolve the deformation radius for QG (Appendix~\ref{app:casestudies}). This model error, partly parametric and partly structural, adds a misspecification of the dynamics to the budget. Its structural part is of the kind of the closure error of an unresolved level studied in~\cite{fablet_not_2026,fablet_flow_2026}, here combined with parametric and forcing errors. The learned schemes are still trained on simulations of the true system, so at S1 they are a reference bound rather than a matched competitor.
@@ -53,7 +53,7 @@ error.}
 We report numerical experiments with both ensemble Kalman approaches and 4DVar schemes \cite{carrassi_data_2018}:
 \begin{itemize}[leftmargin=*]
   \item \textbf{Ensembles Kalman schemes.} We consider two ensemble filters, namely 
-  an Ensemble Transform Kalman Filter (ETKF) \cite{bishop_adaptive_2001,hunt_efficient_2007} and an Enesemble Kalman Filter (EnKF) \cite{evensen_data_2009}, and one ensemble smoother, the smoother version of the ETKF \cite{bishop_adaptive_2001,hunt_efficient_2007}. As a default configuration, we run all ensemble schemes use 30 members. We also run a 100-member ETKS as a sensitivity row.
+  an Ensemble Transform Kalman Filter (ETKF) \cite{bishop_adaptive_2001,hunt_efficient_2007} and an Ensemble Kalman Filter (EnKF) \cite{evensen_data_2009}, and one ensemble smoother, the smoother version of the ETKF \cite{bishop_adaptive_2001,hunt_efficient_2007}. As a default configuration, we run all ensemble schemes use 30 members. We also run a 100-member ETKS as a sensitivity row.
   \item \textbf{4D-Var schemes.} we consider both weak-constraint and strong-constraint 4DVar schemes, referred to respectively as Strong-4DVar and Weak-4DVar. They use L-BFGS optimizer and are cycled over sub-windows. The weak-constraint version adds a whitened model-error control at every step, of scale $q$ times the climatological
   spread~\cite{tremolet_accounting_2006}.
 \end{itemize}
@@ -85,24 +85,26 @@ of each observing system:
 These sweeps also characterise how the schemes respond to model error.
 At \Sz{}, the optimal inflation is close to one and the optimal model-error scale
 is small: Weak-4DVar then performs on par with Strong-4DVar.
-At \So{}, both increase by an order of magnitude ($\lambda$ from about 1.2 up to 2.5--4,
-$q$ from 0.03 to 0.3). On the regular observing system, the RMSE-optimal ETKF
-inflation at \So{} even yields an over-dispersed ensemble (spread--skill ratio
-1.17): in that regime, inflation lowers the RMSE by increasing the weight given to
+At \So{}, both increase markedly ($\lambda$ two- to threefold, from about 1.2 to 2.5--4;
+$q$ tenfold, from 0.03 to 0.3). On the regular observing system alone, the RMSE-optimal ETKF
+inflation at \So{}, larger than the shared value, even yields an over-dispersed ensemble
+(spread--skill ratio 1.17, against 0.59 at the shared value of Table~\ref{tab:s1}): in that regime, inflation lowers the RMSE by increasing the weight given to
 the observations rather than by representing the model error. 
 
 
 \subsection{Neural Schemes}\label{sec:neural}
 
 \paragraph{Shared backbone.}
-All learned schemes rely on the same neural architecture, a one-dimensional
-U-Net~\cite{ronneberger_u-net_2015} along the time axis of the assimilation
-window, built from the diffusion U-Net of the MONAI library~\cite{cardoso_monai_2022}.
-The 24 observed channels of the state are the input channels, and the network
-processes the full 3000-step window. The encoder has three resolution levels with
-64, 128 and 256 channels and two residual blocks per level, with group
-normalisation (32 groups), dropout 0.1 and no attention layers, for 5.9\,M
-parameters. The observations, with zeros at unobserved times and channels, are
+Within each case study, all learned schemes rely on the same neural architecture, a
+U-Net~\cite{ronneberger_u-net_2015} built from the diffusion U-Net of the MONAI
+library~\cite{cardoso_monai_2022}, with two residual blocks per resolution level, group
+normalisation, dropout 0.1 and no attention layers. For L63, it is one-dimensional along the
+time axis of the window (64, 128 and 256 channels). For L96, it is two-dimensional over time
+and the sector of the slow variables, with circular padding along the sectors (40, 80 and 160
+channels, 5.6\,M parameters); an earlier one-dimensional version (64, 128 and 256 channels,
+5.9\,M parameters), whose results still appear where stated, processes the 24 observed
+channels as input channels. For QG, it is three-dimensional over time and space
+(Appendix~\ref{app:casestudies}). In every case, the network processes the full window. The observations, with zeros at unobserved times and channels, are
 concatenated to the input as additional channels, together with the
 window's parameters $\thv$ and forcing for the schemes that use them. The
 flow time $\tau$ enters every residual block through a sinusoidal embedding;
@@ -122,8 +124,8 @@ and from how they are sampled, not from the network capacity.
   \item \textbf{Score-based DA (SDA).} Following~\cite{rozet_score-based_2023}, SDA
     learns a prior on the window states and combines it with an explicit Gaussian
     likelihood ($\mathbf{R} = 0.5\,I$) at sampling time. The prior is learned by flow
-    matching with the same backbone. We consider three versions of the prior: an unconditional prior (SDA1), a prior conditioned by model parmaters and forcings trained with only true model parameters and forcings (SDA2), the same architecture trained with noisy model parameters and forcings (SDA3). At inference time, SDA comes to leverage the available observations at each integration time step through a correction term of the prior score  by the gradient of the observation misfit of the predicted endpoint, scaled by a guidance weight  \cite{chung_diffusion_2022}.
-  \item \textbf{Hybrid (D-Unet+SDA).} The hybrid scheme combines the amortised mean of a D-Unet with the explicit likelihood and prior of an SDA guided sampler. We start the SDA sampling from a noised version of the D-Unet estimate with a given $\tau$ value (e.g., $\tau_0 = 0.1$), instead of from pure noise. On QG, the guided sampler started from pure noise does not reach a competitive estimate (validation score 0.32, against 0.85 for D-Unet), so that SDA is only reported in this composed form there. 
+    matching with the same backbone. We consider three versions of the prior: an unconditional prior (SDA1), a prior conditioned by model parameters and forcings trained with only true model parameters and forcings (SDA2), the same architecture trained with noisy model parameters and forcings (SDA3). At inference time, SDA comes to leverage the available observations at each integration time step through a correction term of the prior score  by the gradient of the observation misfit of the predicted endpoint, scaled by a guidance weight  \cite{chung_diffusion_2022}.
+  \item \textbf{Hybrid (D-Unet+SDA).} The hybrid scheme combines the amortised mean of a D-Unet with the explicit likelihood and prior of an SDA guided sampler. We start the SDA sampling from a noised version of the D-Unet estimate with a given $\tau$ value (e.g., $\tau_0 = 0.1$), instead of from pure noise. 
 \end{itemize}
 
 \paragraph{Training setup.}
@@ -144,9 +146,8 @@ true system (Sect.~\ref{sec:testbeds}):
 CFM draws 30 members per window by integrating the flow ODE with
 10 Euler steps from independent draws of $\xv_0$. SDA and D-Unet+SDA
 draw 30 members with 10 guided steps. D-Unet is evaluated with a single
-forward pass. For schemes truely using model parameters and forcings at inference time, 
-they receive are true model parameters and forcings at \Sz{} and noisy ones at
-\So{}, as the model-based schemes do.
+forward pass. The schemes that use model parameters and forcings at inference time receive the true
+ones at \Sz{} and the biased ones at \So{}, as the model-based schemes do.
 
 \paragraph{Tuning.}
 The training settings are fixed, and only the inference hyper-parameters of the
