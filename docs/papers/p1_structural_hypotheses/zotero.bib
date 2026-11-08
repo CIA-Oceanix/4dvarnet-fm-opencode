@@ -1,4 +1,421 @@
 
+@inproceedings{mccabe_learning_2021,
+	title = {Learning to {Assimilate} in {Chaotic} {Dynamical} {Systems}},
+	url = {https://openreview.net/forum?id=ctusEbqyLwO},
+	abstract = {The accuracy of simulation-based forecasting in chaotic systems is heavily dependent on high-quality estimates of the system state at the beginning of the forecast. Data assimilation methods are used to infer these initial conditions by systematically combining noisy, incomplete observations and numerical models of system dynamics to produce highly effective estimation schemes. We introduce a self-supervised framework, which we call {\textbackslash}textit\{amortized assimilation\}, for learning to assimilate in dynamical systems. Amortized assimilation combines deep learning-based denoising with differentiable simulation, using independent neural networks to assimilate specific observation types while connecting the gradient flow between these sub-tasks with differentiable simulation and shared recurrent memory. This hybrid architecture admits a self-supervised training objective which is minimized by an unbiased estimator of the true system state even in the presence of only noisy training data. Numerical experiments across several chaotic benchmark systems highlight the improved effectiveness of our approach compared to widely-used data assimilation methods.},
+	language = {en},
+	urldate = {2026-11-08},
+	author = {McCabe, Michael and Brown, Jed},
+	month = nov,
+	year = {2021},
+}
+
+@inproceedings{rozet_learning_2024,
+	address = {Vancouver, BC, Canada},
+	title = {Learning {Diffusion} {Priors} from {Observations} by {Expectation} {Maximization}},
+	isbn = {979-8-3313-1438-5},
+	url = {http://www.proceedings.com/079017-2783.html},
+	doi = {10.52202/079017-2783},
+	urldate = {2026-11-08},
+	booktitle = {Advances in {Neural} {Information} {Processing} {Systems} 37},
+	publisher = {Neural Information Processing Systems Foundation, Inc. (NeurIPS)},
+	author = {Rozet, François and Andry, Gérôme and Lanusse, François and Louppe, Gilles},
+	year = {2024},
+	pages = {87647--87682},
+}
+
+@article{laloyaux_exploring_2020,
+	title = {Exploring the potential and limitations of weak‐constraint {4D}‐{Var}},
+	volume = {146},
+	issn = {0035-9009, 1477-870X},
+	url = {https://rmets.onlinelibrary.wiley.com/doi/10.1002/qj.3891},
+	doi = {10.1002/qj.3891},
+	abstract = {Abstract
+            
+              The standard formulation of 4D‐Var assumes random zero‐mean errors for all sources of information used in the analysis. This assumption is usually not well verified in real‐world applications. The performance of a weak‐constraint 4D‐Var formulation ("forcing" formulation) is studied in this paper in a simplified experimental setting using additive model errors of different length‐scales and observing systems of different coverage and accuracy. A set of twin experiments is carried out and results show that weak‐constraint 4D‐Var can accurately estimate the actual model errors and the initial state only when background and model errors have different spatial scales and when the observations are unbiased and spatially homogeneous. We also present preliminary results from a different weak‐constraint 4D‐Var formulation ("state" formulation) which could in principle overcome some of these limitations, but at the cost of a substantial increase of computational and memory requirements. These findings help identify the potential but also the intrinsic limitations of the weak‐constraint 4D‐Var approach. They also help to clarify the experimental results seen in the operational ECMWF analysis system where the analysis and first‐guess temperature bias is reduced by up to 50
+              
+                \%
+              
+              in the stratosphere.},
+	language = {en},
+	number = {733},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Laloyaux, P. and Bonavita, M. and Chrust, M. and Gürol, S.},
+	month = oct,
+	year = {2020},
+	pages = {4067--4082},
+}
+
+@article{yu_evaluation_2019,
+	title = {Evaluation of nonidentical versus identical twin approaches for observation impact assessments: an ensemble-{Kalman}-filter-based ocean assimilation application for the {Gulf} of {Mexico}},
+	volume = {15},
+	copyright = {https://creativecommons.org/licenses/by/4.0/},
+	issn = {1812-0792},
+	shorttitle = {Evaluation of nonidentical versus identical twin approaches for observation impact assessments},
+	url = {https://os.copernicus.org/articles/15/1801/2019/},
+	doi = {10.5194/os-15-1801-2019},
+	abstract = {Assessments of ocean data assimilation (DA) systems and observing system
+design experiments typically rely on identical or nonidentical twin
+experiments. The identical twin approach has been recognized as yielding
+biased impact assessments in atmospheric predictions, but these shortcomings
+are not sufficiently appreciated for oceanic DA applications. Here we
+present the first direct comparison of the nonidentical and identical twin
+approaches in an ocean DA application. We assess the assimilation impact for
+both approaches in a DA system for the Gulf of Mexico that uses the ensemble
+Kalman filter. Our comparisons show that, despite a reasonable error growth
+rate in both approaches, the identical twin produces a biased skill
+assessment, overestimating the improvement from assimilating sea surface
+height and sea surface temperature observations while underestimating the
+value of assimilating temperature and salinity profiles. Such biases can
+lead to an undervaluation of some observing assets (in this case profilers)
+and thus a misguided distribution of observing system investments.},
+	language = {en},
+	number = {6},
+	urldate = {2026-11-08},
+	journal = {Ocean Science},
+	author = {Yu, Liuqian and Fennel, Katja and Wang, Bin and Laurent, Arnaud and Thompson, Keith R. and Shay, Lynn K.},
+	month = dec,
+	year = {2019},
+	pages = {1801--1814},
+}
+
+@article{halliwell_rigorous_2014,
+	title = {Rigorous {Evaluation} of a {Fraternal} {Twin} {Ocean} {OSSE} {System} for the {Open} {Gulf} of {Mexico}},
+	volume = {31},
+	issn = {0739-0572, 1520-0426},
+	url = {http://journals.ametsoc.org/doi/10.1175/JTECH-D-13-00011.1},
+	doi = {10.1175/JTECH-D-13-00011.1},
+	abstract = {Abstract
+            A new fraternal twin ocean observing system simulation experiment (OSSE) system is validated in a Gulf of Mexico domain. It is the first ocean system that takes full advantage of design criteria and rigorous evaluation procedures developed to validate atmosphere OSSE systems that have not been fully implemented for the ocean. These procedures are necessary to determine a priori that the OSSE system does not overestimate or underestimate observing system impacts. The new system consists of 1) a nature run (NR) stipulated to represent the true ocean, 2) a data assimilation system consisting of a second ocean model (the “forecast model”) coupled to a new ocean data assimilation system, and 3) software to simulate observations from the NR and to add realistic errors. The system design is described to illustrate the requirements of a validated OSSE system. The chosen NR reproduces the climatology and variability of ocean phenomena with sufficient realism. Although the same ocean model type is used (the “fraternal twin” approach), the forecast model is configured differently so that it approximately satisfies the requirement that differences (errors) with respect to the NR grow at the same rate as errors that develop between state-of-the-art ocean models and the true ocean. Rigorous evaluation procedures developed for atmospheric OSSEs are then applied by first performing observing system experiments (OSEs) to evaluate one or more existing observing systems. OSSEs are then performed that are identical except for the assimilation of synthetic observations simulated from the NR. Very similar impact assessments were realized between each OSE–OSSE pair, thus validating the system without the need for calibration.},
+	language = {en},
+	number = {1},
+	urldate = {2026-11-08},
+	journal = {Journal of Atmospheric and Oceanic Technology},
+	author = {Halliwell, G. R. and Srinivasan, A. and Kourafalou, V. and Yang, H. and Willey, D. and Le Hénaff, M. and Atlas, R.},
+	month = jan,
+	year = {2014},
+	pages = {105--130},
+}
+
+@article{bao_ensemble_2024,
+	title = {An ensemble score filter for tracking high-dimensional nonlinear dynamical systems},
+	volume = {432},
+	issn = {00457825},
+	url = {https://linkinghub.elsevier.com/retrieve/pii/S0045782524007023},
+	doi = {10.1016/j.cma.2024.117447},
+	language = {en},
+	urldate = {2026-11-08},
+	journal = {Computer Methods in Applied Mechanics and Engineering},
+	author = {Bao, Feng and Zhang, Zezhong and Zhang, Guannan},
+	month = dec,
+	year = {2024},
+	pages = {117447},
+}
+
+@article{boudier_data_2023,
+	title = {Data {Assimilation} {Networks}},
+	volume = {15},
+	issn = {1942-2466, 1942-2466},
+	url = {https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2022MS003353},
+	doi = {10.1029/2022MS003353},
+	abstract = {Abstract
+            
+              Data Assimilation aims at estimating the posterior conditional probability density functions based on error statistics of the noisy observations and the dynamical system. State of the art methods are sub‐optimal due to the common use of Gaussian error statistics and the linearization of the non‐linear dynamics. To achieve a good performance, these methods often require case‐by‐case fine‐tuning by using explicit regularization techniques such as inflation and localization. In this paper, we propose a
+              fully data driven deep learning framework
+              generalizing recurrent Elman networks and data assimilation algorithms. Our approach approximates a sequence of prior and posterior densities conditioned on noisy observations using a
+              log‐likelihood cost function
+              . By construction our approach can then be used for general nonlinear dynamics and non‐Gaussian densities. As a first step, we evaluate the performance of the proposed approach by using fully and partially observed Lorenz‐95 system in which the outputs of the recurrent network are fitted to Gaussian densities. We numerically show that our approach,
+              without using any explicit regularization technique
+              , achieves comparable performance to the state‐of‐the‐art methods, IEnKF‐Q and LETKF, across various ensemble size.
+            
+          , 
+            Plain Language Summary
+            Data Assimilation aims at forecasting the state of a dynamical system by combining information coming from the dynamics and noisy observations. Bayesian data assimilation uses the random nature of a system to predict its states in terms of probability density functions. The calculation of these densities is difficult for non‐linear dynamical systems. Practical algorithms compute limited statistics due to computational cost, but this results in sub‐optimal DA algorithms which requires then the use of explicit regularization techniques to increase the performance of the algorithm. With the advances in Machine Learning (ML) and deep learning, there has been significant increase in the research of using ML for data assimilation to decrease the computational cost, or to have better estimation of the state. In this paper, we propose a fully data driven algorithm to learn the prior and posterior pdfs conditioned on given observations. Our learning is based on a set of trajectories of the model and observations. It aims to correct the pdfs by optimizing likelihood‐based loss functions in the sense of the Kullback‐Leibler (KL) divergence. Numerical experiments show that we can obtain similar performance when compared with the IEnKF‐Q and LETKF methods, without the need of localization and inflation techniques. These numerical results shows the potential advantage of ML based algorithms when the used practical algorithms are sub‐optimal.
+          , 
+            Key Points
+            
+              
+                
+                  We propose a general framework Data Assimilation Networks (DAN) based on an extended Elman Network for Bayesian Data Assimilation
+                
+                
+                  We show that DAN can achieve optimal prior and posterior density estimations by optimizing likelihood‐based objective functions
+                
+                
+                  Numerically DAN achieve comparable performance to EnKF methods on Lorenz‐95 system, without using explicit regularization such as localization or inflation},
+	language = {en},
+	number = {4},
+	urldate = {2026-11-08},
+	journal = {Journal of Advances in Modeling Earth Systems},
+	author = {Boudier, Pierre and Fillion, Anthony and Gratton, Serge and Gürol, Selime and Zhang, Sixin},
+	month = apr,
+	year = {2023},
+	pages = {e2022MS003353},
+}
+
+@article{bocquet_accurate_2024,
+	title = {Accurate deep learning-based filtering for chaotic dynamics by identifying instabilities without an ensemble},
+	volume = {34},
+	issn = {1054-1500, 1089-7682},
+	url = {https://pubs.aip.org/cha/article/34/9/091104/3314756/Accurate-deep-learning-based-filtering-for-chaotic},
+	doi = {10.1063/5.0230837},
+	abstract = {We investigate the ability to discover data assimilation (DA) schemes meant for chaotic dynamics with deep learning. The focus is on learning the analysis step of sequential DA, from state trajectories and their observations, using a simple residual convolutional neural network, while assuming the dynamics to be known. Experiments are performed with the Lorenz 96 dynamics, which display spatiotemporal chaos and for which solid benchmarks for DA performance exist. The accuracy of the states obtained from the learned analysis approaches that of the best possibly tuned ensemble Kalman filter and is far better than that of variational DA alternatives. Critically, this can be achieved while propagating even just a single state in the forecast step. We investigate the reason for achieving ensemble filtering accuracy without an ensemble. We diagnose that the analysis scheme actually identifies key dynamical perturbations, mildly aligned with the unstable subspace, from the forecast state alone, without any ensemble-based covariances representation. This reveals that the analysis scheme has learned some multiplicative ergodic theorem associated to the DA process seen as a non-autonomous random dynamical system.},
+	language = {en},
+	number = {9},
+	urldate = {2026-11-08},
+	journal = {Chaos: An Interdisciplinary Journal of Nonlinear Science},
+	author = {Bocquet, Marc and Farchi, Alban and Finn, Tobias S. and Durand, Charlotte and Cheng, Sibo and Chen, Yumeng and Pasmans, Ivo and Carrassi, Alberto},
+	month = sep,
+	year = {2024},
+	pages = {091104},
+}
+
+@article{guo_mutual_2005,
+	title = {Mutual {Information} and {Minimum} {Mean}-{Square} {Error} in {Gaussian} {Channels}},
+	volume = {51},
+	copyright = {https://ieeexplore.ieee.org/Xplorehelp/downloads/license-information/IEEE.html},
+	issn = {0018-9448},
+	url = {http://ieeexplore.ieee.org/document/1412024/},
+	doi = {10.1109/TIT.2005.844072},
+	language = {en},
+	number = {4},
+	urldate = {2026-11-08},
+	journal = {IEEE Transactions on Information Theory},
+	author = {Guo, D. and Shamai, S. and Verdu, S.},
+	month = apr,
+	year = {2005},
+	pages = {1261--1282},
+}
+
+@article{verdu_mismatched_2010,
+	title = {Mismatched {Estimation} and {Relative} {Entropy}},
+	volume = {56},
+	copyright = {https://ieeexplore.ieee.org/Xplorehelp/downloads/license-information/IEEE.html},
+	issn = {0018-9448, 1557-9654},
+	url = {http://ieeexplore.ieee.org/document/5508632/},
+	doi = {10.1109/TIT.2010.2050800},
+	number = {8},
+	urldate = {2026-11-08},
+	journal = {IEEE Transactions on Information Theory},
+	author = {Verdu, Sergio},
+	month = aug,
+	year = {2010},
+	pages = {3712--3720},
+}
+
+@article{parry_proper_2012,
+	title = {Proper local scoring rules},
+	volume = {40},
+	issn = {0090-5364, 2168-8966},
+	url = {https://projecteuclid.org/journals/annals-of-statistics/volume-40/issue-1/Proper-local-scoring-rules/10.1214/12-AOS971.full},
+	doi = {10.1214/12-AOS971},
+	abstract = {We investigate proper scoring rules for continuous distributions on the real line. It is known that the log score is the only such rule that depends on the quoted density only through its value at the outcome that materializes. Here we allow further dependence on a finite number m of derivatives of the density at the outcome, and describe a large class of such m-local proper scoring rules: these exist for all even m but no odd m. We further show that for m ≥ 2 all such m-local rules can be computed without knowledge of the normalizing constant of the distribution.},
+	number = {1},
+	urldate = {2026-11-08},
+	journal = {The Annals of Statistics},
+	author = {Parry, Matthew and Dawid, A. Philip and Lauritzen, Steffen},
+	month = feb,
+	year = {2012},
+	pages = {561--592},
+}
+
+@article{rodwell_reliability_2016,
+	title = {Reliability in ensemble data assimilation},
+	volume = {142},
+	issn = {0035-9009, 1477-870X},
+	url = {https://rmets.onlinelibrary.wiley.com/doi/10.1002/qj.2663},
+	doi = {10.1002/qj.2663},
+	abstract = {A key attribute of a probabilistic forecast system is its reliability: the degree to which forecast probabilities agree with outcome frequencies. Here, we focus on short‐lead‐time (12 h) reliability in the nonlinear background forecasts of the Ensemble of Data Assimilations (EDA) from the European Centre for Medium‐Range Weather Forecasts (ECMWF). A ‘reliability budget’, derived from consistency arguments, is used to separate the mean‐squared departures of the ensemble mean (relative to observations) into bias, ensemble variance and observation‐error contributions, along with a residual that indicates a deficiency in reliability. At these short lead times, the residual is found to be sensitive, in a local manner, to the assignment of observation errors and to the parametrization of ‘stochastic physics’, which accounts for the deficit in a model's error growth rate. In particular, the results highlight the importance of the stochastic physics parametrization to represent error growth rates fully in convective regions and suggest that current stochastic physics may be too active in subtropical anticyclones, where the mid‐tropospheric meteorology is largely characterized by time‐mean descent and radiative cooling. Other results demonstrate how the reliability budget can be used to tune observation errors, which leads to an improvement in diagnosed background reliability. Although there remains some ambiguity in the attribution of deficiencies, the budget represents a useful additional tool that can help stimulate improvements in model stochastic error representation and observation‐error estimates. Such improvements should help facilitate the development of more reliable ensemble forecasts in future.},
+	language = {en},
+	number = {694},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Rodwell, M. J. and Lang, S. T. K. and Ingleby, N. B. and Bormann, N. and Hólm, E. and Rabier, F. and Richardson, D. S. and Yamaguchi, M.},
+	month = jan,
+	year = {2016},
+	pages = {443--454},
+}
+
+@article{allen_assessing_2024,
+	title = {Assessing the calibration of multivariate probabilistic forecasts},
+	volume = {150},
+	issn = {0035-9009, 1477-870X},
+	url = {https://rmets.onlinelibrary.wiley.com/doi/10.1002/qj.4647},
+	doi = {10.1002/qj.4647},
+	abstract = {Abstract
+            Rank and probability integral transform histograms are established tools to assess the calibration of probabilistic forecasts. They not only check whether a forecast is calibrated, but they also reveal what systematic biases (if any) are present in the forecasts. Several extensions of rank histograms have been proposed to evaluate the calibration of probabilistic forecasts for multivariate outcomes. These extensions introduce a so‐called pre‐rank function that condenses the multivariate forecasts and observations into univariate objects, from which a standard rank histogram can be produced. Existing pre‐rank functions typically aim to preserve as much information as possible when condensing the multivariate forecasts and observations into univariate objects. Although this is sensible when conducting statistical tests for multivariate calibration, it can hinder the interpretation of the resulting histograms. In this article, we demonstrate that there are few restrictions on the choice of pre‐rank function, meaning forecasters can choose a pre‐rank function depending on what information they want to extract concerning forecast performance. We introduce the concept of simple pre‐rank functions and provide examples that can be used to assess the mean, spread, and dependence structure of multivariate probabilistic forecasts, as well as pre‐rank functions that could be useful when evaluating probabilistic spatial field forecasts. The simple pre‐rank functions that we introduce are easy to interpret, easy to implement, and they deliberately provide complementary information, meaning several pre‐rank functions can be employed to achieve a more complete understanding of multivariate forecast performance. We then discuss how e‐values can be employed to formally test for multivariate calibration over time. This is demonstrated in an application to wind‐speed forecasting using the EUPPBench post‐processing benchmark dataset.},
+	language = {en},
+	number = {760},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Allen, Sam and Ziegel, Johanna and Ginsbourger, David},
+	month = apr,
+	year = {2024},
+	pages = {1315--1335},
+}
+
+@article{scheuerer_variogram-based_2015,
+	title = {Variogram-{Based} {Proper} {Scoring} {Rules} for {Probabilistic} {Forecasts} of {Multivariate} {Quantities}*},
+	volume = {143},
+	issn = {0027-0644, 1520-0493},
+	url = {http://journals.ametsoc.org/doi/10.1175/MWR-D-14-00269.1},
+	doi = {10.1175/MWR-D-14-00269.1},
+	abstract = {Abstract
+            Proper scoring rules provide a theoretically principled framework for the quantitative assessment of the predictive performance of probabilistic forecasts. While a wide selection of such scoring rules for univariate quantities exists, there are only few scoring rules for multivariate quantities, and many of them require that forecasts are given in the form of a probability density function. The energy score, a multivariate generalization of the continuous ranked probability score, is the only commonly used score that is applicable in the important case of ensemble forecasts, where the multivariate predictive distribution is represented by a finite sample. Unfortunately, its ability to detect incorrectly specified correlations between the components of the multivariate quantity is somewhat limited. In this paper the authors present an alternative class of proper scoring rules based on the geostatistical concept of variograms. The sensitivity of these variogram-based scoring rules to incorrectly predicted means, variances, and correlations is studied in a number of examples with simulated observations and forecasts; they are shown to be distinctly more discriminative with respect to the correlation structure. This conclusion is confirmed in a case study with postprocessed wind speed forecasts at five wind park locations in Colorado.},
+	language = {en},
+	number = {4},
+	urldate = {2026-11-08},
+	journal = {Monthly Weather Review},
+	author = {Scheuerer, Michael and Hamill, Thomas M.},
+	month = apr,
+	year = {2015},
+	pages = {1321--1334},
+}
+
+@article{ferro_fair_2014,
+	title = {Fair scores for ensemble forecasts: {Fair} {Scores} for {Ensemble} {Forecasts}},
+	volume = {140},
+	copyright = {http://doi.wiley.com/10.1002/tdm\_license\_1.1},
+	issn = {00359009},
+	shorttitle = {Fair scores for ensemble forecasts},
+	url = {https://onlinelibrary.wiley.com/doi/10.1002/qj.2270},
+	doi = {10.1002/qj.2270},
+	language = {en},
+	number = {683},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Ferro, C. A. T.},
+	month = jul,
+	year = {2014},
+	pages = {1917--1923},
+}
+
+@article{hodyss_what_2016,
+	title = {To what extent is your data assimilation scheme designed to find the posterior mean, the posterior mode or something else?},
+	volume = {68},
+	issn = {1600-0870},
+	url = {https://tellusjournal.org/articles/10.3402/tellusa.v68.30625},
+	doi = {10.3402/tellusa.v68.30625},
+	number = {1},
+	urldate = {2026-11-08},
+	journal = {Tellus A: Dynamic Meteorology and Oceanography},
+	author = {Hodyss, Daniel and Bishop, Craig H. and Morzfeld, Matthias},
+	month = dec,
+	year = {2016},
+	pages = {30625},
+}
+
+@article{ernst_analysis_2015,
+	title = {Analysis of the {Ensemble} and {Polynomial} {Chaos} {Kalman} {Filters} in {Bayesian} {Inverse} {Problems}},
+	volume = {3},
+	issn = {2166-2525},
+	url = {https://epubs.siam.org/doi/10.1137/140981319},
+	doi = {10.1137/140981319},
+	abstract = {We analyze the ensemble and polynomial chaos Kalman filters applied to nonlinear stationary Bayesian inverse problems. In a sequential data assimilation setting, such stationary problems arise in each step of either filter. We give a new interpretation of the approximations produced by these two popular filters in the Bayesian context and prove that, in the limit of large ensemble or high polynomial degree, both methods yield approximations which converge to a well-defined random variable termed the analysis random variable. We then show that this analysis variable is more closely related to a specific linear Bayes estimator than to the solution of the associated Bayesian inverse problem given by the posterior measure. This suggests limited or at least guarded use of these generalized Kalman filter methods for the purpose of uncertainty quantification.},
+	language = {en},
+	number = {1},
+	urldate = {2026-11-08},
+	journal = {SIAM/ASA Journal on Uncertainty Quantification},
+	author = {Ernst, Oliver G. and Sprungk, Björn and Starkloff, Hans-Jörg},
+	month = jan,
+	year = {2015},
+	pages = {823--851},
+}
+
+@article{law_evaluating_2012,
+	title = {Evaluating {Data} {Assimilation} {Algorithms}},
+	volume = {140},
+	issn = {0027-0644, 1520-0493},
+	url = {http://journals.ametsoc.org/doi/10.1175/MWR-D-11-00257.1},
+	doi = {10.1175/MWR-D-11-00257.1},
+	abstract = {Abstract
+            Data assimilation leads naturally to a Bayesian formulation in which the posterior probability distribution of the system state, given all the observations on a time window of interest, plays a central conceptual role. The aim of this paper is to use this Bayesian posterior probability distribution as a gold standard against which to evaluate various commonly used data assimilation algorithms.
+            A key aspect of geophysical data assimilation is the high dimensionality and limited predictability of the computational model. This paper examines the two-dimensional Navier–Stokes equations in a periodic geometry, which has these features and yet is tractable for explicit and accurate computation of the posterior distribution by state-of-the-art statistical sampling techniques. The commonly used algorithms that are evaluated, as quantified by the relative error in reproducing moments of the posterior, are four-dimensional variational data assimilation (4DVAR) and a variety of sequential filtering approximations based on three-dimensional variational data assimilation (3DVAR) and on extended and ensemble Kalman filters.
+            The primary conclusions are that, under the assumption of a well-defined posterior probability distribution, (i) with appropriate parameter choices, approximate filters can perform well in reproducing the mean of the desired probability distribution, (ii) they do not perform as well in reproducing the covariance, and (iii) the error is compounded by the need to modify the covariance, in order to induce stability. Thus, filters can be a useful tool in predicting mean behavior but should be viewed with caution as predictors of uncertainty. These conclusions are intrinsic to the algorithms when assumptions underlying them are not valid and will not change if the model complexity is increased.},
+	language = {en},
+	number = {11},
+	urldate = {2026-11-08},
+	journal = {Monthly Weather Review},
+	author = {Law, K. J. H. and Stuart, A. M.},
+	month = nov,
+	year = {2012},
+	pages = {3757--3782},
+}
+
+@article{dee_bias_2005,
+	title = {Bias and data assimilation},
+	volume = {131},
+	issn = {0035-9009, 1477-870X},
+	url = {https://rmets.onlinelibrary.wiley.com/doi/10.1256/qj.05.137},
+	doi = {10.1256/qj.05.137},
+	abstract = {Abstract
+            All data assimilation systems are affected by biases, caused by problems with the data, by approximations in the observation operators used to simulate the data, by limitations of the assimilating model, or by the assimilation methodology itself. A clear symptom of bias in the assimilation is the presence of systematic features in the analysis increments, such as large persistent mean values or regularly recurring spatial structures. Bias can also be detected by monitoring statistics of observed‐minus‐background residuals for different instruments. Bias‐aware assimilation methods are designed to estimate and correct systematic errors jointly with the model state variables. Such methods require attribution of a bias to a particular source, and its characterization in terms of some well‐defined set of parameters. They can be formulated either in a variational or sequential estimation framework by augmenting the system state with the bias parameters. Copyright © 2005 Royal Meteorological Society},
+	language = {en},
+	number = {613},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Dee, D. P.},
+	month = oct,
+	year = {2005},
+	pages = {3323--3343},
+}
+
+@article{raanes_adaptive_2019,
+	title = {Adaptive covariance inflation in the ensemble {Kalman} filter by {Gaussian} scale mixtures},
+	volume = {145},
+	issn = {0035-9009, 1477-870X},
+	url = {https://rmets.onlinelibrary.wiley.com/doi/10.1002/qj.3386},
+	doi = {10.1002/qj.3386},
+	abstract = {This paper studies multiplicative inflation: the complementary scaling of the state covariance in the ensemble Kalman filter (EnKF). Firstly, error sources in the EnKF are catalogued and discussed in relation to inflation; nonlinearity is given particular attention as a source of sampling error. In response, the “finite‐size” refinement known as the EnKF‐
+              N
+              is re‐derived via a Gaussian scale mixture, again demonstrating how it yields adaptive inflation. Existing methods for adaptive inflation estimation are reviewed, and several insights are gained from a comparative analysis. One such adaptive inflation method is selected to complement the EnKF‐
+              N
+              to make a hybrid that is suitable for contexts where model error is present and imperfectly parametrized. Benchmarks are obtained from experiments with the two‐scale Lorenz model and its slow‐scale truncation. The proposed hybrid EnKF‐
+              N
+              method of adaptive inflation is found to yield systematic accuracy improvements in comparison with the existing methods, albeit to a moderate degree.},
+	language = {en},
+	number = {718},
+	urldate = {2026-11-08},
+	journal = {Quarterly Journal of the Royal Meteorological Society},
+	author = {Raanes, Patrick N. and Bocquet, Marc and Carrassi, Alberto},
+	month = jan,
+	year = {2019},
+	pages = {53--75},
+}
+
+@article{whitaker_evaluating_2012,
+	title = {Evaluating {Methods} to {Account} for {System} {Errors} in {Ensemble} {Data} {Assimilation}},
+	volume = {140},
+	issn = {0027-0644, 1520-0493},
+	url = {http://journals.ametsoc.org/doi/10.1175/MWR-D-11-00276.1},
+	doi = {10.1175/MWR-D-11-00276.1},
+	abstract = {Abstract
+            Inflation of ensemble perturbations is employed in ensemble Kalman filters to account for unrepresented error sources. The authors propose a multiplicative inflation algorithm that inflates the posterior ensemble in proportion to the amount that observations reduce the ensemble spread, resulting in more inflation in regions of dense observations. This is justified since the posterior ensemble variance is more affected by sampling errors in these regions. The algorithm is similar to the “relaxation to prior” algorithm proposed by Zhang et al., but it relaxes the posterior ensemble spread back to the prior instead of the posterior ensemble perturbations.
+            The new inflation algorithm is compared to the method of Zhang et al. and simple constant covariance inflation using a two-level primitive equation model in an environment that includes model error. The new method performs somewhat better, although the method of Zhang et al. produces more balanced analyses whose ensemble spread grows faster. Combining the new multiplicative inflation algorithm with additive inflation is found to be superior to either of the methods used separately.
+            Tests with large and small ensembles, with and without model error, suggest that multiplicative inflation is better suited to account for unrepresented observation-network-dependent assimilation errors such as sampling error, while model errors, which do not depend on the observing network, are better treated by additive inflation. A combination of additive and multiplicative inflation can provide a baseline for evaluating more sophisticated stochastic treatments of unrepresented background errors. This is demonstrated by comparing the performance of a stochastic kinetic energy backscatter scheme with additive inflation as a parameterization of model error.},
+	language = {en},
+	number = {9},
+	urldate = {2026-11-08},
+	journal = {Monthly Weather Review},
+	author = {Whitaker, Jeffrey S. and Hamill, Thomas M.},
+	month = sep,
+	year = {2012},
+	pages = {3078--3089},
+}
+
+@misc{abernathey_pyqg_2022,
+	title = {pyqg: {Python} {Quasigeostrophic} {Model}},
+	shorttitle = {pyqg/pyqg},
+	url = {https://zenodo.org/records/6563667},
+	doi = {10.5281/zenodo.6563667},
+	urldate = {2026-10-13},
+	publisher = {Zenodo},
+	author = {Abernathey, Ryan and rochanotes and Ross, Andrew and Jansen, Malte and Li, Ziwei and Poulin, Francis J. and Constantinou, Navid C. and Sinha, Anirban and Balwada, Dhruv and SalahKouhen and Jones, Spencer and Rocha, Cesar B. and Wolfe, Christopher L. Pitt and Meng, Chuizheng and Kemenade, Hugo van and Bourbeau, James and Penn, James and Busecke, Julius and Bueti, Mike and Tobias},
+	month = may,
+	year = {2022},
+}
+
 @inproceedings{lorenz_predictability_1996,
 	title = {Predictability: a problem partly solved},
 	volume = {1},
@@ -42,25 +459,6 @@
 	author = {Ross, A. and Li, Z. and Perezhogin, P. and Fernandez-Granda, C. and Zanna, Z.},
 	year = {2023},
 	pages = {e2022MS003258},
-}
-
-@misc{abernathey_pyqg_2022,
-	title = {pyqg: {Python} {Quasigeostrophic} {Model}},
-	shorttitle = {pyqg/pyqg},
-	url = {https://zenodo.org/records/6563667},
-	doi = {10.5281/zenodo.6563667},
-	abstract = {What's Changed
-
-
-Remove subgrid\_forcing method for now by @asross in https://github.com/pyqg/pyqg/pull/308
-
-
-Full Changelog: https://github.com/pyqg/pyqg/compare/v0.7.1...v0.7.2},
-	urldate = {2026-10-13},
-	publisher = {Zenodo},
-	author = {Abernathey, Ryan and rochanotes and Ross, Andrew and Jansen, Malte and Li, Ziwei and Poulin, Francis J. and Constantinou, Navid C. and Sinha, Anirban and Balwada, Dhruv and SalahKouhen and Jones, Spencer and Rocha, Cesar B. and Wolfe, Christopher L. Pitt and Meng, Chuizheng and Kemenade, Hugo van and Bourbeau, James and Penn, James and Busecke, Julius and Bueti, Mike and Tobias},
-	month = may,
-	year = {2022},
 }
 
 @book{vallis_atmospheric_2017,
@@ -4795,7 +5193,7 @@ A series of comprehensive validation metrics is proposed, specifically tailore..
 	pages = {402 -- 405},
 }
 
-@inproceedings{fablet_statistical_2000-1,
+@inproceedings{fablet_statistical_2000,
 	address = {Barcelon, Spain},
 	title = {Statistical motion-based object indexing using optic flow field},
 	url = {https://hal.archives-ouvertes.fr/hal-02283239},
