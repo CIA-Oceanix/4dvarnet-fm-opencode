@@ -107,22 +107,22 @@ irreducible error.
 \paragraph{Restriction component in filtering schemes.}
 A filter conditions each state on past observations only, a smoother on the whole
 window. Measured with large ensembles, so that the ensemble size does not contaminate
-it, filtering costs 0.057 of normalised MSE on L96 (ETKF 0.138 against ETKS 0.081,
+it, filtering costs 0.057 of normalised MSE on L96 (ETKF 0.141 against ETKS 0.084,
 100 members) and 0.011 on QG (0.020 against 0.010, 320 members). It is the largest
 identified term of the DA ensembles in both case studies. To check that this gain is a
 restriction, we run the filter and the smoother on the same L96 ensemble realisation
 and evaluate both sides of the identity
 $\mathrm{MSE}_F - \mathrm{MSE}_S = \mathrm{var}_F - \mathrm{var}_S = \E\|m_F - m_S\|^2$
-(physical units). It holds approximately with 100 members --- an MSE gap of 0.162
-against a variance gap of 0.176 and a mean shift of 0.233 --- and less well with 30
+(physical units). It holds approximately with 100 members --- an MSE gap of 0.161
+against a variance gap of 0.176 and a mean shift of 0.241 --- and less well with 30
 (0.159, 0.227, 0.296). The deviation shrinks as the ensemble grows, as expected if it
 is an approximation error of the ensemble.
 
 \paragraph{Approximation components.} We can partly assess the approximation components of the different schemes:
 \begin{itemize}[leftmargin=*,nosep]
   \item \textbf{Ensemble size in ensemble DA approaches.} Going from 30 to 100 members reduces the normalised MSE
-    of the L96 ETKS from 0.134 to 0.081 (40\,\%) and that of the ETKF from 0.185 to
-    0.138. On QG, going from 80 to 320 members (with a re-tuned localisation radius)
+    of the L96 ETKS from 0.134 to 0.084 (37\,\%) and that of the ETKF from 0.185 to
+    0.141. On QG, going from 80 to 320 members (with a re-tuned localisation radius)
     reduces it from 0.013 to 0.010 for the ETKS and from 0.024 to 0.020 for the ETKF.
   \item \textbf{Optimisation in 4DVar schemes.} With 10 L-BFGS iterations per sub-window,
     Strong-4DVar is far from its own optimum (validation RMSE 0.721 against 0.545 with
@@ -141,7 +141,7 @@ is an approximation error of the ensemble.
 \paragraph{Residual component.}
 The excess left after these contrasts is a residual: in the budget~\eqref{eq:residual}, it
 contains the misspecification of the scheme, the cross term and the approximation that the
-resources we vary do not remove. On L96, it is 0.062 for the 100-member ETKS, consistent with
+resources we vary do not remove. On L96, it is 0.065 for the 100-member ETKS, consistent with
 the floor that a Gaussian update leaves above the MMSE for any ensemble
 size~\cite{fablet_not_2026}, and it makes up almost all of the excess of the 4D-Var schemes
 (0.22 to 0.24), although they use the exact model and have converged. Their candidates are the
@@ -160,14 +160,14 @@ reach an EV of 0.76--0.79 there, against 0.62 for Strong-4DVar and the ETKS.
 \paragraph{Synthesis.}
 Figure~\ref{fig:budget-s0} summarises the budget per scheme family. For the ensemble
 DA schemes, the excess over the floor splits into comparable shares of restriction,
-approximation and residual error on L96 (ETKF: 0.057, 0.047 and 0.062), while the
+approximation and residual error on L96 (ETKF: 0.057, 0.044 and 0.065), while the
 restriction due to filtering dominates on QG (ETKF: 0.011, 0.004 and 0.005). For the
 variational schemes, the excess is almost entirely residual in both case studies, but
 small on QG (0.004), where Strong-4DVar is the best DA scheme. By contrast, the end-to-end neural schemes,
 D-Unet and CFM, lie just above the floor in both case studies (excess 0.009 and 0.004
 on L96, 0.0006 and 0.0017 on QG). SDA, which combines a learned prior with an explicit
 likelihood, has a larger excess on L96 (0.058), in the same range as the residual
-of the 100-member ETKS (0.062). This points to a misspecification of the
+of the 100-member ETKS (0.065). This points to a misspecification of the
 posterior induced by the approximate likelihood of the guided sampler, even though the
 observation operator and the error statistics are exact. On QG, by contrast, SDA guided
 from pure noise lies within 0.001 of the floor, and started from the D-Unet estimate it
@@ -271,7 +271,7 @@ four times that of the ETKS, and 0.019--0.024 on QG, i.e. one to one and a half 
 their \Sz{} error. The contrasts that reduced their
 \Sz{} excess no longer help, as expected of a misspecification, which by definition remains
 with unlimited resources~\cite{fablet_not_2026}: 100 members leave the L96 ETKS unchanged (EV 0.358 with 30
-and 100 members), 320 members barely improve the QG ETKS (EV 0.9674 to 0.9681), and smoothing
+and 0.359 with 100 members), 320 members barely improve the QG ETKS (EV 0.9674 to 0.9681), and smoothing
 gains only 12\,\% of normalised MSE over filtering on L96 (0.642 against 0.728). On QG,
 smoothing keeps most of its \Sz{} gain (32\,\%, 0.033 against 0.048, against 45\,\% at
 \Sz). The filter/smoother identity also fails: on L96, the
@@ -523,7 +523,7 @@ prior & scheme & \Sz & \So & \Sz & \So & \Sz & \So \\
 model, hard constraint & Strong-4DVar & 0.741 & 0.239 & $-1.56$ & $-6.48$ & -- & -- \\
 model + model error & Weak-4DVar & 0.757 & 0.561 & $-1.40$ & $-3.32$ & -- & -- \\
 model, 30-member ensemble & ETKS & 0.866 & 0.358 & 0.41 & $-1.56$ & 0.48 & 0.34 \\
-\emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.919} & \emph{0.358} & & & & \\
+\emph{model, 100-member ensemble} & \emph{ETKS} & \emph{0.916} & \emph{0.359} & & & & \\
 \midrule
 learned, unconditional & SDA1$^\ast$ & 0.923 & 0.924 & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
 learned, $\thv$ + forcing (true training) & SDA2 & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ & $\circ$ \\
@@ -537,7 +537,7 @@ learned + amortised mean & D-Unet+SDA$^\ast$ & 0.981 & 0.982 & $\circ$ & $\circ$
 With a perfect model, the learned joint-window prior (SDA, EV 0.908--0.911) outperforms
 the model-derived priors of the hard constraint (Strong-4DVar, 0.741) and of the
 30-member smoother (ETKS, 0.866), although these use the exact equations. It does not
-outperform the 100-member smoother (0.919): the ordering is set by the approximation term
+outperform the 100-member smoother (0.916): the ordering is set by the approximation term
 of the model-based scheme, not by the fidelity of its prior, which is exact at \Sz{}. The
 learned prior also gives the better reported distribution ($\mathrm{FMSS}_{0.75}$ of
 0.62--0.69 against 0.41 for the ETKS), as it is less over-confident (SS 0.61--0.81
