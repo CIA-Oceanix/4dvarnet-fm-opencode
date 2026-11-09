@@ -4,6 +4,8 @@
     python reports/p1/p1_figures.py extras    # L96 ETKS-100 scores, filter/smoother identity along tau, the
                                               # S1-mean/S0-spread counterfactual and the SS / FMSS of the 2D
                                               # learned rows (3 seeds) -> reports/p1/outputs/l96_extras.json
+    python reports/p1/p1_figures.py obs       # EV of the benchmark schemes on the observing-system cells
+                                              # -> reports/p1/outputs/l96_obs_system.json
     python reports/p1/p1_figures.py figures   # the seven figures -> reports/p1/outputs/figures/
     python reports/p1/p1_figures.py all
 
@@ -461,52 +463,73 @@ def budget_figures(out: Path) -> None:
         plt.close(fig)
 
 
+OBS_CELLS = {
+    "a": ("number of observation times", [(n, f"rlayout_n{n}-{n}_k16-16_w20_d3") for n in (6, 10, 20, 30, 50, 75, 100, 300, 1000)],
+          (10, 300), True),
+    "b": ("observed fast variables", [(k, f"rlayout_n30-30_k{k}-{k}_w20_d3") for k in (0, 2, 4, 8, 12, 16)], (4, 16), False),
+    "c": ("observation-error variance", [(0.25, "rlayout_n30-30_k16-16_w20_d3_r0.25"), (0.5, "rlayout_n30-30_k16-16_w20_d3"),
+                                         (1.0, "rlayout_n30-30_k16-16_w20_d3_r1")], (0.5, 0.5), True),
+}
+OBS_DA = ("ETKF", "EnKF", "ETKS", "Strong-4DVar")
+OBS_LEARNED = {"D-Unet": ("L96B_directunet2d_monaiM_seed1", "ens1_no1"),
+               "CFM": ("L96B_vanillacfm_monai2dM_ep1200_seed1", "ens30_no20"),
+               "SDA": ("L96B_sda2_monai2dM_ep1200_seed1", "ens30_gw25"),
+               "D-Unet+SDA": ("hybrid_DU2dMs1_L96B_sda3fix_monai2dM_ep1200_seed1", "tau0.1_gw1")}
+OBS_DA_INF = "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
+
+
+def _one(d: Path, pattern: str) -> Path:
+    hits = sorted(d.glob(pattern))
+    assert len(hits) == 1, (d, pattern, hits)
+    return hits[0]
+
+
+def _ev(est: np.ndarray, truth: np.ndarray) -> float:
+    """Paper EV on the 24 observed channels: per channel 1 - MSE / Var(truth), pooled over the cell's runs and
+    times, averaged over channels."""
+    t = truth.reshape(-1, truth.shape[-1])
+    return float(np.mean(1 - ((est - truth) ** 2).reshape(t.shape).mean(0) / t.var(0)))
+
+
+def l96_obs_system() -> Path:
+    """EV of the benchmark schemes on the cells of the observing-system figure -> l96_obs_system.json."""
+    here = _inputs.root("benchmark_extended", "here")
+    import torch
+    data = torch.load(_inputs.root("p1_benchmark", "here") / "l96_datasets_obsj2_int100_nwin200.pt", weights_only=False)
+    da_dir = here / "obs_system_da"
+    res = {}
+    for case, key in (("s0", "test_s0"), ("s1", "test_s1")):
+        res[case] = {}
+        for _, cells, _, _ in OBS_CELLS.values():
+            for _, c in cells:
+                if c in res[case]:
+                    continue
+                pw = np.load(_one(da_dir / "l96_da_random_layout", f"per_window_{c}_etks-*{OBS_DA_INF}.npz"))
+                truth = np.stack([data[key][int(w)]["true_state"].numpy()[:, IDX] for w in pw[f"{case}_window_index"]])
+                truth = truth.astype(np.float64)
+                z = np.load(_one(da_dir, f"l96_baselines_trajectories_dws500_{c}_etks-*{OBS_DA_INF}_obsj2_fw_dafw.npz"))
+                row = {m: _ev(_sel(z[f"{case}_{m.replace('-', '_')}_trajectories"]).astype(np.float64), truth) for m in OBS_DA}
+                for lab, (run, sub) in OBS_LEARNED.items():
+                    e = np.load(here / "eval_obs_system" / c / run / sub / f"estimates_{case}.npz")
+                    assert np.allclose(e["truth"], truth, atol=1e-4), (c, run, case)
+                    row[lab] = _ev(e["trajectories"].astype(np.float64), truth)
+                res[case][c] = row
+    path = OUT / "l96_obs_system.json"
+    path.write_text(json.dumps({"cells": {k: [[x, c] for x, c in v[1]] for k, v in OBS_CELLS.items()}, "ev": res},
+                               indent=1) + "\n")
+    return path
+
+
 def obs_system_figure(out: Path) -> None:
     plt = _plt()
-    here = _inputs.root("benchmark_extended", "here")
-    da_dir = here / "da_inflation_2026-09-28" / "l96_da_random_layout"
-    tag = "_infs0-1.2_s1-3.0_etkf_infs0-1.15_s1-2.5"
-    learned = {"D-Unet (400 ep)": ("L96B_directunet_monaiM_seed1", ["ens1_no1"]),
-               "CFM (400 ep)": ("L96B_vanillacfm_monaiM_seed1", ["ens30_no20", "ens30_no10"]),
-               "SDA1 (1200 ep)": ("B4_sda1_monaiM_ep1200_l96_seed1", ["ens30_gw25", "ens30_gw20"])}
-
-    def cell(n, k, r=None):
-        return f"rlayout_n{n}-{n}_k{k}-{k}_w20_d3" + (f"_r{r}" if r is not None else "")
-
-    def da_rmse(c, case, m):
-        f = da_dir / f"per_window_{c}{tag}.npz"
-        return float(np.load(f)[f"{case}_{m}_rmse_all_obs"].mean()) if f.exists() else None
-
-    def learned_rmse(c, case, run, subs):
-        for root in ("eval_factorial", "eval_ood"):
-            for s in subs:
-                f = here / root / c / run / s / f"estimates_{case}.npz"
-                if f.exists():
-                    z = np.load(f)
-                    e = z["trajectories"].astype(np.float64) - z["truth"].astype(np.float64)
-                    return float(np.sqrt((e ** 2).mean(1)).mean())
-        return None
-
-    axes_spec = {
-        "a": ("number of observation times", [(n, cell(n, 16)) for n in (6, 10, 20, 30, 50, 75, 100, 300, 1000)], (10, 300), True),
-        "b": ("observed fast variables", [(k, cell(30, k)) for k in (0, 2, 4, 8, 12, 16)], (4, 16), False),
-        "c": ("observation-error variance", [(0.25, cell(30, 16, 0.25)), (0.5, cell(30, 16)), (1.0, cell(30, 16, 1))], (0.5, 0.5), True),
-    }
-    data = {}
-    for case in ("s0", "s1"):
-        for key, (_, cells, _, _) in axes_spec.items():
-            for x, c in cells:
-                for m in ("ETKF", "EnKF"):
-                    data[(case, key, m, x)] = da_rmse(c, case, m)
-                for lab, (run, subs) in learned.items():
-                    data[(case, key, lab, x)] = learned_rmse(c, case, run, subs)
-    style = {"ETKF": ("#2a78d6", "o", "-"), "EnKF": ("#eb6834", "s", "-"),
-             "D-Unet (400 ep)": ("#52514e", "x", "--"), "CFM (400 ep)": ("#eda100", "D", "-"),
-             "SDA1 (1200 ep)": ("#e87ba4", "v", "-")}
-    fig, axes = plt.subplots(2, 3, figsize=(7.0, 4.4), gridspec_kw={"hspace": 0.4, "wspace": 0.3})
+    ev = json.loads((OUT / "l96_obs_system.json").read_text())["ev"]
+    style = {"ETKF": ("#2a78d6", "o", "-"), "EnKF": ("#eb6834", "s", "-"), "ETKS": ("#1baf7a", "^", "-"),
+             "Strong-4DVar": ("#52514e", "x", ":"), "D-Unet": ("#52514e", "+", "--"), "CFM": ("#eda100", "D", "-"),
+             "SDA": ("#e87ba4", "v", "-"), "D-Unet+SDA": ("#008300", "P", "-")}
+    fig, axes = plt.subplots(2, 3, figsize=(7.0, 4.6), gridspec_kw={"hspace": 0.4, "wspace": 0.3})
     for i, case in enumerate(("s0", "s1")):
         for j, key in enumerate("abc"):
-            label, cells, (lo, hi), logx = axes_spec[key]
+            label, cells, (lo, hi), logx = OBS_CELLS[key]
             ax = axes[i, j]
             _style_axes(ax)
             xs = [x for x, _ in cells]
@@ -515,9 +538,7 @@ def obs_system_figure(out: Path) -> None:
             else:
                 ax.axvspan(lo, hi, color="#f0efec", zorder=0)
             for m, (col, mk, ls) in style.items():
-                pts = [(x, data[(case, key, m, x)]) for x in xs if data[(case, key, m, x)] is not None]
-                if pts:
-                    ax.plot(*zip(*pts), color=col, marker=mk, ls=ls, lw=1.6, ms=4.5, label=m)
+                ax.plot(xs, [ev[case][c][m] for _, c in cells], color=col, marker=mk, ls=ls, lw=1.4, ms=4, label=m)
             if logx:
                 ax.set_xscale("log")
             ticks = [6, 10, 30, 100, 300, 1000] if key == "a" else xs
@@ -528,9 +549,9 @@ def obs_system_figure(out: Path) -> None:
             if i == 1:
                 ax.set_xlabel(label)
             if j == 0:
-                ax.set_ylabel("RMSE")
+                ax.set_ylabel("EV")
     h, lab = axes[0, 0].get_legend_handles_labels()
-    fig.legend(h, lab, loc="upper center", ncol=5, frameon=False, fontsize=7, bbox_to_anchor=(0.5, 1.02))
+    fig.legend(h, lab, loc="upper center", ncol=8, frameon=False, fontsize=6.5, bbox_to_anchor=(0.5, 1.02))
     _save(fig, out, "fig_obs_system")
     plt.close(fig)
 
@@ -549,12 +570,14 @@ def figures() -> Path:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("step", choices=("series", "extras", "figures", "all"), nargs="?", default="all")
+    p.add_argument("step", choices=("series", "extras", "obs", "figures", "all"), nargs="?", default="all")
     args = p.parse_args()
     if args.step in ("series", "all"):
         print(f"wrote {l96_series()}")
     if args.step in ("extras", "all"):
         print(f"wrote {l96_extras()}")
+    if args.step in ("obs", "all"):
+        print(f"wrote {l96_obs_system()}")
     if args.step in ("figures", "all"):
         print(f"figures in {figures()}")
 
