@@ -135,6 +135,29 @@ Field EVs are for the forced dataset.
 | S1: weak 4D-Var − ETKF (R × 6) | −0.021 [−0.041, −0.005] |
 | S1: weak 4D-Var − EnKS (R × 6) | −0.053 [−0.074, −0.036] |
 
+## Weak constraint at S0 (added 2026-11-09)
+
+**Val (10 windows, 10-day sub-windows, spectral B × 1, 60 iterations, R × 1):**
+
+| model-error scale | score | ψ₁ | ψ₂ | q₁ | q₂ | fallbacks |
+|---|---|---|---|---|---|---|
+| 0.005 | 0.823 | 0.975 | 0.984 | 0.724 | 0.609 | 0 |
+| **0.01** | **0.827** | 0.976 | 0.985 | 0.731 | 0.617 | 0 |
+| 0.02 | 0.814 | 0.972 | 0.983 | 0.705 | 0.597 | 1 |
+| 0.05 | 0.799 | 0.970 | 0.981 | 0.678 | 0.568 | 2 |
+| 0.1 | 0.803 | 0.968 | 0.980 | 0.690 | 0.576 | 1 |
+| strong (reference) | 0.824 | 0.975 | 0.984 | 0.722 | 0.613 | 0 |
+
+**Selected:** model-error scale 0.01, by the S1 rule (best mean field EV). With a perfect model the
+weak constraint only matches the strong one: the optimal scale is 10× smaller than at S1.
+
+**Test (100 windows, SLURM 70744):**
+- Score 0.839, against 0.840 for the strong constraint; ψ₁ 0.977, ψ₂ 0.983, q₁ 0.750, q₂ 0.646.
+- 5 fallbacks (strong: 3).
+- In the P1 table convention (climatological EV over ψ₁, ψ₂): EV 0.9906, MAE skill 0.882, against
+  0.9911 / 0.885 for Strong-4DVar.
+- Row `Weak-4DVar` of `reports/qg/outputs/qg_p1/qg_p1_rows.json` (S0).
+
 ## Findings
 
 1. **In the perfect model, 4D-Var is the best estimate.** It beats the EnKS
