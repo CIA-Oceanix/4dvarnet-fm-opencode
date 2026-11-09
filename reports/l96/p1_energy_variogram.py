@@ -140,10 +140,40 @@ def score(root: Path, out: Path, label: str | None) -> None:
               f"VS {arr['vs_snap'].mean():.4f} <- {f}", flush=True)
 
 
-FMSS_SOURCES = {"ETKF": ("series", "ETKF", "DA run"), "EnKF": ("series", "EnKF", "DA run"),
-                "ETKS": ("series", "ETKS", "DA run"), "CFM": ("learned2d", "CFM", "2D, seed 1"),
-                "SDA": ("learned2d", "SDA", "2D SDA1, seed 1"),
-                "D-Unet+SDA": ("learned2d", "D-Unet+SDA", "2D D-Unet -> SDA1, seed 1")}
+# row -> (score file label, FMSS source, FMSS key, note). Main rows follow the final P1 mapping
+# (SDA = SDA2-2D, D-Unet+SDA = DirectUNet-2D -> SDA3-fix-2D); the SDA1-based rows of the first
+# scoring run, filed under the generic labels "SDA" / "D-Unet+SDA", are kept as a sensitivity entry.
+# Learned FMSS_0.75: the seed-1 value (per_seed[0]), as the scores are on seed 1.
+ROWS = {"ETKF": ("ETKF", "series", "ETKF", "DA run"), "EnKF": ("EnKF", "series", "EnKF", "DA run"),
+        "ETKS": ("ETKS", "series", "ETKS", "DA run"), "CFM": ("CFM", "learned2d", "CFM", "2D CFM, seed 1"),
+        "SDA": ("SDA2", "learned2d", "SDA2", "2D SDA2, seed 1"),
+        "D-Unet+SDA": ("D-Unet+SDA3", "learned2d", "D-Unet+SDA", "2D D-Unet -> SDA3-fix, seed 1")}
+SENSITIVITY = {"SDA1": ("SDA", "learned2d", "SDA1", "2D SDA1, seed 1"),
+               "D-Unet+SDA1": ("D-Unet+SDA", "learned2d", "D-Unet+SDA1", "2D D-Unet -> SDA1, seed 1")}
+
+
+def _fmss(d: dict, key: str, i75: int, seed_one: bool) -> float:
+    r = d[key]
+    if seed_one and "per_seed" in r:
+        return float(r["per_seed"]["fmss"][0][i75])
+    return float(r["fmss"][i75])
+
+
+def _rows(spec: dict, src: Path, case: str, series: dict, extras: dict, i75: int) -> dict:
+    out = {}
+    for name, (label, kind, key, note) in spec.items():
+        f = src / f"{label}_{case}.npz"
+        if not f.exists():
+            continue
+        z = np.load(f)
+        row = {k: float(z[k].mean()) for k in KEYS}
+        row.update({f"{k}_skill": float(1 - z[k].mean() / z[f"{k}_clim"].mean()) for k in KEYS})
+        row["rmse_phys"] = float(z["rmse_phys"].mean())
+        d = series["cases"][case] if kind == "series" else extras["learned2d"][case]
+        row["fmss_0.75"] = _fmss(d, key, i75, kind == "learned2d")
+        row["fmss_source"] = note
+        out[name] = row
+    return out
 
 
 def report() -> Path:
@@ -151,23 +181,11 @@ def report() -> Path:
     series = json.loads((REPO / "reports" / "p1" / "outputs" / "l96_tau_series.json").read_text())
     extras = json.loads((REPO / "reports" / "p1" / "outputs" / "l96_extras.json").read_text())
     i75 = series["taus"].index(0.75)
-    res = {}
-    for case in ("s0", "s1"):
-        res[case] = {}
-        for name, (kind, key, note) in FMSS_SOURCES.items():
-            f = src / f"{name}_{case}.npz"
-            if not f.exists():
-                continue
-            z = np.load(f)
-            row = {k: float(z[k].mean()) for k in KEYS}
-            row.update({f"{k}_skill": float(1 - z[k].mean() / z[f"{k}_clim"].mean()) for k in KEYS})
-            row["rmse_phys"] = float(z["rmse_phys"].mean())
-            d = series["cases"][case] if kind == "series" else extras["learned2d"][case]
-            row["fmss_0.75"] = float(d[key]["fmss"][i75])
-            row["fmss_source"] = note
-            res[case][name] = row
+    res = {c: _rows(ROWS, src, c, series, extras, i75) for c in ("s0", "s1")}
+    sens = {c: _rows(SENSITIVITY, src, c, series, extras, i75) for c in ("s0", "s1")}
     OUT_JSON.write_text(json.dumps({"snap_stride": SNAP_STRIDE, "patch": [PATCH_TIMES, PATCH_STRIDE],
-                                    "n_clim": N_CLIM, "p": P, "cases": res}, indent=1) + "\n")
+                                    "n_clim": N_CLIM, "p": P, "cases": res,
+                                    "sensitivity_sda1": sens}, indent=1) + "\n")
     return OUT_JSON
 
 
