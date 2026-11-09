@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
 #SBATCH --time=10:00:00
-#SBATCH --array=0-3
+#SBATCH --array=0-5
 #SBATCH --exclude=sl-mee-br-202,sl-mee-br-203,sl-mee-br-204,sl-mee-br-205,sl-mee-br-206,sl-mee-br-208,sl-mee-br-209,sl-mee-br-210,sl-mee-br-211,sl-mee-br-212,sl-mee-br-213,sl-mee-br-214,sl-mee-br-215,sl-mee-br-216
 #SBATCH --job-name=l96-p1-ev
 #SBATCH --output=sbatch_logs/l96_p1_ev_%A_%a.out
@@ -16,7 +16,10 @@
 #   task 0: ETKF / EnKF / ETKS, 30 members, benchmark inflations (ETKF/ETKS 1.15 / 2.5, EnKF 1.2 / 3.0,
 #           ETKS `correct`, full window): the run_l96_fm_score_da.sbatch command with the EnKF added;
 #   task 1: VanillaCFM-2D-M seed 1; 2: SDA1-2D-M seed 1 (gw 25); 3: DirectUNet-2D-M -> SDA1-2D-M
-#           (tau0 0.1, gw 1): the run_l96b_2d_variance_eval.sbatch commands with --members-file full.
+#           (tau0 0.1, gw 1): the run_l96b_2d_variance_eval.sbatch commands with --members-file full;
+#   task 4: SDA2-2D-M seed 1 (gw 25); 5: DirectUNet-2D-M seed 1 -> SDA3-fix-2D-M seed 1 (tau0 0.1, gw 1):
+#           the final P1 rows (batch/run_l96b_sda23_2d.sbatch commands with --members-file full).
+#           Tasks 2-3 (SDA1-based) are kept as a sensitivity entry.
 # DA_CASES=s0 (or s1) restricts task 0 to one case.
 # Submit from this worktree's root (task 0 writes its trajectory files to ./experiments).
 set -euo pipefail
@@ -36,6 +39,8 @@ SCORES=$L96/p1_energy_variogram
 mkdir -p "$SCORES"
 CFM=$L96/L96B_vanillacfm_monai2dM_ep1200_seed1
 SDA=$L96/L96B_sda1_monai2dM_ep1200_seed1
+SDA2=$L96/L96B_sda2_monai2dM_ep1200_seed1
+SDA3=$L96/L96B_sda3fix_monai2dM_ep1200_seed1
 DU=$L96/L96B_directunet2d_monaiM_seed1
 EV="$NODE_TMP/eval"; mkdir -p "$EV"
 echo "task ${SLURM_ARRAY_TASK_ID:-0} | commit $(git rev-parse --short HEAD) | $(hostname) | $(date +%T)"
@@ -64,6 +69,16 @@ case ${SLURM_ARRAY_TASK_ID:-0} in
        --dataset $DS --num-windows 200 --batch-size 25 --n-members 30 --n-outer 10 --tau0 0.1 \
        --guidance-weight 1 --normalize-stats $NORM --members-file full --output "$EV/hybrid_eval.json"
      LABEL="--label D-Unet+SDA" ;;
+  4) python eval_sda_l96.py --checkpoint $SDA2/checkpoints/stage1_best.ckpt --config $SDA2/resolved_config.yaml \
+       --dataset $DS --num-windows 200 --batch-size 16 --n-members 30 --n-outer 10 --r-var 0.5 \
+       --guidance-weight 25 --normalize-stats $NORM --members-file full --output "$EV/sda_eval.json"
+     LABEL="--label SDA2" ;;
+  5) python eval_sda_directunet_hybrid_l96.py \
+       --mean-checkpoint $DU/checkpoints/stage1_best.ckpt --mean-config $DU/resolved_config.yaml \
+       --sda-checkpoint $SDA3/checkpoints/stage1_best.ckpt --sda-config $SDA3/resolved_config.yaml \
+       --dataset $DS --num-windows 200 --batch-size 25 --n-members 30 --n-outer 10 --tau0 0.1 \
+       --guidance-weight 1 --normalize-stats $NORM --members-file full --output "$EV/hybrid_eval.json"
+     LABEL="--label D-Unet+SDA3" ;;
 esac
 du -sh "$FDV_MEMBERS_TMP"
 python -u reports/l96/p1_energy_variogram.py score "$FDV_MEMBERS_TMP" "$SCORES" $LABEL
