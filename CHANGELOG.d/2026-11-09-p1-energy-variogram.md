@@ -9,4 +9,4 @@
 - The energy score is sensitive mostly to the mean.
 - The variogram score reads the dependence structure: on snapshots of the 24 observed variables, and on space-time patches of 24 variables x 10 times 30 steps apart.
 - The climatological reference is one fixed set of 30 truth samples per case, shared by every scheme.
-**Verification:** A synthetic smoke test reproduced the expected ensemble-mean RMSE (1/sqrt(30) for unit-noise members). The ensemble-mean RMSE of every row matches the stored benchmark RMSE within the sampling noise of a new ensemble realisation. `ruff check` passes.
+**Verification:** A synthetic smoke test reproduced the expected ensemble-mean RMSE (1/sqrt(30) for unit-noise members). The ensemble-mean RMSE of every row matches the stored benchmark RMSE within the sampling noise of a new ensemble realisation: learned rows and S1 DA identical to 4 decimals, S0 DA within 1.1 % (ETKF 0.703 vs 0.695). Jobs 70762 (all rows; its S0 DA was skipped by a mis-globbed results-cache guard, now fixed) and 70955 (S0 DA). `ruff check` passes.
