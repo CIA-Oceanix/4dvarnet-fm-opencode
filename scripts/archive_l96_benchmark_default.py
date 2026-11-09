@@ -19,7 +19,8 @@ replaced -- a checkpoint conflict is reported and left alone. Idempotent.
 
 The 2D (time x sector) VanillaCFM and SDA1 runs (S / M / L, seed 1) and the DirectUNet-2D-M -> SDA1-2D-M
 hybrid, behind the 2D rows of the extended report and the P1 paper tables, were trained in the
-``4dvarnet-fm-l96-fdv-2d`` worktree; they have no random-set scoring here.
+``4dvarnet-fm-l96-fdv-2d`` worktree; they have no random-set scoring here. The 2D SDA2 / SDA3-fix priors
+(seeds 1-3) and the 2D VanillaCFM / SDA1 seeds 2-3 were trained in ``4dvarnet-fm-l96-2d-sda23``.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ BENCH = REPO / "4dvarnet-fm-bench-default/experiments"
 HERE = REPO / "4dvarnet-fm-sda-nanfix/experiments"
 P1 = REPO / "4dvarnet-fm-fdv-tau-aware/experiments"
 FDV2D = REPO / "4dvarnet-fm-l96-fdv-2d/experiments"
+SDA23_2D = REPO / "4dvarnet-fm-l96-2d-sda23/experiments"
 REGULAR_EVAL = HERE / "eval_regular"
 CANON_EVAL = HERE / "eval_rlayout_n10-100_k4-16_w200"
 CANON_EVAL_FLOW = REPO / "4dvarnet-fm-bench-n20/experiments/eval_rlayout_n10-100_k4-16_w200"
@@ -107,6 +109,16 @@ RUNS = (
     + [Run("hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1", None,
            FDV2D / "eval_regular" / "hybrid_DU2dMs1_L96B_sda1_monai2dM_ep1200_seed1" / HYB2D, None, ("extended",),
            ("L96B_directunet2d_monaiM_seed1", "L96B_sda1_monai2dM_ep1200_seed1"))]
+    + [Run(f"L96B_vanillacfm_monai2dM_ep1200_seed{s}", SDA23_2D / f"L96B_vanillacfm_monai2dM_ep1200_seed{s}",
+           SDA23_2D / f"L96B_vanillacfm_monai2dM_ep1200_seed{s}" / FLOW, None, ("extended",)) for s in (2, 3)]
+    + [Run(n, SDA23_2D / n, SDA23_2D / "eval_regular" / n / SDA25,
+           SDA23_2D / "eval_rlayout_n10-100_k4-16_w200" / n / SDA25, ("extended",))
+       for n in [f"L96B_sda1_monai2dM_ep1200_seed{s}" for s in (2, 3)]
+       + [f"L96B_{p}_monai2dM_ep1200_seed{s}" for p in ("sda2", "sda3fix") for s in (1, 2, 3)]]
+    + [Run(h, None, SDA23_2D / "eval_regular" / h / HYB2D, SDA23_2D / "eval_rlayout_n10-100_k4-16_w200" / h / HYB2D,
+           ("extended",), (f"L96B_directunet2d_monaiM_seed{d}", f"L96B_{p}_monai2dM_ep1200_seed1"))
+       for p in ("sda2", "sda3fix") for d in (1, 2, 3)
+       for h in [f"hybrid_DU2dMs{d}_L96B_{p}_monai2dM_ep1200_seed1"]]
 )
 
 

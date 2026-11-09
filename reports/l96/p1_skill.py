@@ -41,7 +41,7 @@ LEARNED = (("D-Unet (DirectUNet-2D-M)", [EX / f"L96B_directunet2d_monaiM_seed{s}
             [REGE / f"hybrid_DU2dMs{s}_L96B_sda3fix_monai2dM_ep1200_seed1" / "tau0.1_gw1" for s in SEEDS], False),
            ("DirectUNet-2D-M -> SDA1-2D-M",
             [REGE / f"hybrid_DU2dMs{s}_L96B_sda1_monai2dM_ep1200_seed1" / "tau0.1_gw1" for s in SEEDS], False),
-           ("DirectUNet-2D-M -> SDA3-fix-M (1D prior, interim)",
+           ("DirectUNet-2D-M -> SDA3-fix-M (1D prior, sensitivity)",
             [REGE / f"hybrid_DU2dMs{s}_A3_sda3fix_monaiM_ep1200_l96" / "tau0.1_gw1" for s in SEEDS], False))
 
 

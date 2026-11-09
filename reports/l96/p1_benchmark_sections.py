@@ -41,10 +41,10 @@ LEARNED = {
             (G2D_SDA, "SDA3-fix-2D-M", "SDA3-fix-2D-M", "gw 25", ""),
             (G2D_HYB, "DirectUNet-2D-M -> SDA3-fix-2D-M", "Hybrid DirectUNet-2D-M -> SDA3-fix-2D-M", "tau0 0.1, gw 1", HYB_REF),
             (G2D_HYB, "DirectUNet-2D-M -> SDA1-2D-M", "Hybrid DirectUNet-2D-M -> SDA1-2D-M", "2 x 5.63 M, tau0 0.1, gw 1",
-             HYB_REF + "; SDA1 prior until SDA3-fix-2D-M is trained"),
+             HYB_REF + "; with the unconditional SDA1 prior"),
             (G2D_HYB, "DirectUNet-2D-M -> SDA3-fix-M (1D prior)", "Hybrid DirectUNet-2D-M -> SDA3-fix-M (1D prior)",
              "5.63 M + 5.89 M, tau0 0.1, gw 1",
-             "interim: the 1D SDA3-fix-M prior started from the 2D DirectUNet, until SDA3-fix-2D-M is trained")),
+             "sensitivity: the 1D SDA3-fix-M prior started from the 2D DirectUNet")),
 }
 TIERS = (("DirectUNet-2D", {"S": (G2D_TIER, "DirectUNet-2D-S", "2.03 M"), "M": (G2D, "DirectUNet-2D-M", "5.63 M"),
                              "L": (G2D_TIER, "DirectUNet-2D-L", "22.5 M")}),
@@ -206,8 +206,7 @@ def reading(rows: dict) -> list[str]:
              f"{100 * (mean(sa, 'reg', 's0') - min(det, fm)) / min(det, fm):.0f}% behind the best amortised scheme), "
              "but the guided sampler refines a DirectUNet-2D estimate: "
              + "; ".join(f"{r['label']} {mean(r, 'reg', 's0'):.3f} / {mean(r, 'can', 's0'):.3f} ({seeds(r)})" for r in hyb)
-             + " (regular / random S0). SDA2-2D and SDA3-fix-2D, and hence the paper's DirectUNet -> SDA3-fix hybrid, "
-             "are not trained yet.")
+             + " (regular / random S0).")
     da_r = [mean(r, "reg", "s1") / mean(r, "reg", "s0") for r in rows["da"] if not r["flag"]]
     le_r = [mean(r, "reg", "s1") / mean(r, "reg", "s0") for s in ("det", "fm", "sda") for r in rows[s]
             if not r["flag"] and r["reg"] is not None]

@@ -221,8 +221,8 @@ def main():
       "Y_k,j as channels, circular padding over the sectors (never downsampled), zero padding and 2x resampling in "
       "time, mid-level attention along time, the widths of the 1D tiers. The 1D U-Net rows this report used to show "
       "remain in `l96_benchmark_extended.md`. **Seeds:** the benchmark plans 3 seeds per row; `seeds` = finished / "
-      "planned, rows with fewer than 3 carry a note, and rows whose 2D checkpoint is not trained yet (PredictStateCFM, "
-      "SDA2, SDA3-fix and the DirectUNet -> SDA3-fix hybrid) render as pending.\n")
+      "planned, rows with fewer than 3 carry a note, and rows whose 2D checkpoint is not trained yet (PredictStateCFM) "
+      "render as pending.\n")
     A("**Evaluation framework (2026-10-02).** Sections 1-4, the cross-family reading, the per-window and pooled "
       "summaries and the reconstruction examples use the **benchmark-default** framework of `l96_benchmark_extended.md` "
       "and are scored by that report's code: learned models trained on a random observing system with fresh noise "
@@ -265,9 +265,10 @@ def main():
     for line in p1_skill.section():
         A(line)
     A("## Distributional score FMS_τ\n")
-    A("_pending for the 2D rows: the FMS_τ probes (`reports/l96/probe_fm_score*.py`) need the 2D ensembles' "
-      "per-element mean and variance, which the benchmark runs did not store; they will be re-run with the 2D "
-      "training of step 2. The 1D section is in this report's git history and `docs/results/l96_p1_fm_score.md`._\n")
+    A("_The 2D rows' FMS_τ (Gaussian form), spread-skill ratio and FMSS of the P1 tables come from their re-evaluation "
+      "with the ensemble variance stored (`*_var` eval dirs, `batch/run_l96b_2d_sda23_eval.sbatch`), computed by "
+      "`reports/p1/p1_figures.py extras` into `reports/p1/outputs/l96_extras.json`. The 1D probe section is in this "
+      "report's git history and `docs/results/l96_p1_fm_score.md`._\n")
     A("## Caveats\n")
     A("- DA baselines receive the same per-window parameters as truth generation (S0) or their "
       "biased `*_da` counterparts (S1); the learned schemes see observations only. This is what "
@@ -276,9 +277,10 @@ def main():
       "to the generative families' ensemble CRPS.")
     A("- SDA is the only learned family with a tuned inference hyper-parameter (`gw`, 25 as for 1D, not re-tuned for "
       "2D); the hybrid tunes its start time and guidance on the validation windows (tau0 0.1, gw 1 for the "
-      "DirectUNet-2D mean).")
-    A("- Single-seed 2D rows: VanillaCFM-2D-M, SDA1-2D-M, the DirectUNet-2D-M -> SDA1-2D-M hybrid and the annex "
-      "tiers. Their seed spread is unknown; the 1D seed sd was 0.002-0.005 at regular S0.\n")
+      "DirectUNet-2D mean, re-checked for the SDA3-fix-2D prior: CRPS 0.101 vs 0.106 for gw 2, 100 validation "
+      "windows, S0 / S1, regular / random, DirectUNet seeds 1-3).")
+    A("- Single-seed 2D rows: the annex tiers only; every M-tier row of the tables has 3 seeds (the hybrids: 3 "
+      "DirectUNet seeds on prior seed 1).\n")
     # --- reconstruction figures -------------------------------------------
     fig_rows = []
     try:

@@ -8,6 +8,7 @@ monai = pytest.importorskip("monai")
 
 from models.monai_unet_adapter import MonaiDirectUNet  # noqa: E402
 from models.monai_unet_l96_2d import (  # noqa: E402
+    MonaiConditionalPriorCFM2D,
     MonaiDirectUNet2D,
     MonaiUNet2DSectorSolver,
     MonaiUnconditionalPriorCFM2D,
@@ -263,6 +264,54 @@ def test_sda1_2d_prior_is_equivariant_and_drives_the_guided_sampler():
     assert torch.isfinite(m.compute_cfm_loss(batch))
     pred, _ = sda_guided_sample(m, batch, R_var=0.5, N_outer=2, guidance_weight=2.0)
     assert pred.shape == (2, 64, D) and torch.isfinite(pred).all()
+
+
+def test_conditional_2d_prior_is_equivariant_uses_its_conditioning_and_drives_the_guided_sampler():
+    from evaluation.sda_sampler import sda_guided_sample
+    from models.sda import ConditionalPriorCFM
+
+    torch.manual_seed(0)
+    m = MonaiConditionalPriorCFM2D(state_dim=D, param_dim=8, NO=NO, hidden_channels=[16, 32], num_res_blocks=1,
+                                   norm_num_groups=8, dropout=0.0, use_flash_attention=False, N_outer=2)
+    assert isinstance(m, ConditionalPriorCFM)
+    for p in m.parameters():
+        p.data.normal_(0.0, 0.05)
+    m.eval()
+    x = torch.randn(2, 64, D)
+    tau = torch.full((2,), 0.4)
+    batch = SimpleNamespace(forcing=torch.randn(2, 64), params=torch.randn(2, 8))
+    other = SimpleNamespace(forcing=batch.forcing, params=batch.params + 1.0)
+    with torch.no_grad():
+        v = m(x, batch, tau)
+        v_shifted = m(_roll_sectors(x, 3), batch, tau)
+        v_other = m(x, other, tau)
+    assert v.shape == (2, 64, D)
+    assert torch.allclose(v_shifted, _roll_sectors(v, 3), atol=1e-5)
+    assert not torch.allclose(v, v_other, atol=1e-4)
+    obs_mask = torch.zeros(2, 64, dtype=torch.bool)
+    obs_mask[:, ::8] = True
+    obs = torch.where(obs_mask[..., None], torch.randn(2, 64, D), torch.tensor(float("nan")))
+    batch = SimpleNamespace(obs=obs, obs_mask=obs_mask, forcing=batch.forcing, params=batch.params,
+                            states=torch.randn(2, 64, D))
+    assert torch.isfinite(m.compute_cfm_loss(batch))
+    pred, _ = sda_guided_sample(m, batch, R_var=0.5, N_outer=2, guidance_weight=2.0)
+    assert pred.shape == (2, 64, D) and torch.isfinite(pred).all()
+
+
+@pytest.mark.parametrize("name,biased", [("L96B_sda2_monai2dM_ep1200", False), ("L96B_sda3fix_monai2dM_ep1200", True)])
+def test_conditional_2d_prior_configs_swap_only_the_backbone(name, biased):
+    from hydra import compose, initialize_config_dir
+    from train import model_factory
+
+    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config")
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        cfg = compose(config_name=f"experiment/{name}")
+        ref = compose(config_name="experiment/" + ("A3_sda3fix_monaiM_ep1200_l96" if biased else "A3_sda2_monaiM_ep1200_l96"))
+    model = model_factory(cfg, torch.device("cpu"))
+    assert isinstance(model, MonaiConditionalPriorCFM2D)
+    assert sum(p.numel() for p in model.parameters()) == 5_637_723
+    assert cfg.data == ref.data and cfg.training == ref.training
+    assert cfg.data.randomize.F.biased is biased
 
 
 @pytest.mark.parametrize("name,cls,n_params", [

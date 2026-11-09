@@ -129,11 +129,11 @@
         "label": "VanillaCFM-2D-M",
         "params": "5.64 M, 1200 ep",
         "flag": "",
-        "seeds": "1/3",
+        "seeds": "3/3",
         "rmse": {
           "reg": {
-            "s0": 0.22000069506737682,
-            "s1": 0.21736604382872662
+            "s0": 0.21815706591502973,
+            "s1": 0.21435546719105225
           },
           "can": {
             "s0": 0.3052542396817943,
@@ -147,15 +147,15 @@
         "label": "SDA1-2D-M",
         "params": "5.63 M, gw 25",
         "flag": "",
-        "seeds": "1/3",
+        "seeds": "3/3",
         "rmse": {
           "reg": {
-            "s0": 0.4134527711109389,
-            "s1": 0.41043892615380334
+            "s0": 0.4142299901379798,
+            "s1": 0.411797072543668
           },
           "can": {
-            "s0": 0.5170173736999424,
-            "s1": 0.5405991274465478
+            "s0": 0.5213241346371796,
+            "s1": 0.5446667321633529
           }
         }
       },
@@ -163,52 +163,70 @@
         "label": "SDA2-2D-M",
         "params": "gw 25",
         "flag": "",
-        "seeds": "0/3",
+        "seeds": "3/3",
         "rmse": {
-          "reg": null,
-          "can": null
+          "reg": {
+            "s0": 0.359464814345533,
+            "s1": 0.37525147242225443
+          },
+          "can": {
+            "s0": 0.44814788425983976,
+            "s1": 0.4822410675410512
+          }
         }
       },
       {
         "label": "SDA3-fix-2D-M",
         "params": "gw 25",
         "flag": "",
-        "seeds": "0/3",
+        "seeds": "3/3",
         "rmse": {
-          "reg": null,
-          "can": null
+          "reg": {
+            "s0": 0.3890018350042351,
+            "s1": 0.3819837009772815
+          },
+          "can": {
+            "s0": 0.4837521357521352,
+            "s1": 0.49633732876733333
+          }
         }
       },
       {
         "label": "Hybrid DirectUNet-2D-M -> SDA3-fix-2D-M",
         "params": "tau0 0.1, gw 1",
         "flag": "two families: SDA guided sampling started from the DirectUNet-2D-M estimate (reference)",
-        "seeds": "0/3",
+        "seeds": "3/3",
         "rmse": {
-          "reg": null,
-          "can": null
+          "reg": {
+            "s0": 0.19844205232896797,
+            "s1": 0.19488234254886336
+          },
+          "can": {
+            "s0": 0.2646266365279274,
+            "s1": 0.25852498786761335
+          }
         }
       },
       {
         "label": "Hybrid DirectUNet-2D-M -> SDA1-2D-M",
         "params": "2 x 5.63 M, tau0 0.1, gw 1",
-        "flag": "two families: SDA guided sampling started from the DirectUNet-2D-M estimate (reference); SDA1 prior until SDA3-fix-2D-M is trained",
-        "seeds": "1/3",
+        "flag": "two families: SDA guided sampling started from the DirectUNet-2D-M estimate (reference); with the unconditional SDA1 prior",
+        "seeds": "3/3",
         "rmse": {
           "reg": {
-            "s0": 0.19720609105989836,
-            "s1": 0.19237285835414042
+            "s0": 0.19728422923962946,
+            "s1": 0.19302792350729261
           },
           "can": {
-            "s0": 0.26683405454063736,
-            "s1": 0.26082326507797526
+            "s0": 0.26660022280257867,
+            "s1": 0.2605480647549211
           }
         }
       },
       {
         "label": "Hybrid DirectUNet-2D-M -> SDA3-fix-M (1D prior)",
         "params": "5.63 M + 5.89 M, tau0 0.1, gw 1",
-        "flag": "interim: the 1D SDA3-fix-M prior started from the 2D DirectUNet, until SDA3-fix-2D-M is trained",
+        "flag": "sensitivity: the 1D SDA3-fix-M prior started from the 2D DirectUNet",
         "seeds": "3/3",
         "rmse": {
           "reg": {

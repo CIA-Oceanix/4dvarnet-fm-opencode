@@ -171,8 +171,8 @@ INTRO_2D = ("Generated from the `benchmark_extended` inputs by `reports/l96/per_
             "the DA rows of the 1D summary, every U-Net row replaced by its 2D (time x sector) circular-backbone "
             "counterpart at the benchmark recipe (1200 epochs, M tier). `seeds` = finished seeds of the 3 planned; a row "
             "with `—` everywhere is not trained yet. The hybrids use tau0 0.1, gw 1 (validated for the DirectUNet-2D "
-            "mean); the *interim* row starts the 1D SDA3-fix prior from the 2D DirectUNet and is the only 3-seed hybrid "
-            "until SDA3-fix-2D is trained.\n")
+            "mean, re-checked for the SDA3-fix-2D prior); the *interim* row, a sensitivity row, starts the 1D SDA3-fix "
+            "prior from the 2D DirectUNet.\n")
 
 
 def section(heading: str = "##", backbone: str = "1d") -> list[str]:
