@@ -22,7 +22,8 @@ set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 export PATH="/Odyssey/private/rfablet/miniforge3/envs/${CONDA_ENV:-fdv-monai-proto}/bin:$PATH"
 export PYTHONUNBUFFERED=1 PYTHONPATH=$PWD
-NODE_TMP="/tmp/${USER}_slurm_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP"
+# node-local /SCRATCH, not /tmp: the members (1.7 GB per case and scheme) overflow the root disk of the GPU nodes
+NODE_TMP="/SCRATCH/$USER/slurm_tmp/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"; mkdir -p "$NODE_TMP"
 export TMPDIR="$NODE_TMP" MPLCONFIGDIR="$NODE_TMP/mplconfig" FDV_MEMBERS_TMP="$NODE_TMP/members"
 trap 'rm -rf "$NODE_TMP"' EXIT
 mkdir -p "$MPLCONFIGDIR" sbatch_logs
