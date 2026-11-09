@@ -68,7 +68,8 @@ These conclusions come with limitations. The irreducible term $\mathrm{mmse}_p(\
 unknown, so that every component is a share of an excess over the best scheme, and the cross
 term between misspecification and approximation is bounded rather than identified. The L96
 imperfect-model experiment combines a parametric error with a structural one, as the DA model
-is truncated to the observed variables \needsrun{\So-full rows}, and the learned rows of this
+is truncated to the observed variables, which accounts for most of the loss of DA (\So-full,
+Sect.~\ref{sec:q2}), and the learned rows of this
 experiment are oracle bounds, since the learned schemes are trained on the true system
 \needsrun{biased-model training arms}. The flow-matching score is evaluated per element, with
 sliced evaluations as a check of the dependence structure, and its shape diagnostic has a small
@@ -107,9 +108,16 @@ over the optimum is the mismatched-estimation error of~\cite{verdu_mismatched_20
 integral over the noise level is the Kullback--Leibler
 divergence~\cite{guo_mutual_2005,verdu_mismatched_2010}. We use it as a verification score for
 DA because it reduces to the mean-squared error at $\tau = 0$, applies to point estimates,
-Gaussian reports and ensembles alike, and resolves calibration along $\tau$. A comparison with
-the energy and variogram scores on one case study would show what it adds
-\needsrun{Energy and variogram scores of the L96 ensembles, alongside $\mathrm{FMSS}_\tau$.}
+Gaussian reports and ensembles alike, and resolves calibration along $\tau$. On the L96 ensembles,
+the energy and variogram scores~\cite{gneiting_assessing_2008,scheuerer_variogram-based_2015}, computed
+on 24-variable snapshots and space--time patches against a climatological ensemble, rank the learned
+schemes as $\mathrm{FMSS}_{0.75}$ does, but follow the mean more closely: with a perfect model, they put
+the ETKS first among the DA ensembles (energy skill 0.67 against 0.62--0.63), where
+$\mathrm{FMSS}_{0.75}$ puts it last (0.41 against 0.49--0.50) for its over-confidence, and they
+slightly favour D-Unet+SDA over CFM (0.88 against 0.87), which $\mathrm{FMSS}_{0.75}$ ties (0.89).
+Under model error, the variogram skill of the DA ensembles falls to about zero or below ($-0.15$ to
+$-0.02$): their dependence structure is no better than that of climatology
+(\texttt{reports/l96/outputs/fm\_score/p1\_energy\_variogram.json}).
 
 This paper is the benchmark of a set of three: \cite{fablet_not_2026} defines the error budget
 and derives its terms for classes of schemes, \cite{fablet_flow_2026} develops the theory of the

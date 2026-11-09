@@ -30,6 +30,7 @@ DA = (("ETKF", P1 / ("l96_baselines_trajectories_dws500_s0c_test_etks-correct-Lf
       ("Weak-4DVar", EX / "weak4dvar_2026-10-04" / ("l96_baselines_trajectories_dws500_s0c_test_weak4dvar-qs0-0.03_s1-0.3-it40"
                                                      "_obsj2_int100_fw_dafw.npz"), "Weak_4DVar", True))
 SEEDS = (1, 2, 3)
+SLOW, FAST = slice(0, 8), slice(8, 24)
 REGE = EX / "eval_regular"
 LEARNED = (("D-Unet (DirectUNet-2D-M)", [EX / f"L96B_directunet2d_monaiM_seed{s}" / "ens1_no1" for s in SEEDS], True),
            ("CFM (VanillaCFM-2D-M)", [EX / f"L96B_vanillacfm_monai2dM_ep1200_seed{s}" / "ens30_no20" for s in SEEDS], False),
@@ -66,8 +67,8 @@ def scores(case: str) -> list[dict]:
     var_c = flat.var(0)
     crps_c = np.array([_half_gini(rng.choice(flat[:, j], 200000, replace=False)) for j in range(flat.shape[1])])
 
-    def ev(traj: np.ndarray) -> float:
-        return float(np.mean(1 - ((traj - truth) ** 2).mean((0, 1)) / var_c))
+    def ev(traj: np.ndarray, sl: slice = slice(None)) -> float:
+        return float(np.mean((1 - ((traj - truth) ** 2).mean((0, 1)) / var_c)[sl]))
 
     def crpss(crps_wj: np.ndarray) -> float:
         return float(np.mean(1 - crps_wj.mean(0) / crps_c))
@@ -79,17 +80,22 @@ def scores(case: str) -> list[dict]:
     for label, path, key, point in DA:
         z = np.load(path)
         t = _sel(z[f"{case}_{key}_trajectories"]).astype(np.float64)
-        rows.append({"label": label, "family": "DA", "seeds": "—", "ev": ev(t),
+        rows.append({"label": label, "family": "DA", "seeds": "—", "ev": ev(t), "ev_slow": ev(t, SLOW),
+                     "ev_fast": ev(t, FAST),
                      "skill": mae_skill(t) if point else crpss(_sel(z[f"{case}_{key}_crps"])), "mae": point})
     for label, dirs, point in LEARNED:
         ok = [d for d in dirs if (d / f"estimates_{case}.npz").exists() and (point or (d / f"scores_{case}.npz").exists())]
-        e, c = [], []
+        e, c, es, ef = [], [], [], []
         for d in ok:
             t = np.load(d / f"estimates_{case}.npz")["trajectories"].astype(np.float64)
             e.append(ev(t))
+            es.append(ev(t, SLOW))
+            ef.append(ev(t, FAST))
             c.append(mae_skill(t) if point else crpss(np.load(d / f"scores_{case}.npz")["crps"]))
         rows.append({"label": label, "family": "learned", "seeds": f"{len(ok)}/{len(dirs)}",
-                     "ev": float(np.mean(e)) if e else None, "skill": float(np.mean(c)) if c else None, "mae": point})
+                     "ev": float(np.mean(e)) if e else None, "ev_slow": float(np.mean(es)) if es else None,
+                     "ev_fast": float(np.mean(ef)) if ef else None,
+                     "skill": float(np.mean(c)) if c else None, "mae": point})
     return rows
 
 
@@ -119,6 +125,12 @@ def section(heading: str = "##") -> list[str]:
     for r0, r1 in zip(S["s0"], S["s1"]):
         A.append(f"| {r0['label']} | {r0['seeds']} | {cell(r0, 's0', 'ev')} | {cell(r0, 's0', 'skill')} | "
                  f"{cell(r1, 's1', 'ev')} | {cell(r1, 's1', 'skill')} |")
+    A += ["", "EV on the 8 slow and the 16 observed fast variables (same pooling):\n",
+          "| scheme | slow S0 | fast S0 | slow S1 | fast S1 |", "|---|---|---|---|---|"]
+    for r0, r1 in zip(S["s0"], S["s1"]):
+        if r0["ev"] is not None:
+            A.append(f"| {r0['label']} | {r0['ev_slow']:.3f} | {r0['ev_fast']:.3f} | {r1['ev_slow']:.3f} | "
+                     f"{r1['ev_fast']:.3f} |")
     A.append("")
     return A
 

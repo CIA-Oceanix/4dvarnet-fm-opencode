@@ -153,6 +153,24 @@ Per channel, pooled over the 200 windows and all time steps, then averaged over 
 | DirectUNet-2D-M -> SDA1-2D-M | 3/3 | **0.981** | **0.907** | **0.982** | **0.909** |
 | DirectUNet-2D-M -> SDA3-fix-M (1D prior, sensitivity) | 3/3 | 0.972 | 0.879 | 0.973 | 0.881 |
 
+EV on the 8 slow and the 16 observed fast variables (same pooling):
+
+| scheme | slow S0 | fast S0 | slow S1 | fast S1 |
+|---|---|---|---|---|
+| ETKF | 0.981 | 0.733 | 0.636 | 0.090 |
+| EnKF | 0.978 | 0.712 | 0.633 | 0.083 |
+| ETKS | 0.988 | 0.804 | 0.606 | 0.234 |
+| Strong-4DVar | 0.970 | 0.627 | 0.666 | 0.026 |
+| Weak-4DVar | 0.964 | 0.654 | 0.859 | 0.412 |
+| D-Unet (DirectUNet-2D-M) | 0.996 | 0.960 | 0.996 | 0.961 |
+| CFM (VanillaCFM-2D-M) | 0.997 | 0.966 | 0.997 | 0.967 |
+| SDA1-2D-M | 0.989 | 0.891 | 0.989 | 0.892 |
+| SDA2-2D-M | 0.993 | 0.916 | 0.992 | 0.908 |
+| SDA3-fix-2D-M | 0.990 | 0.905 | 0.990 | 0.907 |
+| D-Unet+SDA (DirectUNet-2D-M -> SDA3-fix-2D-M) | 0.998 | 0.972 | 0.998 | 0.973 |
+| DirectUNet-2D-M -> SDA1-2D-M | 0.998 | 0.973 | 0.998 | 0.974 |
+| DirectUNet-2D-M -> SDA3-fix-M (1D prior, sensitivity) | 0.996 | 0.960 | 0.996 | 0.962 |
+
 ## Distributional score FMS_τ
 
 _The 2D rows' FMS_τ (Gaussian form), spread-skill ratio and FMSS of the P1 tables come from their re-evaluation with the ensemble variance stored (`*_var` eval dirs, `batch/run_l96b_2d_sda23_eval.sbatch`), computed by `reports/p1/p1_figures.py extras` into `reports/p1/outputs/l96_extras.json`. The 1D probe section is in this report's git history and `docs/results/l96_p1_fm_score.md`._
