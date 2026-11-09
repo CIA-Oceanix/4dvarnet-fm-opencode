@@ -115,6 +115,10 @@ RUNS = (
            SDA23_2D / "eval_rlayout_n10-100_k4-16_w200" / n / SDA25, ("extended",))
        for n in [f"L96B_sda1_monai2dM_ep1200_seed{s}" for s in (2, 3)]
        + [f"L96B_{p}_monai2dM_ep1200_seed{s}" for p in ("sda2", "sda3fix") for s in (1, 2, 3)]]
+    + [Run(h, None, SDA23_2D / "eval_regular" / h / HYB2D, SDA23_2D / "eval_rlayout_n10-100_k4-16_w200" / h / HYB2D,
+           ("extended",), (f"L96B_directunet2d_monaiM_seed{d}", f"L96B_{p}_monai2dM_ep1200_seed1"))
+       for p in ("sda2", "sda3fix") for d in (1, 2, 3)
+       for h in [f"hybrid_DU2dMs{d}_L96B_{p}_monai2dM_ep1200_seed1"]]
 )
 
 
