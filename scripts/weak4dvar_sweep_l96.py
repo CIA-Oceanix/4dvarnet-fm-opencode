@@ -35,6 +35,7 @@ max_iter = int(sys.argv[6]) if len(sys.argv) > 6 else 10
 w_start = int(os.environ.get("W_START", 0))
 cases = os.environ.get("CASES", "s0,s1").split(",")
 keep_dir = os.environ.get("KEEP_DIR")
+s1_j = int(os.environ["S1_J"]) if os.environ.get("S1_J") else None
 INSTANCES = []
 
 
@@ -56,10 +57,12 @@ win_idx = np.arange(w_start, w_start + len(next(iter(datasets.values())).windows
 suffix = f"_w4dsweep_{dset}_w{n_win}_{kind}_q{q_scale:g}_it{max_iter}"
 if w_start or cases != ["s0", "s1"]:
     suffix += f"_from{w_start}_{'-'.join(cases)}"
+if s1_j is not None:
+    suffix += f"_s1j{s1_j}"
 t0 = time.time()
 R.run_and_cache_baselines(datasets, torch.device("cuda"), batch_size=200, da_window_steps=500, suffix=suffix,
                           exclude_methods=[m for m in ("ETKF", "EnKF", "Weak-4DVar", "Strong-4DVar") if m != method],
-                          obs_j=2, obs_interval=100, fw_randomized=True, da_fast_weights=True)
+                          obs_j=2, s1_j=s1_j, obs_interval=100, fw_randomized=True, da_fast_weights=True)
 idx = np.array(R.make_obs_j_indices(8, 4, 2))
 key = method.replace("-", "_")
 z = {}
@@ -69,6 +72,7 @@ for c in cases:
     z[f"{c}_{key}_trajectories"] = np.load(paths[0])["trajectories"]
 out = {"set": dset, "n_windows": n_win, "w_start": w_start, "method": method, "mode": kind, "max_iter": max_iter,
        "q_var_scale": q_scale if kind == "weak" else None,
+       "s1_j": s1_j,
        "elapsed_s": time.time() - t0, "n_resets": sum(m.n_resets for m in INSTANCES),
        "n_subwindows": sum(m.n_subwindows for m in INSTANCES), "cases": {}}
 for c in cases:

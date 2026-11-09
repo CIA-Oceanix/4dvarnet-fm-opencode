@@ -52,6 +52,9 @@ def main() -> None:
     p.add_argument("--method", choices=["ETKF", "EnKF"], default="ETKF")
     p.add_argument("--out", required=True)
     p.add_argument("--n-windows", type=int, default=None, help="first N windows only (smoke tests)")
+    p.add_argument("--s1-j", type=int, default=None,
+                   help="fast variables per slow node in the S1 DA model (default: obs_j = 2, the truncated "
+                        "24-variable model; 4 = the full 40-variable model)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -61,8 +64,10 @@ def main() -> None:
             v.windows = v.windows[:args.n_windows]
     idx = np.array(make_obs_j_indices(8, 4, 2))
     suffix = f"_valsweep_{args.method}_{args.valset}_lam{args.inflation:.2f}" + (f"_w{args.n_windows}" if args.n_windows else "")
+    if args.s1_j is not None:
+        suffix += f"_s1j{args.s1_j}"
     cfg = {"inflation": args.inflation}
-    kw = dict(obs_j=2, obs_interval=100, fw_randomized=True, da_fast_weights=True)
+    kw = dict(obs_j=2, s1_j=args.s1_j, obs_interval=100, fw_randomized=True, da_fast_weights=True)
     if args.valset == "rlayout":
         cfg.update(init_fill=make_fast_ring_fill(8, 4, 2), R_var=0.5)
         kw["obs_interval"] = None
@@ -74,7 +79,8 @@ def main() -> None:
     paths = glob.glob(os.path.join(EXP_DIR, f"l96_baselines_trajectories_dws500{suffix}_*obsj2*.npz"))
     assert len(paths) == 1, paths
     z = np.load(paths[0])
-    out = {"method": args.method, "valset": args.valset, "inflation": args.inflation, "n_windows": len(datasets["test_s0"]), "cases": {}}
+    out = {"method": args.method, "valset": args.valset, "inflation": args.inflation, "s1_j": args.s1_j,
+           "n_windows": len(datasets["test_s0"]), "cases": {}}
     for c in ("s0", "s1"):
         truth = np.stack([w["true_state"].numpy()[:, idx] for w in datasets[f"test_{c}"]]).astype(np.float64)
         k = f"{c}_{args.method}"
