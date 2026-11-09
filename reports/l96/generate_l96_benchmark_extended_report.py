@@ -815,7 +815,7 @@ def finding_2d(row: dict, m) -> list[str]:
     return ["11. **2D (time x sector) circular backbone** (S0 per-window RMSE, 1D -> 2D, M tier, benchmark recipe): "
             + "; ".join(parts) + ". The 2D backbone shares its weights across the 8 sectors and is exactly equivariant "
             "to cyclic sector shifts, where the 1D U-Net learns separate weights per sector. Single-seed 2D rows are flagged by their `n/3`; "
-            "SDA2 / SDA3-fix / PredictStateCFM in 2D are not trained yet (`0/3`). The unrolled 4DVarNet schemes of P2 "
+            "PredictStateCFM in 2D is not trained yet (`0/3`). The unrolled 4DVarNet schemes of P2 "
             f"gain as much in 2D (regular / random S0: {fdv_txt}; seed 1, group `{G2D_FDV}`).\n"]
 
 
@@ -903,9 +903,9 @@ def main() -> None:
           "hybrid uses the same validation-selected setting (re-checked on validation, section 6).",
           "- Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.",
           "- Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps).",
-          "- 2D rows: DirectUNet-2D-M and the interim DirectUNet-2D-M -> SDA3-fix-M (1D prior) hybrid have 3 seeds; every other "
-          "2D row is seed 1 (`1/3`, or `1/1` for the tier and 4DVarNet groups). The 2D hybrids use gw 1, validated on the "
-          "DirectUNet-2D mean (the 1D hybrid keeps gw 2). Sections 2-7 are 1D only."]
+          "- 2D rows: the M-tier rows have 3 seeds (hybrids: 3 DirectUNet seeds on prior seed 1), PredictStateCFM-2D is not "
+          "trained yet, and the tier and 4DVarNet groups are seed 1 (`1/1`). The 2D hybrids use gw 1, validated on the "
+          "DirectUNet-2D mean and re-checked for the SDA3-fix-2D prior (the 1D hybrid keeps gw 2). Sections 2-7 are 1D only."]
     (OUT / "l96_benchmark_extended.md").write_text("\n".join(A) + "\n")
     print(f"wrote {OUT / 'l96_benchmark_extended.md'}")
 

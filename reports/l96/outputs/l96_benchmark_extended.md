@@ -38,7 +38,7 @@ The current L96 benchmark (it supersedes the frozen 400-epoch snapshot `l96_benc
 8. **Flow ensembles**: averaging the velocities of the three 1200-epoch PredictStateCFM-M seeds (equal weights, one shared trajectory) gives regular / random S0 0.327 / 0.429 vs 0.341 / 0.443 for a single network, with unchanged calibration -- at 3x the parameters and sampling cost. tau-varying weights (a PredictStateCFM -> VanillaCFM hand-over, or random schedules) add nothing over equal weights (`docs/results/l96_cfm_velocity_ensembles.md`).
 9. **DA ensemble size (sensitivity)**: the 30-member DA rows are sampling-limited at S0. With 100 members (inflation re-selected on the validation windows, S0 1.05 / S1 2.5) the ETKS reaches regular / random S0 0.393 / 0.463 vs 0.497 / 0.572 at 30 members, but S1 barely moves (1.338 / 1.335 vs 1.338 / 1.347): more members fix the sampling error, not the model error. The benchmark keeps 30 members (the learned ensembles' size); these rows bound what a larger ensemble buys.
 10. **Weak-constraint 4D-Var**: a model-error control per time step (whitened, scale q tuned per case on the validation windows, LBFGS 40 iterations) leaves S0 level with Strong-4D-Var (0.695 vs 0.703, q 0.03) and cuts S1 by 26% (1.064 vs 1.436, q 0.3): representing model error converts part of the hard constraint's misspecification. At S1 it is the best DA row, ahead of the ETKS (1.338), and still 3.2x the best learned scheme's RMSE. Regular grid only (`docs/results/l96_weak4dvar.md`).
-11. **2D (time x sector) circular backbone** (S0 per-window RMSE, 1D -> 2D, M tier, benchmark recipe): DirectUNet 0.340 -> 0.248 regular, 0.450 -> 0.363 random (3 seeds); VanillaCFM 0.351 -> 0.220 regular, 0.462 -> 0.305 random (1 seed); SDA1 (gw 25) 0.464 -> 0.413 regular, 0.572 -> 0.517 random (1 seed); hybrid 0.293 -> 0.197 regular, 0.367 -> 0.267 random (1 seed). The 2D backbone shares its weights across the 8 sectors and is exactly equivariant to cyclic sector shifts, where the 1D U-Net learns separate weights per sector. Single-seed 2D rows are flagged by their `n/3`; SDA2 / SDA3-fix / PredictStateCFM in 2D are not trained yet (`0/3`). The unrolled 4DVarNet schemes of P2 gain as much in 2D (regular / random S0: FDV2-2D-M 0.170 / 0.207; FDV2-2D-M -> SDA1-2D-L 0.162 / 0.201; seed 1, group `2D 4DVarNet (P2 schemes, seed 1)`).
+11. **2D (time x sector) circular backbone** (S0 per-window RMSE, 1D -> 2D, M tier, benchmark recipe): DirectUNet 0.340 -> 0.248 regular, 0.450 -> 0.363 random (3 seeds); VanillaCFM 0.351 -> 0.218 regular, 0.462 -> 0.305 random (3 seeds); SDA1 (gw 25) 0.464 -> 0.414 regular, 0.572 -> 0.521 random (3 seeds); hybrid 0.293 -> 0.197 regular, 0.367 -> 0.267 random (3 seeds). The 2D backbone shares its weights across the 8 sectors and is exactly equivariant to cyclic sector shifts, where the 1D U-Net learns separate weights per sector. Single-seed 2D rows are flagged by their `n/3`; PredictStateCFM in 2D is not trained yet (`0/3`). The unrolled 4DVarNet schemes of P2 gain as much in 2D (regular / random S0: FDV2-2D-M 0.170 / 0.207; FDV2-2D-M -> SDA1-2D-L 0.162 / 0.201; seed 1, group `2D 4DVarNet (P2 schemes, seed 1)`).
 
 ## 1. Main table
 
@@ -84,12 +84,12 @@ Per-window RMSE on the 24D observed space, **mean ± sd across the 200 windows**
 | P1 fixed obs (reference) | VanillaCFM-M | 1/1 | 0.341 ± 0.073 | 0.336 ± 0.073 | 0.998 ± 0.339 | 0.986 ± 0.308 | 2.92 | — |
 | 2D backbone, 1200 ep | DirectUNet-2D-M | 3/3 | 0.248 ± 0.045 | 0.245 ± 0.043 | 0.363 ± 0.318 | 0.345 ± 0.267 | 1.46 | 0.002 |
 | 2D backbone, 1200 ep | PredictStateCFM-2D-M | 0/3 | pending | pending | pending | pending | — | — |
-| 2D backbone, 1200 ep | VanillaCFM-2D-M | 1/3 | 0.220 ± 0.051 | 0.217 ± 0.053 | 0.305 ± 0.237 | 0.300 ± 0.212 | 1.39 | — |
-| 2D SDA, 1200 ep, gw 25 | SDA1-2D-M | 1/3 | 0.413 ± 0.095 | 0.410 ± 0.093 | 0.517 ± 0.230 | 0.541 ± 0.243 | 1.25 | — |
-| 2D SDA, 1200 ep, gw 25 | SDA2-2D-M | 0/3 | pending | pending | pending | pending | — | — |
-| 2D SDA, 1200 ep, gw 25 | SDA3-fix-2D-M | 0/3 | pending | pending | pending | pending | — | — |
-| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 0/3 | pending | pending | pending | pending | — | — |
-| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 1/3 | 0.197 ± 0.043 | 0.192 ± 0.042 | 0.267 ± 0.200 | 0.261 ± 0.182 | 1.35 | — |
+| 2D backbone, 1200 ep | VanillaCFM-2D-M | 3/3 | 0.218 ± 0.049 | 0.214 ± 0.052 | 0.305 ± 0.237 | 0.300 ± 0.212 | 1.40 | 0.003 |
+| 2D SDA, 1200 ep, gw 25 | SDA1-2D-M | 3/3 | 0.414 ± 0.096 | 0.412 ± 0.093 | 0.521 ± 0.223 | 0.545 ± 0.236 | 1.26 | 0.010 |
+| 2D SDA, 1200 ep, gw 25 | SDA2-2D-M | 3/3 | 0.359 ± 0.081 | 0.375 ± 0.083 | 0.448 ± 0.210 | 0.482 ± 0.214 | 1.25 | 0.012 |
+| 2D SDA, 1200 ep, gw 25 | SDA3-fix-2D-M | 3/3 | 0.389 ± 0.087 | 0.382 ± 0.082 | 0.484 ± 0.220 | 0.496 ± 0.224 | 1.24 | 0.011 |
+| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 3/3 | 0.198 ± 0.045 | 0.195 ± 0.044 | 0.265 ± 0.194 | 0.259 ± 0.175 | 1.33 | 0.001 |
+| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 3/3 | 0.197 ± 0.043 | 0.193 ± 0.042 | 0.267 ± 0.199 | 0.261 ± 0.182 | 1.35 | 0.001 |
 | 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-M (1D prior) | 3/3 | 0.247 ± 0.049 | 0.242 ± 0.048 | 0.320 ± 0.208 | 0.311 ± 0.182 | 1.29 | 0.000 |
 | 2D tiers, 1200 ep (seed 1) | DirectUNet-2D-S | 1/1 | 0.262 ± 0.046 | 0.258 ± 0.045 | 0.378 ± 0.318 | 0.362 ± 0.268 | 1.44 | — |
 | 2D tiers, 1200 ep (seed 1) | VanillaCFM-2D-S | 1/1 | 0.241 ± 0.056 | 0.238 ± 0.059 | 0.341 ± 0.255 | 0.336 ± 0.227 | 1.41 | — |
@@ -140,9 +140,12 @@ spread/RMSE = window-mean spread / window-mean RMSE. It is biased low against th
 | Hybrid, 1200-ep SDA prior (tau0 0.1, gw 2) | DirectUNet-M(1200 ep) -> SDA3-fix-M | 0.137 (0.136) | 0.175 (0.173) | 0.46 (0.47) | 0.40 (0.40) |
 | P1 fixed obs (reference) | PredictStateCFM-M | 0.166 (0.165) | 0.550 (0.534) | 0.49 (0.49) | 0.30 (0.30) |
 | P1 fixed obs (reference) | VanillaCFM-M | 0.153 (0.151) | 0.578 (0.570) | 0.61 (0.62) | 0.31 (0.31) |
-| 2D backbone, 1200 ep | VanillaCFM-2D-M | 0.093 (0.092) | 0.129 (0.127) | 0.69 (0.69) | 0.70 (0.68) |
-| 2D SDA, 1200 ep, gw 25 | SDA1-2D-M | 0.196 (0.195) | 0.248 (0.264) | 0.52 (0.53) | 0.47 (0.45) |
-| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 0.087 (0.085) | 0.125 (0.121) | 0.54 (0.55) | 0.44 (0.44) |
+| 2D backbone, 1200 ep | VanillaCFM-2D-M | 0.092 (0.090) | 0.129 (0.127) | 0.70 (0.70) | 0.70 (0.68) |
+| 2D SDA, 1200 ep, gw 25 | SDA1-2D-M | 0.196 (0.195) | 0.246 (0.262) | 0.53 (0.54) | 0.48 (0.46) |
+| 2D SDA, 1200 ep, gw 25 | SDA2-2D-M | 0.160 (0.169) | 0.194 (0.210) | 0.62 (0.72) | 0.61 (0.68) |
+| 2D SDA, 1200 ep, gw 25 | SDA3-fix-2D-M | 0.181 (0.177) | 0.225 (0.229) | 0.52 (0.54) | 0.49 (0.51) |
+| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 0.088 (0.086) | 0.122 (0.117) | 0.48 (0.50) | 0.41 (0.42) |
+| 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 0.087 (0.085) | 0.125 (0.121) | 0.54 (0.54) | 0.44 (0.44) |
 | 2D hybrid (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-M (1D prior) | 0.113 (0.111) | 0.151 (0.144) | 0.62 (0.64) | 0.51 (0.53) |
 | 2D tiers, 1200 ep (seed 1) | VanillaCFM-2D-S | 0.103 (0.102) | 0.146 (0.144) | 0.69 (0.70) | 0.71 (0.69) |
 | 2D tiers, 1200 ep (seed 1) | SDA1-2D-S | 0.188 (0.185) | 0.238 (0.254) | 0.50 (0.51) | 0.45 (0.43) |
@@ -481,7 +484,7 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 
 ## Per-window RMSE / EV / CRPS summary (2D backbone)
 
-Generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py` (`backbone="2d"`): the DA rows of the 1D summary, every U-Net row replaced by its 2D (time x sector) circular-backbone counterpart at the benchmark recipe (1200 epochs, M tier). `seeds` = finished seeds of the 3 planned; a row with `—` everywhere is not trained yet. The hybrids use tau0 0.1, gw 1 (validated for the DirectUNet-2D mean); the *interim* row starts the 1D SDA3-fix prior from the 2D DirectUNet and is the only 3-seed hybrid until SDA3-fix-2D is trained.
+Generated from the `benchmark_extended` inputs by `reports/l96/per_window_summary.py` (`backbone="2d"`): the DA rows of the 1D summary, every U-Net row replaced by its 2D (time x sector) circular-backbone counterpart at the benchmark recipe (1200 epochs, M tier). `seeds` = finished seeds of the 3 planned; a row with `—` everywhere is not trained yet. The hybrids use tau0 0.1, gw 1 (validated for the DirectUNet-2D mean, re-checked for the SDA3-fix-2D prior); the *interim* row, a sensitivity row, starts the 1D SDA3-fix prior from the 2D DirectUNet.
 
 Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is the per-channel RMSE over time; **EV** is per-channel 1 - SSE/SST over time, with SST about the window's own mean, so it is lower than the pooled EV of the benchmark JSONs; **CRPS** is taken on the analysis ensemble (DA) or the members (flows, SDA). Each is averaged over channels. Seeds are averaged per window; cells are mean ± sd over the 200 windows. Per column, the best value is in **bold** and the second best in *italics*. Deterministic schemes have no CRPS. The random-layout Strong-4DVar trajectories were not kept, so that cell has no EV.
 
@@ -493,14 +496,14 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.641 ± 0.143 | 1.416 ± 0.229 | 0.706 ± 0.236 | 1.484 ± 0.370 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.497 ± 0.164 | 1.338 ± 0.224 | 0.572 ± 0.258 | 1.347 ± 0.298 |
 | DA | Strong-4DVar | — | 0.703 ± 0.199 | 1.436 ± 0.232 | 0.742 ± 0.310 | 1.444 ± 0.246 |
-| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 1 | 0.413 ± 0.095 | 0.410 ± 0.093 | 0.517 ± 0.230 | 0.541 ± 0.243 |
-| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | — | — | — | — | — |
-| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | — | — | — | — | — |
+| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 3 | 0.414 ± 0.096 | 0.412 ± 0.093 | 0.521 ± 0.223 | 0.545 ± 0.236 |
+| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | 3 | 0.359 ± 0.081 | 0.375 ± 0.083 | 0.448 ± 0.210 | 0.482 ± 0.214 |
+| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | 3 | 0.389 ± 0.087 | 0.382 ± 0.082 | 0.484 ± 0.220 | 0.496 ± 0.224 |
 | DirectUNet 2D (1200 ep) | DirectUNet-2D-M | 3 | 0.248 ± 0.045 | 0.245 ± 0.043 | 0.363 ± 0.318 | 0.345 ± 0.267 |
 | CFM 2D (1200 ep) | PredictStateCFM-2D-M | — | — | — | — | — |
-| CFM 2D (1200 ep) | VanillaCFM-2D-M | 1 | *0.220* ± 0.051 | *0.217* ± 0.053 | *0.305* ± 0.237 | *0.300* ± 0.212 |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | — | — | — | — | — |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 1 | **0.197** ± 0.043 | **0.192** ± 0.042 | **0.267** ± 0.200 | **0.261** ± 0.182 |
+| CFM 2D (1200 ep) | VanillaCFM-2D-M | 3 | 0.218 ± 0.049 | 0.214 ± 0.052 | 0.305 ± 0.237 | 0.300 ± 0.212 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 3 | *0.198* ± 0.045 | *0.195* ± 0.044 | **0.265** ± 0.194 | **0.259** ± 0.175 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 3 | **0.197** ± 0.043 | **0.193** ± 0.042 | *0.267* ± 0.199 | *0.261* ± 0.182 |
 | *interim* | *DirectUNet-2D-M -> SDA3-fix-M (1D prior)* | 3 | 0.247 ± 0.049 | 0.242 ± 0.048 | 0.320 ± 0.208 | 0.311 ± 0.182 |
 
 **EV** (higher is better)
@@ -511,15 +514,15 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.802 ± 0.070 | 0.258 ± 0.076 | 0.754 ± 0.135 | 0.028 ± 0.564 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.872 ± 0.077 | 0.350 ± 0.084 | 0.818 ± 0.143 | 0.222 ± 0.259 |
 | DA | Strong-4DVar | — | 0.745 ± 0.124 | 0.229 ± 0.072 | — | — |
-| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 1 | 0.927 ± 0.017 | 0.927 ± 0.015 | 0.864 ± 0.110 | 0.850 ± 0.116 |
-| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | — | — | — | — | — |
-| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | — | — | — | — | — |
+| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 3 | 0.927 ± 0.017 | 0.927 ± 0.015 | 0.865 ± 0.107 | 0.851 ± 0.113 |
+| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | 3 | 0.943 ± 0.013 | 0.938 ± 0.013 | 0.894 ± 0.091 | 0.879 ± 0.094 |
+| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | 3 | 0.935 ± 0.014 | 0.937 ± 0.012 | 0.880 ± 0.099 | 0.873 ± 0.100 |
 | DirectUNet 2D (1200 ep) | DirectUNet-2D-M | 3 | 0.972 ± 0.007 | 0.972 ± 0.007 | 0.916 ± 0.133 | 0.924 ± 0.115 |
 | CFM 2D (1200 ep) | PredictStateCFM-2D-M | — | — | — | — | — |
-| CFM 2D (1200 ep) | VanillaCFM-2D-M | 1 | *0.977* ± 0.009 | *0.977* ± 0.009 | 0.937 ± 0.092 | 0.939 ± 0.087 |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | — | — | — | — | — |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 1 | **0.981** ± 0.007 | **0.982** ± 0.007 | **0.950** ± 0.075 | **0.952** ± 0.073 |
-| *interim* | *DirectUNet-2D-M -> SDA3-fix-M (1D prior)* | 3 | 0.972 ± 0.008 | 0.973 ± 0.008 | *0.938* ± 0.082 | *0.942* ± 0.076 |
+| CFM 2D (1200 ep) | VanillaCFM-2D-M | 3 | 0.977 ± 0.008 | 0.977 ± 0.008 | 0.937 ± 0.092 | 0.939 ± 0.087 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 3 | *0.981* ± 0.007 | *0.981* ± 0.007 | **0.951** ± 0.073 | **0.954** ± 0.069 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 3 | **0.981** ± 0.007 | **0.982** ± 0.007 | *0.950* ± 0.075 | *0.953* ± 0.073 |
+| *interim* | *DirectUNet-2D-M -> SDA3-fix-M (1D prior)* | 3 | 0.972 ± 0.008 | 0.973 ± 0.008 | 0.938 ± 0.082 | 0.942 ± 0.076 |
 
 **CRPS** (lower is better)
 
@@ -529,14 +532,14 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 | DA | EnKF (inflation 1.2 / 3.0) | — | 0.287 ± 0.069 | 0.763 ± 0.124 | 0.320 ± 0.109 | 0.837 ± 0.186 |
 | DA | ETKS (inflation 1.15 / 2.5) | — | 0.238 ± 0.085 | 0.771 ± 0.142 | 0.269 ± 0.122 | 0.744 ± 0.179 |
 | DA | Strong-4DVar | — | — | — | — | — |
-| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 1 | 0.196 ± 0.045 | 0.195 ± 0.042 | 0.248 ± 0.109 | 0.264 ± 0.119 |
-| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | — | — | — | — | — |
-| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | — | — | — | — | — |
+| SDA 2D (gw 25, 1200 ep) | SDA1-2D-M | 3 | 0.196 ± 0.045 | 0.195 ± 0.042 | 0.246 ± 0.109 | 0.262 ± 0.120 |
+| SDA 2D (gw 25, 1200 ep) | SDA2-2D-M | 3 | 0.160 ± 0.030 | 0.169 ± 0.030 | 0.194 ± 0.074 | 0.210 ± 0.074 |
+| SDA 2D (gw 25, 1200 ep) | SDA3-fix-2D-M | 3 | 0.181 ± 0.037 | 0.177 ± 0.033 | 0.225 ± 0.092 | 0.229 ± 0.092 |
 | DirectUNet 2D (1200 ep) | DirectUNet-2D-M | 3 | — | — | — | — |
 | CFM 2D (1200 ep) | PredictStateCFM-2D-M | — | — | — | — | — |
-| CFM 2D (1200 ep) | VanillaCFM-2D-M | 1 | *0.093* ± 0.020 | *0.092* ± 0.021 | *0.129* ± 0.102 | *0.127* ± 0.092 |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | — | — | — | — | — |
-| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 1 | **0.087** ± 0.017 | **0.085** ± 0.018 | **0.125** ± 0.108 | **0.121** ± 0.097 |
+| CFM 2D (1200 ep) | VanillaCFM-2D-M | 3 | 0.092 ± 0.019 | 0.090 ± 0.021 | 0.129 ± 0.102 | 0.127 ± 0.092 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA3-fix-2D-M | 3 | *0.088* ± 0.018 | *0.086* ± 0.018 | **0.122** ± 0.099 | **0.117** ± 0.085 |
+| Hybrid 2D (tau0 0.1, gw 1) | DirectUNet-2D-M -> SDA1-2D-M | 3 | **0.087** ± 0.017 | **0.085** ± 0.018 | *0.125* ± 0.108 | *0.121* ± 0.097 |
 | *interim* | *DirectUNet-2D-M -> SDA3-fix-M (1D prior)* | 3 | 0.113 ± 0.022 | 0.111 ± 0.022 | 0.151 ± 0.106 | 0.144 ± 0.089 |
 
 
@@ -547,4 +550,4 @@ Per window, on the 24 observed channels of the 200 P1 test windows: **RMSE** is 
 - The hybrid's 400-epoch mean was tuned and evaluated with the 400-epoch DirectUNet; the 1200-epoch-mean hybrid uses the same validation-selected setting (re-checked on validation, section 6).
 - Probes and factorial cells use 20 windows x 3 draws, not the 200-window test sets.
 - Flow calibration was only probed (sampling-time settings, on the uniform grid); the benchmark flows use the #257 sampler (20 early-fine steps).
-- 2D rows: DirectUNet-2D-M and the interim DirectUNet-2D-M -> SDA3-fix-M (1D prior) hybrid have 3 seeds; every other 2D row is seed 1 (`1/3`, or `1/1` for the tier and 4DVarNet groups). The 2D hybrids use gw 1, validated on the DirectUNet-2D mean (the 1D hybrid keeps gw 2). Sections 2-7 are 1D only.
+- 2D rows: the M-tier rows have 3 seeds (hybrids: 3 DirectUNet seeds on prior seed 1), PredictStateCFM-2D is not trained yet, and the tier and 4DVarNet groups are seed 1 (`1/1`). The 2D hybrids use gw 1, validated on the DirectUNet-2D mean and re-checked for the SDA3-fix-2D prior (the 1D hybrid keeps gw 2). Sections 2-7 are 1D only.
