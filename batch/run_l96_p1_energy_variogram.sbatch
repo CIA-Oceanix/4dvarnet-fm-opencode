@@ -17,6 +17,7 @@
 #           ETKS `correct`, full window): the run_l96_fm_score_da.sbatch command with the EnKF added;
 #   task 1: VanillaCFM-2D-M seed 1; 2: SDA1-2D-M seed 1 (gw 25); 3: DirectUNet-2D-M -> SDA1-2D-M
 #           (tau0 0.1, gw 1): the run_l96b_2d_variance_eval.sbatch commands with --members-file full.
+# DA_CASES=s0 (or s1) restricts task 0 to one case.
 # Submit from this worktree's root (task 0 writes its trajectory files to ./experiments).
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
@@ -41,13 +42,13 @@ echo "task ${SLURM_ARRAY_TASK_ID:-0} | commit $(git rev-parse --short HEAD) | $(
 case ${SLURM_ARRAY_TASK_ID:-0} in
   0) RANDOMIZE='{"F": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "c1": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "h": {"randomized": false, "noise": 0.2, "biased": false, "bias": 0.0}, "hx": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "eps": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}, "fast_weights": {"randomized": true, "noise": 0.2, "biased": true, "bias": 0.1}}'
      INF="s0=1.15,s1=2.5"
-     if ls experiments/l96_baselines_dws500_*_s0c_ev*.json >/dev/null 2>&1; then
+     if ls experiments/l96_baselines_dws500*_s0c_ev*.json >/dev/null 2>&1; then
        echo "results cache in $PWD/experiments: the evaluators would skip every method; move it aside"; exit 1
      fi
      python -u evaluate_all_l96.py --data-cache "$DS" --da-window-steps 500 --num-test-windows 200 --t-max 3.0 \
        --obs-j 2 --obs-interval 100 --suffix _s0c_ev --randomize "$RANDOMIZE" \
        --etkf-inflation "$INF" --enkf-inflation "s0=1.2,s1=3.0" --skip-weak --skip-strong --da-fast-weights \
-       --etks --etks-inflation "$INF" --save-members
+       --etks --etks-inflation "$INF" --save-members ${DA_CASES:+--cases $DA_CASES}
      LABEL="" ;;
   1) python eval_neural_l96.py --step-power 0.5 --checkpoint $CFM/checkpoints/stage1_best.ckpt --dataset $DS \
        --num-windows 200 --n-members 30 --n-outer 20 --batch-size 25 --members-file full \
