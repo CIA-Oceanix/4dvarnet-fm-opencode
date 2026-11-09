@@ -43,6 +43,7 @@ ROWS = {
         "EnKF": ("enkf_c3_loc6.0_r0.1_x1.0_bred_d1.0_k0_s0_n100_fms", "ensemble"),
         "ETKS": ("enks_c3_loc8.0_r0.1_x1.0_bred_lag0_tau8_d1.0_k0_s0_n100_fms", "ensemble"),
         "Strong-4DVar": ("strong4dvar_c3_loc8.0_r0.1_x1.0_bred_d1.0_k0_Bspectral1.0_W120_s0_n100", "rmse"),
+        "Weak-4DVar": ("weak4dvar_c3_loc8.0_r0.1_x1.0_bred_d1.0_k0_Bspectral1.0_Q0.01_W120_s0_n100", "rmse"),
         "D-Unet": ("neural_G1L3D_b16_w15_kpow_s0_full_c3_cubic_N1", "deterministic"),
         "CFM": ("neural_G2_3d_w15_kpow_s0_fms_c3_cubic_N30", "ensemble"),
         "SDA": ("neural_G3_3d_w15_pub_g0.01_st100_c1_fms_c3_cubic_N30", "ensemble"),
