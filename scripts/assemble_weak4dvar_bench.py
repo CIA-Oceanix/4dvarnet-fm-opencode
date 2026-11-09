@@ -8,8 +8,10 @@ RMSE on the 24 observed channels, averaged over channels) and checks the result 
 per-chunk JSONs. It writes ``<out>/<NAME>`` (keys ``s0_Weak_4DVar_trajectories`` /
 ``s1_Weak_4DVar_trajectories``, the layout of the other DA trajectory files) and a summary JSON.
 
-usage: assemble_weak4dvar_bench.py <chunk_dir> <out_dir>
+usage: assemble_weak4dvar_bench.py <chunk_dir> <out_dir> [--cases s0=0.03 s1=0.3] [--name NAME]
+(defaults: the benchmark rows; e.g. ``--cases s1=0.03 --name ..._s1full...npz`` for the S1-full row)
 """
+import argparse
 import glob
 import json
 import os
@@ -27,11 +29,11 @@ Q = {"s0": "0.03", "s1": "0.3"}
 N_WIN = 200
 
 
-def main(chunk_dir: str, out_dir: str) -> None:
+def main(chunk_dir: str, out_dir: str, q: dict = Q, name: str = NAME) -> None:
     idx = np.array(make_obs_j_indices(8, 4, 2))
     data = torch.load(TEST, weights_only=False)
-    out, summary = {}, {"test_set": TEST, "q_var_scale": Q, "max_iter": 40, "cases": {}}
-    for case, q in Q.items():
+    out, summary = {}, {"test_set": TEST, "q_var_scale": q, "max_iter": 40, "cases": {}}
+    for case, q in q.items():
         files = sorted(glob.glob(os.path.join(chunk_dir, f"{case}_q{q}_it40_w*.npz")))
         windows, trajs, chunk_rmse, resets = [], [], [], 0
         for f in files:
@@ -57,10 +59,16 @@ def main(chunk_dir: str, out_dir: str) -> None:
                                   "n_chunks": len(files), "n_resets": resets}
         print(f"{case}: q {q}, {len(files)} chunks, RMSE {rmse:.4f} ± {per_window.std(ddof=1):.4f}, resets {resets}")
     os.makedirs(out_dir, exist_ok=True)
-    np.savez_compressed(os.path.join(out_dir, NAME), **out)
-    json.dump(summary, open(os.path.join(out_dir, NAME.replace(".npz", ".json")), "w"), indent=1)
-    print(f"wrote {os.path.join(out_dir, NAME)}")
+    np.savez_compressed(os.path.join(out_dir, name), **out)
+    json.dump(summary, open(os.path.join(out_dir, name.replace(".npz", ".json")), "w"), indent=1)
+    print(f"wrote {os.path.join(out_dir, name)}")
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    ap = argparse.ArgumentParser()
+    ap.add_argument("chunk_dir")
+    ap.add_argument("out_dir")
+    ap.add_argument("--cases", nargs="+", default=[f"{c}={v}" for c, v in Q.items()])
+    ap.add_argument("--name", default=NAME)
+    a = ap.parse_args()
+    main(a.chunk_dir, a.out_dir, dict(c.split("=") for c in a.cases), a.name)
