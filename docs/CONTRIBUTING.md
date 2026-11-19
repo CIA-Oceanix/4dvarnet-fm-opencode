@@ -84,7 +84,10 @@ conflict on it. Format is in `CHANGELOG.d/README.md`.
 - **Cosine LR scheduling is the deliberate default** (`use_cosine_scheduler: true`),
   not an accident. See the 2026-09-10 CHANGELOG entry before changing it.
 - **`experiments/` is gitignored.** Checkpoints worth keeping get archived to
-  `experiments/l96/` and referenced from a report.
+  `experiments/l96/` and referenced from a report. Artifacts other contributors
+  need go to the shared folder `/Odyssey/public/4dvarnet-fm/`, each run with a
+  `MANIFEST.json`. Its `README.md` has the layout and rules (see "Shared storage"
+  in the top-level README).
 - **Nested `4dvarnet-fm-*/` directories are git worktrees**, one per topic branch
   (`docs/plans/tech/worktrees.md`). They are not part of the source tree.
 - **Not every test file runs in CI yet.** See `docs/plans/tech/multi_refactor_plan.md` Phase 0.

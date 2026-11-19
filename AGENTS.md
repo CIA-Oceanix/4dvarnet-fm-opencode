@@ -88,6 +88,8 @@ Stop for user input only on a genuine external blocker:
 ### Hygiene
 
 - Never commit artifacts/checkpoints or untracked scratch files (`experiments/` is gitignored).
+  Artifacts shared with other contributors go to `/Odyssey/public/4dvarnet-fm/`. Follow its
+  `README.md` (layout, per-run `MANIFEST.json`, write-once rules, L63 specifics).
 - Add a CHANGELOG.d/ fragment (see format below) for every merged change, except pure paper
   syncs (changes under `docs/papers/` only), whose history is the Overleaf log.
 - Don't reformat or restyle unrelated code in the same change — keep diffs scoped to
