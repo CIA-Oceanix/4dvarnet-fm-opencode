@@ -40,6 +40,26 @@ Results and their provenance live in `reports/<system>/outputs/`. The report
 generators render from stored JSON, so a report can always be regenerated
 without re-running the science.
 
+## Shared storage (artifacts too large for git)
+
+Checkpoints, resolved configs, normalization stats, DA baseline outputs and
+report-input bundles that other people need go to the shared folder
+**`/Odyssey/public/4dvarnet-fm/`** on Odyssey. It is readable by every Odyssey user
+and writable by contributors (ask Ronan Fablet for write access).
+
+```
+datasets/{l63,l96,qg}/   runs/{l63,l96,qg}/<exp_id>/   baselines/{l63,l96,qg}/
+bundles/                 scratch/<user>/
+```
+
+Its own `README.md` (`/Odyssey/public/4dvarnet-fm/README.md`) is the reference: it
+gives the layout, the per-run `MANIFEST.json` (git SHA, command, SLURM job id), the
+rules, and how to link it into a worktree's `experiments/`. The rules: runs are
+write-once, runs that back a report row are frozen read-only, no ensemble
+dumps, no code, and nothing there is backed up. Lorenz-63 has its own layout
+(no `s0/s1` run subfolders, per-item symlinks), described in that README's
+"L63 specifics" section.
+
 ## Documentation
 
 | doc | what it covers |
